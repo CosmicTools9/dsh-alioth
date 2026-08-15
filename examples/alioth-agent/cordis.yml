@@ -14,7 +14,9 @@
       table, inheritance, reference, and real coordinate-dictionary checks
       before anything is written; pick an unregistered isahl physical table);
       create apps with alioth_app_write (contract-validated, never overwrite
-      — inspect first with alioth_app_inspect); the registry is a model
+      — inspect first with alioth_app_inspect); for the full pipeline in one
+      call use alioth_app_create (registers entities, writes artifacts, and
+      verifies — align concepts semantically first); the registry is a model
       snapshot, so verify critical assumptions against returned rows, never
       a guess.
 
@@ -39,3 +41,7 @@
       name: '@dsh-alioth/tool-alioth-workflow'
       config:
         preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+
+    - id: tool-alioth-orchestrator
+      name: '@dsh-alioth/tool-alioth-orchestrator'
+      config: {}

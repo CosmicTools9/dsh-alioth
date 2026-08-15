@@ -22,3 +22,7 @@
       name: '@dsh-alioth/tool-alioth-workflow'
       config:
         preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+
+    - id: tool-alioth-orchestrator
+      name: '@dsh-alioth/tool-alioth-orchestrator'
+      config: {}

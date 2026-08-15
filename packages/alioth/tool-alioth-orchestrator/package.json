@@ -1,0 +1,25 @@
+{
+  "name": "@dsh-alioth/tool-alioth-orchestrator",
+  "description": "Programmatic Tool Calling orchestrator: deterministic app-creation pipeline over registered tools",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@dsh-alioth/env-alioth": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@dsh-alioth/tool-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth-meta": "workspace:*"
+  }
+}

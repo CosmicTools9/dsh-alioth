@@ -17,6 +17,7 @@
     "@dsh-alioth/env-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth-meta": "workspace:*",
     "@dsh-alioth/tool-alioth-workflow": "workspace:*",
+    "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh": "0.1.0-rc.6",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.6",
