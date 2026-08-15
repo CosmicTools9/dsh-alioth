@@ -1,7 +1,10 @@
 # dsh-alioth 启动命令
 # launch：启动 web 界面（浏览器 GUI）并自动拉起浏览器（需 DEEPSEEK_API_KEY；DSH_WEB_PORT 可改端口，默认 3100）
 # dev：headless 一次性会话，创建企业应用（需 DEEPSEEK_API_KEY）
+# alioth:doctor：环境自检——拉取/校验模型快照、自动装配内嵌 PostgreSQL、引导 isahl_meta、输出健康报告（退出码 0 = 绿；env 覆盖 ALIOTH_MODEL_SOURCE / ALIOTH_DATABASE_URL / ALIOTH_DATA_ROOT）
 # 可选 ALIOTH_PRE_PROC_ROOT（默认 ~/WorkSpace/AliothStudio/Pre-Proc）
 
-doctor = "tsx scripts/alioth-doctor.ts"
+[tasks]
+launch = "bash scripts/launch-web.sh"
+"alioth:doctor" = "pnpm exec tsx scripts/alioth-doctor.ts"
 dev = "pnpm exec dsh --profile headless --patch examples/alioth-agent/cordis.yml \"${@:-请描述你要创建的企业应用，我会基于 Alioth 模型生成 AppCreator 产物}\""
