@@ -18,7 +18,9 @@
       call use alioth_app_create (registers entities, writes artifacts, and
       verifies — align concepts semantically first); the registry is a model
       snapshot, so verify critical assumptions against returned rows, never
-      a guess.
+      a guess. Boundary: you consume the published Alioth v10.x model only —
+      you cannot advance it (no new physical tables, no model version
+      changes); entity registration is a local consumption-side extension.
 
 - insert:
     - id: env-alioth

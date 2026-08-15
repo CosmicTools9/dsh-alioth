@@ -117,7 +117,10 @@ export function registerEntityWrite(ctx: Context, approvalMode: 'required' | 'by
       + 'reference integrity (local_key vs the FK index), and real coordinate-dictionary codes; any '
       + 'violation fails the whole write with all issues listed. Requires approval when the deployment '
       + 'sets approvalMode=required. Query the registry with alioth_schema_info / alioth_schema_semantic_search '
-      + 'before defining; pick an unregistered physical table (list: schema_info entities) for the new entity.',
+      + 'before defining; pick an unregistered physical table (list: schema_info entities) for the new entity. '
+      + 'NOTE: registration is a consumption-side extension of the bootstrapped registry — this plugin '
+      + 'cannot advance the Alioth model (no new physical tables, no version changes); the registry is '
+      + 'rebuilt from the published baseline on model refresh.',
     parameters: {
       table: {
         type: 'string',

@@ -53,7 +53,8 @@ Positioning (from `AppCreator/DESIGN_INTENT.md`): AppCreator is the open-source 
 - Commands: `pnpm install` / `test` / `typecheck` / `lint`; `mise run launch` (web GUI, port 3100, `DSH_WEB_PORT`/`DSH_OPEN`), `mise run dev` (headless one-shot; needs `DEEPSEEK_API_KEY`).
 - Profile overlays: `--patch` top-level rows REPLACE existing rows (ids must match the base tree, e.g. `system-prompt` persona); new plugins go in an `insert:` block — rows with unmatched ids are silently ignored.
 - Running the composed profiles needs the workspace packages in DSH's profile fallback: `bash scripts/link-dsh-profiles.sh` (symlinks `~/.dsh/profiles/node_modules/@dsh-alioth/*`; heal does not remove manual links). Package sources must be Node strip-only compatible — no TypeScript parameter properties (`constructor(private …)`) — the dsh loader runs `.ts` entries through Node's native TS strip.
-- Next: wire skill-alioth into a harness skill/tool surface, prototype build gate (bun), entity write path.
+- **Positioning — pure consumer, no model evolution**: dsh-alioth creates apps ONLY against the published Alioth v10.x model (the pulled model snapshot). It cannot advance the Alioth model the way AliothStudio does: no meta-management, no version publication, no upstream writes. Local entity registration (alioth_entity_write) is a consumption-side extension of the bootstrapped registry — physically gated to published tables, rebuilt from the published baseline on resetRegistry; it never becomes part of the model. Model evolution is AliothStudio's job; this plugin tracks it by refreshing snapshots.
+- Next: prototype build gate end-to-end (bun runner in workflow gates), snapshot drift policy for dict refresh.
 
 ### Licensing
 
