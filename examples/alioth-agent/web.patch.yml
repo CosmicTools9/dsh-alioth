@@ -1,0 +1,7 @@
+# Adds the Alioth app-inspection tool to the web profile. New row only: the web
+# profile's own rows keep their config (a patch replaces a row only when ids
+# match). ALIOTH_PRE_PROC_ROOT overrides the default ~/WorkSpace/AliothStudio/Pre-Proc.
+- id: tool-alioth
+  name: '@dsh-alioth/tool-alioth'
+  config:
+    preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"

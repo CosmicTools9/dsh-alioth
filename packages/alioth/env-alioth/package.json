@@ -1,0 +1,29 @@
+{
+  "name": "@dsh-alioth/env-alioth",
+  "description": "Self-bootstrapping Alioth environment: model snapshot sync, PostgreSQL lifecycle, isahl_meta bootstrap, and health doctor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@embedded-postgres/darwin-arm64": "18.1.0-beta.15",
+    "@embedded-postgres/darwin-x64": "18.1.0-beta.15",
+    "@embedded-postgres/linux-arm64": "18.1.0-beta.15",
+    "@embedded-postgres/linux-x64": "18.1.0-beta.15",
+    "embedded-postgres": "18.1.0-beta.15",
+    "pg": "8.23.0",
+    "tar-fs": "3.1.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5",
+    "@types/tar-fs": "2.0.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}
