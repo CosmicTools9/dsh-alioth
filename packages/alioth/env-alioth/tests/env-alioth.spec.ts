@@ -349,6 +349,19 @@ describe('env-alioth embedded end-to-end', () => {
       await dispose()
     }
   })
+
+  it('resetRegistry drops and re-bootstraps from the current snapshot', { timeout: 120_000 }, async () => {
+    const { ctx, dispose } = await boot()
+    try {
+      await ctx.aliothEnv.resetRegistry()
+      // The reset invalidates the memo; the next ready() re-runs the baseline.
+      const info = await ctx.aliothEnv.ready()
+      expect(info.bootstrap).toEqual({ created: true, stamped: true })
+      await expect(ctx.aliothEnv.doctor()).resolves.toMatchObject({ status: 'green' })
+    } finally {
+      await dispose()
+    }
+  })
 })
 
 // ── network-gated: real github pull ──────────────────────────────────────

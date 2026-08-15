@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-alioth.local/schemas/app.json",
+  "title": "Alioth app.json",
+  "description": "Alioth v10 application artifact. Evidence: golden app `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json` mirror; contract rules from the model spec (namespace pattern, routing, permissions, min_alioth_version).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "code", "namespace", "name", "version", "config", "permissions", "routing", "navigation", "min_alioth_version"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "code": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*$" },
+    "namespace": { "type": "string", "pattern": "^[A-Z][a-zA-Z0-9-]*$" },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "min_alioth_version": { "type": "string", "minLength": 1 },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modules", "blocks"],
+      "properties": {
+        "modules": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "blocks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultRoles", "adminRoles"],
+      "properties": {
+        "defaultRoles": { "type": "array", "items": { "type": "string" } },
+        "adminRoles": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base", "defaultRoute"],
+      "properties": {
+        "base": { "type": "string", "pattern": "^/apps/" },
+        "defaultRoute": { "type": "string", "pattern": "^/" }
+      }
+    },
+    "navigation": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group", "modules"],
+        "properties": {
+          "group": { "type": "string", "minLength": 1 },
+          "icon": { "type": "string" },
+          "modules": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    }
+  }
+}

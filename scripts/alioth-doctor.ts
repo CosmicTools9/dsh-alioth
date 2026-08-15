@@ -7,6 +7,7 @@
  *   ALIOTH_MODEL_SOURCE   github:owner/repo[@ref] | local path (default github:CosmicTools9/AppCreator@main)
  *   ALIOTH_DATABASE_URL   reuse an existing PostgreSQL instead of provisioning
  *   ALIOTH_DATA_ROOT      state root for snapshots + embedded cluster
+ * Flag: --reset           drop isahl_meta + stamp, then re-bootstrap from the snapshot (destructive)
  */
 import { Context } from '@deepseek-ai/cordis'
 import * as envAlioth from '@dsh-alioth/env-alioth'
@@ -14,6 +15,7 @@ import { maskUrl } from '@dsh-alioth/env-alioth'
 
 const databaseUrl = process.env.ALIOTH_DATABASE_URL
 const dataRoot = process.env.ALIOTH_DATA_ROOT
+const reset = process.argv.includes('--reset')
 const config: envAlioth.Config = {
   modelSource: process.env.ALIOTH_MODEL_SOURCE ?? 'github:CosmicTools9/AppCreator@main',
   ...(databaseUrl === undefined ? {} : { databaseUrl }),
@@ -22,6 +24,10 @@ const config: envAlioth.Config = {
 
 const ctx = new Context()
 const fiber = await ctx.plugin(envAlioth, config)
+if (reset) {
+  // Destructive by request: drop the registry and re-bootstrap from the snapshot.
+  await ctx.aliothEnv.resetRegistry()
+}
 const info = await ctx.aliothEnv.ready()
 console.log(`model    ${info.modelVersion} @ ${info.sourceRef.slice(0, 12)}`)
 console.log(`  dir    ${info.modelDir}`)

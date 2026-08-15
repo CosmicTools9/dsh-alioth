@@ -12,4 +12,6 @@ allowBuilds:
   esbuild: true
   koffi: true
   node-pty: true
+  onnxruntime-node: true
   protobufjs: true
+  sharp: true

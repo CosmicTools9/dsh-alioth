@@ -1,0 +1,27 @@
+{
+  "name": "@dsh-alioth/tool-alioth-meta",
+  "description": "Model-facing Alioth entity-registry queries (alioth_schema_info) over the env-alioth service",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/skill-alioth": "workspace:*",
+    "@huggingface/transformers": "4.2.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5",
+    "pg": "8.23.0"
+  }
+}

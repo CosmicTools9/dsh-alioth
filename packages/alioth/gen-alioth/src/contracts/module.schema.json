@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://dsh-alioth.local/schemas/module.json",
+  "title": "Alioth module.json",
+  "description": "Alioth module artifact. Evidence: the real `module.json` of the AppCreator service in the model distribution; generated app modules keep the same spine (id/namespace/name/version) and may carry the optional service fields. Open for future keys: app modules may grow fields the distribution has not yet published.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "namespace", "name", "version"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "namespace": { "type": "string", "minLength": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "category": { "type": "string" },
+    "status": { "type": "string", "enum": ["active", "draft", "archived"] },
+    "routePrefix": { "type": "string", "pattern": "^/" },
+    "icon": { "type": "string" },
+    "hasBackend": { "type": "boolean" },
+    "hasFrontend": { "type": "boolean" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "dependencies": { "type": "array", "items": { "type": "string" } },
+    "selectable": { "type": "boolean" },
+    "techStack": { "type": "array", "items": { "type": "string" } },
+    "description": { "type": "string" },
+    "prototypeVersion": { "type": "string" }
+  }
+}

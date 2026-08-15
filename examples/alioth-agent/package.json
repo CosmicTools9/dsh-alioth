@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@dsh-alioth/tool-alioth": "workspace:^",
+    "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth-meta": "workspace:*",
+    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
     "@deepseek-ai/dsh-agent-spine-demo": "0.1.0-rc.6",
     "@deepseek-ai/dsh-credentials-local": "0.1.0-rc.6",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6",

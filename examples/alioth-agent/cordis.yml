@@ -1,49 +1,41 @@
-# One-shot Alioth app-inspection agent. Mounts the alioth_app_inspect tool into
-# the headless composition so the model reads real Pre-Proc artifacts before
-# creating or extending apps (AppCreator capability). Requires ALIOTH_PRE_PROC_ROOT
-# (defaults to ~/WorkSpace/AliothStudio/Pre-Proc) and, for a live run,
-# DEEPSEEK_API_KEY.
-- id: settings
-  name: '@deepseek-ai/dsh-settings-file'
-
-- id: credentials
-  name: '@deepseek-ai/dsh-credentials-local'
-
-- id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek'
+# Alioth app agent overlay for the headless profile. Top-level rows patch
+# existing rows (system-prompt persona); `insert` appends new plugin rows
+# (env-alioth + Alioth tools). Env: ALIOTH_MODEL_SOURCE (default
+# github:CosmicTools9/AppCreator@main), ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT,
+# ALIOTH_PRE_PROC_ROOT, DEEPSEEK_API_KEY.
+- id: system-prompt
   config:
-    thinking: enabled
-    reasoningEffort: max
-    models:
-      - id: deepseek-v4-pro
-        contextWindow: 128000
-      - id: deepseek-v4-flash
-        contextWindow: 128000
+    persona: >-
+      You are the Alioth app agent. Rules: ground every entity and field in
+      the entity registry — alioth_schema_info for exact names,
+      alioth_schema_semantic_search for synonyms or cross-language terms
+      (e.g. "inventory balance" finds 状态-库存); register new business
+      entities with alioth_entity_write (definitions pass naming, physical
+      table, inheritance, reference, and real coordinate-dictionary checks
+      before anything is written; pick an unregistered isahl physical table);
+      create apps with alioth_app_write (contract-validated, never overwrite
+      — inspect first with alioth_app_inspect); the registry is a model
+      snapshot, so verify critical assumptions against returned rows, never
+      a guess.
 
-- id: agent-spine
-  name: '@deepseek-ai/dsh-agent-spine-demo'
-  config:
-    agents:
-      - id: main
-        provider: deepseek-official
-        model: deepseek-v4-flash
-        cwd: !!js process.cwd()
-    persona: |
-      You are the Alioth app agent. Inspect existing Alioth apps with
-      alioth_app_inspect before proposing any change; ground every answer
-      in the returned artifact, never a guess.
+- insert:
+    - id: env-alioth
+      name: '@dsh-alioth/env-alioth'
+      config:
+        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'github:CosmicTools9/AppCreator@main'"
+        databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
+        dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
 
-- id: persistence
-  name: '@deepseek-ai/dsh-session-persistence-jsonl'
-  config:
-    root: './.sessions'
+    - id: tool-alioth
+      name: '@dsh-alioth/tool-alioth'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
 
-- id: tool-todo
-  name: '@deepseek-ai/dsh-tool-todo'
-  config:
-    allowParallelInProgress: true
+    - id: tool-alioth-meta
+      name: '@dsh-alioth/tool-alioth-meta'
+      config: {}
 
-- id: tool-alioth
-  name: '@dsh-alioth/tool-alioth'
-  config:
-    preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+    - id: tool-alioth-workflow
+      name: '@dsh-alioth/tool-alioth-workflow'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"

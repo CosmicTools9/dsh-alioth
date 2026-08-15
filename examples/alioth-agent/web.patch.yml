@@ -1,7 +1,24 @@
-# Adds the Alioth app-inspection tool to the web profile. New row only: the web
-# profile's own rows keep their config (a patch replaces a row only when ids
-# match). ALIOTH_PRE_PROC_ROOT overrides the default ~/WorkSpace/AliothStudio/Pre-Proc.
-- id: tool-alioth
-  name: '@dsh-alioth/tool-alioth'
-  config:
-    preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+# Adds the Alioth environment + tools to the web profile. `insert` appends new
+# rows (the web profile's own rows keep their config). Env: ALIOTH_PRE_PROC_ROOT,
+# ALIOTH_MODEL_SOURCE, ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT.
+- insert:
+    - id: env-alioth
+      name: '@dsh-alioth/env-alioth'
+      config:
+        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'github:CosmicTools9/AppCreator@main'"
+        databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
+        dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
+
+    - id: tool-alioth
+      name: '@dsh-alioth/tool-alioth'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+
+    - id: tool-alioth-meta
+      name: '@dsh-alioth/tool-alioth-meta'
+      config: {}
+
+    - id: tool-alioth-workflow
+      name: '@dsh-alioth/tool-alioth-workflow'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"

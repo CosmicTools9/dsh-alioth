@@ -1,5 +1,6 @@
 {
   "name": "@dsh-alioth/env-alioth",
+  "license": "Apache-2.0",
   "description": "Self-bootstrapping Alioth environment: model snapshot sync, PostgreSQL lifecycle, isahl_meta bootstrap, and health doctor",
   "version": "0.0.0",
   "private": true,

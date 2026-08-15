@@ -1,0 +1,35 @@
+dsh-alioth
+Copyright 2026 the dsh-alioth authors
+
+dsh-alioth is an independent, native consumer of the Alioth model — a
+sibling of AppCreator under the same model, NOT a consumer of AppCreator's
+products (its generated applications, its service code, or its runtime).
+
+The Alioth model's open distribution is published by the AppCreator
+open-source project:
+
+    https://github.com/CosmicTools9/AppCreator
+    Copyright 2026 The Alioth Authors
+    Licensed under the Apache License, Version 2.0
+
+From that distribution, model snapshots pulled by @dsh-alioth/env-alioth
+(cache under <dataRoot>/models) carry the model artifacts this plugin
+consumes: the isahl_meta registry bootstrap baseline
+(`backend/ddl/*isahl_meta*.sql`), the skill-adapter definitions
+(`skill-adapters/*.yaml`), and the vendored model sources used as the
+version anchor. AppCreator's own application artifacts (`app_creator`
+persistence DDL, service code, generated apps) are excluded from
+consumption by design.
+
+Following that open-source license, this repository is licensed under
+Apache-2.0 (see LICENSE). License notes on the distribution: the
+authoritative upstream checkout carries an Apache-2.0 LICENSE file, while
+the public GitHub tree currently ships WITHOUT any LICENSE file and its
+Cargo.toml metadata says MIT. The LICENSE file from the authoritative tree
+prevails; the LICENSE in this repository serves as the compliant copy for
+the model artifacts handled here. Upstream should publish LICENSE on the
+public tree and align its Cargo metadata.
+
+Native implementations of Alioth model pipeline semantics in this
+repository carry this attribution and remain under Apache-2.0. Upstream
+carries no NOTICE file at the time of writing.

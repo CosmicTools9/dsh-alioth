@@ -1,10 +1,12 @@
 /**
- * Alioth model snapshot resolution. The model travels as a checkout of the
- * open-source AppCreator repository: `backend/ddl/*isahl_meta*.sql` bootstraps
- * the entity registry, `skill-adapters/*.yaml` and
- * `Pre-Proc/Alioth/_schema/*.schema.json` are consumed downstream by the
- * orchestration and artifact-generation packages. GitHub snapshots are cached
- * per commit SHA under `<dataRoot>/models`; local checkouts are used in place.
+ * Alioth model snapshot resolution. dsh-alioth is a sibling consumer of the
+ * Alioth model (like AppCreator), not a consumer of AppCreator's products.
+ * The model's open distribution is published via the AppCreator open-source
+ * repository: the `backend/ddl/*isahl_meta*.sql` registry baseline, the
+ * `skill-adapters/*.yaml` definitions, and `Pre-Proc/Alioth/_schema/*.schema.json`
+ * contracts (when present) are model artifacts; AppCreator's own application
+ * artifacts are excluded. GitHub snapshots are cached per commit SHA under
+ * `<dataRoot>/models`; local checkouts are used in place.
  * @module @dsh-alioth/env-alioth/model-source
  */
 
@@ -29,7 +31,7 @@ const MODEL_VERSION_RE = /ALIOTH_MODEL_VERSION[\s\S]{0,400}?unwrap_or_else\(\s*\
 /**
  * A parsed model-source spec.
  * - `github` — `{repo}` is `owner/name`; `ref` is a branch, tag, or SHA.
- * - `local` — a filesystem path to an AppCreator checkout.
+ * - `local` — a filesystem path to a model-distribution checkout.
  */
 export type ModelSpec
   = | { kind: 'github'; repo: string; ref: string }

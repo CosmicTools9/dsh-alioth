@@ -7,4 +7,5 @@
 [tasks]
 launch = "bash scripts/launch-web.sh"
 "alioth:doctor" = "pnpm exec tsx scripts/alioth-doctor.ts"
+"alioth:rebuild-semantic" = "pnpm exec tsx scripts/rebuild-semantic.ts"
 dev = "pnpm exec dsh --profile headless --patch examples/alioth-agent/cordis.yml \"${@:-请描述你要创建的企业应用，我会基于 Alioth 模型生成 AppCreator 产物}\""

@@ -1,5 +1,6 @@
 {
   "name": "@dsh-alioth/tool-alioth",
+  "license": "Apache-2.0",
   "description": "Model-facing Alioth app-artifact inspection tool for the DeepSeek Harness",
   "version": "0.0.0",
   "private": true,
@@ -10,7 +11,8 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.1"
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@dsh-alioth/gen-alioth": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
