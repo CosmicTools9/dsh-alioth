@@ -63,7 +63,7 @@ const FIELD_NAME_RE = /^[a-z][a-z0-9_]*$/
 const MAX_INHERITANCE_DEPTH = 5
 
 /** Field name → declared physical local keys, from the FK index snapshot. */
-const LOCAL_KEYS_BY_TABLE: ReadonlyMap<string, ReadonlySet<string>> = (() => {
+export const LOCAL_KEYS_BY_TABLE: ReadonlyMap<string, ReadonlySet<string>> = (() => {
   const map = new Map<string, Set<string>>()
   const refs = fkIndex.refs as unknown as readonly (readonly [string, string, string, string])[]
   for (const [table, , , localKey] of refs) {
@@ -84,7 +84,7 @@ const FUNCTION_CODES = new Set(coordinatesDict.function as readonly string[])
 /** Physical isahl tables ([table, parent]); new entities must map onto one. */
 const PHYSICAL_TABLES = new Set((physicalTables.tables as unknown as readonly (readonly [string, string])[]).map(([table]) => table))
 /** Root-family common columns every lifecycle table inherits. */
-const ROOT_COLUMNS = new Set(physicalTables.root_columns as readonly string[])
+export const ROOT_COLUMNS = new Set(physicalTables.root_columns as readonly string[])
 
 function issue(code: string, message: string): ValidationIssue {
   return { code, message }
@@ -239,4 +239,36 @@ export function validateEntitySpec(spec: EntitySpec, registry: RegistryView): re
     ...validateReferences(spec, registry),
     ...validateCoordinates(spec),
   ]
+}
+
+// ── service field-mapping column validation ──────────────────────────────
+
+/** Known physical columns for local_key/column checks (exported for service.json validation). */
+export interface PhysicalColumnIndex {
+  /** Reference local keys per table (from the FK index snapshot). */
+  readonly localKeysByTable: ReadonlyMap<string, ReadonlySet<string>>
+  /** Common lifecycle columns every table inherits. */
+  readonly rootColumns: ReadonlySet<string>
+}
+
+export { LOCAL_KEYS_BY_TABLE as exportedLocalKeys, ROOT_COLUMNS as exportedRootColumns }
+
+/** Validate a service field mapping's physical column: common column or declared reference key of its table. */
+export function validateMappedColumn(
+  table: string,
+  column: string,
+  index: PhysicalColumnIndex,
+): ValidationIssue[] {
+  if (index.rootColumns.has(column)) {
+    return []
+  }
+  const known = index.localKeysByTable.get(table)
+  if (known?.has(column) === true) {
+    return []
+  }
+  return [{
+    code: 'mapped-column',
+    message: `field mapping column ${JSON.stringify(column)} of ${table} is neither a common lifecycle column `
+      + `nor a declared physical reference column (per the FK index snapshot)`,
+  }]
 }

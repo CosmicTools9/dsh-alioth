@@ -112,7 +112,7 @@ export class AliothEnv extends Service {
     if (handle === undefined || snapshot === undefined) {
       throw new Error('env-alioth: doctor ran without a resolved environment')
     }
-    return runDoctor(handle.client, snapshot)
+    return runDoctor(handle.client, snapshot, this.dataRoot())
   }
 
   /**

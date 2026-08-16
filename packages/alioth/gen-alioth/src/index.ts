@@ -5,5 +5,5 @@
  * @module @dsh-alioth/gen-alioth
  */
 
-export { validateArtifact, type ArtifactKind, type ValidationResult } from './validate.ts'
-export { generateApp, generateExtensions, generateExtension, sourceModuleDirs, EXTENSION_FILES, type AppSpec, type GeneratedApp, type ModuleSpec, type NavigationGroup } from './generate.ts'
+export { validateArtifact, validateArtifactWith, type ArtifactKind, type ArtifactSchemas, type ValidationResult } from './validate.ts'
+export { generateApp, generateExtensions, generateExtension, generateService, sourceModuleDirs, sourceServiceDirs, EXTENSION_FILES, type AppSpec, type GeneratedApp, type ModuleSpec, type NavigationGroup, type ServiceSpec, type ServiceEntitySpec } from './generate.ts'

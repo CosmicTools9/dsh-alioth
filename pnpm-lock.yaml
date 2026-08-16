@@ -248,6 +248,9 @@ importers:
       '@dsh-alioth/tool-alioth-meta':
         specifier: workspace:*
         version: link:../tool-alioth-meta
+      '@dsh-alioth/tool-alioth-workflow':
+        specifier: workspace:*
+        version: link:../tool-alioth-workflow
 
   packages/alioth/tool-alioth-workflow:
     dependencies:

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { validateEntitySpec, type EntitySpec, type RegistryView } from '../src/entity-validate.ts'
+import { validateEntitySpec, validateMappedColumn, type EntitySpec, type RegistryView } from '../src/entity-validate.ts'
+import { LOCAL_KEYS_BY_TABLE, ROOT_COLUMNS } from '../src/entity-validate.ts'
 import coordinatesDict from '../src/data/coordinates.json' with { type: 'json' }
 import fkIndex from '../src/data/fk-index.json' with { type: 'json' }
 
@@ -163,5 +164,30 @@ describe('entity-validate coordinates', () => {
 
   it('accepts codes from the real dictionary', () => {
     expect(validateEntitySpec(VALID_ENTITY, REGISTRY)).toEqual([])
+  })
+})
+
+describe('entity-validate mapped columns', () => {
+  it('accepts common lifecycle columns', () => {
+    expect(validateMappedColumn('zc_id_oper', 'notice', {
+      localKeysByTable: LOCAL_KEYS_BY_TABLE,
+      rootColumns: ROOT_COLUMNS,
+    })).toEqual([])
+  })
+
+  it('accepts declared reference local keys of the table', () => {
+    expect(validateMappedColumn('zc_id_deta-bill-check', 'fk_biller', {
+      localKeysByTable: LOCAL_KEYS_BY_TABLE,
+      rootColumns: ROOT_COLUMNS,
+    })).toEqual([])
+  })
+
+  it('rejects unknown physical columns', () => {
+    const issues = validateMappedColumn('zc_id_deta-bill-check', 'fk_ghost', {
+      localKeysByTable: LOCAL_KEYS_BY_TABLE,
+      rootColumns: ROOT_COLUMNS,
+    })
+    expect(issues).toHaveLength(1)
+    expect(issues[0]?.code).toBe('mapped-column')
   })
 })

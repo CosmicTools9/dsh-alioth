@@ -10,6 +10,7 @@ import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as orchestrator from '../src/index.ts'
+import * as workflowTool from '@dsh-alioth/tool-alioth-workflow'
 
 const signal = new AbortController().signal
 
@@ -155,5 +156,72 @@ describe('alioth_app_create (PTC orchestrator)', () => {
     })
     if (result.isError) throw new Error(`expected alioth_app_create success: ${result.error.message}`)
     expect(result.value).toMatchObject({ entitiesRegistered: 0, verified: true })
+  })
+})
+
+describe('alioth_app_create with workflow adapter', () => {
+  let workflowCtx: Context
+  const workflowDisposers: Array<() => Promise<void>> = []
+  let workflowPreProc: string
+
+  it('runs the workflow gate after writing artifacts', async () => {
+    // app_write generates the artifacts; the workflow gate then verifies them.
+    workflowPreProc = await mkdtemp(path.join(tmpdir(), 'ptc-wf-preproc-'))
+
+    const modelDir = await mkdtemp(path.join(tmpdir(), 'ptc-wf-model-'))
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'ptc-wf-data-'))
+    await mkdir(path.join(modelDir, 'backend', 'ddl'), { recursive: true })
+    await mkdir(path.join(modelDir, 'backend', 'vendor', 'alioth-gen', 'src'), { recursive: true })
+    await mkdir(path.join(modelDir, 'skill-adapters'), { recursive: true })
+    await mkdir(path.join(modelDir, 'Pre-Proc', 'Alioth', '_schema'), { recursive: true })
+    await writeFile(path.join(modelDir, 'backend', 'ddl', '002_isahl_meta_schema.sql'), SCHEMA_DDL)
+    await writeFile(path.join(modelDir, 'skill-adapters', 'alioth-app.yaml'), `
+name: alioth-app
+version: "2.0"
+tracks:
+  - name: 构建
+    steps:
+      - id: "1.1"
+        instruction: "preflight"
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+`)
+    await writeFile(path.join(modelDir, 'Pre-Proc', 'Alioth', '_schema', 'a.schema.json'), '{}\n')
+    await writeFile(
+      path.join(modelDir, 'backend', 'vendor', 'alioth-gen', 'src', 'lib.rs'),
+      'pub static ALIOTH_MODEL_VERSION: LazyLock<String> =\n    LazyLock::new(|| env::var("MODEL_VERSION").unwrap_or_else(|_| "10.0.0".to_string()));\n',
+    )
+
+    workflowCtx = new Context()
+    const system = await workflowCtx.plugin(SystemPrompt)
+    workflowDisposers.push(() => system.dispose())
+    const tools = await workflowCtx.plugin(ToolRuntime)
+    workflowDisposers.push(() => tools.dispose())
+    const env = await workflowCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+    workflowDisposers.push(() => env.dispose())
+    const appTool = await workflowCtx.plugin(toolAlioth, { preProcRoot: workflowPreProc })
+    workflowDisposers.push(() => appTool.dispose())
+    const meta = await workflowCtx.plugin(toolMeta, {})
+    workflowDisposers.push(() => meta.dispose())
+    const wf = await workflowCtx.plugin(workflowTool, { preProcRoot: workflowPreProc })
+    workflowDisposers.push(() => wf.dispose())
+    const orchestration = await workflowCtx.plugin(orchestrator, { adapter: 'alioth-app.yaml' })
+    workflowDisposers.push(() => orchestration.dispose())
+
+    const result = await workflowCtx.tools.execute({
+      signal,
+      callId: CallId('create-wf'),
+      name: 'alioth_app_create',
+      arguments: { namespace: 'Demo', code: 'wf-app', name: 'WF 应用', modules: [{ id: 'm1', name: 'M1' }] },
+    })
+    if (result.isError) throw new Error(`expected alioth_app_create success: ${result.error.message}`)
+    expect(result.value).toMatchObject({ verified: true, workflowGate: 'step 1.1 passed' })
+  }, 120_000)
+
+  afterAll(async () => {
+    for (const dispose of workflowDisposers.reverse()) {
+      await dispose().catch(() => {})
+    }
+    await rm(workflowPreProc, { recursive: true, force: true }).catch(() => {})
   })
 })

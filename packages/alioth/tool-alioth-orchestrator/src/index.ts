@@ -18,9 +18,19 @@ import { CallId } from '@deepseek-ai/dsh-llm'
 export const name = 'tool-alioth-orchestrator'
 export const inject = ['tools', 'aliothEnv']
 
-export interface Config {}
+export interface Config {
+  /**
+   * When set, `alioth_app_create` runs the AppAgent workflow gate after
+   * writing artifacts: it opens a run state for the adapter and executes the
+   * first step's gates via alioth_workflow_complete. Gate failure fails the
+   * create (artifacts stay; fix them and re-run workflow_complete).
+   */
+  readonly adapter?: string
+}
 
-export const Config: z<Config> = z.object({})
+export const Config: z<Config> = z.object({
+  adapter: z.string(),
+})
 
 /** Execute one registered tool through the registry (model-equivalent path). */
 async function runTool(
@@ -42,7 +52,8 @@ async function runTool(
   return result.value as Record<string, unknown>
 }
 
-export function apply(ctx: Context, _config: Config): void {
+export function apply(ctx: Context, config: Config): void {
+  const adapterName = config.adapter
   ctx.tools.register(defineTool({
     name: 'alioth_app_create',
     description:
@@ -139,6 +150,7 @@ export function apply(ctx: Context, _config: Config): void {
           entitiesRegistered: { type: 'number', required: true },
           filesWritten: { type: 'number', required: true },
           verified: { type: 'boolean', required: true },
+          workflowGate: { type: 'string', required: true },
           summary: { type: 'string', required: true },
         },
       },
@@ -181,14 +193,37 @@ export function apply(ctx: Context, _config: Config): void {
       })
       const missing = Array.isArray(inspected.missing) ? inspected.missing as string[] : []
       const filesWritten = Array.isArray(written.files) ? written.files.length : 0
+
+      // Phase 4 — AppAgent workflow gate (when an adapter is configured):
+      // open the run state and run the first step's gates; failure keeps the
+      // artifacts but fails the create (fix artifacts, re-run workflow_complete).
+      let workflowGate = 'not-configured'
+      if (adapterName !== undefined) {
+        const step = await runTool(ctx, exec, 'alioth_workflow_step', {
+          namespace: args.namespace,
+          app: args.code,
+        })
+        if (step.finished !== true) {
+          const completed = await runTool(ctx, exec, 'alioth_workflow_complete', {
+            namespace: args.namespace,
+            app: args.code,
+          })
+          workflowGate = `step ${String(step.stepId)} passed`
+          void completed
+        } else {
+          workflowGate = 'finished'
+        }
+      }
+
       return {
         namespace: args.namespace,
         code: args.code,
         entitiesRegistered,
         filesWritten,
         verified: missing.length === 0,
+        workflowGate,
         summary: missing.length === 0
-          ? `app ${args.namespace}/${args.code} verified against the registry`
+          ? `app ${args.namespace}/${args.code} verified against the registry (workflow: ${workflowGate})`
           : `app ${args.namespace}/${args.code} missing: ${missing.join(', ')}`,
       }
     },

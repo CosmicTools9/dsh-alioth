@@ -278,6 +278,10 @@ describe('env-alioth embedded end-to-end', () => {
     modelDir = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-e2e-model-'))
     dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-e2e-data-'))
     await makeModelFixture(modelDir, '10.0.0')
+    // A present semantic index keeps the doctor green in these env-focused tests.
+    await mkdir(path.join(dataRoot, 'semantic'), { recursive: true })
+    await writeFile(path.join(dataRoot, 'semantic', 'meta.json'),
+      JSON.stringify({ model: 'fake', entriesHash: 'x', count: 1, dimension: 8 }))
   })
 
   afterAll(async () => {
@@ -302,7 +306,7 @@ describe('env-alioth embedded end-to-end', () => {
       expect(info.databaseUrl).toMatch(/^postgres:\/\/alioth:[^@]+@127\.0\.0\.1:\d+\/alioth$/)
       const report = await ctx.aliothEnv.doctor()
       expect(report.status).toBe('green')
-      expect(report.checks.map(check => check.name)).toEqual(['model-snapshot', 'database', 'isahl-meta', 'model-stamp'])
+      expect(report.checks.map(check => check.name)).toEqual(['model-snapshot', 'database', 'isahl-meta', 'model-stamp', 'semantic-index', 'dictionary-snapshots'])
       // Seeds landed and the registry answers queries from a second connection.
       const probe = new Client({ connectionString: info.databaseUrl })
       await probe.connect()
@@ -389,4 +393,50 @@ describe.skipIf(!networkTests)('env-alioth github snapshot', () => {
       await rm(cacheRoot, { recursive: true, force: true })
     }
   })
+})
+
+describe('env-alioth doctor observability', () => {
+  it('reports semantic-index as not built and dictionary snapshots', async () => {
+    const modelDir = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-obs-model-'))
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-obs-data-'))
+    await makeModelFixture(modelDir, '10.0.0')
+    const ctx = new Context()
+    const fiber = await ctx.plugin(AliothEnv, { modelSource: modelDir, dataRoot })
+    try {
+      await ctx.aliothEnv.ready()
+      const report = await ctx.aliothEnv.doctor()
+      const semantic = report.checks.find(check => check.name === 'semantic-index')
+      expect(semantic?.ok).toBe(false)
+      expect(semantic?.detail).toContain('not built')
+      const dicts = report.checks.find(check => check.name === 'dictionary-snapshots')
+      expect(dicts?.ok).toBe(true)
+      expect(dicts?.detail).toContain('generate-dicts.sh')
+    } finally {
+      await fiber.dispose()
+      await rm(modelDir, { recursive: true, force: true })
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }, 120_000)
+
+  it('reports a built semantic index', async () => {
+    const modelDir = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-obs2-model-'))
+    const dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-obs2-data-'))
+    await makeModelFixture(modelDir, '10.0.0')
+    await mkdir(path.join(dataRoot, 'semantic'), { recursive: true })
+    await writeFile(path.join(dataRoot, 'semantic', 'meta.json'),
+      JSON.stringify({ model: 'fake', entriesHash: 'x', count: 12, dimension: 8 }))
+    const ctx = new Context()
+    const fiber = await ctx.plugin(AliothEnv, { modelSource: modelDir, dataRoot })
+    try {
+      await ctx.aliothEnv.ready()
+      const report = await ctx.aliothEnv.doctor()
+      const semantic = report.checks.find(check => check.name === 'semantic-index')
+      expect(semantic?.ok).toBe(true)
+      expect(semantic?.detail).toContain('12 entries')
+    } finally {
+      await fiber.dispose()
+      await rm(modelDir, { recursive: true, force: true })
+      await rm(dataRoot, { recursive: true, force: true })
+    }
+  }, 120_000)
 })

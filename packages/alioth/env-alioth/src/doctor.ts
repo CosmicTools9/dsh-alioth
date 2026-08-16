@@ -5,6 +5,8 @@
  * @module @dsh-alioth/env-alioth/doctor
  */
 
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import type { Client } from 'pg'
 import type { ModelSnapshot } from './model-source.ts'
 import { readStamp } from './bootstrap.ts'
@@ -64,11 +66,39 @@ async function checkStamp(client: Client, snapshot: ModelSnapshot): Promise<Doct
   return { name: 'model-stamp', ok: true, detail: `${snapshot.sourceRef.slice(0, 12)} @ model ${snapshot.modelVersion}` }
 }
 
+/** Semantic index + dictionary-snapshot observability (informational checks). */
+async function checkSemanticIndex(dataRoot: string): Promise<DoctorCheck> {
+  try {
+    const meta = JSON.parse(await readFile(path.join(dataRoot, 'semantic', 'meta.json'), 'utf8')) as { count?: number; dimension?: number; model?: string }
+    return {
+      name: 'semantic-index',
+      ok: true,
+      detail: `${meta.count ?? 0} entries, ${meta.dimension ?? 0} dims, ${meta.model ?? 'unknown'}`,
+    }
+  } catch {
+    return {
+      name: 'semantic-index',
+      ok: false,
+      detail: 'not built — run mise run alioth:rebuild-semantic (auto-rebuilds on next semantic_search otherwise)',
+    }
+  }
+}
+
+/** Snapshot freshness reminder: dict snapshots ship with the code, not the model tree. */
+async function checkDictionarySnapshots(modelDir: string): Promise<DoctorCheck> {
+  void modelDir
+  return {
+    name: 'dictionary-snapshots',
+    ok: true,
+    detail: 'shipped with the code (skill-alioth/src/data/) — refresh with scripts/generate-dicts.sh after upstream model updates',
+  }
+}
+
 /**
  * Run all checks. Each check's failure is contained: a throwing check becomes
  * `ok: false` with the error message as evidence, never aborting the report.
  */
-export async function runDoctor(client: Client, snapshot: ModelSnapshot): Promise<DoctorReport> {
+export async function runDoctor(client: Client, snapshot: ModelSnapshot, dataRoot?: string): Promise<DoctorReport> {
   const artifacts = snapshot.artifacts
   const checks: DoctorCheck[] = [
     {
@@ -85,5 +115,9 @@ export async function runDoctor(client: Client, snapshot: ModelSnapshot): Promis
       checks.push({ name: 'unknown', ok: false, detail: error instanceof Error ? error.message : String(error) })
     }
   }
+  if (dataRoot !== undefined) {
+    checks.push(await checkSemanticIndex(dataRoot))
+  }
+  checks.push(await checkDictionarySnapshots(snapshot.dir))
   return { status: checks.every(check => check.ok) ? 'green' : 'red', checks }
 }

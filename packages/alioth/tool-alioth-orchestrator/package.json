@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@dsh-alioth/tool-alioth": "workspace:*",
-    "@dsh-alioth/tool-alioth-meta": "workspace:*"
+    "@dsh-alioth/tool-alioth-meta": "workspace:*",
+    "@dsh-alioth/tool-alioth-workflow": "workspace:*"
   }
 }

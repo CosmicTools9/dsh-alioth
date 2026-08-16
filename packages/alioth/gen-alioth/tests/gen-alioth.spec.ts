@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXTENSION_FILES, generateApp, generateExtensions, sourceModuleDirs, validateArtifact } from '../src/index.ts'
+import { EXTENSION_FILES, generateApp, generateExtensions, generateService, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
 
 /** Golden mirror: `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json` (same shape as the tool-alioth fixture). */
 const GOLDEN_APP = {
@@ -171,5 +171,59 @@ describe('gen-alioth app tree skeletons', () => {
     const spec = { id: '1', namespace: 'Demo', code: 'demo', name: 'Demo', modules: [{ id: 'alpha', name: 'A' }] }
     expect(sourceModuleDirs(spec.modules)).toEqual(['Sources/Modules/alpha'])
     expect(sourceModuleDirs([])).toEqual([])
+  })
+})
+
+describe('gen-alioth generateService', () => {
+  it('generates a service.json that passes the service contract', () => {
+    const service = generateService({
+      id: 'demo-inventory-service',
+      domain: '库存',
+      services: ['FA'],
+      layer: 1,
+      dtoDependencies: [],
+      backendCrate: 'alioth-service-demo-inventory',
+      hasBackend: true,
+      hasFrontend: false,
+      ontology: {
+        entities: [{
+          name: 'BillCheck',
+          table: 'isahl.zc_id_deta-bill-check',
+          inherits: 'zc_id_lifecycle',
+          coordinates: { scene: 'CA', factor: 'GBA', function: '↑_AA' },
+          fieldMappings: [
+            { jsonPath: 'name', column: 'notice' },
+            { jsonPath: 'biller', column: 'fk_biller' },
+          ],
+          relationships: [{ target: 'Category', type: 'belongsToMany', via: 'zc_id_lifecycle_r_test' }],
+        }],
+      },
+    })
+    expect(validateArtifact('service', service).valid).toBe(true)
+    const entity = (service.ontology as { entities: Array<Record<string, unknown>> }).entities[0]
+    expect(entity).toMatchObject({
+      name: 'BillCheck',
+      table: 'isahl.zc_id_deta-bill-check',
+      coordinates: { scene: 'CA', factor: 'GBA', function: '↑_AA' },
+    })
+  })
+
+  it('lists one service source dir per service id', () => {
+    expect(sourceServiceDirs([{ id: 'demo-inventory-service' }])).toEqual(['Sources/Services/demo-inventory-service'])
+  })
+})
+
+describe('gen-alioth injectable schemas', () => {
+  it('validates against a caller-provided schema set', () => {
+    const custom: ArtifactSchemas = {
+      app: { type: 'object', required: ['code'], properties: { code: { type: 'string' } } },
+      module: { type: 'object', required: ['id'] },
+      block: { type: 'object', required: ['id'] },
+      service: { type: 'object', required: ['id'] },
+    }
+    expect(validateArtifactWith(custom, 'app', { code: 'x' }).valid).toBe(true)
+    const strict = validateArtifactWith(custom, 'app', {})
+    expect(strict.valid).toBe(false)
+    expect(strict.errors.some(error => error.includes('code'))).toBe(true)
   })
 })

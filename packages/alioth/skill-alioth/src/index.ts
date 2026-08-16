@@ -28,6 +28,10 @@ export { ADAPTER_TOOL_TO_DSH, missingToolSurface, type MissingTool } from './map
 export { createProgramRunner, bunAvailable, type ProgramResult, type ProgramRunnerOptions } from './bun.ts'
 export {
   validateEntitySpec,
+  validateMappedColumn,
+  LOCAL_KEYS_BY_TABLE as physicalLocalKeys,
+  ROOT_COLUMNS as physicalRootColumns,
+  type PhysicalColumnIndex,
   type CoordinatesSpec,
   type EntitySpec,
   type FieldSpec,

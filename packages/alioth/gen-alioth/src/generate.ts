@@ -110,3 +110,70 @@ export function generateApp(spec: AppSpec): GeneratedApp {
   }))
   return { app, modules }
 }
+
+// ── service.json generator ───────────────────────────────────────────────
+
+/** One entity's ontology mapping for a service. */
+export interface ServiceEntitySpec {
+  readonly name: string
+  readonly table: string
+  readonly inherits: string
+  readonly coordinates?: { readonly scene: string; readonly factor: string; readonly function: string }
+  /** Field mappings: json_path = field name; column = physical isahl column (reference localKey). */
+  readonly fieldMappings?: readonly { readonly jsonPath: string; readonly column: string; readonly scalar?: string }[]
+  readonly relationships?: readonly { readonly target: string; readonly type: string; readonly via: string }[]
+}
+
+/** The service.json artifact (contract: `service`). */
+export interface ServiceSpec {
+  readonly id: string
+  readonly domain: string
+  readonly services: readonly string[]
+  readonly layer: number
+  readonly dtoDependencies: readonly string[]
+  readonly backendCrate: string
+  readonly hasBackend: boolean
+  readonly hasFrontend: boolean
+  readonly version?: string
+  readonly ontology: { readonly entities: readonly ServiceEntitySpec[] }
+}
+
+/** Build a service.json from an ontology spec; always passes the service contract. */
+export function generateService(spec: ServiceSpec): Record<string, unknown> {
+  return {
+    id: spec.id,
+    domain: spec.domain,
+    services: [...spec.services],
+    layer: spec.layer,
+    dtoDependencies: [...spec.dtoDependencies],
+    backendCrate: spec.backendCrate,
+    hasBackend: spec.hasBackend,
+    hasFrontend: spec.hasFrontend,
+    version: spec.version ?? DEFAULT_VERSION,
+    ontology: {
+      entities: spec.ontology.entities.map(entity => ({
+        name: entity.name,
+        table: entity.table,
+        inherits: entity.inherits,
+        ...(entity.coordinates === undefined ? {} : { coordinates: entity.coordinates }),
+        ...(entity.fieldMappings === undefined || entity.fieldMappings.length === 0
+          ? {}
+          : {
+            field_mappings: entity.fieldMappings.map(mapping => ({
+              json_path: mapping.jsonPath,
+              column: mapping.column,
+              ...(mapping.scalar === undefined ? {} : { scalar: mapping.scalar }),
+            })),
+          }),
+        ...(entity.relationships === undefined || entity.relationships.length === 0
+          ? {}
+          : { relationships: entity.relationships.map(relationship => ({ ...relationship })) }),
+      })),
+    },
+  }
+}
+
+/** Source-skeleton directory for one service. */
+export function sourceServiceDirs(services: readonly { readonly id: string }[]): readonly string[] {
+  return services.map(service => `Sources/Services/${service.id}`)
+}

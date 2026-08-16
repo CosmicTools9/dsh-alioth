@@ -34,8 +34,9 @@ const ACTIONS = ['entities', 'entity', 'search-fields'] as const
 const MAX_LIMIT = 100
 const DEFAULT_LIMIT = 20
 
-/** Test entities in the dev-seed snapshot carry `-testing`/`-test` suffixes. */
-const TEST_ENTITY_FILTER = "table_name NOT LIKE '%-testing' AND table_name NOT LIKE '%-test'"
+import { testEntityFilter } from './hygiene.ts'
+
+const TEST_ENTITY_FILTER = testEntityFilter()
 
 const ENTITIES_SQL = `
 SELECT table_name, name, type,
