@@ -1,0 +1,5 @@
+{
+  "ignorePatterns": [
+    "packages/alioth/env-alioth/vendor/**"
+  ]
+}

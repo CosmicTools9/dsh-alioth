@@ -410,7 +410,7 @@ describe('env-alioth doctor observability', () => {
       expect(semantic?.detail).toContain('not built')
       const dicts = report.checks.find(check => check.name === 'dictionary-snapshots')
       expect(dicts?.ok).toBe(true)
-      expect(dicts?.detail).toContain('generate-dicts.sh')
+      expect(dicts?.detail).toContain('FROZEN')
     } finally {
       await fiber.dispose()
       await rm(modelDir, { recursive: true, force: true })
