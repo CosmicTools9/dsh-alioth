@@ -55,10 +55,20 @@ function normalize(vector: Float32Array): Float32Array {
 }
 
 /** transformers.js feature-extraction embedder. */
+/**
+ * transformers.js feature-extraction embedder. The model resolves in this
+ * order: `DSH_EMBEDDING_MODEL` (local model directory or HF model id) →
+ * `DSH_HF_ENDPOINT` mirror → hf-mirror default. A local path makes the
+ * semantic library fully offline (semantic library = dict snapshots + model
+ * files, shipped with the release).
+ */
 export class TransformersEmbedder implements Embedder {
   private readonly ready: Promise<(texts: readonly string[]) => Promise<readonly Float32Array[]>>
 
-  constructor(model: string = DEFAULT_MODEL, endpoint: string = process.env.DSH_HF_ENDPOINT ?? DEFAULT_ENDPOINT) {
+  constructor(
+    model: string = process.env.DSH_EMBEDDING_MODEL ?? DEFAULT_MODEL,
+    endpoint: string = process.env.DSH_HF_ENDPOINT ?? DEFAULT_ENDPOINT,
+  ) {
     transformersEnv.remoteHost = endpoint
     this.ready = (async () => {
       const extract = await pipeline('feature-extraction', model, { dtype: 'fp32' })
