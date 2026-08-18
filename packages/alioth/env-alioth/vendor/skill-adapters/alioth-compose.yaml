@@ -1,0 +1,42 @@
+name: alioth-compose
+description: "应用组装 — app.json(17 字段) + extensions/*.yaml + ESM 原型构建与校验"
+version: "2.0"
+tracks:
+  - name: 应用组装验证
+    steps:
+      - id: "1.1"
+        instruction: preflight — 确认 compose 产物目录已生成 app.json
+        tools: [read_file]
+        schema: { type: object, required: [app_name] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+      - id: "1.2"
+        instruction: 校验 app.json 结构与 17 字段完整性（对齐 app.schema.json）
+        tools: [read_file, write_file]
+        schema: { type: object, required: [app_json_valid] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+      - id: "1.3"
+        instruction: 校验 extensions/*.yaml 格式有效（constraints/rules/statemachines/workflows）
+        tools: [read_file]
+        schema: { type: object, required: [extensions_valid] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/extensions/*.yaml"
+      - id: "1.4"
+        instruction: 构建 ESM 原型（prototype-tool.js build → m-v{N}.html）
+        tools: [read_file, run_command]
+        schema: { type: object, required: [prototype_path] }
+        gates:
+          - program: "bun"
+            args: ["scripts/prototype-tool.js", "build", "Pre-Proc/{ns}/Apps/{app}/llm-tsx/app.tsx"]
+            output_glob: "Pre-Proc/{ns}/Apps/{app}/m-v*.html"
+            timeout_sec: 180
+      - id: "1.5"
+        instruction: 组装完整性报告 — 汇总模块/扩展/原型校验结果
+        tools: [read_file, write_file]
+        schema: { type: object, required: [compose_report] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/compose-report.json"
+          - program: "bun"
+            args: ["scripts/check/check-nav-hrefs.ts", "--fail", "--ns", "{ns}"]
+            timeout_sec: 120

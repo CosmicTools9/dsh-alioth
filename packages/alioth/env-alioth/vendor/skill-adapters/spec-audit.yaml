@@ -1,0 +1,36 @@
+name: spec-audit
+description: "规约审计 — 45+ 规约文件的系统性合规检查 + 自动修复闭环 (3-5 轮)"
+version: "2.0"
+tracks:
+  - name: 合规审计
+    steps:
+      - id: "1.1"
+        instruction: Phase 1 — 范围界定：确定受影响的规约文件清单
+        tools: [read_file, search_file]
+        schema: { type: object, required: [scope_definition] }
+        gates:
+          - output_glob: "openspec/changes/{change_id}/spec-audit-report.md"
+      - id: "1.2"
+        instruction: Phase 2 — 并行加载所有命中规约文件
+        tools: [read_file]
+        schema: { type: object, required: [loaded_specs] }
+        gates: []
+      - id: "1.3"
+        instruction: Phase 3 — 逐条比照：禁则/必遵/边界/引用完整
+        tools: [read_file]
+        schema: { type: object, required: [compliance_report] }
+        gates: []
+      - id: "1.4"
+        instruction: Phase 4 — 生成结构化审计报告
+        tools: [write_file]
+        schema: { type: object, required: [audit_report_path] }
+        gates:
+          - output_glob: "openspec/changes/{change_id}/spec-audit-report.md"
+      - id: "1.5"
+        instruction: Phase 5 — 自动修复闭环 (最多 3 轮，5+ 规约可放宽至 5 轮)
+        tools: [read_file, write_file, search_file]
+        schema: { type: object, required: [fix_applied, reaudit_passed] }
+        gates:
+          - program: "npx"
+            args: ["openspec", "validate", "{change_id}"]
+            timeout_sec: 30

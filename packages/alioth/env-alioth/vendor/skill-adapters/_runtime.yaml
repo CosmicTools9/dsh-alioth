@@ -1,0 +1,15 @@
+# Skill Adapter runtime configuration
+#
+# Loaded by RunCommandTool (tool_registry::RunCommandTool) at startup.
+# If this file is missing or unreadable, RunCommandTool falls back to the
+# hardcoded DEFAULT_ALLOWED_PROGRAMS list in the Rust source.
+#
+# Matching rule: program MUST either equal an entry exactly, or start with
+# "<entry>/" so path-prefix entries like `target/debug/ontology-mapping`
+# work alongside bare-name entries like `bun`.
+
+allowed_programs:
+  - target/debug/ontology-mapping
+  - bun
+  - npx
+  - cargo

@@ -90,7 +90,7 @@ async function checkDictionarySnapshots(modelDir: string): Promise<DoctorCheck> 
   return {
     name: 'dictionary-snapshots',
     ok: true,
-    detail: 'shipped with the code (skill-alioth/src/data/) — refresh with scripts/generate-dicts.sh after upstream model updates',
+    detail: 'shipped with the code (skill-alioth/src/data/); model is FROZEN (builtin) — dict snapshots change only with a new plugin release',
   }
 }
 

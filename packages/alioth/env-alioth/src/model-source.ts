@@ -30,15 +30,23 @@ const MODEL_VERSION_RE = /ALIOTH_MODEL_VERSION[\s\S]{0,400}?unwrap_or_else\(\s*\
 
 /**
  * A parsed model-source spec.
+ * - `builtin` — the frozen model vendored inside this package (`vendor/`); zero network.
  * - `github` — `{repo}` is `owner/name`; `ref` is a branch, tag, or SHA.
  * - `local` — a filesystem path to a model-distribution checkout.
  */
 export type ModelSpec
-  = | { kind: 'github'; repo: string; ref: string }
+  = | { kind: 'builtin' }
+    | { kind: 'github'; repo: string; ref: string }
     | { kind: 'local'; path: string }
 
-/** Parse a model-source string: `github:owner/repo[@ref]` or a filesystem path. */
+/** The vendored frozen model version (upstream distribution stopped at v10.x). */
+export const BUILTIN_MODEL_VERSION = '10.0.0'
+
+/** Parse a model-source string: `builtin`, `github:owner/repo[@ref]`, or a filesystem path. */
 export function parseModelSource(spec: string): ModelSpec {
+  if (spec === 'builtin') {
+    return { kind: 'builtin' }
+  }
   if (spec.startsWith('github:')) {
     const rest = spec.slice('github:'.length)
     const at = rest.lastIndexOf('@')
@@ -171,6 +179,12 @@ async function downloadGithubTarball(repo: string, sha: string, dest: string): P
  * needed. Local sources are validated in place — no copy is made.
  */
 export async function resolveModelSnapshot(spec: ModelSpec, cacheRoot: string): Promise<ModelSnapshot> {
+  if (spec.kind === 'builtin') {
+    // Zero-network frozen model: vendored under this package's `vendor/`.
+    const dir = path.resolve(new URL('../vendor', import.meta.url).pathname)
+    const artifacts = await inspectModelArtifacts(dir)
+    return { dir, sourceRef: `builtin-v${BUILTIN_MODEL_VERSION}`, modelVersion: BUILTIN_MODEL_VERSION, artifacts }
+  }
   if (spec.kind === 'local') {
     const dir = path.resolve(spec.path)
     const artifacts = await inspectModelArtifacts(dir)

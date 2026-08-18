@@ -35,7 +35,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   databaseUrl: z.string(),
-  modelSource: z.string().default('github:CosmicTools9/AppCreator@main'),
+  modelSource: z.string().default('builtin'),
   dataRoot: z.string(),
 })
 

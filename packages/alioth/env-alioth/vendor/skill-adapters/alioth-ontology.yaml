@@ -1,0 +1,43 @@
+name: alioth-ontology
+description: "本体语义映射 — 从 Block 原型提取实体到 Alioth 本体表"
+version: "2.0"
+tracks:
+  - name: 本体映射
+    steps:
+      - id: "1.1"
+        instruction: Phase 1 — 解析 Block 原型字段，扫描歧义
+        tools: [read_file, write_file, search_file]
+        schema: { type: object, required: [block_path] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Blocks/{block}/block.json"
+      - id: "1.2"
+        instruction: Phase 1.5 — schema-info map 字段映射 (Safe→auto, Suggest→ask, Unclear→ask)
+        tools: [read_file, write_file, run_command]
+        schema: { type: object, required: [mapping_output] }
+        gates:
+          - program: "target/debug/ontology-mapping"
+            args: ["match", "--entity", "{entity}", "--fields", "{}"]
+            timeout_sec: 120
+      - id: "1.3"
+        instruction: Phase 2 — 交互式歧义消解（Unclear 项逐项确认）
+        tools: [read_file]
+        schema: { type: object, required: [resolved_fields] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/local/ontology-output.json"
+      - id: "1.4"
+        instruction: Phase 3 — DB 坐标发现 (dk_scene, dk_factor, dk_function)
+        tools: [read_file, write_file]
+        schema: { type: object, required: [coordinates] }
+        gates:
+          - program: "target/debug/ontology-mapping"
+            args: ["locate", "--table", "{table}"]
+            timeout_sec: 60
+      - id: "1.5"
+        instruction: Phase 4 — 生成 MappingOutput JSON + 写入 service.json
+        tools: [read_file, write_file]
+        schema: { type: object, required: [service_json_updated] }
+        gates:
+          - program: "target/debug/ontology-mapping"
+            args: ["map", "--input", "Pre-Proc/{ns}/local/ontology-output.json"]
+            output_glob: "Pre-Proc/{ns}/local/ontology-output.json"
+            timeout_sec: 120

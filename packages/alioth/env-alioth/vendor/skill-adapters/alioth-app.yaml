@@ -1,0 +1,30 @@
+name: alioth-app
+description: "App 级配置富化 — 从 FlowPlan/OntologyModel 推导 brand/navigation/routing/permissions/goal/non_scope 写入 app.json"
+version: "2.0"
+tracks:
+  - name: App 配置富化
+    steps:
+      - id: "1.1"
+        instruction: preflight — 读取 FlowPlan 与 OntologyModel，提取 App 级元数据
+        tools: [read_file]
+        schema: { type: object, required: [ns, app] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+      - id: "1.2"
+        instruction: 推导并写入 brand（primary/logo）与 navigation（分组/模块映射）
+        tools: [read_file, write_file]
+        schema: { type: object, required: [brand, navigation] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+      - id: "1.3"
+        instruction: 推导并写入 routing（base/default_route）与 permissions（default_roles/public_paths/admin_roles）
+        tools: [read_file, write_file]
+        schema: { type: object, required: [routing, permissions] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+      - id: "1.4"
+        instruction: 推导并写入 goal 与 non_scope，完成 17 字段对齐
+        tools: [read_file, write_file]
+        schema: { type: object, required: [goal, non_scope] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"

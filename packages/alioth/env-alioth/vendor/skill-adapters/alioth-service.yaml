@@ -1,0 +1,43 @@
+name: alioth-service
+description: "Service API 生成 — DTO → Service → Handler → TDD → 合规审计"
+version: "2.0"
+tracks:
+  - name: API 开发
+    steps:
+      - id: "1.1"
+        instruction: Phase 0 — 校验 ONTOLOGY_SPEC.md 映射完整性
+        tools: [read_file]
+        schema: { type: object, required: [ontology_spec_path] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Services/{service}/service.json"
+      - id: "1.2"
+        instruction: Phase 1 — DTO 规格与冲突标识
+        tools: [read_file, write_file]
+        schema: { type: object, required: [dto_files] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Services/{service}/dto/*.ts"
+      - id: "1.3"
+        instruction: Phase 2 — TDD 模式开发 Service (test→impl→refactor)
+        tools: [read_file, write_file, search_file, run_command]
+        schema: { type: object, required: [service_code, test_code] }
+        gates:
+          - program: "cargo"
+            args: ["test", "-p", "{crate}"]
+            timeout_sec: 300
+          - program: "cargo"
+            args: ["check"]
+            timeout_sec: 180
+      - id: "1.4"
+        instruction: Phase 3 — Block 前端绑定 service.json + API hooks
+        tools: [read_file, write_file]
+        schema: { type: object, required: [block_json_updated] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Blocks/{block}/block.json"
+      - id: "1.5"
+        instruction: Phase 4 — Service 规约合规审计 (F1-F8)
+        tools: [read_file]
+        schema: { type: object, required: [audit_report] }
+        gates:
+          - program: "npx"
+            args: ["tsc", "--noEmit"]
+            timeout_sec: 180

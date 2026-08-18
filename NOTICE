@@ -33,3 +33,17 @@ public tree and align its Cargo metadata.
 Native implementations of Alioth model pipeline semantics in this
 repository carry this attribution and remain under Apache-2.0. Upstream
 carries no NOTICE file at the time of writing.
+
+Frozen model artifacts (vendored, zero-network distribution):
+This repository vendors the published Alioth v10.x model artifacts under
+packages/alioth/env-alioth/vendor/ — the `backend/ddl/*isahl_meta*.sql`
+registry baseline, `skill-adapters/*.yaml`, and the prototype build scripts
+(`scripts/prototype-tool.js` and its check/eval companions). These files are
+redistributed from the AppCreator open distribution (Apache-2.0, Copyright
+2026 The Alioth Authors) and remain under that license. The upstream
+distribution channel is frozen; the model evolves only through new plugin
+releases that refresh these artifacts.
+
+Not vendored: the shell reference assets (`gateway-shell.tsx`,
+`prototype-base.css`, UMD vendors) exist only in the closed-source upstream
+and are replaced by in-repo equivalents (planned).

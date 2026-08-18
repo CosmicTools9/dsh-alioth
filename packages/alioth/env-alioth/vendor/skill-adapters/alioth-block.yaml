@@ -1,0 +1,30 @@
+name: alioth-block
+description: "Block Capability 原型设计与前端实现 — 提取 → 原型 → 实现"
+version: "2.0"
+tracks:
+  - name: Block 原型
+    steps:
+      - id: "1.1"
+        instruction: Track 0 — 从 Module 提取未构建的 Block，创建 block.json + 骨架
+        tools: [read_file, write_file, search_file]
+        schema: { type: object, required: [module_id, block_ids] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Blocks/{block}/block.json"
+      - id: "1.2"
+        instruction: Track 1 — Block 原型业务内容填充（Step 1-19）
+        tools: [read_file, write_file]
+        schema: { type: object, required: [block_prototypes] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Blocks/{block}/b-v*.html"
+      - id: "1.3"
+        instruction: 构建 + 验证 — prototype-tool.js build → prototype-check
+        tools: [read_file, run_command]
+        schema: { type: object, required: [build_output] }
+        gates:
+          - program: "bun"
+            args: ["scripts/prototype-tool.js", "build", "Pre-Proc/{ns}/Prototypes/Blocks/{block}/llm-tsx/block.tsx"]
+            output_glob: "Pre-Proc/{ns}/Prototypes/Blocks/{block}/b-v*.html"
+            timeout_sec: 180
+          - program: "target/debug/ontology-mapping"
+            args: ["prototype-check", "Pre-Proc/{ns}/Prototypes/Blocks/{block}"]
+            timeout_sec: 60

@@ -1,0 +1,48 @@
+name: alioth-module
+description: "Module 级高保真原型设计 — 能力发现 → Block 分发 → 组装构建 → 视觉验证"
+version: "2.0"
+tracks:
+  - name: 原型设计
+    steps:
+      - id: "1.1"
+        instruction: preflight — 清理产物、验证原型、提取 mock、字段覆盖
+        tools: [read_file, write_file, search_file]
+        schema: { type: object, required: [namespace, module] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
+      - id: "1.2"
+        instruction: Phase 1 能力发现 — 输出 capability-map.md
+        tools: [read_file, write_file]
+        schema: { type: object, required: [capability_map] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/capability-map.md"
+      - id: "1.3"
+        instruction: Phase 2 组装设计 — 编写 Block Brief，更新 module.json blockAssembly
+        tools: [read_file, write_file]
+        schema: { type: object, required: [block_briefs] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
+      - id: "1.4"
+        instruction: Phase 2.5 Block 并行分发 — 创建 block.tsx 骨架 + block.json
+        tools: [read_file, write_file]
+        schema: { type: object, required: [blocks] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Sources/Blocks/*/block.json"
+      - id: "1.5"
+        instruction: Phase 3 组装构建 — prototype-tool.js build → m-v{N}.html
+        tools: [read_file, write_file, run_command]
+        schema: { type: object, required: [prototype_path] }
+        gates:
+          - program: "bun"
+            args: ["scripts/prototype-tool.js", "build", "Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx"]
+            output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/m-v*.html"
+            timeout_sec: 180
+          - program: "target/debug/ontology-mapping"
+            args: ["prototype-check", "Pre-Proc/{ns}/Prototypes/Modules/{module}"]
+            timeout_sec: 60
+      - id: "1.6"
+        instruction: Phase 4 视觉验证 — 截图 7 帧 + 6 维度评分 ≥90
+        tools: [read_file]
+        schema: { type: object, required: [visual_report] }
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Prototypes/visual-verify/{module}/v*/report.json"

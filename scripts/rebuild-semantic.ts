@@ -14,7 +14,7 @@ import { loadSemanticEntries, TransformersEmbedder, ensureSemanticIndex } from '
 const databaseUrl = process.env.ALIOTH_DATABASE_URL
 const dataRoot = process.env.ALIOTH_DATA_ROOT
 const config: envAlioth.Config = {
-  modelSource: process.env.ALIOTH_MODEL_SOURCE ?? 'github:CosmicTools9/AppCreator@main',
+  modelSource: process.env.ALIOTH_MODEL_SOURCE ?? 'builtin',
   ...(databaseUrl === undefined ? {} : { databaseUrl }),
   ...(dataRoot === undefined ? {} : { dataRoot }),
 }

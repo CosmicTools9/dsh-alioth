@@ -26,7 +26,7 @@
     - id: env-alioth
       name: '@dsh-alioth/env-alioth'
       config:
-        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'github:CosmicTools9/AppCreator@main'"
+        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'builtin'"
         databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
         dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
 
