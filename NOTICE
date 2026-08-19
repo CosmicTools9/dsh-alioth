@@ -47,3 +47,12 @@ releases that refresh these artifacts.
 Not vendored: the shell reference assets (`gateway-shell.tsx`,
 `prototype-base.css`, UMD vendors) exist only in the closed-source upstream
 and are replaced by in-repo equivalents (planned).
+
+Semantic-mapping library (generated, shipped with the plugin):
+packages/alioth/skill-alioth/src/data/{coordinates,physical-tables,fk-index}.json
+are generated offline by scripts/generate-semantic-dicts.ts from:
+- the Alioth model repository (github.com/CosmicTools9/Alioth) — MIT License,
+  Copyright (c) 2025 宇器科技 — dimension seeds (003_seed_dimensions.sql)
+  and tables DDL (002_isahl_tables.sql);
+- the vendored isahl_meta seed (Apache-2.0, The Alioth Authors) for the FK index.
+The library ships with the plugin; no database access is required to rebuild it.
