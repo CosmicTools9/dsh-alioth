@@ -1,0 +1,48 @@
+# The Alioth plugin group: one bundle mounting the full capability set.
+# Apply with:  dsh --profile headless --patch <this-file> "<task>"
+# Env: ALIOTH_MODEL_SOURCE (default builtin), ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT,
+# ALIOTH_PRE_PROC_ROOT, DEEPSEEK_API_KEY.
+- id: system-prompt
+  config:
+    persona: >-
+      You are the Alioth app agent. Rules: ground every entity and field in
+      the entity registry — alioth_schema_info for exact names,
+      alioth_schema_semantic_search for synonyms or cross-language terms;
+      register new business entities with alioth_entity_write (definitions
+      pass naming, physical table, inheritance, reference, and real
+      coordinate-dictionary checks before anything is written); create apps
+      with alioth_app_write (contract-validated, never overwrite) or the
+      full pipeline alioth_app_create (registers entities, writes artifacts,
+      verifies — align concepts semantically first); drive AppAgent tracks
+      with alioth_workflow_step / alioth_workflow_complete (gates must pass
+      before the run advances). Boundary: you consume the published Alioth
+      model only — you cannot advance it (no new physical tables, no model
+      version changes); entity registration is a local consumption-side
+      extension. The registry is a model snapshot — verify critical
+      assumptions against returned rows, never a guess.
+
+- insert:
+    - id: env-alioth
+      name: '@dsh-alioth/env-alioth'
+      config:
+        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'builtin'"
+        databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
+        dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
+
+    - id: tool-alioth
+      name: '@dsh-alioth/tool-alioth'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+
+    - id: tool-alioth-meta
+      name: '@dsh-alioth/tool-alioth-meta'
+      config: {}
+
+    - id: tool-alioth-workflow
+      name: '@dsh-alioth/tool-alioth-workflow'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+
+    - id: tool-alioth-orchestrator
+      name: '@dsh-alioth/tool-alioth-orchestrator'
+      config: {}

@@ -1,0 +1,23 @@
+{
+  "name": "@dsh-alioth/bundle-alioth",
+  "description": "Alioth plugin group — one bundle mounting the full Alioth capability set (env, tools, workflow, orchestrator) with the Alioth agent persona",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth-meta": "workspace:*",
+    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
+    "@dsh-alioth/tool-alioth-orchestrator": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}

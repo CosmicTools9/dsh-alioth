@@ -126,6 +126,27 @@ importers:
         specifier: workspace:*
         version: link:../../packages/alioth/tool-alioth-workflow
 
+  packages/alioth/bundle-alioth:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@dsh-alioth/env-alioth':
+        specifier: workspace:*
+        version: link:../env-alioth
+      '@dsh-alioth/tool-alioth':
+        specifier: workspace:*
+        version: link:../tool-alioth
+      '@dsh-alioth/tool-alioth-meta':
+        specifier: workspace:*
+        version: link:../tool-alioth-meta
+      '@dsh-alioth/tool-alioth-orchestrator':
+        specifier: workspace:*
+        version: link:../tool-alioth-orchestrator
+      '@dsh-alioth/tool-alioth-workflow':
+        specifier: workspace:*
+        version: link:../tool-alioth-workflow
+
   packages/alioth/env-alioth:
     dependencies:
       '@deepseek-ai/cordis':

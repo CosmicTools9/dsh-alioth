@@ -7,7 +7,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 FALLBACK="$HOME/.dsh/profiles/node_modules/@dsh-alioth"
 mkdir -p "$FALLBACK"
-for p in env-alioth tool-alioth tool-alioth-meta tool-alioth-workflow tool-alioth-orchestrator gen-alioth skill-alioth; do
+for p in env-alioth tool-alioth tool-alioth-meta tool-alioth-workflow tool-alioth-orchestrator gen-alioth skill-alioth bundle-alioth; do
   ln -sfn "$REPO/packages/alioth/$p" "$FALLBACK/$p"
   echo "linked $p"
 done
