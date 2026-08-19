@@ -269,6 +269,15 @@ export function apply(ctx: Context, config: Config): void {
       version: { type: 'string', description: 'App version; default 0.1.0.' },
       base: { type: 'string', description: 'Routing base; default /apps/{code}.' },
       defaultRoute: { type: 'string', description: 'Default route; default first module.' },
+      brand: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          primary: { type: 'string', description: 'Primary brand color (hex).' },
+          logo: { type: 'string', description: 'Logo asset path.' },
+        },
+      },
+      goal: { type: 'string', description: 'App goal (17-field alignment).' },
+      nonScope: { type: 'array', items: { type: 'string' }, description: 'Explicit non-scope statements.' },
     },
     output: {
       schema: {
@@ -312,6 +321,9 @@ export function apply(ctx: Context, config: Config): void {
         ...(args.adminRoles === undefined ? {} : { adminRoles: args.adminRoles }),
         ...(args.base === undefined ? {} : { base: args.base }),
         ...(args.defaultRoute === undefined ? {} : { defaultRoute: args.defaultRoute }),
+        ...(args.brand === undefined ? {} : { brand: args.brand }),
+        ...(args.goal === undefined ? {} : { goal: args.goal }),
+        ...(args.nonScope === undefined ? {} : { nonScope: args.nonScope }),
       }
       const generated = generateApp(spec)
       // Contract gate: never persist an artifact that fails its own contract.
@@ -389,6 +401,117 @@ export function apply(ctx: Context, config: Config): void {
       title: `Write Alioth app ${args.namespace}/${args.code}`,
       kind: 'other',
       rawInput: { namespace: args.namespace, code: args.code, modules: args.modules },
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'alioth_app_configure',
+    description:
+      'Programmatic app enrichment: merge brand / navigation / routing / permissions / goal / '
+      + 'non_scope into an existing app.json, contract-validate, and write back. Deterministic — '
+      + 'no LLM generation; the model supplies structured parameters only. Idempotent: fields '
+      + 'not provided are left untouched; provided fields replace. Refuses to write when the '
+      + 'merged app.json fails its contract. Use this instead of writing app.json by hand.',
+    parameters: {
+      namespace: { type: 'string', required: true },
+      app: { type: 'string', required: true },
+      brand: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          primary: { type: 'string' },
+          logo: { type: 'string' },
+        },
+      },
+      navigation: {
+        type: 'array',
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            group: { type: 'string', required: true },
+            icon: { type: 'string' },
+            modules: { type: 'array', items: { type: 'string' }, required: true },
+          },
+        },
+      },
+      defaultRoles: { type: 'array', items: { type: 'string' } },
+      adminRoles: { type: 'array', items: { type: 'string' } },
+      base: { type: 'string' },
+      defaultRoute: { type: 'string' },
+      goal: { type: 'string' },
+      nonScope: { type: 'array', items: { type: 'string' } },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          namespace: { type: 'string', required: true },
+          app: { type: 'string', required: true },
+          updated: { type: 'array', required: true, items: { type: 'string' } },
+          file: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: `Configured ${value.namespace}/${value.app}: updated ${value.updated.join(', ')}`,
+      }],
+    },
+    async execute(args, exec) {
+      const root = path.resolve(config.preProcRoot)
+      const appFile = path.resolve(root, args.namespace, 'Apps', args.app, 'app.json')
+      if (!appFile.startsWith(root + path.sep)) {
+        throw new Error(`alioth_app_configure: path escapes preProcRoot: ${appFile}`)
+      }
+      const existing = await readFile(appFile, 'utf8').catch(() => undefined)
+      if (existing === undefined) {
+        throw new Error(`alioth_app_configure: no app.json at ${appFile} — create the app first (alioth_app_write)`)
+      }
+      const app = JSON.parse(existing) as Record<string, unknown>
+      const updated: string[] = []
+      if (args.brand !== undefined) {
+        const current = typeof app.brand === 'object' && app.brand !== null ? app.brand as Record<string, unknown> : {}
+        const merged = { ...current }
+        for (const [key, value] of Object.entries(args.brand)) {
+          if (value !== undefined) { merged[key] = value; updated.push(`brand.${key}`) }
+        }
+        if (Object.keys(merged).length > 0) { app.brand = merged }
+      }
+      if (args.navigation !== undefined) {
+        app.navigation = args.navigation as unknown
+        updated.push('navigation')
+      }
+      if (args.defaultRoles !== undefined || args.adminRoles !== undefined) {
+        const permissions = typeof app.permissions === 'object' && app.permissions !== null
+          ? app.permissions as Record<string, unknown> : {}
+        if (args.defaultRoles !== undefined) { permissions.defaultRoles = args.defaultRoles; updated.push('permissions.defaultRoles') }
+        if (args.adminRoles !== undefined) { permissions.adminRoles = args.adminRoles; updated.push('permissions.adminRoles') }
+        app.permissions = permissions
+      }
+      if (args.base !== undefined || args.defaultRoute !== undefined) {
+        const routing = typeof app.routing === 'object' && app.routing !== null ? app.routing as Record<string, unknown> : {}
+        if (args.base !== undefined) { routing.base = args.base; updated.push('routing.base') }
+        if (args.defaultRoute !== undefined) { routing.defaultRoute = args.defaultRoute; updated.push('routing.defaultRoute') }
+        app.routing = routing
+      }
+      if (args.goal !== undefined) { app.goal = args.goal; updated.push('goal') }
+      if (args.nonScope !== undefined) { app.non_scope = args.nonScope; updated.push('non_scope') }
+
+      // Contract gate: never persist an artifact that fails its own contract.
+      const validation = validateArtifact('app', app)
+      if (!validation.valid) {
+        throw new Error(`alioth_app_configure: merged app.json fails the app contract: ${validation.errors.join('; ')}`)
+      }
+      if (updated.length === 0) {
+        return { namespace: args.namespace, app: args.app, updated: [], file: appFile }
+      }
+      await writeFile(appFile, `${JSON.stringify(app, null, 2)}\n`, 'utf8')
+      return { namespace: args.namespace, app: args.app, updated, file: appFile }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Configure Alioth app ${args.namespace}/${args.app}`,
+      kind: 'other',
+      rawInput: { namespace: args.namespace, app: args.app },
     }),
   }))
 }

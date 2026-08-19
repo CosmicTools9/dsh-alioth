@@ -25,7 +25,7 @@ const verbose = process.argv.includes('--verbose')
 const log = (msg: string): void => { if (verbose) console.log(msg) }
 
 const EXPECTED_TOOLS = [
-  'alioth_app_inspect', 'alioth_app_write',
+  'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure',
   'alioth_schema_info', 'alioth_schema_semantic_search', 'alioth_entity_write',
   'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_app_create',
 ]
@@ -61,7 +61,7 @@ try {
   if (missing.length > 0) {
     throw new Error(`tool registration failed — missing: ${missing.join(', ')}`)
   }
-  log(`tools registered: ${EXPECTED_TOOLS.length}/8`)
+  log(`tools registered: ${EXPECTED_TOOLS.length}/${EXPECTED_TOOLS.length}`)
 
   // 2. Env ready (builtin, zero network)
   const info = await ctx.aliothEnv.ready()
@@ -95,7 +95,7 @@ try {
   }
   log(`doctor: core green (semantic-index=${report.checks.find(c => c.name === 'semantic-index')?.ok})`)
 
-  console.log('SMOKE PASS: group mounted, 8 tools registered, builtin env ready, tool round-trip ok, doctor core green')
+  console.log(`SMOKE PASS: group mounted, ${EXPECTED_TOOLS.length} tools registered, builtin env ready, tool round-trip ok, doctor core green`)
 } finally {
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})

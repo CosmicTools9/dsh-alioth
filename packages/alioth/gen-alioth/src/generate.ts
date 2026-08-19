@@ -34,6 +34,12 @@ export interface AppSpec {
   readonly base?: string
   /** Default route; defaults to the first module id. */
   readonly defaultRoute?: string
+  /** Brand: primary color + logo asset. */
+  readonly brand?: { readonly primary?: string; readonly logo?: string }
+  /** App goal (17-field alignment; free-form intent). */
+  readonly goal?: string
+  /** Explicit non-scope statements (model wire shape: string[]). */
+  readonly nonScope?: readonly string[]
 }
 
 export interface GeneratedApp {
@@ -76,12 +82,17 @@ export function generateApp(spec: AppSpec): GeneratedApp {
       icon: group.icon ?? 'AppstoreOutlined',
       modules: [...group.modules],
     }))
+  const brand = spec.brand === undefined ? undefined
+    : Object.fromEntries(Object.entries(spec.brand).filter(([, value]) => value !== undefined))
   const app = {
     id: spec.id,
     code: spec.code,
     namespace: spec.namespace,
     name: spec.name,
     version,
+    ...(brand === undefined || Object.keys(brand).length === 0 ? {} : { brand }),
+    ...(spec.goal === undefined ? {} : { goal: spec.goal }),
+    ...(spec.nonScope === undefined ? {} : { non_scope: [...spec.nonScope] }),
     config: {
       modules: moduleIds,
       blocks: [...(spec.blocks ?? [])],

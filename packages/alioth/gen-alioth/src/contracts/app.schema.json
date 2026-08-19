@@ -5,39 +5,111 @@
   "description": "Alioth v10 application artifact. Evidence: golden app `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json` mirror; contract rules from the model spec (namespace pattern, routing, permissions, min_alioth_version).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "code", "namespace", "name", "version", "config", "permissions", "routing", "navigation", "min_alioth_version"],
+  "required": [
+    "id",
+    "code",
+    "namespace",
+    "name",
+    "version",
+    "config",
+    "permissions",
+    "routing",
+    "navigation",
+    "min_alioth_version"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
-    "code": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*$" },
-    "namespace": { "type": "string", "pattern": "^[A-Z][a-zA-Z0-9-]*$" },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-    "min_alioth_version": { "type": "string", "minLength": 1 },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*$"
+    },
+    "namespace": {
+      "type": "string",
+      "pattern": "^[A-Z][a-zA-Z0-9-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "min_alioth_version": {
+      "type": "string",
+      "minLength": 1
+    },
     "config": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["modules", "blocks"],
+      "required": [
+        "modules",
+        "blocks"
+      ],
       "properties": {
-        "modules": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "blocks": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "permissions": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["defaultRoles", "adminRoles"],
+      "required": [
+        "defaultRoles",
+        "adminRoles"
+      ],
       "properties": {
-        "defaultRoles": { "type": "array", "items": { "type": "string" } },
-        "adminRoles": { "type": "array", "items": { "type": "string" } }
+        "defaultRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "adminRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "publicPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "routing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["base", "defaultRoute"],
+      "required": [
+        "base",
+        "defaultRoute"
+      ],
       "properties": {
-        "base": { "type": "string", "pattern": "^/apps/" },
-        "defaultRoute": { "type": "string", "pattern": "^/" }
+        "base": {
+          "type": "string",
+          "pattern": "^/apps/"
+        },
+        "defaultRoute": {
+          "type": "string",
+          "pattern": "^/"
+        }
       }
     },
     "navigation": {
@@ -45,13 +117,53 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["group", "modules"],
+        "required": [
+          "group",
+          "modules"
+        ],
         "properties": {
-          "group": { "type": "string", "minLength": 1 },
-          "icon": { "type": "string" },
-          "modules": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          "group": {
+            "type": "string",
+            "minLength": 1
+          },
+          "icon": {
+            "type": "string"
+          },
+          "modules": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
-    }
+    },
+    "brand": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "type": "string"
+        },
+        "logo": {
+          "type": "string"
+        }
+      }
+    },
+    "goal": {
+      "type": "string"
+    },
+    "non_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "description": {},
+    "endpointUrl": {},
+    "environment": {},
+    "status": {},
+    "deploymentMode": {}
   }
 }

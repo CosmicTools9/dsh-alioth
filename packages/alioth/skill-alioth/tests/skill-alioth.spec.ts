@@ -6,7 +6,7 @@ import { parseAdapterDocument, loadAdapter, type Adapter } from '../src/adapter.
 import { completeCurrentStep, currentStep, initialRunState, type RunState } from '../src/state.ts'
 import { checkStepGates } from '../src/gates.ts'
 import { loadRun, saveRun } from '../src/workspace.ts'
-import { missingToolSurface } from '../src/mapping.ts'
+import { ADAPTER_TOOL_TO_DSH, missingToolSurface } from '../src/mapping.ts'
 import { bunAvailable, createProgramRunner } from '../src/bun.ts'
 
 /** The real `alioth-app.yaml` shape: tracks with steps carrying tools/schema/gates. */
@@ -208,17 +208,18 @@ describe('skill-alioth run persistence', () => {
 describe('skill-alioth tool-surface mapping', () => {
   it('reports missing harness tools per adapter reference', () => {
     const missing = missingToolSurface(adapter, new Set(['read', 'write']))
-    expect(missing).toHaveLength(1)
-    expect(missing[0]).toMatchObject({
-      adapterTool: 'search_files',
-      required: ['glob', 'tool:glob', 'grep', 'tool:grep'],
-      usedBy: ['1.1'],
-    })
+    expect(missing).toHaveLength(2)
+    expect(missing[0]).toMatchObject({ adapterTool: 'search_files', usedBy: ['1.1'] })
+    // PROGRAMMATIC-FIRST: write_file is intentionally unmapped — artifact
+    // content comes from programmatic tools, never LLM free-text writes.
+    expect(missing[1]).toMatchObject({ adapterTool: 'write_file', required: [] })
   })
 
-  it('passes when every adapter tool has a harness counterpart', () => {
+  it('never maps write_file (programmatic-first rule)', () => {
     const registered = new Set(['read', 'tool:read', 'write', 'tool:write', 'glob', 'tool:glob', 'grep', 'tool:grep'])
-    expect(missingToolSurface(adapter, registered)).toEqual([])
+    const missing = missingToolSurface(adapter, registered)
+    expect(missing.find(item => item.adapterTool === 'write_file')).toBeDefined()
+    expect(ADAPTER_TOOL_TO_DSH.write_file).toEqual([])
   })
 })
 

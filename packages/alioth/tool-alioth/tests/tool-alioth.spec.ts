@@ -280,6 +280,75 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
     expect(result.value).toMatchObject({ code: 'granted-app' })
   })
 
+  it('writes brand/goal/non_scope through app_write parameters', async () => {
+    const result = await ctx.tools.execute({
+      signal,
+      callId: CallId('write-branded'),
+      name: 'alioth_app_write',
+      arguments: {
+        namespace: 'Alioth', code: 'branded-app', name: 'Branded',
+        modules: [{ id: 'm1', name: 'M1' }],
+        brand: { primary: '#1677ff', logo: '/assets/logo.png' },
+        goal: 'manage inventory',
+        nonScope: ['no accounting'],
+      },
+    })
+    if (result.isError) throw new Error(`expected app_write success: ${result.error.message}`)
+    const appJson = JSON.parse(await readFile(path.join(root, 'Alioth', 'Apps', 'branded-app', 'app.json'), 'utf8'))
+    expect(appJson.brand).toEqual({ primary: '#1677ff', logo: '/assets/logo.png' })
+    expect(appJson.goal).toBe('manage inventory')
+    expect(appJson.non_scope).toEqual(['no accounting'])
+  })
+
+  it('alioth_app_configure merges enrichment fields into an existing app', async () => {
+    const result = await ctx.tools.execute({
+      signal,
+      callId: CallId('configure-app'),
+      name: 'alioth_app_configure',
+      arguments: {
+        namespace: 'Alioth', app: 'ai-i-need-a',
+        brand: { primary: '#1677ff' },
+        goal: 'business app',
+        navigation: [{ group: '库存', icon: 'Inbox', modules: ['inventory'] }],
+      },
+    })
+    if (result.isError) throw new Error(`expected configure success: ${result.error.message}`)
+    expect(result.value).toMatchObject({ updated: expect.arrayContaining(['brand.primary', 'goal', 'navigation']) })
+    const appJson = JSON.parse(await readFile(path.join(root, 'Alioth', 'Apps', 'ai-i-need-a', 'app.json'), 'utf8'))
+    expect(appJson.brand.primary).toBe('#1677ff')
+    expect(appJson.goal).toBe('business app')
+    expect(appJson.navigation).toEqual([{ group: '库存', icon: 'Inbox', modules: ['inventory'] }])
+    // untouched fields survive
+    expect(appJson.routing).toEqual({ base: '/apps/ai-i-need-a', defaultRoute: '/inventory' })
+  })
+
+  it('alioth_app_configure is idempotent and refuses unknown config', async () => {
+    const noop = await ctx.tools.execute({
+      signal, callId: CallId('configure-noop'),
+      name: 'alioth_app_configure',
+      arguments: { namespace: 'Alioth', app: 'ai-i-need-a' },
+    })
+    if (noop.isError) throw new Error(`expected noop success: ${noop.error.message}`)
+    expect(noop.value).toMatchObject({ updated: [] })
+
+    const invalid = await ctx.tools.execute({
+      signal, callId: CallId('configure-invalid'),
+      name: 'alioth_app_configure',
+      arguments: { namespace: 'Alioth', app: 'ai-i-need-a', defaultRoles: 'admin' },
+    })
+    if (!invalid.isError) throw new Error('expected configure failure on bad types')
+  })
+
+  it('alioth_app_configure fails loud when the app does not exist', async () => {
+    const result = await ctx.tools.execute({
+      signal, callId: CallId('configure-missing'),
+      name: 'alioth_app_configure',
+      arguments: { namespace: 'Alioth', app: 'no-such-app', goal: 'x' },
+    })
+    if (!result.isError) throw new Error('expected configure failure')
+    expect(result.error.message).toContain('no app.json')
+  })
+
   it('denies the write when approval rejects', async () => {
     approvalCtx = await bootWithApproval('rejected')
     const result = await approvalCtx.tools.execute({
