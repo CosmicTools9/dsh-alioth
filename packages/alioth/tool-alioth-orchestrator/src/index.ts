@@ -14,8 +14,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { runPipeline } from '@dsh-alioth/skill-alioth/agent-machine'
 import { stageOf } from '@dsh-alioth/skill-alioth/agent-machine'
 import { buildPlan, buildPrimitives } from './primitives.ts'
@@ -37,25 +36,6 @@ export const Config: z<Config> = z.object({
   adapter: z.string(),
 })
 
-/** Execute one registered tool through the registry (model-equivalent path). */
-async function runTool(
-  ctx: Context,
-  exec: ToolRunContext,
-  toolName: string,
-  args: unknown,
-): Promise<Record<string, unknown>> {
-  const result = await ctx.tools.execute({
-    signal: exec.signal,
-    callId: CallId(`${toolName}-orchestrated`),
-    name: toolName,
-    arguments: args,
-    ...(exec.agent === undefined ? {} : { agent: exec.agent }),
-  })
-  if (result.isError) {
-    throw new Error(`alioth_app_create: step ${toolName} failed: ${result.error.message}`)
-  }
-  return result.value as Record<string, unknown>
-}
 
 export function apply(ctx: Context, config: Config): void {
   const adapterName = config.adapter

@@ -10,7 +10,7 @@
 # Self-check (keyless): docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth
 
 # ── build stage: install the workspace with production binaries ──
-FROM node:22.19-slim AS build
+FROM node:24.19-slim AS build
 # node-pty/koffi compile native bits when prebuilds are missing (linux-arm64).
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
@@ -33,13 +33,20 @@ RUN pnpm --filter '@dsh-alioth/env-alioth' deploy --legacy --prod /app/runtime-e
   && pnpm --filter '@dsh-alioth/bundle-alioth' deploy --legacy --prod /app/runtime-bundle
 
 # ── runtime stage: slim, no toolchain ──
-FROM node:22.19-slim AS runtime
+FROM node:24.19-slim AS runtime
 # bun — the declared prototype-gate runtime (distribution dependency).
-RUN npm install -g bun@1 --silent
+# bun pinned to the AliothStudio stack version (prototype gates must match).
+RUN npm install -g bun@1.3.14 --silent
 # embedded-postgres hard-codes LC_MESSAGES=en_US.UTF-8 for initdb; Debian
 # slim ships only C/POSIX — generate the locale or PG init fails.
-RUN apt-get update && apt-get install -y --no-install-recommends locales \
+# PostgreSQL 18.6 via PGDG — aligned with the AliothStudio stack (Homebrew
+# 18.6); embedded-postgres (npm) tops out at 18.4, so the container runs the
+# official build and env-alioth connects through ALIOTH_DATABASE_URL.
+RUN apt-get update && apt-get install -y --no-install-recommends locales curl ca-certificates gnupg \
   && sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen en_US.UTF-8 \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+  && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update && apt-get install -y --no-install-recommends postgresql-18 \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
@@ -56,7 +63,9 @@ COPY --from=build /app/tsconfig*.json /app/
 ENV DSH_WEB_PORT=3100 \
     DSH_OPEN=false \
     ALIOTH_DATA_ROOT=/data/alioth \
-    ALIOTH_MODEL_SOURCE=builtin
+    ALIOTH_MODEL_SOURCE=builtin \
+    PATH="/usr/lib/postgresql/18/bin:${PATH}" \
+    PGPASSWORD=alioth
 
 # Entry/check scripts (root-owned, world-readable, executable) and the data
 # volume, then drop to the non-root node user — Postgres refuses root, and

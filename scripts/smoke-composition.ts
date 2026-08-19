@@ -40,7 +40,11 @@ try {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const env = await ctx.plugin(envAlioth, { modelSource: 'builtin', dataRoot })
+  const env = await ctx.plugin(envAlioth, {
+    modelSource: 'builtin',
+    dataRoot,
+    ...(process.env.ALIOTH_DATABASE_URL === undefined ? {} : { databaseUrl: process.env.ALIOTH_DATABASE_URL }),
+  })
   disposers.push(() => env.dispose())
   const appTool = await ctx.plugin(toolAlioth, { preProcRoot })
   disposers.push(() => appTool.dispose())
