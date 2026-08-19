@@ -65,6 +65,9 @@ importers:
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:packages/alioth/env-alioth
+      '@dsh-alioth/tool-alioth':
+        specifier: workspace:*
+        version: link:packages/alioth/tool-alioth
       '@dsh-alioth/tool-alioth-meta':
         specifier: workspace:*
         version: link:packages/alioth/tool-alioth-meta
