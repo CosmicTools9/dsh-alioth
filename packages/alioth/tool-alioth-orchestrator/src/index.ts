@@ -1,12 +1,14 @@
 /**
- * PTC orchestrator: `alioth_app_create` — a programmatic Tool Calling
- * pipeline. The sequence is fixed by code (semantic alignment is a
- * PRE-condition the model completes in dialogue via alioth_schema_* tools and
- * passes in as parameters): validate inputs → register missing entities →
- * write the artifact tree → read back and verify. Every step runs through
- * `ctx.tools.execute`, the same path the model uses — approvals, gates, and
- * the session log all apply. No LLM calls inside; the model appears only as
- * the caller and as the semantic-alignment step before the call.
+ * PTC orchestrator: `alioth_app_create` — the complete AppAgent pipeline
+ * driven deterministically. The 7-stage machine (semantic analysis → function
+ * decomposition → ontology analysis → module/block creation → ontology
+ * transfer → service API → publishing) runs through `ctx.tools.execute` —
+ * the same path the model uses, so approvals, gates, and the session log
+ * apply per stage. No LLM calls inside; semantic alignment is a PRE-condition
+ * the model completes in dialogue via alioth_schema_* tools and passes in as
+ * parameters (re-confirmed by the semantic-analysis stage for the audit
+ * trail). Data contracts are unified with the Meta AppAgent
+ * (`@dsh-alioth/skill-alioth/agent-contract`).
  * @module @dsh-alioth/tool-alioth-orchestrator
  */
 
@@ -14,6 +16,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { CallId } from '@deepseek-ai/dsh-llm'
+import { runPipeline } from '@dsh-alioth/skill-alioth/agent-machine'
+import { stageOf } from '@dsh-alioth/skill-alioth/agent-machine'
+import { buildPlan, buildPrimitives } from './primitives.ts'
 
 export const name = 'tool-alioth-orchestrator'
 export const inject = ['tools', 'aliothEnv']
@@ -151,6 +156,7 @@ export function apply(ctx: Context, config: Config): void {
           filesWritten: { type: 'number', required: true },
           verified: { type: 'boolean', required: true },
           workflowGate: { type: 'string', required: true },
+          stages: { type: 'array', items: { type: 'string' }, required: true },
           summary: { type: 'string', required: true },
         },
       },
@@ -161,70 +167,35 @@ export function apply(ctx: Context, config: Config): void {
       }],
     },
     async execute(args, exec) {
-      // Phase 1 — deterministic validation happens inside each step tool; here
-      // we just sequence them. Entities first: they may be referenced by
-      // nothing later, but a failed entity write aborts the whole pipeline.
-      let entitiesRegistered = 0
-      for (const entity of args.entities ?? []) {
-        await runTool(ctx, exec, 'alioth_entity_write', {
-          table: entity.table,
-          name: entity.name,
-          ...(entity.inherits === undefined ? {} : { inherits: entity.inherits }),
-          ...(entity.category === undefined ? {} : { category: entity.category }),
-          ...(entity.coordinates === undefined ? {} : { coordinates: entity.coordinates }),
-          fields: entity.fields ?? [],
-        })
-        entitiesRegistered += 1
+      // The full pipeline: each stage runs a registered tool through the
+      // registry (deterministic, zero LLM). Stage history is returned for
+      // audit; the terminal state decides success.
+      const plan = buildPlan(args)
+      const run = await runPipeline('app creation request', buildPrimitives(ctx, exec, args, adapterName), plan)
+      const transitions = run.history
+      const stages = transitions.map(t => `${t.from.kind}->${stageOf(t.to) ?? t.to.kind}`)
+      if (run.state.kind !== 'published') {
+        const reason = run.state.kind === 'failed'
+          ? `pipeline failed at ${stages.at(-1)}: ${run.state.error ?? 'unknown'}`
+          : `pipeline ended at ${stages.at(-1)}`
+        throw new Error(`alioth_app_create: ${reason}`)
       }
-
-      // Phase 2 — artifact tree (contract gate inside alioth_app_write).
-      const written = await runTool(ctx, exec, 'alioth_app_write', {
-        namespace: args.namespace,
-        code: args.code,
-        name: args.name,
-        modules: args.modules,
-        ...(args.blocks === undefined ? {} : { blocks: args.blocks }),
-      })
-
-      // Phase 3 — verify by reading back.
-      const inspected = await runTool(ctx, exec, 'alioth_app_inspect', {
-        namespace: args.namespace,
-        app: args.code,
-      })
-      const missing = Array.isArray(inspected.missing) ? inspected.missing as string[] : []
-      const filesWritten = Array.isArray(written.files) ? written.files.length : 0
-
-      // Phase 4 — AppAgent workflow gate (when an adapter is configured):
-      // open the run state and run the first step's gates; failure keeps the
-      // artifacts but fails the create (fix artifacts, re-run workflow_complete).
-      let workflowGate = 'not-configured'
-      if (adapterName !== undefined) {
-        const step = await runTool(ctx, exec, 'alioth_workflow_step', {
-          namespace: args.namespace,
-          app: args.code,
-        })
-        if (step.finished !== true) {
-          const completed = await runTool(ctx, exec, 'alioth_workflow_complete', {
-            namespace: args.namespace,
-            app: args.code,
-          })
-          workflowGate = `step ${String(step.stepId)} passed`
-          void completed
-        } else {
-          workflowGate = 'finished'
-        }
-      }
+      const result = run.state.result
+      const workflowGate = result.runtimeValidation?.checks
+        .find(check => check.name === 'workflow-gate')?.detail ?? 'not-configured'
+      const verified = result.runtimeValidation?.valid ?? false
 
       return {
         namespace: args.namespace,
         code: args.code,
-        entitiesRegistered,
-        filesWritten,
-        verified: missing.length === 0,
+        entitiesRegistered: plan.knownEntities.length,
+        filesWritten: result.generatedFiles.length,
+        verified,
         workflowGate,
-        summary: missing.length === 0
-          ? `app ${args.namespace}/${args.code} verified against the registry (workflow: ${workflowGate})`
-          : `app ${args.namespace}/${args.code} missing: ${missing.join(', ')}`,
+        stages,
+        summary: verified
+          ? `app ${args.namespace}/${args.code} published (${stages.length} stages: ${stages.join(' -> ')})`
+          : `app ${args.namespace}/${args.code} published with validation warnings (${stages.join(' -> ')})`,
       }
     },
     presentCall: args => ({

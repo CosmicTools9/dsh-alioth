@@ -8,6 +8,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./agent-contract": "./src/agent-contract.ts",
+    "./agent-machine": "./src/agent-machine.ts",
     "./package.json": "./package.json"
   },
   "dependencies": {

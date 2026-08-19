@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+**/.git
+*.log
+coverage
+dist
+lib
+.DS_Store
+reports
+openspec
+.agents
+.tmp

@@ -11,7 +11,8 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@dsh-alioth/env-alioth": "workspace:*"
+    "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/skill-alioth": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

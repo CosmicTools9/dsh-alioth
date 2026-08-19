@@ -265,6 +265,9 @@ importers:
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
+      '@dsh-alioth/skill-alioth':
+        specifier: workspace:*
+        version: link:../skill-alioth
     devDependencies:
       '@dsh-alioth/tool-alioth':
         specifier: workspace:*
