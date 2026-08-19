@@ -76,7 +76,7 @@ RUN chmod +x /app/scripts/docker-entry.sh /app/scripts/docker-check.sh \
   && chown -R node:node /app \
   && mkdir -p /data && chown node:node /data
 VOLUME ["/data"]
-EXPOSE 3100
+EXPOSE 3100 3900
 USER node
 
 ENTRYPOINT ["/app/scripts/docker-entry.sh"]

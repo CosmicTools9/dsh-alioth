@@ -27,6 +27,11 @@
       assumptions against returned rows, never a guess.
 
 - insert:
+    - id: auth-alioth
+      plugin: '@dsh-alioth/auth-alioth'
+      config:
+        port: 3900
+        mode: open
     - id: env-alioth
       name: '@dsh-alioth/env-alioth'
       config:

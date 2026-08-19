@@ -456,7 +456,7 @@ export function apply(ctx: Context, config: Config): void {
         text: `Configured ${value.namespace}/${value.app}: updated ${value.updated.join(', ')}`,
       }],
     },
-    async execute(args, exec) {
+    async execute(args, _exec) {
       const root = path.resolve(config.preProcRoot)
       const appFile = path.resolve(root, args.namespace, 'Apps', args.app, 'app.json')
       if (!appFile.startsWith(root + path.sep)) {
