@@ -1,12 +1,11 @@
 /**
  * Alioth model snapshot resolution. dsh-alioth is a sibling consumer of the
- * Alioth model (like AppCreator), not a consumer of AppCreator's products.
- * The model's open distribution is published via the AppCreator open-source
- * repository: the `backend/ddl/*isahl_meta*.sql` registry baseline, the
- * `skill-adapters/*.yaml` definitions, and `Pre-Proc/Alioth/_schema/*.schema.json`
- * contracts (when present) are model artifacts; AppCreator's own application
- * artifacts are excluded. GitHub snapshots are cached per commit SHA under
- * `<dataRoot>/models`; local checkouts are used in place.
+ * Alioth model. The model's current channel is the Alioth model repository
+ * (github:CosmicTools9/Alioth or a local checkout). The consumption-side
+ * artifacts — the `backend/ddl/*isahl_meta*.sql` registry baseline, the
+ * `skill-adapters/*.yaml` definitions, and the prototype build scripts — are
+ * vendored from the historical AppCreator distribution (frozen, Apache-2.0).
+ * GitHub snapshots are cached per commit SHA under `<dataRoot>/models`.
  * @module @dsh-alioth/env-alioth/model-source
  */
 

@@ -78,8 +78,8 @@ async function setFixtureVersion(root: string, version: string): Promise<void> {
 
 describe('env-alioth parseModelSource', () => {
   it('parses github with ref', () => {
-    expect(parseModelSource('github:CosmicTools9/AppCreator@main'))
-      .toEqual({ kind: 'github', repo: 'CosmicTools9/AppCreator', ref: 'main' })
+    expect(parseModelSource('github:CosmicTools9/Alioth'))
+      .toEqual({ kind: 'github', repo: 'CosmicTools9/Alioth', ref: 'main' })
   })
 
   it('defaults github ref to main', () => {
@@ -373,7 +373,7 @@ describe('env-alioth embedded end-to-end', () => {
 const networkTests = process.env.DSH_ALIOTH_NETWORK_TESTS === '1'
 
 describe.skipIf(!networkTests)('env-alioth github snapshot', () => {
-  it('pulls the public AppCreator repository and resolves artifacts', { timeout: 300_000 }, async () => {
+  it('pulls a github distribution and resolves artifacts (historical AppCreator channel; new model channel is CosmicTools9/Alioth, validated via builtin/local)', { timeout: 300_000 }, async () => {
     const cacheRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-gh-'))
     try {
       const snapshot = await resolveModelSnapshot(

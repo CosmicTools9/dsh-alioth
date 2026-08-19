@@ -1,7 +1,7 @@
 # Alioth app agent overlay for the headless profile. Top-level rows patch
 # existing rows (system-prompt persona); `insert` appends new plugin rows
 # (env-alioth + Alioth tools). Env: ALIOTH_MODEL_SOURCE (default
-# github:CosmicTools9/AppCreator@main), ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT,
+# github:CosmicTools9/Alioth), ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT,
 # ALIOTH_PRE_PROC_ROOT, DEEPSEEK_API_KEY.
 - id: system-prompt
   config:

@@ -1,7 +1,7 @@
 /**
- * Self-bootstrapping Alioth environment for the DeepSeek Harness. Pulls the
- * latest Alioth model snapshot from the model's open distribution (published
- * via the AppCreator open-source repository, or a local checkout), provisions
+ * Self-bootstrapping Alioth environment for the DeepSeek Harness. Uses the
+ * model's open distribution (github:CosmicTools9/Alioth, or the builtin
+ * frozen vendor set — default), provisions
  * PostgreSQL when none is configured, bootstraps the `isahl_meta` entity
  * registry per the model DDL baseline, and exposes a read-only `doctor()`
  * health report. dsh-alioth is a sibling consumer of the Alioth model — not

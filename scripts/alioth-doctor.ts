@@ -4,7 +4,7 @@
  * the `isahl_meta` registry, and print a health report. Exit code 0 = green.
  *
  * Env overrides:
- *   ALIOTH_MODEL_SOURCE   github:owner/repo[@ref] | local path (default github:CosmicTools9/AppCreator@main)
+ *   ALIOTH_MODEL_SOURCE   github:owner/repo[@ref] | local path (default github:CosmicTools9/Alioth)
  *   ALIOTH_DATABASE_URL   reuse an existing PostgreSQL instead of provisioning
  *   ALIOTH_DATA_ROOT      state root for snapshots + embedded cluster
  * Flag: --reset           drop isahl_meta + stamp, then re-bootstrap from the snapshot (destructive)
