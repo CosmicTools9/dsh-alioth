@@ -15,7 +15,8 @@
     "@dsh-alioth/tool-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth-meta": "workspace:*",
     "@dsh-alioth/tool-alioth-workflow": "workspace:*",
-    "@dsh-alioth/tool-alioth-orchestrator": "workspace:*"
+    "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",
+    "@dsh-alioth/auth-alioth": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
