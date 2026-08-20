@@ -146,6 +146,71 @@ describe('auth service', () => {
   })
 })
 
+describe('B/S HTTP surface (real server)', () => {
+  const base = (): string => `http://127.0.0.1:${port}`
+
+  it('serves the login page (GET /)', async () => {
+    const response = await fetch(`${base()}/`)
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('<form')
+    expect(html).toContain('/api/auth/login')
+  })
+
+  it('registers via browser form submission (urlencoded)', async () => {
+    const form = new URLSearchParams({ username: 'carol', password: 'password-789' })
+    const response = await fetch(`${base()}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    })
+    expect(response.status).toBe(201)
+    const body = await response.json() as { token: string; namespace: string }
+    expect(body.namespace).toBe('U-carol')
+    expect(body.token).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('logs in via JSON API and reads /me', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    expect(login.status).toBe(200)
+    const session = await login.json() as { token: string }
+    const me = await fetch(`${base()}/api/auth/me`, {
+      headers: { authorization: `Bearer ${session.token}` },
+    })
+    expect(me.status).toBe(200)
+    expect(await me.json()).toMatchObject({ username: 'carol', namespace: 'U-carol', role: 'user' })
+  })
+
+  it('rejects invalid credentials over HTTP', async () => {
+    const response = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'wrong-password' }),
+    })
+    expect(response.status).toBe(400)
+    expect((await response.json() as { error: string }).error).toContain('invalid credentials')
+  })
+
+  it('logs out over HTTP and the token stops working', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    await fetch(`${base()}/api/auth/logout`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` },
+    })
+    const me = await fetch(`${base()}/api/auth/me`, { headers: { authorization: `Bearer ${token}` } })
+    expect(me.status).toBe(401)
+  })
+})
+
 describe('namespace authorization guard', () => {
   let bobSession: string
   let aliceToken: string

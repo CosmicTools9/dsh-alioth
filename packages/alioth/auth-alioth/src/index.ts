@@ -86,15 +86,31 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
+/** Parse the request body for both content types the B/S surface uses:
+ * application/json (API clients) and application/x-www-form-urlencoded
+ * (browser form submissions from the login/register pages). */
 function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     request.on('data', chunk => { chunks.push(Buffer.from(chunk)) })
     request.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8')
+      const contentType = request.headers['content-type'] ?? ''
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as Record<string, unknown>)
+        if (contentType.includes('application/json')) {
+          resolve(JSON.parse(raw || '{}') as Record<string, unknown>)
+        } else if (contentType.includes('application/x-www-form-urlencoded')) {
+          const params = new URLSearchParams(raw)
+          const body: Record<string, unknown> = {}
+          for (const [key, value] of params.entries()) {
+            body[key] = value
+          }
+          resolve(body)
+        } else {
+          resolve({})
+        }
       } catch (error) {
-        reject(new Error(`invalid JSON body: ${error instanceof Error ? error.message : String(error)}`))
+        reject(new Error(`invalid request body: ${error instanceof Error ? error.message : String(error)}`))
       }
     })
     request.on('error', reject)
@@ -135,6 +151,10 @@ function loginForm(extra: string): string {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  // Deployment override: ALIOTH_AUTH_MODE=enforce turns on mandatory
+  // authentication for namespace-scoped tools (B/S production); headless
+  // deployments stay open unless asked.
+  const effectiveMode: Config['mode'] = process.env.ALIOTH_AUTH_MODE === 'enforce' ? 'enforce' : config.mode
   const ttlSeconds = config.sessionTtlSeconds ?? 7 * 24 * 3600
 
   // ── service: ctx.aliothAuth ────────────────────────────────────────────
@@ -217,12 +237,12 @@ export function apply(ctx: Context, config: Config): void {
       // bindSession. Direct HTTP-driven calls carry their own token path.
       const agentId = exec.agent?.id
       if (agentId === undefined) {
-        return config.mode !== 'enforce'
+        return effectiveMode !== 'enforce'
       }
       // agent.id is a SessionId; find the user bound to that session.
       const user = await this.userForSessionId(String(agentId))
       if (user === null) {
-        return config.mode !== 'enforce'
+        return effectiveMode !== 'enforce'
       }
       return user.role === 'admin' || user.namespace === namespace
     },
@@ -367,7 +387,7 @@ export function apply(ctx: Context, config: Config): void {
     ctx.logger.error(`auth-alioth: HTTP server failed: ${error instanceof Error ? error.message : String(error)}`)
   })
   server.listen(config.port)
-  ctx.logger.info(`auth-alioth: B/S auth API on :${config.port} (mode ${config.mode})`)
+  ctx.logger.info(`auth-alioth: B/S auth API on :${config.port} (mode ${effectiveMode})`)
 
   // HTTP server teardown rides the registry effect path (harness plugins
   // return void from apply; effects unwind with the context).
