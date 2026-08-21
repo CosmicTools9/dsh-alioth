@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://dsh-alioth.local/schemas/app.json",
   "title": "Alioth app.json",
-  "description": "Alioth v10 application artifact. Evidence: golden app `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json` mirror; contract rules from the model spec (namespace pattern, routing, permissions, min_alioth_version).",
+  "description": "Alioth v10 application artifact. Contract rules from the model spec (namespace pattern, routing, permissions, min_alioth_version).",
   "type": "object",
   "additionalProperties": false,
   "required": [

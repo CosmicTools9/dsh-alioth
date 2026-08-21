@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://dsh-alioth.local/schemas/block.json",
   "title": "Alioth block.json",
-  "description": "Alioth block artifact. Minimal contract; the model distribution publishes no block example yet (golden app references blocks by id only, e.g. block-list-inventory).",
+  "description": "Alioth block artifact. Minimal contract; the model distribution publishes no block example yet — apps reference blocks by id only (e.g. block-list-inventory).",
   "type": "object",
   "additionalProperties": true,
   "required": ["id", "name"],

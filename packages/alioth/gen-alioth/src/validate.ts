@@ -1,6 +1,6 @@
 /**
  * Artifact contract validation. The four JSON Schemas in `contracts/` are
- * hand-written from licensed-distribution evidence (golden app mirror,
+ * hand-written from licensed-distribution evidence (contract rules from the
  * AppCreator `module.json`, vendored `service.json` fixture, model spec rules)
  * and validated by the dependency-free engine in `validate-engine.ts`.
  *
