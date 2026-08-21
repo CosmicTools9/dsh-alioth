@@ -13,7 +13,7 @@ import * as tool from '../src/index.ts'
 
 const signal = new AbortController().signal
 
-/** A valid Alioth app.json mirroring `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json`. */
+/** Self-contained valid Alioth app.json (hand-written test data). */
 const VALID_APP = {
   id: '946462018160351133',
   code: 'ai-i-need-a',

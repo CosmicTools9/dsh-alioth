@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { EXTENSION_FILES, generateApp, generateExtensions, generateModule, generateService, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
 
-/** Golden mirror: `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json` (same shape as the tool-alioth fixture). */
-const GOLDEN_APP = {
+/** Self-contained valid app artifact (hand-written test data). */
+const VALID_APP = {
   id: '946462018160351133',
-  code: 'ai-i-need-a',
-  namespace: 'Alioth',
-  name: 'ai-i-need-a',
+  code: 'demo-app',
+  namespace: 'Demo',
+  name: 'Demo 应用',
   version: '0.1.0',
   config: {
     modules: ['inventory', 'demand'],
@@ -16,33 +16,29 @@ const GOLDEN_APP = {
     defaultRoles: ['admin', 'user'],
     adminRoles: ['admin'],
   },
-  routing: { base: '/apps/ai-i-need-a', defaultRoute: '/inventory' },
+  routing: { base: '/apps/demo-app', defaultRoute: '/inventory' },
   navigation: [{ group: '系统管理', icon: 'Settings', modules: ['inventory', 'demand'] }],
   min_alioth_version: '10.0.0',
 }
 
-/** Real `module.json` of the AppCreator service (from the model distribution). */
-const SERVICE_MODULE = {
-  id: 'app-creator',
-  namespace: 'AppCreator',
-  name: 'AppCreator Service',
-  category: 'service',
-  status: 'active',
-  routePrefix: '/app-creator',
-  icon: 'Cpu',
-  hasBackend: true,
+/** Valid module.json (hand-written test data, module-contract shape). */
+const VALID_MODULE = {
+  id: 'inventory',
+  namespace: 'Demo',
+  name: '库存',
+  category: 'app',
+  status: 'draft',
+  routePrefix: '/inventory',
+  icon: 'AppstoreOutlined',
+  hasBackend: false,
   hasFrontend: true,
   version: '0.1.0',
-  dependencies: ['meta'],
   selectable: true,
-  techStack: ['Rust', 'PostgreSQL'],
-  versions: [{ version: '0.1.0', active: true, releasedAt: '2026-07-19' }],
-  description: 'AppCreator 独立服务 — 对话创建企业应用',
-  prototypeVersion: 'v1',
+  description: '库存管理',
 }
 
-/** Trimmed real `service.json` fixture from the vendored ontology-mapping crate. */
-const SERVICE_ARTIFACT = {
+/** Valid service.json (hand-written test data, service-contract shape). */
+const VALID_SERVICE = {
   id: 'test-service',
   domain: '测试',
   services: ['FA'],
@@ -68,31 +64,31 @@ const SERVICE_ARTIFACT = {
 }
 
 describe('gen-alioth app contract', () => {
-  it('accepts the golden app mirror', () => {
-    expect(validateArtifact('app', GOLDEN_APP)).toEqual({ valid: true, errors: [] })
+  it('accepts a valid app artifact', () => {
+    expect(validateArtifact('app', VALID_APP)).toEqual({ valid: true, errors: [] })
   })
 
   it('rejects missing required fields with paths', () => {
-    const { min_alioth_version: _omit, ...partial } = GOLDEN_APP
+    const { min_alioth_version: _omit, ...partial } = VALID_APP
     const result = validateArtifact('app', partial)
     expect(result.valid).toBe(false)
     expect(result.errors.some(error => error.includes('min_alioth_version'))).toBe(true)
   })
 
   it('rejects namespaces that violate the Gateway pattern', () => {
-    const result = validateArtifact('app', { ...GOLDEN_APP, namespace: 'alioth' })
+    const result = validateArtifact('app', { ...VALID_APP, namespace: 'alioth' })
     expect(result.valid).toBe(false)
     expect(result.errors.some(error => error.includes('namespace'))).toBe(true)
   })
 
   it('rejects unknown top-level keys (drift guard)', () => {
-    expect(validateArtifact('app', { ...GOLDEN_APP, surprise: true }).valid).toBe(false)
+    expect(validateArtifact('app', { ...VALID_APP, surprise: true }).valid).toBe(false)
   })
 })
 
 describe('gen-alioth module contract', () => {
-  it('accepts the real distribution module.json', () => {
-    expect(validateArtifact('module', SERVICE_MODULE)).toEqual({ valid: true, errors: [] })
+  it('accepts a valid module.json', () => {
+    expect(validateArtifact('module', VALID_MODULE)).toEqual({ valid: true, errors: [] })
   })
 
   it('rejects a module without version', () => {
@@ -102,13 +98,13 @@ describe('gen-alioth module contract', () => {
 })
 
 describe('gen-alioth service contract', () => {
-  it('accepts the real vendored service.json fixture', () => {
-    expect(validateArtifact('service', SERVICE_ARTIFACT)).toEqual({ valid: true, errors: [] })
+  it('accepts a valid service.json', () => {
+    expect(validateArtifact('service', VALID_SERVICE)).toEqual({ valid: true, errors: [] })
   })
 
   it('rejects an entity without table', () => {
     const broken = {
-      ...SERVICE_ARTIFACT,
+      ...VALID_SERVICE,
       ontology: { entities: [{ name: 'X', inherits: 'zc_id_lifecycle' }] },
     }
     expect(validateArtifact('service', broken).valid).toBe(false)
@@ -123,20 +119,20 @@ describe('gen-alioth block contract', () => {
 })
 
 describe('gen-alioth generateApp', () => {
-  it('regenerates the golden app shape from its spec', () => {
+  it('regenerates a valid app shape from its spec', () => {
     const { app, modules } = generateApp({
       id: 'new-id',
-      namespace: GOLDEN_APP.namespace,
-      code: GOLDEN_APP.code,
-      name: GOLDEN_APP.name,
-      version: GOLDEN_APP.version,
+      namespace: VALID_APP.namespace,
+      code: VALID_APP.code,
+      name: VALID_APP.name,
+      version: VALID_APP.version,
       modules: [{ id: 'inventory', name: '库存' }, { id: 'demand', name: '需求' }],
-      blocks: [...GOLDEN_APP.config.blocks],
-      navigation: GOLDEN_APP.navigation,
-      defaultRoles: GOLDEN_APP.permissions.defaultRoles,
-      adminRoles: GOLDEN_APP.permissions.adminRoles,
+      blocks: [...VALID_APP.config.blocks],
+      navigation: VALID_APP.navigation,
+      defaultRoles: VALID_APP.permissions.defaultRoles,
+      adminRoles: VALID_APP.permissions.adminRoles,
     })
-    expect({ ...app, id: GOLDEN_APP.id }).toEqual(GOLDEN_APP)
+    expect({ ...app, id: VALID_APP.id }).toEqual(VALID_APP)
     expect(validateArtifact('app', app).valid).toBe(true)
     for (const module of modules) {
       expect(validateArtifact('module', module).valid).toBe(true)
