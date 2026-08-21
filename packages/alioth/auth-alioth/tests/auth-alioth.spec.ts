@@ -253,39 +253,42 @@ describe('workspace (namespace = user workspace)', () => {
     await expect(ctx.aliothAuth.ensureWorkspace('lower')).rejects.toThrow(/invalid namespace/)
   })
 
-  it('resolves the environment by override and host hint', async () => {
-    // auto + loopback / no hint → local
-    expect(ctx.aliothAuth.environment()).toBe('local')
-    expect(ctx.aliothAuth.environment('127.0.0.1')).toBe('local')
-    expect(ctx.aliothAuth.environment('localhost')).toBe('local')
-    // non-loopback bind → production
-    expect(ctx.aliothAuth.environment('0.0.0.0')).toBe('production')
-    expect(ctx.aliothAuth.environment('10.0.0.5')).toBe('production')
+  it('resolves the workspace mode: standard by default, unlimited only when asked', async () => {
+    expect(ctx.aliothAuth.workspaceMode()).toBe('standard')
 
-    // ALIOTH_ENV beats everything (restored afterwards)
-    const saved = process.env.ALIOTH_ENV
+    // ALIOTH_WORKSPACE_MODE env wins (restored afterwards)
+    const saved = process.env.ALIOTH_WORKSPACE_MODE
     try {
-      process.env.ALIOTH_ENV = 'production'
-      expect(ctx.aliothAuth.environment('127.0.0.1')).toBe('production')
-      process.env.ALIOTH_ENV = 'local'
-      expect(ctx.aliothAuth.environment('0.0.0.0')).toBe('local')
+      process.env.ALIOTH_WORKSPACE_MODE = 'unlimited'
+      expect(ctx.aliothAuth.workspaceMode()).toBe('unlimited')
+      process.env.ALIOTH_WORKSPACE_MODE = 'standard'
+      expect(ctx.aliothAuth.workspaceMode()).toBe('standard')
     } finally {
-      if (saved === undefined) { delete process.env.ALIOTH_ENV } else { process.env.ALIOTH_ENV = saved }
+      if (saved === undefined) { delete process.env.ALIOTH_WORKSPACE_MODE } else { process.env.ALIOTH_WORKSPACE_MODE = saved }
     }
   })
 
-  it('config environment beats the host hint', async () => {
-    // A second context pinned to production — config wins over loopback.
-    const prodCtx = new Context()
-    const system = await prodCtx.plugin(SystemPrompt)
-    const tools = await prodCtx.plugin(ToolRuntime)
-    const env = await prodCtx.plugin(envAlioth, { modelSource: path.join(tmpdir(), 'unused-model'), dataRoot: path.join(tmpdir(), 'unused-data') })
+  it('unlimited mode opens every namespace to every user', async () => {
+    // erin is a plain user on the main ctx (real DB + workspace dirs).
+    await ctx.aliothAuth.register('erin', 'password-123')
+    // A second context pinned to unlimited: a plain user sees all workspaces.
+    const unlimitedCtx = new Context()
+    const system = await unlimitedCtx.plugin(SystemPrompt)
+    const tools = await unlimitedCtx.plugin(ToolRuntime)
+    const env = await unlimitedCtx.plugin(envAlioth, { modelSource: path.join(tmpdir(), 'unused-model'), dataRoot: path.join(tmpdir(), 'unused-data') })
     try {
-      const authPlugin = await prodCtx.plugin(auth, {
-        mode: 'open', environment: 'production', preProcRoot, deployRoot,
+      const authPlugin = await unlimitedCtx.plugin(auth, {
+        mode: 'open', workspaceMode: 'unlimited', preProcRoot, deployRoot,
       })
       try {
-        expect(prodCtx.aliothAuth.environment('127.0.0.1')).toBe('production')
+        expect(unlimitedCtx.aliothAuth.workspaceMode()).toBe('unlimited')
+        // erin is a plain user (registered on the real-DB main ctx; the
+        // unlimited ctx only scans the FS — workspaces needs no database).
+        const all = await unlimitedCtx.aliothAuth.workspaces({ namespace: 'U-erin', role: 'user' })
+        expect(all.mode).toBe('unlimited')
+        expect(all.workspaces.map(ws => ws.namespace)).toEqual(expect.arrayContaining(['U-alice', 'U-carol', 'U-erin']))
+        // unlimited carries the workspace paths (自定义工作区 chrome)
+        expect(all.workspaces[0]).toMatchObject({ preProcPath: path.join(preProcRoot, 'U-alice') })
       } finally {
         await authPlugin.dispose()
       }
@@ -296,15 +299,14 @@ describe('workspace (namespace = user workspace)', () => {
     }
   })
 
-  it('workspaces scopes users to their own namespace and admins to all', async () => {
-    // erin is a plain user (registered after the admin); put an app in her workspace.
-    await ctx.aliothAuth.register('erin', 'password-123')
+  it('workspaces scopes users to their own namespace in standard mode and admins to all', async () => {
+    // erin (already registered above) is a plain user; put an app in her workspace.
     const appsDir = path.join(preProcRoot, 'U-erin', 'Apps', 'demo-app')
     await mkdir(appsDir, { recursive: true })
     await writeFile(path.join(appsDir, 'app.json'), JSON.stringify({ code: 'demo-app', name: 'Demo 应用' }))
 
     const own = await ctx.aliothAuth.workspaces({ namespace: 'U-erin', role: 'user' })
-    expect(own.environment).toBe('local')
+    expect(own.mode).toBe('standard')
     expect(own.workspaces.map(ws => ws.namespace)).toEqual(['U-erin'])
     expect(own.workspaces[0]).toMatchObject({
       preProcPath: path.join(preProcRoot, 'U-erin'),

@@ -64,7 +64,6 @@ ENV DSH_WEB_PORT=3100 \
     DSH_OPEN=false \
     ALIOTH_DATA_ROOT=/data/alioth \
     ALIOTH_MODEL_SOURCE=builtin \
-    ALIOTH_ENV=production \
     PATH="/usr/lib/postgresql/18/bin:${PATH}" \
     PGPASSWORD=alioth
 

@@ -225,12 +225,12 @@ function successBody(action: string, token: string, namespace: string, workspace
 ${handoff}`
 }
 
-// ── workspace page (工作区 local / 应用 production) ────────────────────
+// ── workspace page (工作区 unlimited / 应用 standard) ────────────────────
 
 /** Extended chrome: wider card + list rows for the workspace browser. */
 function sendWorkspacePage(
   response: ServerResponse,
-  environment: 'local' | 'production',
+  mode: 'standard' | 'unlimited',
   list: ReadonlyArray<{
     namespace: string
     preProcPath: string
@@ -238,12 +238,12 @@ function sendWorkspacePage(
     apps: ReadonlyArray<{ code: string; name: string }>
   }>,
 ): void {
-  const title = environment === 'local' ? '工作区' : '应用'
+  const title = mode === 'unlimited' ? '工作区' : '应用'
   const rows = list.map(ws => `
 <article class="ws">
-  <header><h2>${esc(ws.namespace)}</h2>${environment === 'local'
+  <header><h2>${esc(ws.namespace)}</h2>${mode === 'unlimited'
     ? `<span class="count">${ws.apps.length} 个应用</span>` : ''}</header>
-  ${environment === 'local' ? `
+  ${mode === 'unlimited' ? `
   <p class="paths"><code>Pre-Proc/${esc(ws.namespace)}/</code></p>
   <p class="paths"><code>Deploy/${esc(ws.namespace)}/</code></p>` : ''}
   ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在对话中让 Alioth 助手创建</p>' : `
@@ -349,8 +349,6 @@ export function apply(ctx: Context, config: Config): void {
    * cookies are per-origin, so a same-origin "/" link would silently keep
    * the visitor unauthenticated on the GUI. */
   let guiOrigin: string | undefined
-  /** Bind host of the harness webServer (environment auto-detection hint). */
-  let webHostHint: string | undefined
   const workspaceHref = (): string => guiOrigin ?? '/'
   /** Landing capability lookup at request/tap time (optional provider). */
   const landing = (): LandingLike | undefined => {
@@ -415,12 +413,12 @@ export function apply(ctx: Context, config: Config): void {
         sendJson(response, 401, { error: 'unauthorized' })
         return
       }
-      sendJson(response, 200, { ...user, environment: auth().environment(webHostHint) })
+      sendJson(response, 200, { ...user, workspaceMode: auth().workspaceMode() })
       return
     }
-    // Workspace browser: the environment decides the presentation — local
-    // exposes the 工作区 list (custom workspaces), production is fixed to
-    // the user's namespace shown as 应用.
+    // Workspace browser: the mode decides the presentation — 'unlimited'
+    // opens the 工作区 list (custom workspaces, every namespace with paths);
+    // 'standard' is fixed to the user's own namespace shown as 应用.
     if (request.method === 'GET' && url.pathname === '/api/workspace') {
       const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
       if (user === null) {
@@ -498,7 +496,7 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
         const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
-        sendWorkspacePage(response, list.environment, list.workspaces)
+        sendWorkspacePage(response, list.mode, list.workspaces)
         return
       }
       if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')
@@ -561,7 +559,7 @@ export function apply(ctx: Context, config: Config): void {
             return
           }
           const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
-          sendWorkspacePage(res, list.environment, list.workspaces)
+          sendWorkspacePage(res, list.mode, list.workspaces)
         },
       }))
       webCtx.effect(() => web.register({
@@ -586,7 +584,6 @@ export function apply(ctx: Context, config: Config): void {
       }))
       if (typeof web.port === 'number') {
         guiOrigin = `http://${typeof web.host === 'string' ? web.host : '127.0.0.1'}:${web.port}`
-        webHostHint = typeof web.host === 'string' ? web.host : undefined
       }
       ctx.logger.info('auth-web-alioth: web gate mounted on webServer (login/register + /api/auth/* + index gate)')
     })

@@ -14,11 +14,12 @@
  * Credentials and sessions live in `dsh_alioth_auth`, a schema SEPARATE from
  * the registry so `resetRegistry()` never wipes users.
  *
- * Deployment environment: `ALIOTH_ENV` (production|local) wins, then the
- * `environment` config, then auto-detection — a non-loopback webServer host
- * means production, anything else is local (dev). The B/S surface uses it to
- * decide between the workspace browser (local) and the fixed app view
- * (production).
+ * Deployment workspace mode: `ALIOTH_WORKSPACE_MODE` (unlimited|standard)
+ * wins, then the `workspaceMode` config, default standard. Only 'unlimited'
+ * opens the custom workspace browser (every namespace visible to every
+ * user); standard fixes the B/S surface to the 应用 view of the user's own
+ * namespace. Namespace workspace dirs (Pre-Proc/{ns}, Deploy/{ns}) are
+ * created for every user regardless of mode.
  *
  * Guard mode: `mode: 'enforce'` requires an authenticated, session-bound
  * identity (deployment override `ALIOTH_AUTH_MODE=enforce` for B/S
@@ -61,10 +62,12 @@ export interface Config {
   /** Username charset rule: ^[a-z0-9][a-z0-9-]{2,31}$ (namespaces derive from it). */
   readonly usernamePattern?: string
   /**
-   * Deployment environment. 'auto' (default): ALIOTH_ENV wins, then the
-   * webServer host — loopback is local, anything else production.
+   * Workspace mode. 'unlimited' opens 自定义工作区 — the workspace browser
+   * shows every namespace (with its Pre-Proc/Deploy paths) to every user;
+   * 'standard' (default) fixes everyone to the 应用 view of their own
+   * namespace. Env override ALIOTH_WORKSPACE_MODE=unlimited wins.
    */
-  readonly environment?: 'auto' | 'local' | 'production'
+  readonly workspaceMode?: 'standard' | 'unlimited'
   /** Workspace root for app artifacts; default ALIOTH_PRE_PROC_ROOT ?? ~/WorkSpace/AliothStudio/Pre-Proc. */
   readonly preProcRoot?: string
   /** Workspace root for deployment artifacts; default ALIOTH_DEPLOY_ROOT ?? ~/WorkSpace/AliothStudio/Deploy. */
@@ -75,7 +78,7 @@ export const Config: z<Config> = z.object({
   mode: z.union(['open', 'enforce'] as const).default('open'),
   sessionTtlSeconds: z.number().default(7 * 24 * 3600),
   usernamePattern: z.string().default('^[a-z0-9][a-z0-9-]{2,31}$'),
-  environment: z.union(['auto', 'local', 'production'] as const).default('auto'),
+  workspaceMode: z.union(['standard', 'unlimited'] as const).default('standard'),
   preProcRoot: z.string(),
   deployRoot: z.string(),
 })
@@ -94,9 +97,9 @@ export interface WorkspaceView {
   readonly apps: readonly WorkspaceApp[]
 }
 
-/** The B/S workspace browser response: environment decides 工作区 vs 应用 presentation. */
+/** The B/S workspace browser response: mode decides 工作区 vs 应用 presentation. */
 export interface WorkspaceList {
-  readonly environment: 'local' | 'production'
+  readonly mode: 'standard' | 'unlimited'
   readonly workspaces: readonly WorkspaceView[]
 }
 
@@ -130,22 +133,15 @@ function defaultRoots(): { preProc: string; deploy: string } {
 }
 
 /**
- * Resolve the deployment environment. Precedence: ALIOTH_ENV > config
- * `environment` > host hint (loopback = local, anything else production;
- * no hint = local, the dev default).
+ * Resolve the workspace mode. Precedence: ALIOTH_WORKSPACE_MODE env >
+ * config `workspaceMode` > 'standard'. Only 'unlimited' opens the custom
+ * workspace browser; everything else is the fixed 应用 view.
  */
-export function resolveEnvironment(
-  configured: Config['environment'],
-  hostHint?: string,
-): 'local' | 'production' {
-  if (process.env.ALIOTH_ENV === 'production' || process.env.ALIOTH_ENV === 'local') {
-    return process.env.ALIOTH_ENV
+export function resolveWorkspaceMode(configured?: Config['workspaceMode']): 'standard' | 'unlimited' {
+  if (process.env.ALIOTH_WORKSPACE_MODE === 'unlimited' || process.env.ALIOTH_WORKSPACE_MODE === 'standard') {
+    return process.env.ALIOTH_WORKSPACE_MODE
   }
-  if (configured === 'production' || configured === 'local') {
-    return configured
-  }
-  const host = hostHint ?? '127.0.0.1'
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1' ? 'local' : 'production'
+  return configured === 'unlimited' ? 'unlimited' : 'standard'
 }
 
 export interface AliothAuthService {
@@ -156,11 +152,11 @@ export interface AliothAuthService {
   authorizeNamespace(exec: ToolExecution, namespace: string): Promise<boolean>
   bind(token: string, sessionId: string): Promise<void>
   userForSessionId(sessionId: string): Promise<{ namespace: string; role: 'admin' | 'user' } | null>
-  /** Resolved deployment environment ('local' | 'production'). */
-  environment(hostHint?: string): 'local' | 'production'
+  /** Resolved workspace mode ('standard' | 'unlimited'). */
+  workspaceMode(): 'standard' | 'unlimited'
   /** Create the user's namespace workspace dirs (Pre-Proc/{ns}, Deploy/{ns}). Idempotent. */
   ensureWorkspace(namespace: string): Promise<void>
-  /** Workspaces visible to an identity: users see their own, admins span all. */
+  /** Workspaces visible to an identity: unlimited shows every namespace, standard is role-scoped. */
   workspaces(identity: { namespace: string; role: 'admin' | 'user' }): Promise<WorkspaceList>
 }
 
@@ -316,21 +312,24 @@ export function apply(ctx: Context, config: Config): void {
       return user === null ? null : { namespace: user.namespace, role: user.role }
     },
 
-    /** Resolved deployment environment; the carrier passes its bind host. */
-    environment(hostHint?: string): 'local' | 'production' {
-      return resolveEnvironment(config.environment, hostHint)
+    /** Resolved workspace mode ('standard' | 'unlimited'). */
+    workspaceMode(): 'standard' | 'unlimited' {
+      return resolveWorkspaceMode(config.workspaceMode)
     },
 
     /** Workspace dir bootstrap (Pre-Proc/{ns}, Deploy/{ns}); idempotent. */
     ensureWorkspace,
 
     /**
-     * Workspaces visible to an identity: a plain user sees exactly their own
-     * namespace; admins span every namespace under the Pre-Proc root. Apps
-     * are read from each namespace's Apps/ dir (tolerant of broken files).
+     * Workspaces visible to an identity. 'unlimited' opens 自定义工作区:
+     * every namespace under the Pre-Proc root is shown to everyone (with its
+     * paths). 'standard' is role-scoped: a plain user sees exactly their own
+     * namespace, admins span all. Apps are read from each namespace's Apps/
+     * dir (tolerant of broken files).
      */
     async workspaces(identity: { namespace: string; role: 'admin' | 'user' }): Promise<WorkspaceList> {
-      const namespaceDirs = identity.role === 'admin'
+      const mode = resolveWorkspaceMode(config.workspaceMode)
+      const namespaceDirs = mode === 'unlimited' || identity.role === 'admin'
         ? await readdir(preProcRoot, { withFileTypes: true }).then(entries =>
           entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
         : [identity.namespace]
@@ -347,7 +346,7 @@ export function apply(ctx: Context, config: Config): void {
         })
       }
       workspaces.sort((a, b) => a.namespace.localeCompare(b.namespace))
-      return { environment: resolveEnvironment(config.environment), workspaces }
+      return { mode, workspaces }
     },
   }
 

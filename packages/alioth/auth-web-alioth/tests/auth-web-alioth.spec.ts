@@ -264,7 +264,7 @@ describe('web gate (real harness WebServer)', () => {
   })
 })
 
-describe('workspace surface (工作区 local / 应用 production)', () => {
+describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
   const base = (): string => `http://127.0.0.1:${port}`
 
   it('requires authentication for /api/workspace', async () => {
@@ -272,7 +272,7 @@ describe('workspace surface (工作区 local / 应用 production)', () => {
     expect(response.status).toBe(401)
   })
 
-  it('returns the user workspace list with AliothStudio paths (local auto-detected)', async () => {
+  it('returns the user workspace list with AliothStudio paths (standard mode)', async () => {
     const login = await fetch(`${base()}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -284,10 +284,10 @@ describe('workspace surface (工作区 local / 应用 production)', () => {
     })
     expect(response.status).toBe(200)
     const body = await response.json() as {
-      environment: 'local' | 'production'
+      mode: 'standard' | 'unlimited'
       workspaces: Array<{ namespace: string; preProcPath: string; deployPath: string; apps: Array<{ code: string; name: string }> }>
     }
-    expect(body.environment).toBe('local')
+    expect(body.mode).toBe('standard')
     expect(body.workspaces).toHaveLength(1)
     expect(body.workspaces[0]).toMatchObject({
       namespace: 'U-carol',
@@ -297,7 +297,7 @@ describe('workspace surface (工作区 local / 应用 production)', () => {
     expect(body.workspaces[0]!.deployPath).toContain('deploy')
   })
 
-  it('serves the workspace page (local renders 工作区 with paths)', async () => {
+  it('serves the workspace page (standard renders 应用 without workspace chrome)', async () => {
     const login = await fetch(`${base()}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -309,10 +309,11 @@ describe('workspace surface (工作区 local / 应用 production)', () => {
     })
     expect(page.status).toBe(200)
     const html = await page.text()
-    expect(html).toContain('<h1>工作区</h1>')
+    expect(html).toContain('<h1>应用</h1>')
     expect(html).toContain('U-carol')
-    expect(html).toContain('Pre-Proc/U-carol/')
-    expect(html).toContain('Deploy/U-carol/')
+    // standard hides the custom-workspace chrome: no Pre-Proc/Deploy paths
+    expect(html).not.toContain('Pre-Proc/U-carol/')
+    expect(html).not.toContain('Deploy/U-carol/')
   })
 
   it('redirects unauthenticated visitors from /workspace to /login', async () => {
@@ -321,32 +322,31 @@ describe('workspace surface (工作区 local / 应用 production)', () => {
     expect(response.headers.get('location')).toBe('/login')
   })
 
-  it('renders 应用 instead of 工作区 when the deployment is production', async () => {
+  it('renders 工作区 with paths when the deployment is unlimited', async () => {
     const login = await fetch(`${base()}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'carol', password: 'password-789' }),
     })
     const { token } = await login.json() as { token: string }
-    const saved = process.env.ALIOTH_ENV
+    const saved = process.env.ALIOTH_WORKSPACE_MODE
     try {
-      process.env.ALIOTH_ENV = 'production'
+      process.env.ALIOTH_WORKSPACE_MODE = 'unlimited'
       const page = await fetch(`${base()}/workspace`, {
         headers: { authorization: `Bearer ${token}` },
       })
       expect(page.status).toBe(200)
       const html = await page.text()
-      expect(html).toContain('<h1>应用</h1>')
-      expect(html).not.toContain('<h1>工作区</h1>')
-      // production hides the custom-workspace chrome: no Pre-Proc/Deploy paths
-      expect(html).not.toContain('Pre-Proc/U-carol/')
-      expect(html).not.toContain('Deploy/U-carol/')
+      expect(html).toContain('<h1>工作区</h1>')
+      expect(html).toContain('U-carol')
+      expect(html).toContain('Pre-Proc/U-carol/')
+      expect(html).toContain('Deploy/U-carol/')
     } finally {
-      if (saved === undefined) { delete process.env.ALIOTH_ENV } else { process.env.ALIOTH_ENV = saved }
+      if (saved === undefined) { delete process.env.ALIOTH_WORKSPACE_MODE } else { process.env.ALIOTH_WORKSPACE_MODE = saved }
     }
   })
 
-  it('includes the resolved environment in /api/auth/me (client chip entry)', async () => {
+  it('includes the resolved workspace mode in /api/auth/me (client chip entry)', async () => {
     const login = await fetch(`${base()}/api/auth/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -355,7 +355,7 @@ describe('workspace surface (工作区 local / 应用 production)', () => {
     const { token } = await login.json() as { token: string }
     const me = await fetch(`${base()}/api/auth/me`, { headers: { authorization: `Bearer ${token}` } })
     expect(me.status).toBe(200)
-    expect(await me.json()).toMatchObject({ username: 'carol', environment: 'local' })
+    expect(await me.json()).toMatchObject({ username: 'carol', workspaceMode: 'standard' })
   })
 })
 
