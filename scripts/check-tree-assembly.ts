@@ -15,7 +15,9 @@
  *   headless + example overlay — dev composition (auth-free by design:
  *                               single-user dialogue; auth is the bundle's
  *                               B/S deployment concern)
- *   web + example web patch    — browser GUI composition
+ *   web + example web patch    — browser GUI dev composition (tools only)
+ *   web + bundle patch         — `mise run launch` composition (full B/S
+ *                               surface: auth badge, billing, feedback)
  *
  * Self-contained: re-runs scripts/link-dsh-profiles.sh first (idempotent) so
  * the dsh profile fallback resolves @dsh-alioth/* packages.
@@ -63,11 +65,18 @@ const COMPOSITIONS: readonly Composition[] = [
     expectPersona: 'You are the Alioth app agent',
   },
   {
-    name: 'example web patch (web GUI)',
+    name: 'example web patch (web GUI dev)',
     profile: 'web',
     patch: 'examples/alioth-agent/web.patch.yml',
     expectPlugins: [...ALIOTH_PLUGINS],
     expectPersona: 'Alioth', // web patch only inserts plugins; base persona untouched
+  },
+  {
+    name: 'web + bundle patch (launch GUI)',
+    profile: 'web',
+    patch: 'packages/alioth/bundle-alioth/cordis.patch.yml',
+    expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'feedback-alioth', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
+    expectPersona: 'You are the Alioth app agent',
   },
 ]
 

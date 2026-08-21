@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Boot the DeepSeek Harness web profile with the alioth-agent patch and open the
-# browser. Needs DEEPSEEK_API_KEY for real model calls; ALIOTH_PRE_PROC_ROOT
-# overrides the default Pre-Proc root. A previous dsh instance still holding
-# the port is stopped automatically (SIGTERM, then SIGKILL); a non-dsh process
-# on the port aborts the launch instead.
+# Boot the DeepSeek Harness web profile with the full Alioth plugin group
+# (bundle patch: env + 4 tool plugins + auth trio + billing + feedback) and
+# open the browser. Needs DEEPSEEK_API_KEY for real model calls;
+# ALIOTH_PRE_PROC_ROOT overrides the default Pre-Proc root. A previous dsh
+# instance still holding the port is stopped automatically (SIGTERM, then
+# SIGKILL); a non-dsh process on the port aborts the launch instead.
 set -euo pipefail
 
 HOST="${DSH_WEB_HOST:-127.0.0.1}"
@@ -39,7 +40,7 @@ free_port() {
 
 free_port
 
-pnpm exec dsh --profile web --patch examples/alioth-agent/web.patch.yml --host "$HOST" --port "$PORT" &
+pnpm exec dsh --profile web --patch packages/alioth/bundle-alioth/cordis.patch.yml --host "$HOST" --port "$PORT" &
 SERVER_PID=$!
 cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT INT TERM
