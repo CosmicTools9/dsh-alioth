@@ -35,7 +35,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolExecution, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { hashPassword, verifyPassword } from './password.ts'
 import {
   AUTH_SCHEMA, bindSession, deleteExpiredSessions, deleteSession, ensureAuthSchema,
@@ -52,7 +52,7 @@ export function namespaceFor(username: string): string {
 }
 
 export const name = 'auth-alioth'
-export const inject = ['aliothEnv']
+export const inject = ['aliothEnv', 'tools']
 
 export interface Config {
   /** Guard mode: 'open' keeps unauthenticated calls working (headless); 'enforce' rejects them. */
@@ -469,4 +469,60 @@ export function apply(ctx: Context, config: Config): void {
   aliothAuth.logout = withReady(aliothAuth.logout)
   aliothAuth.bind = withReady(aliothAuth.bind)
   aliothAuth.userForSessionId = withReady(aliothAuth.userForSessionId)
+
+  // ── model surface: alioth_workspace_current ───────────────────────────
+  // The B/S product rule "the model works inside the caller's workspace":
+  // every namespace-scoped tool must receive the caller's OWN namespace.
+  // The example namespaces in tool descriptions (e.g. "Alioth") would
+  // otherwise leak into real artifacts — this tool resolves the identity
+  // bound to the session and ensures the path structure exists on first use.
+  ctx.tools.register(defineTool({
+    name: 'alioth_workspace_current',
+    description:
+      'Resolve the caller\'s own workspace: the namespace bound to the current session '
+      + '(U-<username>), the workspace mode, and the AliothStudio path structure '
+      + '(Pre-Proc/{namespace}/, Deploy/{namespace}/ — ensured to exist). Call this FIRST '
+      + 'before any alioth_* call that takes a namespace and use the returned namespace '
+      + 'verbatim — never guess or invent a namespace.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          namespace: { type: 'string', required: true },
+          mode: { type: 'string', required: true, enum: ['standard', 'unlimited'] },
+          preProcPath: { type: 'string', required: true },
+          deployPath: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: `Caller workspace: ${value.namespace} (mode ${value.mode}) — Pre-Proc/${value.namespace}/, Deploy/${value.namespace}/`,
+      }],
+    },
+    async execute(_args, exec: ToolRunContext) {
+      const agentId = exec.agent?.id
+      if (agentId === undefined) {
+        throw new Error('alioth_workspace_current: no session identity — log in first')
+      }
+      const user = await aliothAuth.userForSessionId(String(agentId))
+      if (user === null) {
+        throw new Error('alioth_workspace_current: session is not bound to a user — log in first')
+      }
+      await ensureWorkspace(user.namespace)
+      return {
+        namespace: user.namespace,
+        mode: aliothAuth.workspaceMode(),
+        preProcPath: path.join(preProcRoot, user.namespace),
+        deployPath: path.join(deployRoot, user.namespace),
+      }
+    },
+    presentCall: _args => ({
+      card: 'generic',
+      title: 'Resolve current workspace',
+      kind: 'other',
+      rawInput: {},
+    }),
+  }))
 }

@@ -119,7 +119,7 @@ export function apply(ctx: Context, config: Config): void {
     parameters: {
       namespace: {
         type: 'string',
-        description: 'Optional namespace filter, e.g. "Alioth". Letters, digits, hyphens only; omitted = all namespaces.',
+        description: 'Optional namespace filter — resolve with alioth_workspace_current first; omit = all namespaces. Letters, digits, hyphens only.',
       },
     },
     output: {
@@ -261,7 +261,7 @@ export function apply(ctx: Context, config: Config): void {
       namespace: {
         type: 'string',
         required: true,
-        description: 'Alioth namespace, e.g. "Alioth". Letters, digits, hyphens only.',
+        description: 'The caller\'s own workspace namespace — resolve with alioth_workspace_current first. Letters, digits, hyphens only.',
       },
       app: {
         type: 'string',
@@ -423,7 +423,7 @@ export function apply(ctx: Context, config: Config): void {
       namespace: {
         type: 'string',
         required: true,
-        description: 'Alioth namespace, e.g. "Alioth". Letters, digits, hyphens only.',
+        description: 'The caller\'s own workspace namespace — resolve with alioth_workspace_current first. Letters, digits, hyphens only.',
       },
       code: {
         type: 'string',
@@ -803,7 +803,7 @@ export function apply(ctx: Context, config: Config): void {
       namespace: {
         type: 'string',
         required: true,
-        description: 'Alioth namespace, e.g. "Alioth". Letters, digits, hyphens only.',
+        description: 'The caller\'s own workspace namespace — resolve with alioth_workspace_current first. Letters, digits, hyphens only.',
       },
       app: {
         type: 'string',

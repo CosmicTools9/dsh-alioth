@@ -127,7 +127,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Alioth namespace, e.g. \"Alioth\"."
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first."
         },
         "code": {
           "type": "string",
@@ -273,7 +273,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Alioth namespace, e.g. \"Alioth\". Letters, digits, hyphens only."
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first. Letters, digits, hyphens only."
         },
         "app": {
           "type": "string",
@@ -298,7 +298,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Alioth namespace, e.g. \"Alioth\". Letters, digits, hyphens only."
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first. Letters, digits, hyphens only."
         },
         "app": {
           "type": "string",
@@ -319,7 +319,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Optional namespace filter, e.g. \"Alioth\". Letters, digits, hyphens only; omitted = all namespaces."
+          "description": "Optional namespace filter — resolve with alioth_workspace_current first; omit = all namespaces. Letters, digits, hyphens only."
         }
       }
     }
@@ -332,7 +332,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Alioth namespace, e.g. \"Alioth\". Letters, digits, hyphens only."
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first. Letters, digits, hyphens only."
         },
         "code": {
           "type": "string",
@@ -693,7 +693,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Alioth namespace, e.g. \"Alioth\"."
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first."
         },
         "app": {
           "type": "string",
@@ -714,7 +714,7 @@
       "properties": {
         "namespace": {
           "type": "string",
-          "description": "Alioth namespace, e.g. \"Alioth\"."
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first."
         },
         "app": {
           "type": "string",
@@ -725,6 +725,14 @@
         "namespace",
         "app"
       ]
+    }
+  },
+  {
+    "name": "alioth_workspace_current",
+    "description": "Resolve the caller's own workspace: the namespace bound to the current session (U-<username>), the workspace mode, and the AliothStudio path structure (Pre-Proc/{namespace}/, Deploy/{namespace}/ — ensured to exist). Call this FIRST before any alioth_* call that takes a namespace and use the returned namespace verbatim — never guess or invent a namespace.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
     }
   }
 ]

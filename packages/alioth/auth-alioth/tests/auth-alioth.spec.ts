@@ -319,6 +319,28 @@ describe('workspace (namespace = user workspace)', () => {
     await expect(ctx.aliothAuth.createWorkspace('ProjectB')).rejects.toThrow(/disabled/)
   })
 
+  it('alioth_workspace_current resolves the bound identity and ensures the path structure', async () => {
+    // bob's session is bound in the guard describe.
+    const result = await callTool('alioth_workspace_current', {}, fakeAgent('session-bob-1'))
+    if (result.isError) throw new Error(`expected workspace_current success: ${result.error.message}`)
+    expect(result.value).toMatchObject({
+      namespace: 'U-bob',
+      mode: 'standard',
+      preProcPath: path.join(preProcRoot, 'U-bob'),
+      deployPath: path.join(deployRoot, 'U-bob'),
+    })
+
+    // unbound session → loud error (the model must not guess a namespace)
+    const unbound = await callTool('alioth_workspace_current', {}, fakeAgent('no-such-session'))
+    if (!unbound.isError) throw new Error('expected workspace_current failure for unbound session')
+    expect(unbound.error.message).toContain('not bound to a user')
+
+    // no agent identity at all → loud error
+    const noAgent = await callTool('alioth_workspace_current', {})
+    if (!noAgent.isError) throw new Error('expected workspace_current failure without identity')
+    expect(noAgent.error.message).toContain('no session identity')
+  })
+
   it('backfills workspace dirs for users registered before the feature existed', async () => {
     // Simulate a pre-feature user: wipe the dirs, then a workspaces() read
     // must restore them (lazy backfill on access).

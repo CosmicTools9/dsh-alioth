@@ -95,7 +95,7 @@ export function apply(ctx: Context, config: Config): void {
       namespace: {
         type: 'string',
         required: true,
-        description: 'Alioth namespace, e.g. "Alioth".',
+        description: 'The caller\'s own workspace namespace — resolve with alioth_workspace_current first.',
       },
       app: {
         type: 'string',
@@ -160,7 +160,7 @@ export function apply(ctx: Context, config: Config): void {
       namespace: {
         type: 'string',
         required: true,
-        description: 'Alioth namespace, e.g. "Alioth".',
+        description: 'The caller\'s own workspace namespace — resolve with alioth_workspace_current first.',
       },
       app: {
         type: 'string',
