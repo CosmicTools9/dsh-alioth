@@ -361,6 +361,10 @@ export function apply(ctx: Context, config: Config): void {
      */
     async workspaces(identity: { namespace: string; role: 'admin' | 'user' }): Promise<WorkspaceList> {
       const mode = resolveWorkspaceMode(config.workspaceMode)
+      // Lazy backfill: users registered before the workspace feature (or with
+      // roots changed since) may lack their dirs — guarantee the caller's own
+      // workspace exists on every read (idempotent).
+      await ensureWorkspace(identity.namespace)
       const namespaceDirs = mode === 'unlimited' || identity.role === 'admin'
         ? await readdir(preProcRoot, { withFileTypes: true }).then(entries =>
           entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])

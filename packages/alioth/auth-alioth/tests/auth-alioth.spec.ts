@@ -319,6 +319,19 @@ describe('workspace (namespace = user workspace)', () => {
     await expect(ctx.aliothAuth.createWorkspace('ProjectB')).rejects.toThrow(/disabled/)
   })
 
+  it('backfills workspace dirs for users registered before the feature existed', async () => {
+    // Simulate a pre-feature user: wipe the dirs, then a workspaces() read
+    // must restore them (lazy backfill on access).
+    await rm(path.join(preProcRoot, 'U-isahl'), { recursive: true, force: true })
+    await rm(path.join(deployRoot, 'U-isahl'), { recursive: true, force: true })
+    const list = await ctx.aliothAuth.workspaces({ namespace: 'U-isahl', role: 'admin' })
+    expect(list.workspaces.map(ws => ws.namespace)).toContain('U-isahl')
+    const preStat = await import('node:fs/promises').then(fs => fs.stat(path.join(preProcRoot, 'U-isahl')))
+    const deployStat = await import('node:fs/promises').then(fs => fs.stat(path.join(deployRoot, 'U-isahl')))
+    expect(preStat.isDirectory()).toBe(true)
+    expect(deployStat.isDirectory()).toBe(true)
+  })
+
   it('workspaces scopes users to their own namespace in standard mode and admins to all', async () => {
     // erin (already registered above) is a plain user; put an app in her workspace.
     const appsDir = path.join(preProcRoot, 'U-erin', 'Apps', 'demo-app')
