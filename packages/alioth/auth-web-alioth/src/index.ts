@@ -237,6 +237,7 @@ function sendWorkspacePage(
     deployPath: string
     apps: ReadonlyArray<{ code: string; name: string }>
   }>,
+  error = '',
 ): void {
   const title = mode === 'unlimited' ? '工作区' : '应用'
   const rows = list.map(ws => `
@@ -249,6 +250,12 @@ function sendWorkspacePage(
   ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在对话中让 Alioth 助手创建</p>' : `
   <ul class="apps">${ws.apps.map(app => `<li><span class="code">${esc(app.code)}</span>${app.name === '' ? '' : ` — ${esc(app.name)}`}</li>`).join('')}</ul>`}
 </article>`).join('')
+  const form = mode === 'unlimited' ? `
+<form method="post" action="/api/workspace" class="create">
+${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
+<label>新建自定义工作区（namespace）<input name="namespace" pattern="[A-Z][a-zA-Z0-9-]*" placeholder="如 ProjectA" required></label>
+<button>创建</button>
+</form>` : ''
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -280,9 +287,20 @@ padding:1.1rem 1.25rem;margin-bottom:1rem}
 .apps li{font-size:.92rem}
 .apps .code{font-family:var(--mono);color:var(--text)}
 .back{margin-top:1.25rem;font-size:.85rem;color:var(--dim)}
+.create{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:1rem 1.25rem;margin-bottom:1rem;display:grid;gap:.7rem;max-width:30rem}
+.create label{display:grid;gap:.35rem;font-size:.85rem;color:var(--dim)}
+.create input{background:#070b11;border:1px solid var(--line);border-radius:6px;
+color:var(--text);padding:.5rem .7rem;font-size:.95rem;outline:none;font-family:var(--mono)}
+.create input:focus{border-color:var(--accent)}
+.create button{background:var(--accent);border:1px solid var(--accent);border-radius:6px;
+color:#06251a;font-weight:600;padding:.5rem 1.2rem;cursor:pointer;justify-self:start}
+.banner.error{border:1px solid var(--error, #f2718a);color:#f2718a;background:rgba(242,113,138,.08);
+border-radius:6px;padding:.5rem .8rem;font-size:.85rem}
 </style></head><body>
 <nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a></nav>
-<main><h1>${title}</h1>${rows === '' ? '<p class="dim">（空）</p>' : rows}
+<main><h1>${title}</h1>${form}
+${rows === '' ? '<p class="dim">（空）</p>' : rows}
 <p class="back"><a href="/usercenter">← 用户中心</a> · <a href="/">返回首页</a></p></main>
 </body></html>`)
 }
@@ -428,6 +446,37 @@ export function apply(ctx: Context, config: Config): void {
       sendJson(response, 200, await auth().workspaces({ namespace: user.namespace, role: user.role }))
       return
     }
+    // Create a custom workspace (unlimited mode only): browser form posts get
+    // a 302 back to /workspace, JSON clients get the created workspace view.
+    if (request.method === 'POST' && url.pathname === '/api/workspace') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const body = await readBody(request)
+      const namespace = typeof body.namespace === 'string' ? body.namespace : ''
+      if (isFormPost(request)) {
+        try {
+          await auth().createWorkspace(namespace)
+          response.writeHead(302, { location: '/workspace' })
+          response.end()
+        } catch (error) {
+          response.writeHead(302, {
+            location: `/workspace?error=${encodeURIComponent(error instanceof Error ? error.message : String(error))}`,
+          })
+          response.end()
+        }
+        return
+      }
+      try {
+        const created = await auth().createWorkspace(namespace)
+        sendJson(response, 201, created)
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
     // Cross-origin SSO handoff: the standalone (:3900) success page
     // auto-POSTs the fresh token here so the GUI origin gets its own
     // cookies — cookies are per-origin, a bare cross-origin link would
@@ -496,7 +545,7 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
         const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
-        sendWorkspacePage(response, list.mode, list.workspaces)
+        sendWorkspacePage(response, list.mode, list.workspaces, url.searchParams.get('error') ?? '')
         return
       }
       if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')
@@ -559,7 +608,8 @@ export function apply(ctx: Context, config: Config): void {
             return
           }
           const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
-          sendWorkspacePage(res, list.mode, list.workspaces)
+          const error = new URL(req.url ?? '/', 'http://localhost').searchParams.get('error') ?? ''
+          sendWorkspacePage(res, list.mode, list.workspaces, error)
         },
       }))
       webCtx.effect(() => web.register({

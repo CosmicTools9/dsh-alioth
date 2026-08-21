@@ -272,6 +272,72 @@ describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
     expect(response.status).toBe(401)
   })
 
+  it('rejects custom workspace creation in standard mode', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const response = await fetch(`${base()}/api/workspace`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ namespace: 'ProjectB' }),
+    })
+    expect(response.status).toBe(400)
+    expect(((await response.json()) as { error: string }).error).toContain('disabled')
+  })
+
+  it('creates a custom workspace in unlimited mode and auto-builds the path structure', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const saved = process.env.ALIOTH_WORKSPACE_MODE
+    try {
+      process.env.ALIOTH_WORKSPACE_MODE = 'unlimited'
+      const created = await fetch(`${base()}/api/workspace`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ namespace: 'ProjectA' }),
+      })
+      expect(created.status).toBe(201)
+      const view = await created.json() as { namespace: string; preProcPath: string; deployPath: string }
+      expect(view.namespace).toBe('ProjectA')
+      const { stat } = await import('node:fs/promises')
+      expect((await stat(view.preProcPath)).isDirectory()).toBe(true)
+      expect((await stat(view.deployPath)).isDirectory()).toBe(true)
+    } finally {
+      if (saved === undefined) { delete process.env.ALIOTH_WORKSPACE_MODE } else { process.env.ALIOTH_WORKSPACE_MODE = saved }
+    }
+  })
+
+  it('form posts redirect with an error banner on invalid workspace names', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const saved = process.env.ALIOTH_WORKSPACE_MODE
+    try {
+      process.env.ALIOTH_WORKSPACE_MODE = 'unlimited'
+      const form = new URLSearchParams({ namespace: 'U-evil' })
+      const posted = await fetch(`${base()}/api/workspace`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', authorization: `Bearer ${token}` },
+        body: form.toString(),
+        redirect: 'manual',
+      })
+      expect(posted.status).toBe(302)
+      expect(posted.headers.get('location')).toContain('/workspace?error=')
+    } finally {
+      if (saved === undefined) { delete process.env.ALIOTH_WORKSPACE_MODE } else { process.env.ALIOTH_WORKSPACE_MODE = saved }
+    }
+  })
+
   it('returns the user workspace list with AliothStudio paths (standard mode)', async () => {
     const login = await fetch(`${base()}/api/auth/login`, {
       method: 'POST',
@@ -288,13 +354,16 @@ describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
       workspaces: Array<{ namespace: string; preProcPath: string; deployPath: string; apps: Array<{ code: string; name: string }> }>
     }
     expect(body.mode).toBe('standard')
-    expect(body.workspaces).toHaveLength(1)
-    expect(body.workspaces[0]).toMatchObject({
+    // carol is the admin here — standard mode spans all namespaces for admins.
+    const names = body.workspaces.map(ws => ws.namespace)
+    expect(names).toEqual(expect.arrayContaining(['U-carol']))
+    const carolWs = body.workspaces.find(ws => ws.namespace === 'U-carol')
+    expect(carolWs).toMatchObject({
       namespace: 'U-carol',
       apps: [],
     })
-    expect(body.workspaces[0]!.preProcPath).toContain('pre-proc')
-    expect(body.workspaces[0]!.deployPath).toContain('deploy')
+    expect(carolWs!.preProcPath).toContain('pre-proc')
+    expect(carolWs!.deployPath).toContain('deploy')
   })
 
   it('serves the workspace page (standard renders 应用 without workspace chrome)', async () => {
@@ -311,9 +380,10 @@ describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
     const html = await page.text()
     expect(html).toContain('<h1>应用</h1>')
     expect(html).toContain('U-carol')
-    // standard hides the custom-workspace chrome: no Pre-Proc/Deploy paths
+    // standard hides the custom-workspace chrome: no Pre-Proc/Deploy paths, no create form
     expect(html).not.toContain('Pre-Proc/U-carol/')
     expect(html).not.toContain('Deploy/U-carol/')
+    expect(html).not.toContain('action="/api/workspace"')
   })
 
   it('redirects unauthenticated visitors from /workspace to /login', async () => {
@@ -341,6 +411,9 @@ describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
       expect(html).toContain('U-carol')
       expect(html).toContain('Pre-Proc/U-carol/')
       expect(html).toContain('Deploy/U-carol/')
+      // unlimited exposes the custom-workspace creation form
+      expect(html).toContain('action="/api/workspace"')
+      expect(html).toContain('新建自定义工作区')
     } finally {
       if (saved === undefined) { delete process.env.ALIOTH_WORKSPACE_MODE } else { process.env.ALIOTH_WORKSPACE_MODE = saved }
     }

@@ -289,6 +289,22 @@ describe('workspace (namespace = user workspace)', () => {
         expect(all.workspaces.map(ws => ws.namespace)).toEqual(expect.arrayContaining(['U-alice', 'U-carol', 'U-erin']))
         // unlimited carries the workspace paths (自定义工作区 chrome)
         expect(all.workspaces[0]).toMatchObject({ preProcPath: path.join(preProcRoot, 'U-alice') })
+
+        // Custom workspace creation: auto-creates the AliothStudio structure.
+        const custom = await unlimitedCtx.aliothAuth.createWorkspace('ProjectA')
+        expect(custom).toMatchObject({
+          namespace: 'ProjectA',
+          preProcPath: path.join(preProcRoot, 'ProjectA'),
+          deployPath: path.join(deployRoot, 'ProjectA'),
+          apps: [],
+        })
+        const preStat = await import('node:fs/promises').then(fs => fs.stat(path.join(preProcRoot, 'ProjectA')))
+        const deployStat = await import('node:fs/promises').then(fs => fs.stat(path.join(deployRoot, 'ProjectA')))
+        expect(preStat.isDirectory()).toBe(true)
+        expect(deployStat.isDirectory()).toBe(true)
+        // reserved prefix and pattern guards
+        await expect(unlimitedCtx.aliothAuth.createWorkspace('U-evil')).rejects.toThrow(/reserved/)
+        await expect(unlimitedCtx.aliothAuth.createWorkspace('lower')).rejects.toThrow(/invalid namespace/)
       } finally {
         await authPlugin.dispose()
       }
@@ -297,6 +313,10 @@ describe('workspace (namespace = user workspace)', () => {
       await tools.dispose()
       await system.dispose()
     }
+  })
+
+  it('standard mode rejects custom workspace creation', async () => {
+    await expect(ctx.aliothAuth.createWorkspace('ProjectB')).rejects.toThrow(/disabled/)
   })
 
   it('workspaces scopes users to their own namespace in standard mode and admins to all', async () => {

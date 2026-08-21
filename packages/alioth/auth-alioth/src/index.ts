@@ -157,6 +157,12 @@ export interface AliothAuthService {
   workspaceMode(): 'standard' | 'unlimited'
   /** Create the user's namespace workspace dirs (Pre-Proc/{ns}, Deploy/{ns}). Idempotent. */
   ensureWorkspace(namespace: string): Promise<void>
+  /**
+   * Create a custom workspace (unlimited mode only): validates the namespace
+   * (U- prefix is reserved for user workspaces), auto-creates the
+   * AliothStudio path structure, returns the workspace view.
+   */
+  createWorkspace(namespace: string): Promise<WorkspaceView>
   /** Workspaces visible to an identity: unlimited shows every namespace, standard is role-scoped. */
   workspaces(identity: { namespace: string; role: 'admin' | 'user' }): Promise<WorkspaceList>
 }
@@ -320,6 +326,31 @@ export function apply(ctx: Context, config: Config): void {
 
     /** Workspace dir bootstrap (Pre-Proc/{ns}, Deploy/{ns}); idempotent. */
     ensureWorkspace,
+
+    /**
+     * Create a custom workspace — only in unlimited mode (标准模式禁用
+     * 自定义工作区). The namespace must match the Alioth contract; the
+     * `U-` prefix is reserved for per-user workspaces. Auto-creates the
+     * AliothStudio path structure and returns the fresh workspace view.
+     */
+    async createWorkspace(namespace: string): Promise<WorkspaceView> {
+      if (resolveWorkspaceMode(config.workspaceMode) !== 'unlimited') {
+        throw new Error('aliothAuth.createWorkspace: custom workspaces are disabled (workspaceMode=standard)')
+      }
+      if (!NAMESPACE_PATTERN_RE.test(namespace)) {
+        throw new Error(`aliothAuth.createWorkspace: invalid namespace ${JSON.stringify(namespace)} (expected ^[A-Z][a-zA-Z0-9-]*$)`)
+      }
+      if (namespace.startsWith('U-')) {
+        throw new Error(`aliothAuth.createWorkspace: ${namespace} is reserved for user workspaces (U- prefix)`)
+      }
+      await ensureWorkspace(namespace)
+      return {
+        namespace,
+        preProcPath: path.join(preProcRoot, namespace),
+        deployPath: path.join(deployRoot, namespace),
+        apps: await listWorkspaceApps(preProcRoot, namespace),
+      }
+    },
 
     /**
      * Workspaces visible to an identity. 'unlimited' opens 自定义工作区:
