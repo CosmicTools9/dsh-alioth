@@ -76,6 +76,12 @@ window.__ModuleLoader__.load({
       return e('div', { style: styles.chip },
         e('span', { style: styles.name }, user.username),
         e('span', { style: styles.namespace }, user.namespace),
+        // Deployment environment decides the entry: local exposes 工作区
+        // (workspace browser), production is fixed to 应用 (the user's apps).
+        e('a', {
+          href: '/workspace',
+          style: { color: '#4fc3f7', fontSize: 12, textDecoration: 'none', padding: '0 2px' },
+        }, user.environment === 'production' ? '应用' : '工作区'),
         e('a', {
           href: '/usercenter',
           style: { color: '#4fc3f7', fontSize: 12, textDecoration: 'none', padding: '0 2px' },

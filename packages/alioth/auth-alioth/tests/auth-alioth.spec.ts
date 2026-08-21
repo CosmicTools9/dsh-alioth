@@ -44,6 +44,7 @@ CREATE TABLE isahl_meta.meta_fields (
 let ctx: Context
 const disposers: Array<() => Promise<void>> = []
 let preProcRoot: string
+let deployRoot: string
 let counter = 0
 
 function callTool(name: string, args: unknown, agent?: Agent) {
@@ -66,6 +67,7 @@ beforeAll(async () => {
   const modelDir = await mkdtemp(path.join(tmpdir(), 'auth-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'auth-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'auth-preproc-'))
+  deployRoot = await mkdtemp(path.join(tmpdir(), 'auth-deploy-'))
   await mkdir(path.join(modelDir, 'backend', 'ddl'), { recursive: true })
   await mkdir(path.join(modelDir, 'backend', 'vendor', 'alioth-gen', 'src'), { recursive: true })
   await mkdir(path.join(modelDir, 'skill-adapters'), { recursive: true })
@@ -89,7 +91,7 @@ beforeAll(async () => {
   const appTool = await ctx.plugin(toolAlioth, { preProcRoot })
   disposers.push(() => appTool.dispose())
 
-  const authPlugin = await ctx.plugin(auth, { mode: 'enforce' })
+  const authPlugin = await ctx.plugin(auth, { mode: 'enforce', preProcRoot, deployRoot })
   disposers.push(() => authPlugin.dispose())
 }, 120_000)
 
@@ -98,6 +100,7 @@ afterAll(async () => {
     await dispose().catch(() => {})
   }
   await rm(preProcRoot, { recursive: true, force: true })
+  await rm(deployRoot, { recursive: true, force: true })
 })
 
 describe('password', () => {
@@ -230,5 +233,87 @@ describe('namespace authorization guard', () => {
       signal: new AbortController().signal,
     }, async () => ({ kind: 'enter' as const, messages: [] }))
     expect(passed.kind).toBe('enter')
+  })
+})
+
+describe('workspace (namespace = user workspace)', () => {
+  it('creates the AliothStudio workspace dirs at registration', async () => {
+    // carol is a fresh user; her namespace dirs must exist under both roots.
+    const result = await ctx.aliothAuth.register('carol', 'password-123')
+    expect(result.namespace).toBe('U-carol')
+    const preStat = await import('node:fs/promises').then(fs => fs.stat(path.join(preProcRoot, 'U-carol')))
+    const deployStat = await import('node:fs/promises').then(fs => fs.stat(path.join(deployRoot, 'U-carol')))
+    expect(preStat.isDirectory()).toBe(true)
+    expect(deployStat.isDirectory()).toBe(true)
+  })
+
+  it('ensureWorkspace is idempotent and rejects unsafe namespaces', async () => {
+    await expect(ctx.aliothAuth.ensureWorkspace('U-carol')).resolves.toBeUndefined()
+    await expect(ctx.aliothAuth.ensureWorkspace('../evil')).rejects.toThrow(/invalid namespace/)
+    await expect(ctx.aliothAuth.ensureWorkspace('lower')).rejects.toThrow(/invalid namespace/)
+  })
+
+  it('resolves the environment by override and host hint', async () => {
+    // auto + loopback / no hint → local
+    expect(ctx.aliothAuth.environment()).toBe('local')
+    expect(ctx.aliothAuth.environment('127.0.0.1')).toBe('local')
+    expect(ctx.aliothAuth.environment('localhost')).toBe('local')
+    // non-loopback bind → production
+    expect(ctx.aliothAuth.environment('0.0.0.0')).toBe('production')
+    expect(ctx.aliothAuth.environment('10.0.0.5')).toBe('production')
+
+    // ALIOTH_ENV beats everything (restored afterwards)
+    const saved = process.env.ALIOTH_ENV
+    try {
+      process.env.ALIOTH_ENV = 'production'
+      expect(ctx.aliothAuth.environment('127.0.0.1')).toBe('production')
+      process.env.ALIOTH_ENV = 'local'
+      expect(ctx.aliothAuth.environment('0.0.0.0')).toBe('local')
+    } finally {
+      if (saved === undefined) { delete process.env.ALIOTH_ENV } else { process.env.ALIOTH_ENV = saved }
+    }
+  })
+
+  it('config environment beats the host hint', async () => {
+    // A second context pinned to production — config wins over loopback.
+    const prodCtx = new Context()
+    const system = await prodCtx.plugin(SystemPrompt)
+    const tools = await prodCtx.plugin(ToolRuntime)
+    const env = await prodCtx.plugin(envAlioth, { modelSource: path.join(tmpdir(), 'unused-model'), dataRoot: path.join(tmpdir(), 'unused-data') })
+    try {
+      const authPlugin = await prodCtx.plugin(auth, {
+        mode: 'open', environment: 'production', preProcRoot, deployRoot,
+      })
+      try {
+        expect(prodCtx.aliothAuth.environment('127.0.0.1')).toBe('production')
+      } finally {
+        await authPlugin.dispose()
+      }
+    } finally {
+      await env.dispose()
+      await tools.dispose()
+      await system.dispose()
+    }
+  })
+
+  it('workspaces scopes users to their own namespace and admins to all', async () => {
+    // erin is a plain user (registered after the admin); put an app in her workspace.
+    await ctx.aliothAuth.register('erin', 'password-123')
+    const appsDir = path.join(preProcRoot, 'U-erin', 'Apps', 'demo-app')
+    await mkdir(appsDir, { recursive: true })
+    await writeFile(path.join(appsDir, 'app.json'), JSON.stringify({ code: 'demo-app', name: 'Demo 应用' }))
+
+    const own = await ctx.aliothAuth.workspaces({ namespace: 'U-erin', role: 'user' })
+    expect(own.environment).toBe('local')
+    expect(own.workspaces.map(ws => ws.namespace)).toEqual(['U-erin'])
+    expect(own.workspaces[0]).toMatchObject({
+      preProcPath: path.join(preProcRoot, 'U-erin'),
+      deployPath: path.join(deployRoot, 'U-erin'),
+      apps: [{ code: 'demo-app', name: 'Demo 应用' }],
+    })
+
+    const admin = await ctx.aliothAuth.workspaces({ namespace: 'U-alice', role: 'admin' })
+    expect(admin.workspaces.map(ws => ws.namespace)).toEqual(expect.arrayContaining(['U-alice', 'U-carol', 'U-erin']))
+    expect(admin.workspaces.find(ws => ws.namespace === 'U-erin')?.apps).toEqual([{ code: 'demo-app', name: 'Demo 应用' }])
   })
 })

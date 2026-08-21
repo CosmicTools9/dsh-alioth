@@ -225,6 +225,68 @@ function successBody(action: string, token: string, namespace: string, workspace
 ${handoff}`
 }
 
+// ── workspace page (工作区 local / 应用 production) ────────────────────
+
+/** Extended chrome: wider card + list rows for the workspace browser. */
+function sendWorkspacePage(
+  response: ServerResponse,
+  environment: 'local' | 'production',
+  list: ReadonlyArray<{
+    namespace: string
+    preProcPath: string
+    deployPath: string
+    apps: ReadonlyArray<{ code: string; name: string }>
+  }>,
+): void {
+  const title = environment === 'local' ? '工作区' : '应用'
+  const rows = list.map(ws => `
+<article class="ws">
+  <header><h2>${esc(ws.namespace)}</h2>${environment === 'local'
+    ? `<span class="count">${ws.apps.length} 个应用</span>` : ''}</header>
+  ${environment === 'local' ? `
+  <p class="paths"><code>Pre-Proc/${esc(ws.namespace)}/</code></p>
+  <p class="paths"><code>Deploy/${esc(ws.namespace)}/</code></p>` : ''}
+  ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在对话中让 Alioth 助手创建</p>' : `
+  <ul class="apps">${ws.apps.map(app => `<li><span class="code">${esc(app.code)}</span>${app.name === '' ? '' : ` — ${esc(app.name)}`}</li>`).join('')}</ul>`}
+</article>`).join('')
+  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
+  response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} — Alioth AppCreator</title>
+<style>
+:root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
+--accent:#3ee6a8;--accent-2:#4fc3f7;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;
+font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;
+background-image:linear-gradient(rgba(62,230,168,.05) 1px,transparent 1px),
+linear-gradient(90deg,rgba(62,230,168,.05) 1px,transparent 1px);background-size:44px 44px}
+a{color:var(--accent-2);text-decoration:none}
+nav{display:flex;justify-content:space-between;align-items:center;
+max-width:1080px;width:100%;margin:0 auto;padding:1.25rem 1.5rem}
+.wordmark{font-family:var(--mono);font-weight:700;letter-spacing:.04em}
+.wordmark span{color:var(--accent)}
+main{flex:1;width:100%;max-width:1080px;margin:0 auto;padding:0 1.5rem 3rem}
+h1{font-size:1.4rem;margin:1rem 0 1.25rem}
+.ws{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:1.1rem 1.25rem;margin-bottom:1rem}
+.ws header{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
+.ws h2{font-family:var(--mono);font-size:1.05rem;color:var(--accent)}
+.count{font-size:.8rem;color:var(--dim)}
+.paths{font-size:.82rem;color:var(--dim);margin-top:.35rem}
+.paths code{color:var(--accent-2)}
+.dim{color:var(--dim);font-size:.88rem;margin-top:.5rem}
+.apps{list-style:none;margin-top:.6rem;display:grid;gap:.3rem}
+.apps li{font-size:.92rem}
+.apps .code{font-family:var(--mono);color:var(--text)}
+.back{margin-top:1.25rem;font-size:.85rem;color:var(--dim)}
+</style></head><body>
+<nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a></nav>
+<main><h1>${title}</h1>${rows === '' ? '<p class="dim">（空）</p>' : rows}
+<p class="back"><a href="/usercenter">← 用户中心</a> · <a href="/">返回首页</a></p></main>
+</body></html>`)
+}
+
 // ── cookies ──────────────────────────────────────────────────────────────
 /** HttpOnly session cookie (server-side authority). */
 const SESSION_COOKIE = 'alioth_session'
@@ -287,6 +349,8 @@ export function apply(ctx: Context, config: Config): void {
    * cookies are per-origin, so a same-origin "/" link would silently keep
    * the visitor unauthenticated on the GUI. */
   let guiOrigin: string | undefined
+  /** Bind host of the harness webServer (environment auto-detection hint). */
+  let webHostHint: string | undefined
   const workspaceHref = (): string => guiOrigin ?? '/'
   /** Landing capability lookup at request/tap time (optional provider). */
   const landing = (): LandingLike | undefined => {
@@ -351,7 +415,19 @@ export function apply(ctx: Context, config: Config): void {
         sendJson(response, 401, { error: 'unauthorized' })
         return
       }
-      sendJson(response, 200, user)
+      sendJson(response, 200, { ...user, environment: auth().environment(webHostHint) })
+      return
+    }
+    // Workspace browser: the environment decides the presentation — local
+    // exposes the 工作区 list (custom workspaces), production is fixed to
+    // the user's namespace shown as 应用.
+    if (request.method === 'GET' && url.pathname === '/api/workspace') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      sendJson(response, 200, await auth().workspaces({ namespace: user.namespace, role: user.role }))
       return
     }
     // Cross-origin SSO handoff: the standalone (:3900) success page
@@ -414,7 +490,19 @@ export function apply(ctx: Context, config: Config): void {
         sendAuthPage(response, 200, '注册', registerForm(''))
         return
       }
-      if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')) {
+      if (request.method === 'GET' && url.pathname === '/workspace') {
+        const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+        if (user === null) {
+          response.writeHead(302, { location: '/login' })
+          response.end()
+          return
+        }
+        const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
+        sendWorkspacePage(response, list.environment, list.workspaces)
+        return
+      }
+      if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')
+        || url.pathname === '/api/workspace' || url.pathname.startsWith('/api/workspace/')) {
         await handleAuthApi(request, response)
         return
       }
@@ -463,8 +551,29 @@ export function apply(ctx: Context, config: Config): void {
         },
       }))
       webCtx.effect(() => web.register({
+        kind: 'exact',
+        path: '/workspace',
+        handler: async (req, res) => {
+          const user = await auth().userForToken(bearerToken(req) ?? cookieToken(req))
+          if (user === null) {
+            res.writeHead(302, { location: '/login' })
+            res.end()
+            return
+          }
+          const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
+          sendWorkspacePage(res, list.environment, list.workspaces)
+        },
+      }))
+      webCtx.effect(() => web.register({
         kind: 'prefix',
         path: '/api/auth',
+        handler: async (req, res) => {
+          await handleAuthApi(req, res)
+        },
+      }))
+      webCtx.effect(() => web.register({
+        kind: 'prefix',
+        path: '/api/workspace',
         handler: async (req, res) => {
           await handleAuthApi(req, res)
         },
@@ -477,6 +586,7 @@ export function apply(ctx: Context, config: Config): void {
       }))
       if (typeof web.port === 'number') {
         guiOrigin = `http://${typeof web.host === 'string' ? web.host : '127.0.0.1'}:${web.port}`
+        webHostHint = typeof web.host === 'string' ? web.host : undefined
       }
       ctx.logger.info('auth-web-alioth: web gate mounted on webServer (login/register + /api/auth/* + index gate)')
     })

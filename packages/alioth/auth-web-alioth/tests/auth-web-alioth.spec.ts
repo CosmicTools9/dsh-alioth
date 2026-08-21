@@ -72,7 +72,11 @@ beforeAll(async () => {
   disposers.push(() => webServerPlugin.dispose())
   const landing = await ctx.plugin(landingAlioth, {})
   disposers.push(() => landing.dispose())
-  const auth = await ctx.plugin(authAlioth, { mode: 'enforce' })
+  const auth = await ctx.plugin(authAlioth, {
+    mode: 'enforce',
+    preProcRoot: path.join(dataRoot, 'pre-proc'),
+    deployRoot: path.join(dataRoot, 'deploy'),
+  })
   disposers.push(() => auth.dispose())
 
   port = 3987 + Math.floor(Math.random() * 500)
@@ -257,6 +261,101 @@ describe('web gate (real harness WebServer)', () => {
     const match = out.match(/<script>([\s\S]*?)<\/script>/)
     if (match === null) throw new Error('gate script not injected')
     expect(() => new Function(match[1]!)).not.toThrow()
+  })
+})
+
+describe('workspace surface (工作区 local / 应用 production)', () => {
+  const base = (): string => `http://127.0.0.1:${port}`
+
+  it('requires authentication for /api/workspace', async () => {
+    const response = await fetch(`${base()}/api/workspace`)
+    expect(response.status).toBe(401)
+  })
+
+  it('returns the user workspace list with AliothStudio paths (local auto-detected)', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const response = await fetch(`${base()}/api/workspace`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(response.status).toBe(200)
+    const body = await response.json() as {
+      environment: 'local' | 'production'
+      workspaces: Array<{ namespace: string; preProcPath: string; deployPath: string; apps: Array<{ code: string; name: string }> }>
+    }
+    expect(body.environment).toBe('local')
+    expect(body.workspaces).toHaveLength(1)
+    expect(body.workspaces[0]).toMatchObject({
+      namespace: 'U-carol',
+      apps: [],
+    })
+    expect(body.workspaces[0]!.preProcPath).toContain('pre-proc')
+    expect(body.workspaces[0]!.deployPath).toContain('deploy')
+  })
+
+  it('serves the workspace page (local renders 工作区 with paths)', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const page = await fetch(`${base()}/workspace`, {
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(page.status).toBe(200)
+    const html = await page.text()
+    expect(html).toContain('<h1>工作区</h1>')
+    expect(html).toContain('U-carol')
+    expect(html).toContain('Pre-Proc/U-carol/')
+    expect(html).toContain('Deploy/U-carol/')
+  })
+
+  it('redirects unauthenticated visitors from /workspace to /login', async () => {
+    const response = await fetch(`${base()}/workspace`, { redirect: 'manual' })
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toBe('/login')
+  })
+
+  it('renders 应用 instead of 工作区 when the deployment is production', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const saved = process.env.ALIOTH_ENV
+    try {
+      process.env.ALIOTH_ENV = 'production'
+      const page = await fetch(`${base()}/workspace`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+      expect(page.status).toBe(200)
+      const html = await page.text()
+      expect(html).toContain('<h1>应用</h1>')
+      expect(html).not.toContain('<h1>工作区</h1>')
+      // production hides the custom-workspace chrome: no Pre-Proc/Deploy paths
+      expect(html).not.toContain('Pre-Proc/U-carol/')
+      expect(html).not.toContain('Deploy/U-carol/')
+    } finally {
+      if (saved === undefined) { delete process.env.ALIOTH_ENV } else { process.env.ALIOTH_ENV = saved }
+    }
+  })
+
+  it('includes the resolved environment in /api/auth/me (client chip entry)', async () => {
+    const login = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const me = await fetch(`${base()}/api/auth/me`, { headers: { authorization: `Bearer ${token}` } })
+    expect(me.status).toBe(200)
+    expect(await me.json()).toMatchObject({ username: 'carol', environment: 'local' })
   })
 })
 

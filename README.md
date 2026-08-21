@@ -21,7 +21,7 @@ parameters and semantic decisions only, never artifact text.
 | `tool-alioth-meta` | `alioth_schema_info` / `alioth_schema_semantic_search` / `alioth_entity_write` — registry + embedding search (bge-small-zh, deterministic) |
 | `tool-alioth-workflow` | `alioth_workflow_step` / `alioth_workflow_complete` — AppAgent track/step/gate bridge |
 | `tool-alioth-orchestrator` | `alioth_app_create` — PTC pipeline: validate → entity → app → verify (atomic, zero LLM) |
-| `auth-alioth` | B/S auth: scrypt passwords, token sessions, namespace guard (`tools/pre-execute`) |
+| `auth-alioth` | B/S auth + workspace: scrypt passwords, token sessions, namespace guard, env auto-detect, `Pre-Proc/{ns}`+`Deploy/{ns}` workspace bootstrap |
 | `skill-alioth` | Adapter state machine, entity-validate (real dictionary data), 9-stage AppAgent machine |
 | `gen-alioth` | Artifact JSON-Schema contracts + pure generators |
 | `bundle-alioth` | One `cordis.patch.yml` mounting the whole group |
