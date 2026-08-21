@@ -65,6 +65,8 @@ beforeAll(async () => {
   await mkdir(path.join(modelDir, 'Pre-Proc', 'Alioth', '_schema'), { recursive: true })
   await writeFile(path.join(modelDir, 'backend', 'ddl', '002_isahl_meta_schema.sql'), SCHEMA_DDL)
   await writeFile(path.join(modelDir, 'skill-adapters', 'alioth-app.yaml'), ADAPTER_YAML)
+  await writeFile(path.join(modelDir, 'skill-adapters', '_runtime.yaml'),
+    'allowed_programs:\n  - bun\n  - target/debug/ontology-mapping\n')
   await writeFile(path.join(modelDir, 'Pre-Proc', 'Alioth', '_schema', 'a.schema.json'), '{}\n')
   await writeFile(
     path.join(modelDir, 'backend', 'vendor', 'alioth-gen', 'src', 'lib.rs'),
@@ -147,5 +149,25 @@ describe('alioth workflow bridge', () => {
     const result = await callTool('alioth_workflow_step', { namespace: 'alioth', app: 'demo-app' })
     if (!result.isError) throw new Error('expected alioth_workflow_step failure')
     expect(result.error.message).toContain('invalid namespace')
+  })
+
+  it('introspects the full adapter definition without touching files', async () => {
+    const value = expectOk(await callTool('alioth_workflow_info', {}))
+    expect(value.adapter).toBe('alioth-app.yaml')
+    expect(value).toMatchObject({
+      tracks: [
+        {
+          id: 'App 构建',
+          name: 'App 构建',
+          steps: [
+            { id: '1.1', tools: ['write_file'], gates: ['output_glob: Pre-Proc/{ns}/Apps/{app}/app.json'] },
+            { id: '2.1', gates: ['output_glob: Pre-Proc/{ns}/Apps/{app}/extensions/constraints.yaml'] },
+          ],
+        },
+      ],
+      runtime: { allowedPrograms: ['bun', 'target/debug/ontology-mapping'] },
+    })
+    const tracks = (value as { tracks: Array<{ steps: Array<{ instruction: string }> }> }).tracks
+    expect(String(tracks[0]!.steps[0]!.instruction)).toContain('preflight')
   })
 })

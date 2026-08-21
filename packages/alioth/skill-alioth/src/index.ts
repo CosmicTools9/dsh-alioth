@@ -8,6 +8,7 @@
 export {
   parseAdapterDocument,
   loadAdapter,
+  parseRuntimeAllowedPrograms,
   type Adapter,
   type Step,
   type StepGate,

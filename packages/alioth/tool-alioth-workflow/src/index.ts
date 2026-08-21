@@ -9,6 +9,7 @@
  */
 
 import path from 'node:path'
+import { readFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -19,6 +20,7 @@ import {
   currentStep,
   loadAdapter,
   loadRun,
+  parseRuntimeAllowedPrograms,
   saveRun,
   type Adapter,
   type GateContext,
@@ -81,6 +83,87 @@ export function apply(ctx: Context, config: Config): void {
   function gateContext(namespace: string, app: string): GateContext {
     return { preProcRoot, variables: { ns: namespace, app } }
   }
+
+  ctx.tools.register(defineTool({
+    name: 'alioth_workflow_info',
+    description:
+      `Introspect the AppAgent workflow definition for this deployment (adapter ${adapterName}): `
+      + 'every track with its steps — instruction, allowed tools, gates — plus the runtime program '
+      + 'allowlist. This is the sanctioned way to view the flow: NEVER read adapter or vendor files '
+      + 'with filesystem tools. Drive the flow step by step with alioth_workflow_step / '
+      + 'alioth_workflow_complete.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          adapter: { type: 'string', required: true },
+          tracks: {
+            type: 'array', required: true,
+            items: {
+              type: 'object', additionalProperties: false,
+              properties: {
+                id: { type: 'string', required: true },
+                name: { type: 'string', required: true },
+                steps: {
+                  type: 'array', required: true,
+                  items: {
+                    type: 'object', additionalProperties: false,
+                    properties: {
+                      id: { type: 'string', required: true },
+                      instruction: { type: 'string', required: true },
+                      tools: { type: 'array', required: true, items: { type: 'string' } },
+                      gates: { type: 'array', required: true, items: { type: 'string' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          runtime: {
+            type: 'object', required: true, additionalProperties: false,
+            properties: {
+              allowedPrograms: { type: 'array', required: true, items: { type: 'string' } },
+            },
+          },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: `AppAgent adapter ${String(value.adapter)}: ${value.tracks.length} track(s) — `
+          + value.tracks.map((track: { id: string; steps: unknown[] }) =>
+            `${track.id} (${track.steps.length} steps)`).join(', '),
+      }],
+    },
+    async execute() {
+      const adapter = await adapterFor()
+      const info = await ctx.aliothEnv.ready()
+      const runtimeSource = await readFile(path.join(info.modelDir, 'skill-adapters', '_runtime.yaml'), 'utf8').catch(() => '')
+      return {
+        adapter: adapterName,
+        tracks: adapter.tracks.map(track => ({
+          id: track.name,
+          name: track.name,
+          steps: track.steps.map(step => ({
+            id: step.id,
+            instruction: step.instruction,
+            tools: [...step.tools],
+            gates: step.gates.map(gate => gate.kind === 'output-glob'
+              ? `output_glob: ${gate.outputGlob}`
+              : `program: ${gate.program} ${gate.args.join(' ')}`),
+          })),
+        })),
+        runtime: { allowedPrograms: parseRuntimeAllowedPrograms(runtimeSource) },
+      }
+    },
+    presentCall: () => ({
+      card: 'generic',
+      title: 'AppAgent workflow info',
+      kind: 'other',
+      rawInput: {},
+    }),
+  }))
 
   ctx.tools.register(defineTool({
     name: 'alioth_workflow_step',

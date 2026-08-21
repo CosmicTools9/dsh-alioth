@@ -151,3 +151,19 @@ export async function loadAdapter(dir: string, fileName: string): Promise<Adapte
   const source = await readFile(path.join(dir, 'skill-adapters', fileName), 'utf8')
   return parseAdapterDocument(source, fileName)
 }
+
+/**
+ * Parse the runtime program allowlist from the snapshot's `_runtime.yaml`
+ * (RunCommandTool's `allowed_programs`). Missing/unreadable → empty list.
+ */
+export function parseRuntimeAllowedPrograms(content: string): string[] {
+  try {
+    const parsed = parseYaml(content) as { allowed_programs?: unknown } | null
+    if (parsed === null || typeof parsed !== 'object' || !Array.isArray(parsed.allowed_programs)) {
+      return []
+    }
+    return parsed.allowed_programs.filter((entry): entry is string => typeof entry === 'string')
+  } catch {
+    return []
+  }
+}

@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll } from 'vitest'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { parseAdapterDocument, loadAdapter, type Adapter } from '../src/adapter.ts'
+import { parseAdapterDocument, loadAdapter, parseRuntimeAllowedPrograms, type Adapter } from '../src/adapter.ts'
 import { completeCurrentStep, currentStep, initialRunState, type RunState } from '../src/state.ts'
 import { checkStepGates } from '../src/gates.ts'
 import { loadRun, saveRun } from '../src/workspace.ts'
@@ -85,6 +85,14 @@ describe('skill-alioth adapter parsing', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('parses the runtime program allowlist, tolerating missing/broken files', () => {
+    expect(parseRuntimeAllowedPrograms('allowed_programs:\n  - bun\n  - target/debug/ontology-mapping\n'))
+      .toEqual(['bun', 'target/debug/ontology-mapping'])
+    expect(parseRuntimeAllowedPrograms('allowed_programs: []')).toEqual([])
+    expect(parseRuntimeAllowedPrograms('name: x\n')).toEqual([])
+    expect(parseRuntimeAllowedPrograms('{bad yaml')).toEqual([])
   })
 })
 

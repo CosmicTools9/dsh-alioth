@@ -369,9 +369,19 @@ export function apply(ctx: Context, config: Config): void {
         ? await readdir(preProcRoot, { withFileTypes: true }).then(entries =>
           entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
         : [identity.namespace]
+      // Orphan filter (standard mode): `U-*` dirs without a matching user row
+      // are leftovers from deleted accounts or foreign instances — never show
+      // them as workspaces. Unlimited keeps the raw view (operator-controlled).
+      const userNamespaces = mode === 'standard'
+        ? (await ctx.aliothEnv.sql<{ namespace: string }>(`SELECT namespace FROM ${AUTH_SCHEMA}.users`))
+          .rows.map(row => row.namespace)
+        : []
       const workspaces: WorkspaceView[] = []
       for (const namespace of namespaceDirs) {
         if (!NAMESPACE_PATTERN_RE.test(namespace)) {
+          continue
+        }
+        if (mode === 'standard' && namespace.startsWith('U-') && !userNamespaces.includes(namespace)) {
           continue
         }
         workspaces.push({

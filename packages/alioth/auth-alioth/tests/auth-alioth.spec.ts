@@ -344,14 +344,35 @@ describe('workspace (namespace = user workspace)', () => {
   it('backfills workspace dirs for users registered before the feature existed', async () => {
     // Simulate a pre-feature user: wipe the dirs, then a workspaces() read
     // must restore them (lazy backfill on access).
-    await rm(path.join(preProcRoot, 'U-isahl'), { recursive: true, force: true })
-    await rm(path.join(deployRoot, 'U-isahl'), { recursive: true, force: true })
-    const list = await ctx.aliothAuth.workspaces({ namespace: 'U-isahl', role: 'admin' })
-    expect(list.workspaces.map(ws => ws.namespace)).toContain('U-isahl')
-    const preStat = await import('node:fs/promises').then(fs => fs.stat(path.join(preProcRoot, 'U-isahl')))
-    const deployStat = await import('node:fs/promises').then(fs => fs.stat(path.join(deployRoot, 'U-isahl')))
+    await rm(path.join(preProcRoot, 'U-carol'), { recursive: true, force: true })
+    await rm(path.join(deployRoot, 'U-carol'), { recursive: true, force: true })
+    const list = await ctx.aliothAuth.workspaces({ namespace: 'U-carol', role: 'admin' })
+    expect(list.workspaces.map(ws => ws.namespace)).toContain('U-carol')
+    const preStat = await import('node:fs/promises').then(fs => fs.stat(path.join(preProcRoot, 'U-carol')))
+    const deployStat = await import('node:fs/promises').then(fs => fs.stat(path.join(deployRoot, 'U-carol')))
     expect(preStat.isDirectory()).toBe(true)
     expect(deployStat.isDirectory()).toBe(true)
+  })
+
+  it('hides orphan U-* dirs without a user row in standard mode', async () => {
+    // A stale directory from a deleted account / foreign instance.
+    await mkdir(path.join(preProcRoot, 'U-ghost'), { recursive: true })
+    await mkdir(path.join(deployRoot, 'U-ghost'), { recursive: true })
+    const list = await ctx.aliothAuth.workspaces({ namespace: 'U-carol', role: 'admin' })
+    const names = list.workspaces.map(ws => ws.namespace)
+    expect(names).not.toContain('U-ghost')
+    expect(names).toContain('U-carol')
+    // unlimited still shows the raw view (operator-controlled)
+    const saved = process.env.ALIOTH_WORKSPACE_MODE
+    try {
+      process.env.ALIOTH_WORKSPACE_MODE = 'unlimited'
+      const raw = await ctx.aliothAuth.workspaces({ namespace: 'U-carol', role: 'admin' })
+      expect(raw.workspaces.map(ws => ws.namespace)).toContain('U-ghost')
+    } finally {
+      if (saved === undefined) { delete process.env.ALIOTH_WORKSPACE_MODE } else { process.env.ALIOTH_WORKSPACE_MODE = saved }
+    }
+    await rm(path.join(preProcRoot, 'U-ghost'), { recursive: true, force: true })
+    await rm(path.join(deployRoot, 'U-ghost'), { recursive: true, force: true })
   })
 
   it('workspaces scopes users to their own namespace in standard mode and admins to all', async () => {

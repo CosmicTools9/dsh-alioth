@@ -35,7 +35,7 @@ const log = (msg: string): void => { if (verbose) console.log(msg) }
 const EXPECTED_TOOLS = [
   'alioth_app_list', 'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure', 'alioth_app_delete',
   'alioth_schema_info', 'alioth_schema_semantic_search', 'alioth_entity_write',
-  'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_app_create',
+  'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_workflow_info', 'alioth_app_create',
   'alioth_workspace_current',
   'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
 ]
