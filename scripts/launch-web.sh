@@ -28,12 +28,14 @@ free_port() {
     fi
   done
   echo "stopping previous dsh web instance on port $PORT: $pids" >&2
+  # shellcheck disable=SC2086 # $pids carries multiple PIDs intentionally
   kill $pids 2>/dev/null || true
   for _ in $(seq 1 10); do
     if ! lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then return 0; fi
     sleep 0.3
   done
   echo "previous instance did not stop gracefully, forcing" >&2
+  # shellcheck disable=SC2086 # $pids carries multiple PIDs intentionally
   kill -9 $pids 2>/dev/null || true
   sleep 0.3
 }

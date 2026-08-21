@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/physical-tables.json",
  "description": "isahl physical table index [table, parent] + root-family common columns, generated offline from the Alioth model repo.",
- "source": "Alioth repo v10.0.0 (2026-08-19T08:06:21.920418+00:00) + vendored isahl_meta seed",
+ "source": "Alioth repo v10.0.2 (2026-08-21T03:37:26.459622+00:00) + vendored isahl_meta seed",
  "root_columns": [
   "created_at",
   "created_by_id",
@@ -971,6 +971,10 @@
    "zc_id_event"
   ],
   [
+   "zc_id_even-issue",
+   "zc_id_event"
+  ],
+  [
    "zc_id_even-log",
    "zc_id_event"
   ],
@@ -1315,6 +1319,10 @@
    "zc_id_level"
   ],
   [
+   "zc_id_leve-log",
+   "zc_id_level"
+  ],
+  [
    "zc_id_leve-org",
    "zc_id_leve-structure"
   ],
@@ -1584,6 +1592,10 @@
   ],
   [
    "zc_id_operation_rr_standard",
+   "zc_id_lifecycle_rr_non_self"
+  ],
+  [
+   "zc_id_operation_rr_task",
    "zc_id_lifecycle_rr_non_self"
   ],
   [
@@ -3399,6 +3411,10 @@
    "zc_id_tags"
   ],
   [
+   "zc_id_tags-milestone",
+   "zc_id_tags"
+  ],
+  [
    "zc_id_tags-parties",
    "zc_id_tags"
   ],
@@ -3447,24 +3463,20 @@
    "zc_id_task"
   ],
   [
-   "zc_id_task-testing",
+   "zc_id_task-design",
    "zc_id_task"
   ],
   [
-   "zc_id_task_rr_act-group",
-   "zc_id_lifecycle_rr_non_self"
+   "zc_id_task-develop",
+   "zc_id_task"
   ],
   [
-   "zc_id_task_rr_act-position",
-   "zc_id_lifecycle_rr_non_self"
+   "zc_id_task-fix",
+   "zc_id_task"
   ],
   [
-   "zc_id_task_rr_dependency",
-   "zc_id_lifecycle_rr_non_self"
-  ],
-  [
-   "zc_id_task_rr_operation",
-   "zc_id_lifecycle_rr_non_self"
+   "zc_id_task-testing",
+   "zc_id_task"
   ],
   [
    "zc_id_threads",
