@@ -16,5 +16,5 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["packages/**/src", "packages/**/tests"]
+  "include": ["packages/**/src", "packages/**/tests", "scripts", "tests"]
 }

@@ -39,7 +39,7 @@ export type ModelSpec
     | { kind: 'local'; path: string }
 
 /** The vendored frozen model version (upstream distribution stopped at v10.x). */
-export const BUILTIN_MODEL_VERSION = '10.0.0'
+const BUILTIN_MODEL_VERSION = '10.0.0'
 
 /** Parse a model-source string: `builtin`, `github:owner/repo[@ref]`, or a filesystem path. */
 export function parseModelSource(spec: string): ModelSpec {

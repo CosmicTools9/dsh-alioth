@@ -1,0 +1,23 @@
+{
+  "description": "Vendored Alioth model artifacts (Apache-2.0, The Alioth Authors). Regenerate with scripts/check-vendor.ts --update after every vendor refresh.",
+  "license": "Apache-2.0",
+  "files": {
+    "LICENSE": "a8c4aa4403f6d54cb9a0a76d6e632cd4076a4e2d644c2e8d2fa1ee5d95fcab3e",
+    "NOTICE": "59a817bb239ef1e1fe79ddc38d947725d551d3cad0d89fe631f86ffba5c6c59d",
+    "backend/ddl/002_isahl_meta_schema.sql": "2fb805c9ad2a934d6f9cd589619efd475d95bac5b7bea2524e66fc0ab7aee651",
+    "backend/ddl/003_isahl_meta_seed_collections.sql": "8bab04d5d82ec26edeec7e15a19ca85ae58c807ad991796789fc0fc9fa9f1df4",
+    "backend/ddl/004_isahl_meta_seed_fields.sql": "4e75afc89813c5ab83b9062cff41c1bb79abe3008f8b0847b71928eaa0aa5d4a",
+    "scripts/check/audit-css-framework.mjs": "53ba9576f048c5040ffff831ef6c371a635c66902301e84da91a30242af3f481",
+    "scripts/eval/evaluate-prototype-reference.ts": "7eb5d59908b5d597851caec9bd6f949eea1c58c69e76c9d55443a832aa6cb8fc",
+    "scripts/prototype-tool.js": "9d32dc8d5663e5754249a48a87ae8b92cbb3547a631b6b53a6b210701ab0c1bb",
+    "skill-adapters/_runtime.yaml": "f6ef08bdc22931b4a756c5caadfbc40586651e5967e56c779606daafdc8e633c",
+    "skill-adapters/alioth-app.yaml": "daeb345bf2698997a5bcb52a70f7d8d84b92977e6a28f8314d457913443fc2c8",
+    "skill-adapters/alioth-block.yaml": "4b51ca37da19a5054bd7d71d1d67907532ad51826569d425e95c7428571e9fd2",
+    "skill-adapters/alioth-compose.yaml": "8a3f8a8c4fdd8fd865ddb43fa73524c776841bfdd37ba887f3699f49bd52618d",
+    "skill-adapters/alioth-gui.yaml": "1692ce3bb7e444423e9180d14a86211041606e6183f2d349516de8ae1b2edd72",
+    "skill-adapters/alioth-module.yaml": "dd7b87083ced570597d08729ab805f1a466072de1ac9ad1a7fdb850fd2fc0277",
+    "skill-adapters/alioth-ontology.yaml": "630e299d3aa37ca47a0c35a5ffa73b747c9d18ebe69c4db0c90071de0673363e",
+    "skill-adapters/alioth-service.yaml": "19b036aef9bbef8d2cd3054da0d3ad92bff36574c7ffd2470c7378d708107a75",
+    "skill-adapters/spec-audit.yaml": "4de755f06c511b37c9483d42928857fb97f45484727967a7ed852ed450e0797b"
+  }
+}

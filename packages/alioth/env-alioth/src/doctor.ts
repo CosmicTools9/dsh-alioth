@@ -11,7 +11,7 @@ import type { Client } from 'pg'
 import type { ModelSnapshot } from './model-source.ts'
 import { readStamp } from './bootstrap.ts'
 
-export interface DoctorCheck {
+interface DoctorCheck {
   readonly name: string
   readonly ok: boolean
   readonly detail: string

@@ -1,0 +1,122 @@
+# Full gate matrix. Local equivalents: see package.json scripts + AGENTS.md.
+# Every job is a gate — no continue-on-error. Docker build+check lives in
+# docker.yml (heavier image job).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates (typecheck lint test coverage knip checks smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+      - name: install (frozen)
+        run: pnpm install --frozen-lockfile
+      - name: typecheck (packages + scripts + tests)
+        run: pnpm run typecheck
+      - name: lint
+        run: pnpm run lint
+      - name: test + coverage thresholds
+        run: pnpm run test:coverage
+      - name: knip (unused deps/exports/files)
+        run: pnpm exec knip
+      - name: strip-only compatibility
+        run: pnpm run check:strip-only
+      - name: vendor provenance
+        run: pnpm run check:vendor
+      - name: version + license sync
+        run: pnpm run check:versions
+      - name: composition tree assembly
+        run: pnpm run check:tree-assembly
+      - name: composition smoke (real Context, builtin model, zero network)
+        run: node --import tsx scripts/smoke-composition.ts
+
+  dicts-freshness:
+    name: semantic dicts fresh vs model repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+      - name: install (frozen)
+        run: pnpm install --frozen-lockfile
+      - name: clone the Alioth model repo
+        run: git clone --depth 1 https://github.com/CosmicTools9/Alioth "${{ github.workspace }}/../Alioth"
+      - name: anchored + fresh
+        run: pnpm run check:dicts
+        env:
+          ALIOTH_REPO: ${{ github.workspace }}/../Alioth
+
+  commitlint:
+    name: conventional commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+      - name: install (frozen)
+        run: pnpm install --frozen-lockfile
+      - name: lint commit range
+        run: |
+          RANGE="origin/${{ github.base_ref || 'main' }}..HEAD"
+          if git rev-parse --verify "$RANGE" >/dev/null 2>&1 && [ "$(git rev-list --count $RANGE)" -gt 0 ]; then
+            pnpm exec commitlint --from "origin/${{ github.base_ref || 'main' }}" --to HEAD
+          else
+            echo "no commits in range; validating HEAD"
+            git log -1 --pretty=%s | pnpm exec commitlint
+          fi
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+      - name: install (frozen)
+        run: pnpm install --frozen-lockfile
+      - name: pnpm audit (moderate floor, overrides in pnpm-workspace.yaml)
+        run: pnpm audit --audit-level=moderate
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck scripts
+        run: shellcheck scripts/*.sh
+
+  secrets:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

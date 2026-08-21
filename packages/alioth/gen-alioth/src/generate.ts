@@ -24,6 +24,8 @@ export interface AppSpec {
   readonly namespace: string
   readonly code: string
   readonly name: string
+  /** Optional human-readable one-liner (contract-declared field). */
+  readonly description?: string
   readonly version?: string
   readonly modules: readonly ModuleSpec[]
   readonly blocks?: readonly string[]
@@ -68,6 +70,33 @@ export function sourceModuleDirs(modules: readonly ModuleSpec[]): readonly strin
   return modules.map(module => `Sources/Modules/${module.id}`)
 }
 
+/**
+ * Build one module.json for an owner app. Shared by `generateApp` (all
+ * modules at creation) and app-growth paths (one module at a time); the
+ * module version follows the owning app's version.
+ * @param owner - namespace + version of the owning app.json.
+ * @param spec - module spec (id, name, optional description/icon).
+ */
+export function generateModule(
+  owner: { readonly namespace: string; readonly version: string },
+  spec: ModuleSpec,
+): Record<string, unknown> {
+  return {
+    id: spec.id,
+    namespace: owner.namespace,
+    name: spec.name,
+    category: 'app',
+    status: 'draft',
+    routePrefix: `/${spec.id}`,
+    icon: spec.icon ?? 'AppstoreOutlined',
+    hasBackend: false,
+    hasFrontend: true,
+    version: owner.version,
+    selectable: true,
+    description: spec.description ?? '',
+  }
+}
+
 /** Build the app.json object plus one module.json per module. */
 export function generateApp(spec: AppSpec): GeneratedApp {
   const version = spec.version ?? DEFAULT_VERSION
@@ -90,6 +119,7 @@ export function generateApp(spec: AppSpec): GeneratedApp {
     namespace: spec.namespace,
     name: spec.name,
     version,
+    ...(spec.description === undefined ? {} : { description: spec.description }),
     ...(brand === undefined || Object.keys(brand).length === 0 ? {} : { brand }),
     ...(spec.goal === undefined ? {} : { goal: spec.goal }),
     ...(spec.nonScope === undefined ? {} : { non_scope: [...spec.nonScope] }),
@@ -105,20 +135,7 @@ export function generateApp(spec: AppSpec): GeneratedApp {
     navigation,
     min_alioth_version: DEFAULT_MIN_ALIOTH_VERSION,
   }
-  const modules = spec.modules.map(module => ({
-    id: module.id,
-    namespace: spec.namespace,
-    name: module.name,
-    category: 'app',
-    status: 'draft',
-    routePrefix: `/${module.id}`,
-    icon: module.icon ?? 'AppstoreOutlined',
-    hasBackend: false,
-    hasFrontend: true,
-    version,
-    selectable: true,
-    description: module.description ?? '',
-  }))
+  const modules = spec.modules.map(module => generateModule({ namespace: spec.namespace, version }, module))
   return { app, modules }
 }
 

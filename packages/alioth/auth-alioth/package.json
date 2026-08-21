@@ -1,7 +1,7 @@
 {
   "name": "@dsh-alioth/auth-alioth",
-  "description": "B/S auth plugin: user registration/login/authorization with namespace isolation over the shared workspace",
-  "version": "0.0.0",
+  "description": "Auth capability plugin: ctx.aliothAuth service (register/login/sessions/namespace authorization) + tools/pre-execute and agent/pre-step guards",
+  "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -18,7 +18,6 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.8",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.8"
+    "@deepseek-ai/schemastery": "^3.18.1"
   }
 }

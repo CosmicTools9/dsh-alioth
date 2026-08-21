@@ -1,23 +1,29 @@
 {
   "name": "dsh-alioth",
   "license": "Apache-2.0",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.17.0",
+  "packageManager": "pnpm@11.22.0",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "oxlint ."
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "oxlint --fix --fix-suggestions --deny-warnings .",
+    "check:strip-only": "node --import tsx scripts/check-strip-only.ts",
+    "check:vendor": "node --import tsx scripts/check-vendor.ts",
+    "check:versions": "node --import tsx scripts/check-versions.ts",
+    "check:dicts": "node --import tsx scripts/check-semantic-dicts.ts --require-fresh",
+    "check:tree-assembly": "node --import tsx scripts/check-tree-assembly.ts",
+    "prepare": "lefthook install || echo 'lefthook skipped (no git / build env)'"
   },
   "devDependencies": {
-    "@dsh-alioth/env-alioth": "workspace:*",
-    "@dsh-alioth/tool-alioth-meta": "workspace:*",
-    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
-    "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",
+    "@commitlint/cli": "^21.2.2",
+    "@commitlint/config-conventional": "^21.2.2",
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh": "0.1.0-rc.8",
     "@deepseek-ai/dsh-agent": "0.1.0-rc.8",
@@ -36,11 +42,26 @@
     "@deepseek-ai/dsh-tools": "0.1.0-rc.8",
     "@deepseek-ai/dsh-user-approval": "0.1.0-rc.8",
     "@deepseek-ai/schemastery": "3.18.1",
+    "@dsh-alioth/auth-alioth": "workspace:*",
+    "@dsh-alioth/auth-web-alioth": "workspace:*",
+    "@dsh-alioth/landing-alioth": "workspace:*",
+    "@dsh-alioth/billing-alioth": "workspace:*",
+    "@dsh-alioth/billing-web-alioth": "workspace:*",
+    "@dsh-alioth/feedback-alioth": "workspace:*",
+    "@dsh-alioth/feedback-web-alioth": "workspace:*",
+    "@dsh-alioth/tool-feedback-alioth": "workspace:*",
+    "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth": "workspace:*",
+    "@dsh-alioth/tool-alioth-meta": "workspace:*",
+    "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",
+    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
     "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "knip": "^6.32.2",
+    "lefthook": "^2.1.10",
     "oxlint": "1.76.0",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10",
-    "@dsh-alioth/tool-alioth": "workspace:*"
+    "vitest": "^4.1.10"
   }
 }

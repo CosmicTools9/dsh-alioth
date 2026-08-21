@@ -1,0 +1,59 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": [
+    "**/vendor/**",
+    "packages/alioth/auth-web-alioth/lib/client.js"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/*.ts",
+        "tests/*.spec.ts"
+      ],
+      "project": [
+        "scripts/**/*.ts",
+        "tests/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@deepseek-ai/dsh",
+        "@deepseek-ai/dsh-agent-spine-demo",
+        "@deepseek-ai/dsh-credentials-local",
+        "@deepseek-ai/dsh-llm-deepseek",
+        "@deepseek-ai/dsh-session-persistence-jsonl",
+        "@deepseek-ai/dsh-settings-file",
+        "@deepseek-ai/dsh-tool-todo"
+      ]
+    },
+    "packages/alioth/bundle-alioth": {
+      "entry": [
+        "cordis.patch.yml"
+      ],
+      "ignoreDependencies": [
+        "@dsh-alioth/*"
+      ]
+    },
+    "packages/alioth/tool-alioth-meta": {
+      "entry": [
+        "tests/probe-semantic.ts"
+      ]
+    },
+    "packages/alioth/env-alioth": {
+      "ignoreDependencies": [
+        "@embedded-postgres/darwin-arm64",
+        "@embedded-postgres/darwin-x64",
+        "@embedded-postgres/linux-arm64",
+        "@embedded-postgres/linux-x64"
+      ]
+    },
+    "examples/*": {
+      "entry": [
+        "cordis.yml",
+        "web.patch.yml"
+      ],
+      "ignoreDependencies": [
+        "@dsh-alioth/*",
+        "@deepseek-ai/*"
+      ]
+    }
+  }
+}

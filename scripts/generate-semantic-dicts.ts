@@ -12,7 +12,7 @@
  */
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ALIOTH_REPO = process.env.ALIOTH_REPO ?? path.join(process.env.HOME ?? '', 'WorkSpace', 'Alioth')
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -82,13 +82,13 @@ function extractTables(source: string): Array<[string, string]> {
   for (const line of source.split('\n')) {
     const create = /CREATE TABLE (?:IF NOT EXISTS )?(?:isahl\.)?(\S+)/.exec(line)
     if (create !== null) {
-      current = unquote(create[1])
+      current = unquote(create[1] ?? '')
       tables.push([current, ''])
       continue
     }
     const inherits = /INHERITS\s*\(\s*(?:isahl\.)?([^)]+)\)/.exec(line)
     if (inherits !== null && current !== null) {
-      const parents = inherits[1].split(',').map(part => topLevelName(part)).filter(Boolean)
+      const parents = (inherits[1] ?? '').split(',').map(part => topLevelName(part)).filter(Boolean)
       tables[tables.length - 1] = [current, parents[0] ?? '']
       current = null
     }
@@ -107,7 +107,7 @@ function extractRootColumns(source: string): string[] {
     const create = /CREATE TABLE (?:IF NOT EXISTS )?(?:isahl\.)?(\S+)/.exec(line)
     if (create !== null) {
       if (current !== null) columnSets.set(current, columns)
-      current = unquote(create[1])
+      current = unquote(create[1] ?? '')
       columns = []
       inherits = false
       continue
@@ -119,7 +119,7 @@ function extractRootColumns(source: string): string[] {
     }
     const col = /^\s{4}([a-z_][a-z0-9_]*)\s/.exec(line)
     if (col !== null && !line.trim().startsWith('PRIMARY') && !line.trim().startsWith('UNIQUE') && !line.trim().startsWith('CONSTRAINT')) {
-      columns.push(col[1])
+      columns.push(col[1] ?? '')
     }
     if (line.trim() === ');') {
       columnSets.set(current, columns)
@@ -169,9 +169,12 @@ async function read(pathStr: string): Promise<string> {
   return readFile(pathStr, 'utf8')
 }
 
-async function main(): Promise<void> {
-  const latest = JSON.parse(await read(path.join(ALIOTH_REPO, 'latest.json'))) as { version: string; published_at: string }
-  const versionDir = path.join(ALIOTH_REPO, latest.version)
+/** Generate the three dictionaries into `targetDir`. Exported for the
+ * freshness gate (scripts/check-semantic-dicts.ts regenerates into a temp
+ * dir and diffs against the checked-in files). */
+export async function generateDicts(targetDir: string, repoDir = ALIOTH_REPO): Promise<{ source: string }> {
+  const latest = JSON.parse(await read(path.join(repoDir, 'latest.json'))) as { version: string; published_at: string }
+  const versionDir = path.join(repoDir, latest.version)
   const seeds = await read(path.join(versionDir, '003_seed_dimensions.sql'))
   const tablesDdl = await read(path.join(versionDir, '002_isahl_tables.sql'))
   const fkSeed = await read(path.join(VENDOR_DDL, '004_isahl_meta_seed_fields.sql'))
@@ -183,22 +186,22 @@ async function main(): Promise<void> {
   const rootColumns = extractRootColumns(tablesDdl)
   const refs = extractFkIndex(fkSeed)
 
-  await mkdir(DATA_DIR, { recursive: true })
+  await mkdir(targetDir, { recursive: true })
   const provenance = { source: `Alioth repo ${latest.version} (${latest.published_at}) + vendored isahl_meta seed` }
-  await writeFile(path.join(DATA_DIR, 'coordinates.json'), JSON.stringify({
+  await writeFile(path.join(targetDir, 'coordinates.json'), JSON.stringify({
     $schema: 'https://dsh-alioth.local/schemas/coordinates-dict.json',
     description: 'Alioth coordinate dictionaries, generated offline from the Alioth model repo (semantic-mapping library shipped with the plugin).',
     ...provenance,
     scene, factor, function: func,
   }, null, 1) + '\n')
-  await writeFile(path.join(DATA_DIR, 'physical-tables.json'), JSON.stringify({
+  await writeFile(path.join(targetDir, 'physical-tables.json'), JSON.stringify({
     $schema: 'https://dsh-alioth.local/schemas/physical-tables.json',
     description: 'isahl physical table index [table, parent] + root-family common columns, generated offline from the Alioth model repo.',
     ...provenance,
     root_columns: rootColumns,
     tables,
   }, null, 1) + '\n')
-  await writeFile(path.join(DATA_DIR, 'fk-index.json'), JSON.stringify({
+  await writeFile(path.join(targetDir, 'fk-index.json'), JSON.stringify({
     $schema: 'https://dsh-alioth.local/schemas/fk-index.json',
     description: 'Physical FK reference index [table, field, target, local_key] from the vendored isahl_meta seed.',
     ...provenance,
@@ -207,10 +210,34 @@ async function main(): Promise<void> {
   console.log(`coordinates: scene=${scene.length} factor=${factor.length} function=${func.length}`)
   console.log(`physical-tables: ${tables.length} tables, ${rootColumns.length} root columns`)
   console.log(`fk-index: ${refs.length} refs`)
+  return { source: provenance.source }
+}
+
+async function main(): Promise<void> {
+  const { source } = await generateDicts(DATA_DIR)
+  // Anchor: tamper-evidence for the checked-in library. The freshness gate
+  // (check-semantic-dicts.ts) verifies hashes and, when ALIOTH_REPO is set,
+  // regenerates and diffs.
+  const { createHash } = await import('node:crypto')
+  const files: Record<string, string> = {}
+  for (const name of ['coordinates.json', 'physical-tables.json', 'fk-index.json']) {
+    files[name] = createHash('sha256').update(await read(path.join(DATA_DIR, name))).digest('hex')
+  }
+  await writeFile(path.join(DATA_DIR, 'anchor.json'), JSON.stringify({
+    description: 'Semantic-library anchor: sha256 of the generated dictionaries. Regenerated by scripts/generate-semantic-dicts.ts; verified by scripts/check-semantic-dicts.ts.',
+    source,
+    files,
+  }, null, 2) + '\n')
+  console.log(`anchor.json written (3 files hashed)`)
   console.log(`written to ${DATA_DIR}`)
 }
 
-main().catch(error => {
-  console.error(error)
-  process.exitCode = 1
-})
+// CLI entry only — importing (freshness gate) must not regenerate.
+const isEntry = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isEntry) {
+  main().catch(error => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}

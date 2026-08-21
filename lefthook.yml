@@ -1,0 +1,21 @@
+# Local fast gates (CI runs the full matrix; hooks only guard the quick wins).
+# Bypass for WIP commits: git commit --no-verify
+pre-commit:
+  commands:
+    lint-staged:
+      run: pnpm exec oxlint --fix --fix-suggestions --deny-warnings --config .oxlintrc.json {staged_files}
+      glob: '*.{ts,tsx,js,mjs,cjs}'
+      # 可修复问题（含 suggestions）自动落地并重暂存；不可修复的仍 fail commit。
+      # 默认仅 correctness 规则集，suggestion 面很小（no-debugger / no-extra-boolean-cast 等）。
+      stage_fixed: true
+    strip-only:
+      run: node --import tsx scripts/check-strip-only.ts
+    versions:
+      run: node --import tsx scripts/check-versions.ts
+    vendor:
+      run: node --import tsx scripts/check-vendor.ts
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}

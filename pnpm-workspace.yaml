@@ -2,6 +2,12 @@ packages:
   - 'packages/*/*'
   - 'examples/*'
 
+# Security floors for transitive deps (audit gate). pnpm 11 reads settings
+# here, not from package.json#pnpm.
+overrides:
+  adm-zip: '>=0.6.0'
+  sharp: '>=0.35.0'
+  yaml: '>=2.8.3'
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@embedded-postgres/darwin-arm64': true
@@ -11,6 +17,7 @@ allowBuilds:
   '@google/genai': true
   esbuild: true
   koffi: true
+  lefthook: true
   node-pty: true
   onnxruntime-node: true
   protobufjs: true

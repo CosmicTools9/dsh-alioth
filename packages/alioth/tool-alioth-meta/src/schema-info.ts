@@ -82,7 +82,7 @@ ORDER BY mf.fk_collection, mf.name
 LIMIT $3`
 
 /** jsonb `config->'inherits'` arrives as a parsed JSON array or null. */
-export function toInherits(value: unknown): string[] {
+function toInherits(value: unknown): string[] {
   return Array.isArray(value) ? value.map(entry => String(entry)) : []
 }
 

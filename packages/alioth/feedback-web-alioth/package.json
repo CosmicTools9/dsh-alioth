@@ -1,0 +1,20 @@
+{
+  "name": "@dsh-alioth/feedback-web-alioth",
+  "description": "Feedback carrier: standalone HTTP server (default :14747) — annotation API with CORS allowlist, long-poll watch, and the bookmarklet overlay for on-page annotation",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@dsh-alioth/feedback-alioth": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}

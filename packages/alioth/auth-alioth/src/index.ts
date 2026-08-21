@@ -1,32 +1,27 @@
 /**
- * `@dsh-alioth/auth-alioth` — user registration, login, and authorization for
- * B/S deployments of the Alioth plugin group.
+ * `@dsh-alioth/auth-alioth` — the auth CAPABILITY for B/S deployments of the
+ * Alioth plugin group: the `ctx.aliothAuth` service (register / login /
+ * session resolution / namespace authorization / session binding) plus the
+ * two enforcement guards. HTTP surfaces live in `auth-web-alioth` (carrier).
  *
  * Model: single shared workspace, namespace-isolated users. Each user owns a
- * namespace (`u-<username>`) inside the shared preProcRoot / registry; all
+ * namespace (`U-<username>`) inside the shared preProcRoot / registry; all
  * alioth_* tools with a `namespace` parameter are guarded at the
- * `tools/pre-execute` waterfall — a user may only act on their own namespace
- * (admins span all). Credentials and sessions live in `dsh_alioth_auth`, a
- * schema SEPARATE from the registry so `resetRegistry()` never wipes users.
+ * `tools/pre-execute` waterfall, and in enforce mode every agent step of an
+ * unbound session is rejected at `agent/pre-step` (before any model call).
+ * Credentials and sessions live in `dsh_alioth_auth`, a schema SEPARATE from
+ * the registry so `resetRegistry()` never wipes users.
  *
- * HTTP surface (B/S): node:http server with
- *   POST /api/auth/register   {username, password} → {token, namespace, role}
- *   POST /api/auth/login      {username, password} → {token, namespace, role}
- *   POST /api/auth/logout     (Bearer token)
- *   GET  /api/auth/me         (Bearer token) → {username, namespace, role}
- *   GET  /                     minimal login/register page
- *
- * Guard mode: `mode: 'enforce'` requires an authenticated user for every
- * alioth tool call with a namespace argument; `mode: 'open'` (default) keeps
- * headless/unauthenticated deployments working and only checks when the call
- * carries an identity. Bootstrap admin via `ALIOTH_ADMIN_USERNAME` /
+ * Guard mode: `mode: 'enforce'` requires an authenticated, session-bound
+ * identity (deployment override `ALIOTH_AUTH_MODE=enforce` for B/S
+ * production); `mode: 'open'` (default) keeps headless/unauthenticated
+ * deployments working. Bootstrap admin via `ALIOTH_ADMIN_USERNAME` /
  * `ALIOTH_ADMIN_PASSWORD` (created on first ready when set).
  * @module @dsh-alioth/auth-alioth
  */
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { hashPassword, verifyPassword } from './password.ts'
@@ -35,12 +30,19 @@ import {
   insertSession, insertUser, sessionByTokenHash, userById, userByNamespace, userByUsername,
 } from './store.ts'
 
+export { hashPassword, verifyPassword }
+
+/** Derive the user's isolated namespace: `U-<username>` — the Alioth
+ * namespace contract requires ^[A-Z][a-zA-Z0-9-]*$ (Gateway runtime), so the
+ * prefix is uppercase. */
+export function namespaceFor(username: string): string {
+  return `U-${username}`
+}
+
 export const name = 'auth-alioth'
 export const inject = ['aliothEnv']
 
 export interface Config {
-  /** HTTP port for the auth API. */
-  readonly port: number
   /** Guard mode: 'open' keeps unauthenticated calls working (headless); 'enforce' rejects them. */
   readonly mode: 'open' | 'enforce'
   /** Session lifetime in seconds; default 7 days. */
@@ -50,7 +52,6 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
-  port: z.number().default(3900),
   mode: z.union(['open', 'enforce'] as const).default('open'),
   sessionTtlSeconds: z.number().default(7 * 24 * 3600),
   usernamePattern: z.string().default('^[a-z0-9][a-z0-9-]{2,31}$'),
@@ -72,82 +73,9 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-const USERNAME_RE = /^[a-z0-9][a-z0-9-]{2,31}$/
-
-/** Derive the user's isolated namespace: `U-<username>` — the Alioth
- * namespace contract requires ^[A-Z][a-zA-Z0-9-]*$ (Gateway runtime), so the
- * prefix is uppercase. */
-export function namespaceFor(username: string): string {
-  return `U-${username}`
-}
-
 /** Hash a session token for storage (never store the raw token). */
 export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
-}
-
-/** Parse the request body for both content types the B/S surface uses:
- * application/json (API clients) and application/x-www-form-urlencoded
- * (browser form submissions from the login/register pages). */
-function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
-    request.on('data', chunk => { chunks.push(Buffer.from(chunk)) })
-    request.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8')
-      const contentType = request.headers['content-type'] ?? ''
-      try {
-        if (contentType.includes('application/json')) {
-          resolve(JSON.parse(raw || '{}') as Record<string, unknown>)
-        } else if (contentType.includes('application/x-www-form-urlencoded')) {
-          const params = new URLSearchParams(raw)
-          const body: Record<string, unknown> = {}
-          for (const [key, value] of params.entries()) {
-            body[key] = value
-          }
-          resolve(body)
-        } else {
-          resolve({})
-        }
-      } catch (error) {
-        reject(new Error(`invalid request body: ${error instanceof Error ? error.message : String(error)}`))
-      }
-    })
-    request.on('error', reject)
-  })
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body)
-  response.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'content-length': Buffer.byteLength(payload),
-  })
-  response.end(payload)
-}
-
-function bearerToken(request: IncomingMessage): string | null {
-  const header = request.headers.authorization
-  if (header === undefined) {
-    return null
-  }
-  const match = /^Bearer\s+(.+)$/i.exec(header)
-  return match === null ? null : match[1]!
-}
-
-function sendPage(response: ServerResponse, title: string, form: string): void {
-  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-  response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
-<title>${title}</title></head><body style="font-family:system-ui;max-width:24rem;margin:4rem auto">
-<h1>Alioth B/S</h1>${form}</body></html>`)
-}
-
-function loginForm(extra: string): string {
-  return `<form method="post" action="/api/auth/login" style="display:grid;gap:0.5rem">
-<label>用户名 <input name="username" required></label>
-<label>密码 <input name="password" type="password" required></label>
-<button>登录</button></form><p>${extra}</p>
-<p><a href="/register">注册</a></p>`
 }
 
 export function apply(ctx: Context, config: Config): void {
@@ -156,6 +84,7 @@ export function apply(ctx: Context, config: Config): void {
   // deployments stay open unless asked.
   const effectiveMode: Config['mode'] = process.env.ALIOTH_AUTH_MODE === 'enforce' ? 'enforce' : config.mode
   const ttlSeconds = config.sessionTtlSeconds ?? 7 * 24 * 3600
+  const USERNAME_RE = new RegExp(config.usernamePattern ?? '^[a-z0-9][a-z0-9-]{2,31}$')
 
   // ── service: ctx.aliothAuth ────────────────────────────────────────────
   const aliothAuth = {
@@ -164,8 +93,10 @@ export function apply(ctx: Context, config: Config): void {
       if (!USERNAME_RE.test(username)) {
         throw new Error(`aliothAuth.register: username must match ${config.usernamePattern}`)
       }
-      if (password.length < 8) {
-        throw new Error('aliothAuth.register: password must be at least 8 characters')
+      // 新注册密码策略：≥8 位且同时含字母与数字（既有账号不受影响——登录
+      // 不校验复杂度，只核对哈希）。
+      if (!/^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(password)) {
+        throw new Error('aliothAuth.register: password must be at least 8 characters with at least one letter and one digit')
       }
       const existing = await userByUsername(ctx, username)
       if (existing !== null) {
@@ -265,7 +196,6 @@ export function apply(ctx: Context, config: Config): void {
       return user === null ? null : { namespace: user.namespace, role: user.role }
     },
   }
-  ctx.provide('aliothAuth', aliothAuth)
 
   // ── guard: tools/pre-execute ────────────────────────────────────────────
   ctx.on('tools/pre-execute', async (exec, next) => {
@@ -294,60 +224,27 @@ export function apply(ctx: Context, config: Config): void {
     return user?.namespace ?? null
   }
 
-  // ── HTTP server ────────────────────────────────────────────────────────
-  const server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', 'http://localhost')
-    try {
-      if (request.method === 'GET' && url.pathname === '/') {
-        sendPage(response, '登录', loginForm(''))
-        return
+  // ── guard: agent/pre-step (enforce mode) ──────────────────────────────
+  // The B/S product rule "登录才能用" lands here: the web gate bounces
+  // unauthenticated visitors at the UI layer (auth-web-alioth), and this
+  // waterfall blocks the agent loop itself (before any model call) when the
+  // session carries no bound user identity. Open mode skips it (headless).
+  if (effectiveMode === 'enforce') {
+    ctx.on('agent/pre-step', async ({ agent }, next) => {
+      const user = await aliothAuth.userForSessionId(String(agent.id))
+      if (user !== null) {
+        return next()
       }
-      if (request.method === 'GET' && url.pathname === '/register') {
-        sendPage(response, '注册', `<form method="post" action="/api/auth/register" style="display:grid;gap:0.5rem">
-<label>用户名（小写字母/数字/连字符，≥3 位）<input name="username" required></label>
-<label>密码（≥8 位）<input name="password" type="password" required></label>
-<button>注册</button></form><p><a href="/">登录</a></p>`)
-        return
-      }
-      if (request.method === 'POST' && url.pathname === '/api/auth/register') {
-        const body = await readBody(request)
-        const username = typeof body.username === 'string' ? body.username : ''
-        const password = typeof body.password === 'string' ? body.password : ''
-        const result = await aliothAuth.register(username, password)
-        sendJson(response, 201, result)
-        return
-      }
-      if (request.method === 'POST' && url.pathname === '/api/auth/login') {
-        const body = await readBody(request)
-        const username = typeof body.username === 'string' ? body.username : ''
-        const password = typeof body.password === 'string' ? body.password : ''
-        const result = await aliothAuth.login(username, password)
-        sendJson(response, 200, result)
-        return
-      }
-      if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
-        await aliothAuth.logout(bearerToken(request))
-        sendJson(response, 204, null)
-        return
-      }
-      if (request.method === 'GET' && url.pathname === '/api/auth/me') {
-        const user = await aliothAuth.userForToken(bearerToken(request))
-        if (user === null) {
-          sendJson(response, 401, { error: 'unauthorized' })
-          return
-        }
-        sendJson(response, 200, user)
-        return
-      }
-      sendJson(response, 404, { error: 'not found' })
-    } catch (error) {
-      sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
-    }
-  })
+      ctx.logger.warn(`auth-alioth: rejecting agent step — session ${String(agent.id)} is not bound to a user`)
+      return { kind: 'reject' }
+    })
+  }
+
+  ctx.provide('aliothAuth', aliothAuth)
 
   // ── lifecycle: lazy idempotent init (harness boots without a 'ready'
-  //    event — boot() awaits the Loader instead), HTTP listens immediately,
-  //    every DB entry awaits the same cached readiness promise.
+  //    event — boot() awaits the Loader instead); every DB entry awaits the
+  //    same cached readiness promise.
   let readyPromise: Promise<void> | undefined
   async function ensureReady(): Promise<void> {
     readyPromise ??= (async () => {
@@ -382,16 +279,4 @@ export function apply(ctx: Context, config: Config): void {
   aliothAuth.logout = withReady(aliothAuth.logout)
   aliothAuth.bind = withReady(aliothAuth.bind)
   aliothAuth.userForSessionId = withReady(aliothAuth.userForSessionId)
-
-  server.once('error', error => {
-    ctx.logger.error(`auth-alioth: HTTP server failed: ${error instanceof Error ? error.message : String(error)}`)
-  })
-  server.listen(config.port)
-  ctx.logger.info(`auth-alioth: B/S auth API on :${config.port} (mode ${effectiveMode})`)
-
-  // HTTP server teardown rides the registry effect path (harness plugins
-  // return void from apply; effects unwind with the context).
-  ctx.effect(() => () => {
-    server.close()
-  })
 }

@@ -2,7 +2,7 @@
   "name": "@dsh-alioth/tool-alioth",
   "license": "Apache-2.0",
   "description": "Model-facing Alioth app-artifact inspection tool for the DeepSeek Harness",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "src/index.ts",

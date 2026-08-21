@@ -92,7 +92,7 @@ export class TransformersEmbedder implements Embedder {
   }
 }
 
-export interface SemanticIndexMeta {
+interface SemanticIndexMeta {
   readonly model: string
   readonly entriesHash: string
   readonly count: number

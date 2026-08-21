@@ -14,7 +14,7 @@ FROM node:24.19-slim AS build
 # node-pty/koffi compile native bits when prebuilds are missing (linux-arm64).
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages ./packages

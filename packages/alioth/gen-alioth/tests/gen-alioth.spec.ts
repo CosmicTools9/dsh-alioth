@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXTENSION_FILES, generateApp, generateExtensions, generateService, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
+import { EXTENSION_FILES, generateApp, generateExtensions, generateModule, generateService, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
 
 /** Golden mirror: `Pre-Proc/Alioth/Apps/ai-i-need-a/app.json` (same shape as the tool-alioth fixture). */
 const GOLDEN_APP = {
@@ -153,6 +153,40 @@ describe('gen-alioth generateApp', () => {
   it('defaults an empty module list to root route', async () => {
     const { app } = generateApp({ id: '1', namespace: 'Demo', code: 'empty', name: 'Empty', modules: [] })
     expect(app.routing).toEqual({ base: '/apps/empty', defaultRoute: '/' })
+  })
+
+  it('passes description through when set and omits it when not', () => {
+    const withDescription = generateApp({
+      id: '1', namespace: 'Demo', code: 'demo', name: 'Demo', modules: [],
+      description: 'one-liner',
+    })
+    expect(withDescription.app.description).toBe('one-liner')
+    expect(validateArtifact('app', withDescription.app).valid).toBe(true)
+    const without = generateApp({ id: '1', namespace: 'Demo', code: 'demo', name: 'Demo', modules: [] })
+    expect('description' in without.app).toBe(false)
+  })
+})
+
+describe('gen-alioth generateModule', () => {
+  it('builds a contract-valid module.json following the owning app version', () => {
+    const module = generateModule({ namespace: 'Demo', version: '2.3.0' }, { id: 'alpha', name: 'A', description: 'd', icon: 'Cpu' })
+    expect(validateArtifact('module', module)).toEqual({ valid: true, errors: [] })
+    expect(module).toMatchObject({
+      id: 'alpha',
+      namespace: 'Demo',
+      name: 'A',
+      version: '2.3.0',
+      routePrefix: '/alpha',
+      icon: 'Cpu',
+      description: 'd',
+    })
+  })
+
+  it('matches the module shape generateApp produces for the same spec', () => {
+    const owner = { namespace: 'Demo', version: '0.1.0' }
+    const spec = { id: 'alpha', name: 'A', description: 'd' }
+    const { modules } = generateApp({ id: '1', ...owner, code: 'demo', name: 'Demo', modules: [spec] })
+    expect(generateModule(owner, spec)).toEqual(modules[0])
   })
 })
 

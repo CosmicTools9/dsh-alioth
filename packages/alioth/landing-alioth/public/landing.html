@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alioth AppCreator — 对话即企业应用</title>
+<style>
+:root {
+  --bg: #0a0e14;
+  --panel: #101724;
+  --line: #1e2a3a;
+  --text: #d7e0ea;
+  --dim: #7d8ca0;
+  --accent: #3ee6a8;
+  --accent-2: #4fc3f7;
+  --warn: #f2718a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0 }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.6;
+  background-image:
+    linear-gradient(rgba(62,230,168,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(62,230,168,.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+a { color: var(--accent-2); text-decoration: none }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 1.5rem }
+nav {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1.25rem 0;
+}
+.wordmark { font-family: var(--mono); font-weight: 700; letter-spacing: .04em }
+.wordmark span { color: var(--accent) }
+.btn {
+  display: inline-block; padding: .5rem 1.1rem; border-radius: 6px;
+  font-size: .92rem; border: 1px solid var(--line); color: var(--text);
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #06251a; font-weight: 600 }
+nav .btn + .btn { margin-left: .6rem }
+.hero { padding: 4rem 0 2.5rem; text-align: center }
+.hero h1 { font-size: 2.5rem; letter-spacing: .02em }
+.hero h1 em { color: var(--accent); font-style: normal }
+.hero p { color: var(--dim); max-width: 42rem; margin: 1rem auto 1.8rem }
+.stats {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: .8rem 2.4rem;
+  margin: 0 0 3rem; font-size: .85rem; color: var(--dim);
+}
+.stats b { color: var(--accent); font-family: var(--mono); font-size: 1.05rem; margin-right: .35rem }
+h2.section { font-size: 1.5rem; margin-bottom: .4rem; text-align: center }
+p.section-sub { text-align: center; color: var(--dim); margin: 0 auto 2rem; max-width: 38rem }
+section.block { margin: 0 0 3.5rem }
+.demo {
+  display: grid; grid-template-columns: 1fr 1.2fr; gap: 1.25rem;
+  margin: 2rem 0 0;
+}
+@media (max-width: 880px) { .demo { grid-template-columns: 1fr } }
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 1.25rem;
+}
+.panel h3 {
+  font-family: var(--mono); font-size: .78rem; color: var(--dim);
+  text-transform: uppercase; letter-spacing: .12em; margin-bottom: 1rem;
+}
+.bubble {
+  max-width: 85%; padding: .6rem .9rem; border-radius: 10px; margin-bottom: .8rem;
+  font-size: .95rem;
+}
+.bubble.user { background: #1b2b3f; margin-left: auto; border-bottom-right-radius: 2px }
+.bubble.bot { background: #122019; border: 1px solid var(--line); border-bottom-left-radius: 2px }
+.bubble.bot code { font-family: var(--mono); color: var(--accent); font-size: .85em }
+.pipeline { font-family: var(--mono); font-size: .86rem; list-style: none }
+.pipeline li {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .3rem 0; color: var(--dim); transition: color .3s;
+}
+.pipeline li .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line); flex: none; transition: background .3s;
+}
+.pipeline li.done { color: var(--text) }
+.pipeline li.done .dot { background: var(--accent) }
+.pipeline li.done .mark { color: var(--accent) }
+.pipeline li.active { color: var(--accent) }
+.pipeline li.active .dot { background: var(--accent); animation: pulse 1s infinite }
+.pipeline li .zh { margin-left: auto; font-family: system-ui, sans-serif; font-size: .78rem; color: var(--dim) }
+.pipeline li.final.done { color: var(--accent); font-weight: 700 }
+@keyframes pulse { 50% { opacity: .3 } }
+.chips { display: none; flex-wrap: wrap; gap: .5rem; margin-top: 1rem }
+.chips.show { display: flex }
+.chips span {
+  font-family: var(--mono); font-size: .78rem; padding: .25rem .6rem;
+  border: 1px solid var(--accent); color: var(--accent); border-radius: 999px;
+}
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem }
+@media (max-width: 880px) { .cards { grid-template-columns: 1fr 1fr } }
+@media (max-width: 560px) { .cards { grid-template-columns: 1fr } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1.1rem }
+.card h4 { font-size: 1rem; margin-bottom: .5rem; color: var(--accent-2) }
+.card p { font-size: .88rem; color: var(--dim) }
+.card p b { color: var(--warn) }
+.trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem }
+@media (max-width: 880px) { .trio { grid-template-columns: 1fr } }
+.trio .card h4 .tag { float: right; font-size: .72rem; color: var(--warn); border: 1px solid var(--warn); border-radius: 999px; padding: 0 .5rem }
+.values { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem }
+@media (max-width: 880px) { .values { grid-template-columns: 1fr } }
+.values .card { border-color: var(--accent) }
+.values .card h4 { color: var(--accent) }
+.values .card .n { font-family: var(--mono); color: var(--accent); opacity: .6; font-size: .8rem; display: block; margin-bottom: .3rem }
+/* ontology coordinate system */
+.onto { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: stretch }
+@media (max-width: 880px) { .onto { grid-template-columns: 1fr } }
+.axes { display: grid; gap: .6rem }
+.axis { display: grid; grid-template-columns: 7.5rem 1fr; gap: .8rem; align-items: center; padding: .7rem .9rem; background: var(--panel); border: 1px solid var(--line); border-radius: 8px }
+.axis b { font-family: var(--mono); color: var(--accent); font-size: .82rem }
+.axis span { font-size: .82rem; color: var(--dim) }
+.domains { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .6rem }
+.domains span {
+  font-size: .78rem; padding: .15rem .55rem; border: 1px solid var(--line);
+  border-radius: 999px; color: var(--text); background: #0d1420;
+}
+/* 2x2 positioning matrix */
+.matrix { position: relative; margin: 0 auto; max-width: 34rem; aspect-ratio: 1.35; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line) }
+.matrix .x, .matrix .y { position: absolute; font-size: .78rem; color: var(--dim) }
+.matrix .x.top { top: -.4rem; transform: translateX(-50%); left: 50% }
+.matrix .x.bottom { bottom: -.5rem; }
+.matrix .x.left { left: .2rem }
+.matrix .x.right { right: .2rem }
+.matrix .y { writing-mode: vertical-rl; left: -1.5rem; top: 50%; transform: translateY(-50%) rotate(180deg) }
+.matrix .y.bottom { writing-mode: horizontal-tb; left: -1.4rem; top: auto; bottom: -1.8rem; transform: none }
+.matrix .y.top { writing-mode: horizontal-tb; left: -1.4rem; top: -1.8rem; transform: none }
+.dot-comp { position: absolute; transform: translate(-50%, -50%); font-size: .78rem; color: var(--dim); text-align: center }
+.dot-comp i { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--dim); margin: .3rem auto 0; opacity: .7 }
+.dot-comp.us { color: var(--accent); font-weight: 700 }
+.dot-comp.us i { width: 12px; height: 12px; background: var(--accent); opacity: 1; box-shadow: 0 0 12px rgba(62,230,168,.7) }
+/* pricing ladder */
+.ladder { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem }
+@media (max-width: 880px) { .ladder { grid-template-columns: 1fr 1fr } }
+@media (max-width: 560px) { .ladder { grid-template-columns: 1fr } }
+.tier { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; display: flex; flex-direction: column }
+.tier .lv { font-family: var(--mono); font-size: .72rem; color: var(--dim); letter-spacing: .1em }
+.tier h4 { font-size: .95rem; margin: .3rem 0 .2rem }
+.tier .price { font-family: var(--mono); color: var(--accent); font-size: 1.05rem; margin: .4rem 0 }
+.tier p { font-size: .8rem; color: var(--dim); flex: 1 }
+.tier.here { border-color: var(--accent) }
+.tier.here .lv { color: var(--accent) }
+pre {
+  background: #070b11; border: 1px solid var(--line); border-radius: 10px;
+  padding: 1.25rem; overflow-x: auto; font-family: var(--mono);
+  font-size: .85rem; line-height: 1.55; margin-bottom: 3.5rem;
+}
+pre .k { color: var(--accent-2) }
+pre .s { color: var(--accent) }
+footer {
+  border-top: 1px solid var(--line); padding: 1.5rem 0 2.5rem;
+  color: var(--dim); font-size: .85rem; display: flex; justify-content: space-between;
+  flex-wrap: wrap; gap: .5rem;
+}
+footer .patent { font-family: var(--mono); font-size: .78rem }
+@media (prefers-reduced-motion: reduce) {
+  .pipeline li.active .dot { animation: none }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <div class="wordmark">Alioth<span>·</span>AppCreator</div>
+    <div>
+      <a class="btn" href="/login">登录</a>
+      <a class="btn primary" href="/register">注册</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <h1>对话，<em>即企业应用</em>。</h1>
+    <p>Alioth AppCreator 把一句自然语言变成可独立部署的企业级数据管理应用——
+       确定性九阶段流水线，产物是<b>可私有化、源码可读可改</b>的软件资产，直接导入 AliothStudio。</p>
+    <a class="btn primary" href="/register">立即开始</a>
+    <a class="btn" href="/login">已有账号登录</a>
+  </header>
+
+  <div class="stats">
+    <span><b>分钟级</b>全栈生成</span>
+    <span><b>17</b>个业务本体域</span>
+    <span><b>v10</b>Alioth 模型</span>
+    <span><b>100%</b>源码交付</span>
+    <span><b>0</b>厂商锁定</span>
+  </div>
+
+  <section class="block">
+    <h2 class="section">现状：三条路，都不通</h2>
+    <p class="section-sub">成长型企业核心业务系统的供给断裂——买得起、用得上、改得动，三者不可兼得。</p>
+    <div class="trio">
+      <div class="card"><h4>传统定制开发<span class="tag">3-6 个月起步</span></h4>
+        <p>百万级投入、交付即陈旧；维护依赖原厂商，<b>需求一变就要重新立项</b>。</p></div>
+      <div class="card"><h4>通用低代码<span class="tag">拖不出来</span></h4>
+        <p>面向简单表单与审批流；复杂数据模型、事务一致性、细粒度权限面前止步，应用<b>锁死在厂商运行时</b>。</p></div>
+      <div class="card"><h4>大厂 ERP 套件<span class="tag">重且贵</span></h4>
+        <p>功能重、实施贵、不贴合中型企业业务，大量功能闲置仍需<b>支付全套成本</b>。</p></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="section">第四条路：对话生成，源码交付</h2>
+    <p class="section-sub">业务人员描述需求 → AppAgent 确定性流水线 → 可独立部署的全栈应用。</p>
+    <div class="demo">
+      <div class="panel">
+        <h3>Dialogue</h3>
+        <div class="bubble user">帮我做一个库存管理应用</div>
+        <div class="bubble bot">已解析需求：注册实体 <code>6</code> 个，生成应用
+          <code>inventory-management</code>，九阶段全部通过。</div>
+        <div class="chips" id="chips">
+          <span>app.json</span><span>module.json</span><span>extensions/</span>
+          <span>prototype.html</span><span>Sources/</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Pipeline — deterministic, zero-LLM</h3>
+        <ul class="pipeline" id="pipeline">
+          <li class="done"><span class="dot"></span>app-creation<span class="mark">✓</span><span class="zh">应用创建</span></li>
+          <li class="done"><span class="dot"></span>semantic-analysis<span class="mark">✓</span><span class="zh">语义解析</span></li>
+          <li class="done"><span class="dot"></span>function-decomposition<span class="mark">✓</span><span class="zh">功能分解</span></li>
+          <li class="done"><span class="dot"></span>ontology-analysis<span class="mark">✓</span><span class="zh">本体分析</span></li>
+          <li class="done"><span class="dot"></span>module-creation<span class="mark">✓</span><span class="zh">模块创建</span></li>
+          <li class="done"><span class="dot"></span>block-creation<span class="mark">✓</span><span class="zh">区块创建</span></li>
+          <li class="done"><span class="dot"></span>ontology-transfer<span class="mark">✓</span><span class="zh">本体迁移</span></li>
+          <li class="done"><span class="dot"></span>service-api<span class="mark">✓</span><span class="zh">服务接口</span></li>
+          <li class="done"><span class="dot"></span>e2e-verification<span class="mark">✓</span><span class="zh">端到端验证</span></li>
+          <li class="final done"><span class="dot"></span>published<span class="mark">✓</span><span class="zh">发布</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="section">与「运行时型」低代码的本质区别</h2>
+    <p class="section-sub">他们出租平台能力，我们交付软件资产。</p>
+    <div class="values">
+      <div class="card"><span class="n">01</span><h4>分钟级生成完整应用</h4>
+        <p>数据库 + 后端 + 前端 + 权限 + 审计一次产出，编译验证后交付——对比传统开发 3-6 个月。</p></div>
+      <div class="card"><span class="n">02</span><h4>生成的是源码，不是配置黑盒</h4>
+        <p>产物为独立部署包，不依赖平台运行时；企业 IT 团队可审计、可二次开发，无厂商锁定。</p></div>
+      <div class="card"><span class="n">03</span><h4>企业级能力内建</h4>
+        <p>NGAC 细粒度数据权限、全链路审计、基于交易对称性的数据一致性保障——满足核心业务系统的合规与风控。</p></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="section">护城河：核心业务数据的统一建模</h2>
+    <p class="section-sub">AI 应用生成的竞争焦点正从「生成能力」转向「完整业务交付」——而交付的深水区是核心数据的统一建模层。
+       Alioth 模型以三维正交坐标系把业务域纳入同一本体，生成的一切应用天然共享统一数据底座。</p>
+    <div class="onto">
+      <div class="panel">
+        <h3>Ontology coordinates</h3>
+        <div class="axes">
+          <div class="axis"><b>Scene 场景</b><span>业务发生的地方——订单履约、库存周转、采购寻源…</span></div>
+          <div class="axis"><b>Factor 要素</b><span>参与交易的业务对象——商品、仓、承运商、账期…</span></div>
+          <div class="axis"><b>Function 职能</b><span>对象上可执行的动作与约束——入库、核销、调拨…</span></div>
+        </div>
+        <div class="domains">
+          <span>订单</span><span>库存</span><span>采购</span><span>运输</span><span>计划</span><span>渠道</span>
+          <span>生产</span><span>质量</span><span>成本</span><span>结算</span><span>资产</span><span>人事</span>
+          <span>… 17 个业务域</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Positioning</h3>
+        <div class="matrix">
+          <span class="y top">源码交付 · 私有化</span>
+          <span class="y bottom">平台云托管</span>
+          <span class="x left">轻量应用</span>
+          <span class="x right">核心业务系统</span>
+          <div class="dot-comp" style="left:22%; top:72%">AI 零代码<br>秒悟 / bolt.new<i></i></div>
+          <div class="dot-comp" style="left:70%; top:72%">大厂 ERP<i></i></div>
+          <div class="dot-comp" style="left:22%; top:25%">通用低代码<i></i></div>
+          <div class="dot-comp us" style="left:78%; top:22%">AliothStudio<br>AppCreator<i></i></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="section">能力内构</h2>
+    <p class="section-sub">确定性工程，不靠模型即兴发挥。</p>
+    <div class="cards">
+      <div class="card"><h4>语义对齐</h4>
+        <p>bge-small-zh 向量检索跨语言 grounding，自然语言概念确定性映射到注册表术语。</p></div>
+      <div class="card"><h4>契约校验生成</h4>
+        <p>产物由 gen-alioth 程序化生成并通过 JSON Schema 契约校验，非 LLM 自由文本。</p></div>
+      <div class="card"><h4>Namespace 隔离</h4>
+        <p>每个用户独占 <code>U-&lt;username&gt;</code> 命名空间，工具调用前置鉴权。</p></div>
+      <div class="card"><h4>确定性工作流门禁</h4>
+        <p>Track/Step 状态机 + 产物 glob 与程序门禁，主管线零 LLM 调用。</p></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="panel" style="padding:0;background:none;border:none">
+      <h3 style="margin-bottom:.6rem">Artifact — app.json</h3>
+      <pre>{
+  <span class="k">"namespace"</span>: <span class="s">"U-demo"</span>,
+  <span class="k">"min_alioth_version"</span>: <span class="s">"10.0.0"</span>,
+  <span class="k">"config"</span>: {
+    <span class="k">"modules"</span>: [<span class="s">"inventory"</span>],
+    <span class="k">"blocks"</span>: [<span class="s">"stock-list"</span>, <span class="s">"stock-form"</span>]
+  },
+  <span class="k">"permissions"</span>: {
+    <span class="k">"inventory:read"</span>: <span class="s">"查看库存"</span>,
+    <span class="k">"inventory:write"</span>: <span class="s">"维护库存"</span>
+  },
+  <span class="k">"routing"</span>: { <span class="k">"/inventory"</span>: <span class="s">"stock-list"</span> }
+}</pre>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="section">从社区版到私有化</h2>
+    <p class="section-sub">开源建标准，原厂做企业市场。</p>
+    <div class="ladder">
+      <div class="tier here"><span class="lv">L0 · 本站</span><h4>AppCreator 社区版</h4><span class="price">开源免费</span>
+        <p>对话生成能力全开放——Alioth 模型的应用范例，注册即用。</p></div>
+      <div class="tier"><span class="lv">L1</span><h4>AppCreator 订阅</h4><span class="price">¥1,399/月</span>
+        <p>个人开发者与小团队的规模化引擎。</p></div>
+      <div class="tier"><span class="lv">L2</span><h4>源码下载授权</h4><span class="price">¥4,999 起/次</span>
+        <p>把「源码交付」差异化直接变现，按在线验证资源阶梯计价。</p></div>
+      <div class="tier"><span class="lv">L3</span><h4>AliothStudio 私有化</h4><span class="price">¥499,999</span>
+        <p>中大型企业核心业务系统，含闭源模型定制与演化工具。</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Alioth 模型 v10.0.0 · Apache-2.0 · 由 DeepSeek Harness 驱动</span>
+    <span class="patent">发明专利申请已受理 2026108466144 · <a href="/login">登录</a> · <a href="/register">注册</a></span>
+  </footer>
+</div>
+<script>
+(function () {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    document.getElementById('chips').classList.add('show')
+    return
+  }
+  var items = Array.prototype.slice.call(document.querySelectorAll('#pipeline li'))
+  var chips = document.getElementById('chips')
+  var i = 0
+  function reset() {
+    items.forEach(function (li) { li.classList.remove('done', 'active') })
+    chips.classList.remove('show')
+    i = 0
+  }
+  function tick() {
+    if (i > 0) {
+      items[i - 1].classList.remove('active')
+      items[i - 1].classList.add('done')
+    }
+    if (i === items.length) {
+      chips.classList.add('show')
+      window.setTimeout(function () { reset(); tick() }, 2600)
+      return
+    }
+    items[i].classList.add('active')
+    i++
+    window.setTimeout(tick, i === 1 ? 600 : 420)
+  }
+  reset()
+  tick()
+})()
+</script>
+</body>
+</html>

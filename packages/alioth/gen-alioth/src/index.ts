@@ -6,4 +6,4 @@
  */
 
 export { validateArtifact, validateArtifactWith, type ArtifactKind, type ArtifactSchemas, type ValidationResult } from './validate.ts'
-export { generateApp, generateExtensions, generateExtension, generateService, sourceModuleDirs, sourceServiceDirs, EXTENSION_FILES, type AppSpec, type GeneratedApp, type ModuleSpec, type NavigationGroup, type ServiceSpec, type ServiceEntitySpec } from './generate.ts'
+export { generateApp, generateModule, generateExtensions, generateExtension, generateService, sourceModuleDirs, sourceServiceDirs, EXTENSION_FILES, type AppSpec, type GeneratedApp, type ModuleSpec, type NavigationGroup, type ServiceSpec, type ServiceEntitySpec } from './generate.ts'

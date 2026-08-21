@@ -1,7 +1,13 @@
 node_modules/
 lib/
+# Exception: auth-web-alioth's browser half is a HAND-AUTHORED closure-factory
+# artifact (no build step exists for it) — it must ship with the source.
+!packages/alioth/auth-web-alioth/lib/
 dist/
 .sessions/
 *.log
 .DS_Store
 .env
+
+# TypeScript incremental build info
+*.tsbuildinfo

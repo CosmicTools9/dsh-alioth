@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -44,7 +44,6 @@ CREATE TABLE isahl_meta.meta_fields (
 let ctx: Context
 const disposers: Array<() => Promise<void>> = []
 let preProcRoot: string
-let port: number
 let counter = 0
 
 function callTool(name: string, args: unknown, agent?: Agent) {
@@ -90,10 +89,7 @@ beforeAll(async () => {
   const appTool = await ctx.plugin(toolAlioth, { preProcRoot })
   disposers.push(() => appTool.dispose())
 
-  // Port: bind to 0 → kernel-assigned; the plugin reads config.port before
-  // listen, so pick a free port by probing.
-  port = 3987 + Math.floor(Math.random() * 500)
-  const authPlugin = await ctx.plugin(auth, { port, mode: 'enforce' })
+  const authPlugin = await ctx.plugin(auth, { mode: 'enforce' })
   disposers.push(() => authPlugin.dispose())
 }, 120_000)
 
@@ -129,6 +125,8 @@ describe('auth service', () => {
   it('rejects duplicate usernames and weak passwords', async () => {
     await expect(ctx.aliothAuth.register('alice', 'another-pass-1')).rejects.toThrow(/already taken/)
     await expect(ctx.aliothAuth.register('bob', 'short')).rejects.toThrow(/at least 8/)
+    await expect(ctx.aliothAuth.register('bob2', 'password-only')).rejects.toThrow(/at least one letter and one digit/)
+    await expect(ctx.aliothAuth.register('bob3', '12345678')).rejects.toThrow(/at least one letter and one digit/)
     await expect(ctx.aliothAuth.register('BOB', 'password-123')).rejects.toThrow(/must match/)
   })
 
@@ -143,71 +141,6 @@ describe('auth service', () => {
     const login = await ctx.aliothAuth.login('alice', 'password-123')
     await ctx.aliothAuth.logout(login.token)
     expect(await ctx.aliothAuth.userForToken(login.token)).toBeNull()
-  })
-})
-
-describe('B/S HTTP surface (real server)', () => {
-  const base = (): string => `http://127.0.0.1:${port}`
-
-  it('serves the login page (GET /)', async () => {
-    const response = await fetch(`${base()}/`)
-    expect(response.status).toBe(200)
-    const html = await response.text()
-    expect(html).toContain('<form')
-    expect(html).toContain('/api/auth/login')
-  })
-
-  it('registers via browser form submission (urlencoded)', async () => {
-    const form = new URLSearchParams({ username: 'carol', password: 'password-789' })
-    const response = await fetch(`${base()}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: form.toString(),
-    })
-    expect(response.status).toBe(201)
-    const body = await response.json() as { token: string; namespace: string }
-    expect(body.namespace).toBe('U-carol')
-    expect(body.token).toMatch(/^[0-9a-f]{64}$/)
-  })
-
-  it('logs in via JSON API and reads /me', async () => {
-    const login = await fetch(`${base()}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
-    })
-    expect(login.status).toBe(200)
-    const session = await login.json() as { token: string }
-    const me = await fetch(`${base()}/api/auth/me`, {
-      headers: { authorization: `Bearer ${session.token}` },
-    })
-    expect(me.status).toBe(200)
-    expect(await me.json()).toMatchObject({ username: 'carol', namespace: 'U-carol', role: 'user' })
-  })
-
-  it('rejects invalid credentials over HTTP', async () => {
-    const response = await fetch(`${base()}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'carol', password: 'wrong-password' }),
-    })
-    expect(response.status).toBe(400)
-    expect((await response.json() as { error: string }).error).toContain('invalid credentials')
-  })
-
-  it('logs out over HTTP and the token stops working', async () => {
-    const login = await fetch(`${base()}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
-    })
-    const { token } = await login.json() as { token: string }
-    await fetch(`${base()}/api/auth/logout`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}` },
-    })
-    const me = await fetch(`${base()}/api/auth/me`, { headers: { authorization: `Bearer ${token}` } })
-    expect(me.status).toBe(401)
   })
 })
 
@@ -275,5 +208,27 @@ describe('namespace authorization guard', () => {
     })
     if (!result.isError) throw new Error('expected denial for unauthenticated call')
     expect(result.error.message).toContain('not authorized')
+  })
+
+  it('rejects agent steps for unbound sessions, passes bound ones (enforce)', async () => {
+    const rejected = await ctx.waterfall('agent/pre-step', {
+      agent: fakeAgent('unbound-session'),
+      messages: [],
+      turn: 1,
+      step: 1,
+      signal: new AbortController().signal,
+    }, async () => ({ kind: 'enter' as const, messages: [] }))
+    expect(rejected.kind).toBe('reject')
+
+    const { token } = await ctx.aliothAuth.register('dave', 'password-123')
+    await ctx.aliothAuth.bind(token, 'bound-session')
+    const passed = await ctx.waterfall('agent/pre-step', {
+      agent: fakeAgent('bound-session'),
+      messages: [],
+      turn: 1,
+      step: 1,
+      signal: new AbortController().signal,
+    }, async () => ({ kind: 'enter' as const, messages: [] }))
+    expect(passed.kind).toBe('enter')
   })
 })

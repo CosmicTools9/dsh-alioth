@@ -1,0 +1,730 @@
+[
+  {
+    "name": "alioth_app_configure",
+    "description": "Programmatic app enrichment and growth: merge brand / navigation / routing / permissions / goal / non_scope into an existing app.json AND add modules (each new module gets a contract-valid module.json plus a Sources/Modules dir and joins config.modules and navigation) or replace blocks. Contract-validates before write. Deterministic — no LLM generation; the model supplies structured parameters only. Idempotent: fields not provided are left untouched; provided fields replace; re-adding an existing module id is a no-op. Refuses to write when the merged app.json fails its contract. Use this instead of writing app.json by hand.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "app": {
+          "type": "string"
+        },
+        "modules": {
+          "type": "array",
+          "description": "New module specs to add to the app (existing ids are no-ops).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "description": "Replaces config.blocks wholesale.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "brand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "type": "string"
+            },
+            "logo": {
+              "type": "string"
+            }
+          }
+        },
+        "navigation": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "modules": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "group",
+              "modules"
+            ]
+          }
+        },
+        "defaultRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "adminRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "base": {
+          "type": "string"
+        },
+        "defaultRoute": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle status, e.g. \"developing\" or \"archived\" (contract-declared field)."
+        },
+        "goal": {
+          "type": "string"
+        },
+        "nonScope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "namespace",
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "alioth_app_create",
+    "description": "Programmatic end-to-end app creation: validates inputs, registers any missing entities (alioth_entity_write), writes the contract-validated artifact tree (alioth_app_write), and verifies by reading it back (alioth_app_inspect). All steps run through the tool registry — approvals and gates apply per step. Semantic alignment is NOT done here: align concepts to registry entities with alioth_schema_semantic_search first and pass the resolved entity references as `entities`. Fails atomically before writing when any referenced entity does not exist and is not declared.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Alioth namespace, e.g. \"Alioth\"."
+        },
+        "code": {
+          "type": "string",
+          "description": "App code (directory under Apps/)."
+        },
+        "name": {
+          "type": "string",
+          "description": "App display name."
+        },
+        "modules": {
+          "type": "array",
+          "description": "Module specs (as alioth_app_write).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "entities": {
+          "type": "array",
+          "description": "New entities to register (alioth_entity_write semantics). Existing entities: reference them implicitly via field targetTable.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "table": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "inherits": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "category": {
+                "type": "string"
+              },
+              "coordinates": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "scene": {
+                    "type": "string"
+                  },
+                  "factor": {
+                    "type": "string"
+                  },
+                  "function": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "scene",
+                  "factor",
+                  "function"
+                ]
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "category": {
+                      "type": "string"
+                    },
+                    "dataType": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "targetTable": {
+                      "type": "string"
+                    },
+                    "localKey": {
+                      "type": "string"
+                    },
+                    "junctionTable": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "category",
+                    "dataType"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "table",
+              "name"
+            ]
+          }
+        }
+      },
+      "required": [
+        "namespace",
+        "code",
+        "name",
+        "modules"
+      ]
+    }
+  },
+  {
+    "name": "alioth_app_delete",
+    "description": "Permanently delete an Alioth app artifact tree (app.json, modules, extensions, Sources) under Pre-Proc/{namespace}/Apps/{app}/. Destructive and irreversible: requires confirm: true, fails when the app does not exist, and routes through the approval seam when the deployment sets approvalMode=required. List and inspect before deleting; prefer alioth_app_configure status=archived for soft retirement.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Alioth namespace, e.g. \"Alioth\". Letters, digits, hyphens only."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code as in the directory name under Apps/. Letters, digits, hyphens only."
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "Must be true; the delete is irreversible."
+        }
+      },
+      "required": [
+        "namespace",
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "alioth_app_inspect",
+    "description": "Inspect an Alioth app artifact (app.json) under the configured Pre-Proc tree. Returns the app code, version, namespace, status, description, brand, goal, non-scope, required modules and blocks, routing, navigation groups, roles, and any missing required fields — the full readback of everything app_write and app_configure can set. Use this before creating or extending an Alioth app so the model reads the real artifact — never guess an app's contents.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Alioth namespace, e.g. \"Alioth\". Letters, digits, hyphens only."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code as in the directory name under Apps/, e.g. \"ai-i-need-a\". Letters, digits, hyphens only."
+        }
+      },
+      "required": [
+        "namespace",
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "alioth_app_list",
+    "description": "Enumerate Alioth apps under the configured Pre-Proc tree. With `namespace`, lists the apps of that namespace; without it, lists every namespace and its apps. Each app entry carries code, name, version, status, module ids, and contract validity — invalid artifacts are flagged, not hidden. Use this to discover existing apps before creating or extending one; never guess an app code.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Optional namespace filter, e.g. \"Alioth\". Letters, digits, hyphens only; omitted = all namespaces."
+        }
+      }
+    }
+  },
+  {
+    "name": "alioth_app_write",
+    "description": "Generate and persist a validated Alioth app artifact tree: app.json, module.json per module, extensions/*.yaml skeletons, and Sources/Modules/* directories — all under Pre-Proc/{namespace}/Apps/{code}/. Generated app.json/module.json always pass the in-repo contracts before anything is written. Refuses to overwrite an existing app: inspect it first. Requires approval when the deployment sets approvalMode=required.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Alioth namespace, e.g. \"Alioth\". Letters, digits, hyphens only."
+        },
+        "code": {
+          "type": "string",
+          "description": "New app code (directory name under Apps/). Letters, digits, hyphens only."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable app name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional one-line app description (contract-declared field)."
+        },
+        "modules": {
+          "type": "array",
+          "description": "Module specs: id (hyphenated), name, optional description/icon.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          }
+        },
+        "blocks": {
+          "type": "array",
+          "description": "Block ids to declare in config.blocks.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "navigation": {
+          "type": "array",
+          "description": "Navigation groups; defaults to one 系统管理 group over all modules.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string"
+              },
+              "modules": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "group",
+              "modules"
+            ]
+          }
+        },
+        "defaultRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "adminRoles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "version": {
+          "type": "string",
+          "description": "App version; default 0.1.0."
+        },
+        "base": {
+          "type": "string",
+          "description": "Routing base; default /apps/{code}."
+        },
+        "defaultRoute": {
+          "type": "string",
+          "description": "Default route; default first module."
+        },
+        "brand": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "primary": {
+              "type": "string",
+              "description": "Primary brand color (hex)."
+            },
+            "logo": {
+              "type": "string",
+              "description": "Logo asset path."
+            }
+          }
+        },
+        "goal": {
+          "type": "string",
+          "description": "App goal (17-field alignment)."
+        },
+        "nonScope": {
+          "type": "array",
+          "description": "Explicit non-scope statements.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "namespace",
+        "code",
+        "name",
+        "modules"
+      ]
+    }
+  },
+  {
+    "name": "alioth_entity_write",
+    "description": "Register a new business entity on an existing isahl physical table (isahl forbids CREATE TABLE): INSERTs meta_collections + meta_fields rows. Every definition passes the write-path validators first — physical table existence, naming, conflicts, inheritance (exists/acyclic/depth), reference integrity (local_key vs the FK index), and real coordinate-dictionary codes; any violation fails the whole write with all issues listed. Requires approval when the deployment sets approvalMode=required. Query the registry with alioth_schema_info / alioth_schema_semantic_search before defining; pick an unregistered physical table (list: schema_info entities) for the new entity. NOTE: registration is a consumption-side extension of the bootstrapped registry — this plugin cannot advance the Alioth model (no new physical tables, no version changes); the registry is rebuilt from the published baseline on model refresh.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "isahl physical table name the entity maps onto (e.g. zc_id_purchase-order)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Business entity name (e.g. 采购订单)."
+        },
+        "inherits": {
+          "type": "array",
+          "description": "Parent tables/entities (e.g. zc_id_object). Depth is validated against the snapshot limit.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "category": {
+          "type": "string",
+          "description": "Business category name stored in config.category (e.g. 交易信息)."
+        },
+        "coordinates": {
+          "type": "object",
+          "description": "Ontology coordinates; codes are validated against the real dictionary.",
+          "additionalProperties": false,
+          "properties": {
+            "scene": {
+              "type": "string"
+            },
+            "factor": {
+              "type": "string"
+            },
+            "function": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scene",
+            "factor",
+            "function"
+          ]
+        },
+        "fields": {
+          "type": "array",
+          "description": "Fields to register. Reference fields (category=reference) declare targetTable and optionally localKey (physical FK column, checked against the FK index) or junctionTable.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "dataType": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "targetTable": {
+                "type": "string"
+              },
+              "localKey": {
+                "type": "string"
+              },
+              "junctionTable": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "category",
+              "dataType"
+            ]
+          }
+        }
+      },
+      "required": [
+        "table",
+        "name"
+      ]
+    }
+  },
+  {
+    "name": "alioth_feedback_ack",
+    "description": "认领一条批注：标记 acknowledged 并附处理中说明，防止其他消费方重复认领。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "批注 id"
+        },
+        "reply": {
+          "type": "string",
+          "description": "处理中说明"
+        }
+      },
+      "required": [
+        "id"
+      ]
+    }
+  },
+  {
+    "name": "alioth_feedback_dismiss",
+    "description": "不处理并结案一条批注（附原因）；终态后不可再流转。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "批注 id"
+        },
+        "reply": {
+          "type": "string",
+          "description": "不处理原因（必填）"
+        }
+      },
+      "required": [
+        "id",
+        "reply"
+      ]
+    }
+  },
+  {
+    "name": "alioth_feedback_pending",
+    "description": "列出所有未处理的页面批注（pending/acknowledged，新→旧）：comment、url、elementPath、cssClasses。进入批注消费循环前先调用它。",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "alioth_feedback_resolve",
+    "description": "结案一条批注：必须携带修复要点 reply；终态后不可再流转。",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "批注 id"
+        },
+        "reply": {
+          "type": "string",
+          "description": "已修复的要点说明（必填）"
+        }
+      },
+      "required": [
+        "id",
+        "reply"
+      ]
+    }
+  },
+  {
+    "name": "alioth_schema_info",
+    "description": "Query the Alioth entity registry (isahl_meta). Actions: \"entities\" — list collections (optional substring `query` on table/name, exact `category`); \"entity\" — one collection's fields (`collection` = table_name); \"search-fields\" — fields by substring on name/title (`query`). Use before defining or referencing any entity/field; the registry is the structural truth. Dev-seed test entities (names ending -testing/-test) are hidden by default (`filteredTesting` reports how many); pass `includeTesting` to see them. Returns at most `limit` rows (default 20, max 100).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "One of: entities, entity, search-fields."
+        },
+        "query": {
+          "type": "string",
+          "description": "Substring filter (entities: table_name or name; search-fields: field name or title)."
+        },
+        "category": {
+          "type": "string",
+          "description": "entities only: exact category name from config.category.name (e.g. \"交易信息\")."
+        },
+        "collection": {
+          "type": "string",
+          "description": "entity only: collection table_name, e.g. \"zc_id_inventory\"."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max rows (default 20, max 100)."
+        },
+        "includeTesting": {
+          "type": "boolean",
+          "description": "entities/search-fields only: include dev-seed test entities (table names ending -testing/-test); default false."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "alioth_schema_semantic_search",
+    "description": "Semantic search over the Alioth entity registry — covers synonyms and cross-language terms that literal matching misses (e.g. \"库存余额\" or \"inventory balance\" hits 库存-账户金额). Embeds registry terms with a multilingual model; first use downloads the model and builds an index under the data root (offline afterwards). Use for near-miss concepts; for exact names use alioth_schema_info.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Free-form concept description in any language (e.g. \"库存余额\", \"purchase order\")."
+        },
+        "topK": {
+          "type": "number",
+          "description": "Max hits (default 10, max 50)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Restrict to \"entity\" or \"field\"."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "alioth_workflow_complete",
+    "description": "Run the current workflow step's gates for an app (adapter alioth-app.yaml): artifact globs are checked on disk, program gates execute through the deployment runner. All gates must pass; the state machine then advances and the next step is returned. On gate failure nothing advances and every failed gate is listed.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Alioth namespace, e.g. \"Alioth\"."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code (directory under Apps/)."
+        }
+      },
+      "required": [
+        "namespace",
+        "app"
+      ]
+    }
+  },
+  {
+    "name": "alioth_workflow_step",
+    "description": "Show the current AppAgent workflow step for an app (adapter alioth-app.yaml): the step's instruction, allowed tools, and gates. Call this at the start of each step and after alioth_workflow_complete advances. A finished run returns finished=true. PROGRAMMATIC-FIRST: the instruction is context — artifact content is generated by programmatic tools (alioth_app_write / alioth_app_configure / alioth_entity_write); write_file is NOT available for artifacts. Supply structured parameters, never raw JSON.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Alioth namespace, e.g. \"Alioth\"."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code (directory under Apps/)."
+        }
+      },
+      "required": [
+        "namespace",
+        "app"
+      ]
+    }
+  }
+]

@@ -20,14 +20,23 @@ import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as workflow from '@dsh-alioth/tool-alioth-workflow'
 import * as orchestrator from '@dsh-alioth/tool-alioth-orchestrator'
+import * as authAlioth from '@dsh-alioth/auth-alioth'
+import * as authWebAlioth from '@dsh-alioth/auth-web-alioth'
+import * as landingAlioth from '@dsh-alioth/landing-alioth'
+import * as billingAlioth from '@dsh-alioth/billing-alioth'
+import * as billingWebAlioth from '@dsh-alioth/billing-web-alioth'
+import * as feedbackAlioth from '@dsh-alioth/feedback-alioth'
+import * as feedbackWebAlioth from '@dsh-alioth/feedback-web-alioth'
+import * as toolFeedbackAlioth from '@dsh-alioth/tool-feedback-alioth'
 
 const verbose = process.argv.includes('--verbose')
 const log = (msg: string): void => { if (verbose) console.log(msg) }
 
 const EXPECTED_TOOLS = [
-  'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure',
+  'alioth_app_list', 'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure', 'alioth_app_delete',
   'alioth_schema_info', 'alioth_schema_semantic_search', 'alioth_entity_write',
   'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_app_create',
+  'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
 ]
 
 const ctx = new Context()
@@ -54,6 +63,23 @@ try {
   disposers.push(() => wf.dispose())
   const orch = await ctx.plugin(orchestrator, {})
   disposers.push(() => orch.dispose())
+  const landingPlugin = await ctx.plugin(landingAlioth, {})
+  disposers.push(() => landingPlugin.dispose())
+  const authPlugin = await ctx.plugin(authAlioth, { mode: 'open' })
+  disposers.push(() => authPlugin.dispose())
+  const authWebPlugin = await ctx.plugin(authWebAlioth, { port: 3902 })
+  disposers.push(() => authWebPlugin.dispose())
+  const billingPlugin = await ctx.plugin(billingAlioth, {})
+  disposers.push(() => billingPlugin.dispose())
+  const billingWebPlugin = await ctx.plugin(billingWebAlioth, {})
+  disposers.push(() => billingWebPlugin.dispose())
+  const fbStore = await ctx.plugin(feedbackAlioth, {})
+  disposers.push(() => fbStore.dispose())
+  const fbWeb = await ctx.plugin(feedbackWebAlioth, { port: 14747 })
+  disposers.push(() => fbWeb.dispose())
+  const fbTools = await ctx.plugin(toolFeedbackAlioth, {})
+  disposers.push(() => fbTools.dispose())
+
 
   // 1. Tool registration
   const registered = new Set(ctx.tools.schemas().map(schema => schema.name))

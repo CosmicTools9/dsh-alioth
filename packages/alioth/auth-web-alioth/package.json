@@ -1,0 +1,32 @@
+{
+  "name": "@dsh-alioth/auth-web-alioth",
+  "description": "B/S auth surface carrier: standalone HTTP server + webServer-mounted routes, cookies, login gate, and the client user chip — over the auth-alioth capability",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web"
+    }
+  },
+  "dependencies": {
+    "@dsh-alioth/auth-alioth": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-host-webserver": "0.1.0-rc.8"
+  }
+}

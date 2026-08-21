@@ -27,17 +27,43 @@
       assumptions against returned rows, never a guess.
 
 - insert:
+    - id: landing-alioth
+      name: '@dsh-alioth/landing-alioth'
+      config: {}
     - id: auth-alioth
-      plugin: '@dsh-alioth/auth-alioth'
+      name: '@dsh-alioth/auth-alioth'
+      config:
+        mode: open
+    - id: auth-web-alioth
+      name: '@dsh-alioth/auth-web-alioth'
       config:
         port: 3900
-        mode: open
     - id: env-alioth
       name: '@dsh-alioth/env-alioth'
       config:
         modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'builtin'"
         databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
         dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
+
+    - id: billing-alioth
+      name: '@dsh-alioth/billing-alioth'
+      config: {}
+    - id: billing-web-alioth
+      name: '@dsh-alioth/billing-web-alioth'
+      config: {}
+
+    - id: feedback-alioth
+      name: '@dsh-alioth/feedback-alioth'
+      config: {}
+    - id: feedback-web-alioth
+      name: '@dsh-alioth/feedback-web-alioth'
+      config:
+        # 14747 是 AliothStudio 自家 dev feedback server 的惯用端口；同机共存时错开。
+        # 独立部署无冲突可直接用默认 14747。
+        port: 14748
+    - id: tool-feedback-alioth
+      name: '@dsh-alioth/tool-feedback-alioth'
+      config: {}
 
     - id: tool-alioth
       name: '@dsh-alioth/tool-alioth'

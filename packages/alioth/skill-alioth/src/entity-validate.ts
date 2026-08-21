@@ -251,7 +251,6 @@ export interface PhysicalColumnIndex {
   readonly rootColumns: ReadonlySet<string>
 }
 
-export { LOCAL_KEYS_BY_TABLE as exportedLocalKeys, ROOT_COLUMNS as exportedRootColumns }
 
 /** Validate a service field mapping's physical column: common column or declared reference key of its table. */
 export function validateMappedColumn(

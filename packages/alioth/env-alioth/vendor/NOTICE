@@ -1,0 +1,16 @@
+dsh-alioth — vendored Alioth model artifacts
+Copyright 2026 The dsh-alioth Authors
+
+This directory redistributes artifacts of the Alioth data model (v10.x)
+consumed from the published model distribution (github:CosmicTools9/AppCreator,
+subsequently mirrored at github:CosmicTools9/Alioth), licensed Apache-2.0:
+
+  backend/ddl/*isahl_meta*.sql           — isahl_meta registry baseline DDL + seed
+  skill-adapters/*.yaml                  — AppAgent track/step/gate definitions
+  scripts/prototype-tool.js              — prototype build chain
+  scripts/check/audit-css-framework.mjs  — CSS framework audit
+  scripts/eval/evaluate-prototype-reference.ts — prototype evaluation
+
+Copyright for the vendored artifacts is held by The Alioth Authors.
+Licensed under the Apache License, Version 2.0 (see LICENSE in this directory).
+dsh-alioth is a sibling consumer of the Alioth model; it never advances it.

@@ -1,0 +1,25 @@
+# Docker delivery gate: build the image and run the keyless self-check
+# (composition smoke + doctor inside the container). Slow job — isolated from
+# ci.yml so the gate matrix stays fast.
+name: docker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-check:
+    name: docker build + keyless --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t dsh-alioth:ci .
+      - name: keyless self-check (composition smoke + doctor, no API key)
+        run: docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth:ci

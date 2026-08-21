@@ -1,20 +1,24 @@
 /**
- * Model-facing Alioth app-artifact tools. Two tools:
+ * Model-facing Alioth app-artifact tools. Four tools:
+ * - `alioth_app_list` — enumerate apps under a namespace (or all namespaces)
+ *   with contract validity per app; the discovery entry for the model.
  * - `alioth_app_inspect` — read-only validation of an existing `app.json`.
  * - `alioth_app_write` — generate a validated app artifact tree (app.json,
  *   module.json per module, extensions/*.yaml skeletons, Sources/ dirs) under
  *   the configured Pre-Proc root. Write goes through the approval seam when
  *   the deployment composes one (`approvalMode: 'required'`); otherwise the
  *   deployment must choose `'bypass'` explicitly.
+ * - `alioth_app_configure` — merge enrichment fields AND grow the app
+ *   (add modules/blocks) programmatically.
  * @module @dsh-alioth/tool-alioth
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
-import { generateApp, generateExtensions, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
+import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { generateApp, generateExtensions, generateModule, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
 import type {} from '@deepseek-ai/dsh-user-approval'
 
 export const name = 'tool-alioth'
@@ -58,6 +62,43 @@ function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Version used for newly grown modules when the existing app.json lacks one. */
+const DEFAULT_VERSION = '0.1.0'
+
+/**
+ * Route one tool call through the composed ApprovalService when the deployment
+ * chose `approvalMode: 'required'`. Grants are `allowed-once`; anything else
+ * fails the call. Shared by every destructive/persisting tool.
+ */
+async function requestApproval(
+  ctx: Context,
+  exec: ToolRunContext,
+  toolName: string,
+  reason: string,
+): Promise<void> {
+  const approval = ctx.get('approval')
+  if (approval === undefined) {
+    throw new Error(`${toolName}: approvalMode=required but no ApprovalService is composed`)
+  }
+  if (exec.agent === undefined) {
+    throw new Error(`${toolName}: approvalMode=required but the call has no agent to route approval`)
+  }
+  const outcome = await approval.request({
+    agent: exec.agent,
+    toolName,
+    callId: exec.callId,
+    reason,
+    signal: exec.signal,
+  })
+  if (outcome !== 'allowed-once') {
+    throw new Error(`${toolName}: denied by approval (${outcome})`)
+  }
+}
+
 /**
  * Register the `alioth_app_inspect` and `alioth_app_write` tools on `ctx.tools`.
  * @param ctx - registrant context carrying the tool registry.
@@ -68,13 +109,154 @@ export function apply(ctx: Context, config: Config): void {
   const approvalMode = config.approvalMode ?? 'bypass'
 
   ctx.tools.register(defineTool({
+    name: 'alioth_app_list',
+    description:
+      'Enumerate Alioth apps under the configured Pre-Proc tree. With `namespace`, lists the '
+      + 'apps of that namespace; without it, lists every namespace and its apps. Each app '
+      + 'entry carries code, name, version, status, module ids, and contract validity — '
+      + 'invalid artifacts are flagged, not hidden. Use this to discover existing apps '
+      + 'before creating or extending one; never guess an app code.',
+    parameters: {
+      namespace: {
+        type: 'string',
+        description: 'Optional namespace filter, e.g. "Alioth". Letters, digits, hyphens only; omitted = all namespaces.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          namespaces: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                namespace: { type: 'string', required: true },
+                apps: {
+                  type: 'array',
+                  required: true,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      code: { type: 'string', required: true },
+                      name: { type: 'string', required: true },
+                      version: { type: 'string', required: true },
+                      status: { type: 'string', required: true },
+                      modules: { type: 'array', required: true, items: { type: 'string' } },
+                      valid: { type: 'boolean', required: true },
+                      missing: { type: 'array', required: true, items: { type: 'string' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.namespaces
+          .map((ns: { namespace: string; apps: Array<{ code: string; valid: boolean }> }) =>
+            `${ns.namespace}: ${ns.apps.length} app(s) — ${ns.apps.map(app => `${app.code}${app.valid ? '' : ' (invalid)'}`).join(', ') || 'none'}`)
+          .join('\n'),
+      }],
+    },
+    async execute(args) {
+      if (args.namespace !== undefined && !NAMESPACE_PATTERN_RE.test(args.namespace)) {
+        throw new Error(`alioth_app_list: invalid namespace ${JSON.stringify(args.namespace)} (expected ^[A-Z][a-zA-Z0-9-]*$)`)
+      }
+      const namespaceDirs = args.namespace === undefined
+        ? await readdir(root, { withFileTypes: true }).then(entries =>
+          entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
+        : [args.namespace]
+      const namespaces: Array<{
+        namespace: string
+        apps: Array<{
+          code: string
+          name: string
+          version: string
+          status: string
+          modules: string[]
+          valid: boolean
+          missing: string[]
+        }>
+      }> = []
+      for (const namespace of namespaceDirs) {
+        const appsRoot = path.join(root, namespace, 'Apps')
+        const appDirs = await readdir(appsRoot, { withFileTypes: true }).then(entries =>
+          entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
+        const apps: Array<{
+          code: string
+          name: string
+          version: string
+          status: string
+          modules: string[]
+          valid: boolean
+          missing: string[]
+        }> = []
+        for (const app of appDirs) {
+          const appFile = path.join(appsRoot, app, 'app.json')
+          let parsed: unknown
+          let parseError: string | null = null
+          try {
+            parsed = JSON.parse(await readFile(appFile, 'utf8'))
+          } catch (error) {
+            parseError = error instanceof Error ? error.message : String(error)
+          }
+          if (parseError !== null || typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            apps.push({
+              code: app,
+              name: '',
+              version: '',
+              status: '',
+              modules: [],
+              valid: false,
+              missing: REQUIRED_FIELDS.slice(),
+            })
+            continue
+          }
+          const record = parsed as Record<string, unknown>
+          const configObj = typeof record.config === 'object' && record.config !== null
+            ? record.config as Record<string, unknown>
+            : {}
+          const validation = validateArtifact('app', record)
+          apps.push({
+            code: asString(record.code) ?? app,
+            name: asString(record.name) ?? '',
+            version: asString(record.version) ?? '',
+            status: asString(record.status) ?? '',
+            modules: asStringArray(configObj.modules),
+            valid: validation.valid,
+            missing: validation.valid ? [] : REQUIRED_FIELDS.filter(key => !(key in record)),
+          })
+        }
+        apps.sort((a, b) => String(a.code).localeCompare(String(b.code)))
+        namespaces.push({ namespace, apps })
+      }
+      namespaces.sort((a, b) => String(a.namespace).localeCompare(String(b.namespace)))
+      return { namespaces }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: args.namespace === undefined ? 'List Alioth apps' : `List Alioth apps in ${args.namespace}`,
+      kind: 'other',
+      rawInput: args.namespace === undefined ? {} : { namespace: args.namespace },
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
     name: 'alioth_app_inspect',
     description:
       'Inspect an Alioth app artifact (app.json) under the configured Pre-Proc tree. '
-      + 'Returns the app code, version, namespace, required modules and blocks, routing, '
-      + 'navigation groups, roles, and any missing required fields. Use this before '
-      + 'creating or extending an Alioth app so the model reads the real artifact — '
-      + 'never guess an app\'s contents.',
+      + 'Returns the app code, version, namespace, status, description, brand, goal, '
+      + 'non-scope, required modules and blocks, routing, navigation groups, roles, and '
+      + 'any missing required fields — the full readback of everything app_write and '
+      + 'app_configure can set. Use this before creating or extending an Alioth app so '
+      + 'the model reads the real artifact — never guess an app\'s contents.',
     parameters: {
       namespace: {
         type: 'string',
@@ -97,6 +279,17 @@ export function apply(ctx: Context, config: Config): void {
           version: { type: 'string', required: true },
           namespace: { type: 'string', required: true },
           minAliothVersion: { type: 'string', required: true },
+          status: { type: 'string', required: true },
+          description: { type: 'string', required: true },
+          goal: { type: 'string', required: true },
+          nonScope: { type: 'array', required: true, items: { type: 'string' } },
+          brand: {
+            type: 'object', required: true, additionalProperties: false,
+            properties: {
+              primary: { type: 'string' },
+              logo: { type: 'string' },
+            },
+          },
           modules: { type: 'array', required: true, items: { type: 'string' } },
           blocks: { type: 'array', required: true, items: { type: 'string' } },
           routing: {
@@ -178,12 +371,23 @@ export function apply(ctx: Context, config: Config): void {
         }
         return '<unnamed>'
       })
+      const brand = typeof record.brand === 'object' && record.brand !== null
+        ? record.brand as Record<string, unknown>
+        : {}
       return {
         code: asString(record.code) ?? '',
         name: asString(record.name) ?? '',
         version: asString(record.version) ?? '',
         namespace: asString(record.namespace) ?? '',
         minAliothVersion: asString(record.min_alioth_version) ?? '',
+        status: asString(record.status) ?? '',
+        description: asString(record.description) ?? '',
+        goal: asString(record.goal) ?? '',
+        nonScope: asStringArray(record.non_scope),
+        brand: {
+          primary: asString(brand.primary) ?? '',
+          logo: asString(brand.logo) ?? '',
+        },
         modules: asStringArray(configObj.modules),
         blocks: asStringArray(configObj.blocks),
         routing: {
@@ -230,6 +434,10 @@ export function apply(ctx: Context, config: Config): void {
         type: 'string',
         required: true,
         description: 'Human-readable app name.',
+      },
+      description: {
+        type: 'string',
+        description: 'Optional one-line app description (contract-declared field).',
       },
       modules: {
         type: 'array',
@@ -314,6 +522,7 @@ export function apply(ctx: Context, config: Config): void {
         code: args.code,
         name: args.name,
         modules,
+        ...(args.description === undefined ? {} : { description: args.description }),
         ...(args.version === undefined ? {} : { version: args.version }),
         ...(args.blocks === undefined ? {} : { blocks: args.blocks }),
         ...(args.navigation === undefined ? {} : { navigation: args.navigation }),
@@ -351,23 +560,7 @@ export function apply(ctx: Context, config: Config): void {
       }
 
       if (approvalMode === 'required') {
-        const approval = ctx.get('approval')
-        if (approval === undefined) {
-          throw new Error('alioth_app_write: approvalMode=required but no ApprovalService is composed')
-        }
-        if (exec.agent === undefined) {
-          throw new Error('alioth_app_write: approvalMode=required but the call has no agent to route approval')
-        }
-        const outcome = await approval.request({
-          agent: exec.agent,
-          toolName: 'alioth_app_write',
-          callId: exec.callId,
-          reason: `Write Alioth app artifact tree under ${appDir}`,
-          signal: exec.signal,
-        })
-        if (outcome !== 'allowed-once') {
-          throw new Error(`alioth_app_write: denied by approval (${outcome})`)
-        }
+        await requestApproval(ctx, exec, 'alioth_app_write', `Write Alioth app artifact tree under ${appDir}`)
       }
 
       await mkdir(appDir, { recursive: true })
@@ -407,14 +600,36 @@ export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'alioth_app_configure',
     description:
-      'Programmatic app enrichment: merge brand / navigation / routing / permissions / goal / '
-      + 'non_scope into an existing app.json, contract-validate, and write back. Deterministic — '
-      + 'no LLM generation; the model supplies structured parameters only. Idempotent: fields '
-      + 'not provided are left untouched; provided fields replace. Refuses to write when the '
-      + 'merged app.json fails its contract. Use this instead of writing app.json by hand.',
+      'Programmatic app enrichment and growth: merge brand / navigation / routing / '
+      + 'permissions / goal / non_scope into an existing app.json AND add modules (each new '
+      + 'module gets a contract-valid module.json plus a Sources/Modules dir and joins '
+      + 'config.modules and navigation) or replace blocks. Contract-validates before write. '
+      + 'Deterministic — no LLM generation; the model supplies structured parameters only. '
+      + 'Idempotent: fields not provided are left untouched; provided fields replace; '
+      + 're-adding an existing module id is a no-op. Refuses to write when the merged '
+      + 'app.json fails its contract. Use this instead of writing app.json by hand.',
     parameters: {
       namespace: { type: 'string', required: true },
       app: { type: 'string', required: true },
+      modules: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            name: { type: 'string', required: true },
+            description: { type: 'string' },
+            icon: { type: 'string' },
+          },
+        },
+        description: 'New module specs to add to the app (existing ids are no-ops).',
+      },
+      blocks: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Replaces config.blocks wholesale.',
+      },
       brand: {
         type: 'object', additionalProperties: false,
         properties: {
@@ -437,6 +652,7 @@ export function apply(ctx: Context, config: Config): void {
       adminRoles: { type: 'array', items: { type: 'string' } },
       base: { type: 'string' },
       defaultRoute: { type: 'string' },
+      status: { type: 'string', description: 'Lifecycle status, e.g. "developing" or "archived" (contract-declared field).' },
       goal: { type: 'string' },
       nonScope: { type: 'array', items: { type: 'string' } },
     },
@@ -494,7 +710,67 @@ export function apply(ctx: Context, config: Config): void {
         app.routing = routing
       }
       if (args.goal !== undefined) { app.goal = args.goal; updated.push('goal') }
+      if (args.status !== undefined) { app.status = args.status; updated.push('status') }
       if (args.nonScope !== undefined) { app.non_scope = args.nonScope; updated.push('non_scope') }
+      if (args.blocks !== undefined) {
+        const config = typeof app.config === 'object' && app.config !== null
+          ? app.config as Record<string, unknown>
+          : {}
+        config.blocks = [...args.blocks]
+        app.config = config
+        updated.push('config.blocks')
+      }
+      if (args.modules !== undefined) {
+        const config = typeof app.config === 'object' && app.config !== null
+          ? app.config as Record<string, unknown>
+          : {}
+        const moduleIds = asStringArray(config.modules)
+        const ownerVersion = typeof app.version === 'string' ? app.version : DEFAULT_VERSION
+        const ownerNamespace = typeof app.namespace === 'string' ? app.namespace : args.namespace
+        const newModules: Array<{ id: string; name: string; description?: string; icon?: string }> = []
+        for (const module of args.modules) {
+          if (!MODULE_PATTERN_RE.test(module.id)) {
+            throw new Error(`alioth_app_configure: invalid module id ${JSON.stringify(module.id)} (expected ^[a-zA-Z0-9][a-zA-Z0-9-]*$)`)
+          }
+          if (!moduleIds.includes(module.id)) {
+            moduleIds.push(module.id)
+            newModules.push(module)
+          }
+        }
+        if (newModules.length > 0) {
+          config.modules = moduleIds
+          app.config = config
+          const appDir = path.dirname(appFile)
+          for (const module of newModules) {
+            const generated = generateModule({ namespace: ownerNamespace, version: ownerVersion }, module)
+            const validation = validateArtifact('module', generated)
+            if (!validation.valid) {
+              throw new Error(`alioth_app_configure: generated module.json for ${module.id} fails the module contract: ${validation.errors.join('; ')}`)
+            }
+            await mkdir(path.join(appDir, 'modules', module.id), { recursive: true })
+            await writeFile(path.join(appDir, 'modules', module.id, 'module.json'), `${JSON.stringify(generated, null, 2)}\n`)
+            await mkdir(path.join(appDir, 'Sources', 'Modules', module.id), { recursive: true })
+            updated.push(`modules.${module.id}`)
+          }
+          // Every module must be reachable: append new ids to the 系统管理 group when
+          // present, else the first group; a navigation-less app gets the default group.
+          const navigation = Array.isArray(app.navigation) ? app.navigation : null
+          if (navigation === null || navigation.length === 0) {
+            app.navigation = [{ group: '系统管理', icon: 'Settings', modules: moduleIds }]
+          } else {
+            const target = (navigation.find(group => isRecord(group) && group.group === '系统管理') ?? navigation[0])
+            if (isRecord(target)) {
+              const existing = asStringArray(target.modules)
+              for (const id of newModules.map(module => module.id)) {
+                if (!existing.includes(id)) { existing.push(id) }
+              }
+              target.modules = existing
+            }
+            app.navigation = navigation
+          }
+          updated.push('navigation')
+        }
+      }
 
       // Contract gate: never persist an artifact that fails its own contract.
       const validation = validateArtifact('app', app)
@@ -510,6 +786,82 @@ export function apply(ctx: Context, config: Config): void {
     presentCall: args => ({
       card: 'generic',
       title: `Configure Alioth app ${args.namespace}/${args.app}`,
+      kind: 'other',
+      rawInput: { namespace: args.namespace, app: args.app },
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'alioth_app_delete',
+    description:
+      'Permanently delete an Alioth app artifact tree (app.json, modules, extensions, '
+      + 'Sources) under Pre-Proc/{namespace}/Apps/{app}/. Destructive and irreversible: '
+      + 'requires confirm: true, fails when the app does not exist, and routes through the '
+      + 'approval seam when the deployment sets approvalMode=required. List and inspect '
+      + 'before deleting; prefer alioth_app_configure status=archived for soft retirement.',
+    parameters: {
+      namespace: {
+        type: 'string',
+        required: true,
+        description: 'Alioth namespace, e.g. "Alioth". Letters, digits, hyphens only.',
+      },
+      app: {
+        type: 'string',
+        required: true,
+        description: 'App code as in the directory name under Apps/. Letters, digits, hyphens only.',
+      },
+      confirm: {
+        type: 'boolean',
+        description: 'Must be true; the delete is irreversible.',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          namespace: { type: 'string', required: true },
+          app: { type: 'string', required: true },
+          files: { type: 'array', required: true, items: { type: 'string' } },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: `Deleted Alioth app ${value.namespace}/${value.app}: ${value.files.length} paths removed`,
+      }],
+    },
+    async execute(args, exec) {
+      if (!NAMESPACE_PATTERN_RE.test(args.namespace)) {
+        throw new Error(`alioth_app_delete: invalid namespace ${JSON.stringify(args.namespace)} (expected ^[A-Z][a-zA-Z0-9-]*$)`)
+      }
+      if (!APP_PATTERN_RE.test(args.app)) {
+        throw new Error(`alioth_app_delete: invalid app code ${JSON.stringify(args.app)} (expected ^[a-zA-Z0-9][a-zA-Z0-9-]*$)`)
+      }
+      const appDir = path.resolve(root, args.namespace, 'Apps', args.app)
+      if (!appDir.startsWith(root + path.sep)) {
+        throw new Error(`alioth_app_delete: path escapes preProcRoot: ${appDir}`)
+      }
+      const appFile = path.join(appDir, 'app.json')
+      const existing = await readFile(appFile, 'utf8').then(
+        () => true,
+        () => false,
+      )
+      if (!existing) {
+        throw new Error(`alioth_app_delete: no app.json at ${appFile}`)
+      }
+      if (args.confirm !== true) {
+        throw new Error('alioth_app_delete: destructive — pass confirm: true to delete the app tree')
+      }
+      if (approvalMode === 'required') {
+        await requestApproval(ctx, exec, 'alioth_app_delete', `Delete Alioth app artifact tree under ${appDir}`)
+      }
+      const files = await readdir(appDir, { recursive: true }).catch(() => [])
+      await rm(appDir, { recursive: true, force: true })
+      return { namespace: args.namespace, app: args.app, files }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Delete Alioth app ${args.namespace}/${args.app}`,
       kind: 'other',
       rawInput: { namespace: args.namespace, app: args.app },
     }),
