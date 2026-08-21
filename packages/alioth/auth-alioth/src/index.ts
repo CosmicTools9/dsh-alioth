@@ -68,9 +68,9 @@ export interface Config {
    * namespace. Env override ALIOTH_WORKSPACE_MODE=unlimited wins.
    */
   readonly workspaceMode?: 'standard' | 'unlimited'
-  /** Workspace root for app artifacts; default ALIOTH_PRE_PROC_ROOT ?? ~/WorkSpace/AliothStudio/Pre-Proc. */
+  /** Workspace root for app artifacts; default ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (deployment-owned, never the AliothStudio checkout). */
   readonly preProcRoot?: string
-  /** Workspace root for deployment artifacts; default ALIOTH_DEPLOY_ROOT ?? ~/WorkSpace/AliothStudio/Deploy. */
+  /** Workspace root for deployment artifacts; default ALIOTH_DEPLOY_ROOT ?? ~/.dsh-alioth/Deploy. */
   readonly deployRoot?: string
 }
 
@@ -124,11 +124,12 @@ async function listWorkspaceApps(preProcRoot: string, namespace: string): Promis
   return apps
 }
 
-/** Default workspace roots (the AliothStudio checkout layout). */
+/** Default workspace roots — deployment-owned, decoupled from any
+ * AliothStudio checkout (integrate by setting ALIOTH_PRE_PROC_ROOT). */
 function defaultRoots(): { preProc: string; deploy: string } {
   return {
-    preProc: process.env.ALIOTH_PRE_PROC_ROOT ?? path.join(homedir(), 'WorkSpace', 'AliothStudio', 'Pre-Proc'),
-    deploy: process.env.ALIOTH_DEPLOY_ROOT ?? path.join(homedir(), 'WorkSpace', 'AliothStudio', 'Deploy'),
+    preProc: process.env.ALIOTH_PRE_PROC_ROOT ?? path.join(homedir(), '.dsh-alioth', 'Pre-Proc'),
+    deploy: process.env.ALIOTH_DEPLOY_ROOT ?? path.join(homedir(), '.dsh-alioth', 'Deploy'),
   }
 }
 

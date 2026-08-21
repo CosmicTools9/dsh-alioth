@@ -12,7 +12,7 @@
     - id: tool-alioth
       name: '@dsh-alioth/tool-alioth'
       config:
-        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"
 
     - id: tool-alioth-meta
       name: '@dsh-alioth/tool-alioth-meta'
@@ -21,7 +21,7 @@
     - id: tool-alioth-workflow
       name: '@dsh-alioth/tool-alioth-workflow'
       config:
-        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/WorkSpace/AliothStudio/Pre-Proc'"
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"
 
     - id: tool-alioth-orchestrator
       name: '@dsh-alioth/tool-alioth-orchestrator'

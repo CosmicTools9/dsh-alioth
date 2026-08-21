@@ -69,7 +69,9 @@ const COMPOSITIONS: readonly Composition[] = [
     profile: 'web',
     patch: 'examples/alioth-agent/web.patch.yml',
     expectPlugins: [...ALIOTH_PLUGINS],
-    expectPersona: 'Alioth', // web patch only inserts plugins; base persona untouched
+    // web patch only inserts plugins; the base persona (harness default
+    // "coding agent") stays untouched — assert its marker, not an Alioth one.
+    expectPersona: 'You are a coding agent',
   },
   {
     name: 'web + bundle patch (launch GUI)',
