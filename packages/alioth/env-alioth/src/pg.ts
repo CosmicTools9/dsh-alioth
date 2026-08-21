@@ -72,25 +72,48 @@ async function acquireExternal(url: string): Promise<PgHandle> {
 async function acquireEmbedded(options: PgOptions): Promise<PgHandle> {
   const dataDir = path.join(options.dataRoot, 'postgres')
   const fresh = !await pathExists(path.join(dataDir, 'PG_VERSION'))
-  const port = await reservePort()
-  const instance = new EmbeddedPostgres({
-    databaseDir: dataDir,
-    port,
-    user: EMBEDDED_USER,
-    password: EMBEDDED_PASSWORD,
-    authMethod: 'password',
-    persistent: true,
-    onLog: line => options.onLog?.(line),
-    onError: message => options.onLog?.(String(message)),
-  })
-  if (fresh) {
-    await instance.initialise()
+  // reservePort is TOCTOU (probe port, release, then PG binds): under
+  // parallel boot (test suite) the probed port can be taken between probe and
+  // bind, and a just-stopped sibling cluster may not have released its port
+  // yet — retry with a fresh port instead of failing the whole boot.
+  let initialised = false
+  let instance: EmbeddedPostgres | undefined
+  let usedPort = 0
+  let lastError: unknown
+  for (let attempt = 1; attempt <= 3 && instance === undefined; attempt++) {
+    const port = await reservePort()
+    const candidate = new EmbeddedPostgres({
+      databaseDir: dataDir,
+      port,
+      user: EMBEDDED_USER,
+      password: EMBEDDED_PASSWORD,
+      authMethod: 'password',
+      persistent: true,
+      onLog: line => options.onLog?.(line),
+      onError: message => options.onLog?.(String(message)),
+    })
+    try {
+      if (fresh && !initialised) {
+        await candidate.initialise()
+        initialised = true
+      }
+      await candidate.start()
+      instance = candidate
+      usedPort = port
+    } catch (error) {
+      lastError = error
+      await candidate.stop().catch(() => {})
+      options.onLog?.(`env-alioth: embedded PG start attempt ${attempt} failed (${String(error)}) — retrying on a fresh port`)
+    }
   }
-  await instance.start()
-  const url = `postgres://${EMBEDDED_USER}:${EMBEDDED_PASSWORD}@127.0.0.1:${port}/${EMBEDDED_DATABASE}`
+  if (instance === undefined) {
+    throw lastError ?? new Error('env-alioth: embedded PG failed to start after 3 attempts')
+  }
+  const pg = instance
+  const url = `postgres://${EMBEDDED_USER}:${EMBEDDED_PASSWORD}@127.0.0.1:${usedPort}/${EMBEDDED_DATABASE}`
 
   async function connectWithCreate(): Promise<Client> {
-    const client = instance.getPgClient(EMBEDDED_DATABASE)
+    const client = pg.getPgClient(EMBEDDED_DATABASE)
     try {
       await client.connect()
       return client
@@ -100,15 +123,15 @@ async function acquireEmbedded(options: PgOptions): Promise<PgHandle> {
       if (!(error instanceof Error) || !error.message.includes('does not exist')) {
         throw error
       }
-      await instance.createDatabase(EMBEDDED_DATABASE)
-      const retry = instance.getPgClient(EMBEDDED_DATABASE)
+      await pg.createDatabase(EMBEDDED_DATABASE)
+      const retry = pg.getPgClient(EMBEDDED_DATABASE)
       await retry.connect()
       return retry
     }
   }
 
   async function stopInstance(): Promise<void> {
-    await instance.stop()
+    await pg.stop()
   }
 
   const client = await connectWithCreate().catch(async (error: unknown) => {
