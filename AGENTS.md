@@ -1,10 +1,44 @@
 # Repository Guidelines
 
+## 核心决策原则
+
+**准确·稳定·一致性优先**——一切工具选型、方案设计、代码变更以此为标准：准确先于快速，稳定先于新奇，一致先于便利。
+
+- 结构化格式（CSS/HTML/JS/JSON/YAML/TOML/SQL）必须用专用解析器，禁止正则模拟（见 `docs/specs/NO_REGEX_FOR_PARSING.md` 同源规范）；本仓库的离线生成/门禁脚本对固定行格式的种子/DDL 做行级提取属例外，但新解析一律先查现成实现。
+- 工具链固化：同一类操作只留一个入口（pnpm scripts / mise tasks / lefthook），不重复造门禁。
+- 现成方法优先：实现/修复/重构前必须四查现成实现（AGENTS.md 规约 / scripts 工具 / vendored 产物 / 上游 harness 包），有则不重写。
+- 插件对齐 **AppAgent**（app-agent 状态机 + skill-adapters + 产物契约）——不迁移 AliothStudio 的 Meta/Gateway 开发约定（cargo/Rust 门禁、DB schema truth via Meta、SSO/NGAC、前端框架禁令等一概不适用）。
+
+## 核心边界表
+
+| 类型 | 规则 |
+|---|---|
+| ✅ Always | 程序化生成优先：产物一律走 gen-alioth 生成器 + 契约门工具（`alioth_app_write`/`alioth_app_configure`/`alioth_entity_write`），LLM 只供结构化参数与语义决策，禁止直写产物文件；模型面改动必须更新 keyless 快照（`tests/model-surface.spec.ts`）；namespace 参数一律先 `alioth_workspace_current` 解析，禁止猜测；提交前过 lefthook + CI 门禁；改动 AGENTS.md 数字（测试数/字典规模）同 PR 刷新 |
+| ⚠️ Ask | 破坏性操作（删账号/删产物/改门禁/改 CI）；模型发行物同步（vendor 重生成 + `resetRegistry` 会清本地注册实体）；新增外部依赖；迁移 AppAgent 管线契约 |
+| 🚫 Never | 用 `read` 工具读 vendor/模型快照文件（用 `alioth_workflow_info` 内省）；直接 SQL 写 `isahl_meta`/`dsh_alioth_auth`（产品工具是唯一写入通道，人工操作除外）；静默丢弃未提交改动（删除前先 stash 兜底）；agent 代执行 DB 域批量操作（重置/迁移/种子刷新——交付 SQL 或命令，执行归用户） |
+| 🔍 Audit | 动 AppAgent 管线/契约/架构/安全前，对照本文件与 skill-alioth 契约（`agent-contract.ts` serde-alias 兼容）逐条核对；诊断与处方分离——只读审查任务给结论，不附代执行提议 |
+
+## 规约刷新分层
+
+| 层级 | 内容 | 刷新时机 |
+|---|---|---|
+| L-会话级 | 本 AGENTS.md 全文 | 会话启动、上下文压缩恢复后 |
+| L-任务级 | 命中的技能 SKILL.md、契约文件 | 每步决策前（换任务重读） |
+| L-冷层 | 未命中内容 | 永不重读 |
+
+任务特征变化使冷层行命中时，该行升级为任务级——分层是刷新节奏约束，不是信息屏蔽。新增任何协议/文档前先分层，控制层自身不得成为过载源。
+
+## 已知缺口（模型通道现状）
+
+- **模型发布物（`github:CosmicTools9/Alioth`，如 v10.0.2）只含物理 DDL（`002_isahl_tables.sql`，0 条 REFERENCES 约束）+ 维度种子——不含 `isahl_meta` 注册表**。注册表语义（名称/类目/继承/`reference_config`）由 `env-alioth/vendor/backend/ddl/003|004_isahl_meta_seed_*.sql` 承载，来源是活的 AliothStudio 注册表（`sync_from_database`）。
+- 语义库（skill-alioth/src/data/）为混合来源：`coordinates.json`/`physical-tables.json` 可从发布物离线提取（`check:dicts` 真门禁）；`fk-index.json` 只能从 vendored 种子提取，**其新鲜度跟着 vendor 同步节奏走**（`scripts/sync-vendor-registry.ts` → `check:vendor --update`），模型仓库演化不会直接触发它。
+- 模型演化后的本地注册表需 `mise run alioth:doctor --reset` 重引导（清本地自定义实体）+ 语义索引按 entriesHash 自动重建。
+
 ## Project Overview
 
 `dsh-alioth` is a [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that leverages the **Alioth V10 data model** to deliver **AppCreator** capabilities: a dialogue-driven enterprise app generator. The agent (running on the harness) turns a user request into AliothStudio-compatible artifacts — `app.json`, `module.json`/`block.json`, `extensions/*.yaml`, HTML prototypes, and backend `Sources/` skeletons — through the Alioth model pipeline (AppAgent state machine + `alioth-gen` + `ontology-mapping`), backed by a PostgreSQL `isahl_meta` schema.
 
-This repo is currently an **empty scaffold**. It is authored against two sibling checkouts used as reference:
+The plugin group is authored against two sibling checkouts used as reference:
 
 - `/Users/william.d.zk/WorkSpace/deepseek-harness` — the host harness (plugin-based agent framework on vendored Cordis; "everything is a plugin", upstream `deepseek-ai/deepseek-harness`).
 - `/Users/william.d.zk/WorkSpace/AliothStudio` — the Alioth platform (model v10.0.0). `AppCreator/` inside it is the standalone consumer the plugin reproduces as harness-native capability.
