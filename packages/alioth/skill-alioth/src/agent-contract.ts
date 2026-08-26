@@ -15,11 +15,19 @@
 export type AgentState =
   // 0. App creation: namespace + raw intent → app container (code/name/goal).
   | { readonly kind: 'app-creation' }
-  // 1. Semantic analysis: raw intent → business intent and key concepts.
+  // 1. Semantic analysis — DEPRECATED in the active Meta line
+  //    (remove-appagent-hollow-analysis-stages, 2026-08-25): the keyword-
+  //    matching shell was dropped, legacy sessions passthrough to Planning,
+  //    and real analysis is the Planning LLM ontology output. dsh-alioth
+  //    keeps the stage with real work — semantic_search audit confirmation
+  //    (dialogue precondition) — and advances straight through.
   | { readonly kind: 'semantic-analysis' }
-  // 2. Function decomposition: intent → functional units (module/scene/factor).
+  // 2. Function decomposition — DEPRECATED in Meta (keyword-template shell,
+  //    products overwritten by Planning); units now derive from the ontology
+  //    output. dsh-alioth keeps the stage: registry-inventory grounding.
   | { readonly kind: 'function-decomposition' }
-  // 3. Ontology analysis: map to the Alioth ontology (entities/relations/coordinates).
+  // 3. Ontology analysis — DEPRECATED in Meta (pure passthrough). dsh-alioth
+  //    keeps the stage: deterministic entity registration (alioth_entity_write).
   | { readonly kind: 'ontology-analysis'; readonly ontologyRound: number }
   // 4. Module creation/assembly.
   | { readonly kind: 'module-creation' }

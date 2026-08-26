@@ -11,7 +11,7 @@
     "namespace": { "type": "string", "minLength": 1 },
     "name": { "type": "string", "minLength": 1 },
     "category": { "type": "string" },
-    "status": { "type": "string", "enum": ["active", "draft", "archived"] },
+    "status": { "type": "string", "enum": ["active", "inactive", "beta", "planned", "developing"] },
     "routePrefix": { "type": "string", "pattern": "^/" },
     "icon": { "type": "string" },
     "hasBackend": { "type": "boolean" },

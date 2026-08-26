@@ -55,9 +55,12 @@ const DEFAULT_MIN_ALIOTH_VERSION = '10.0.0'
 /** The app-level extensions per the distribution's artifact tree (DESIGN_INTENT). */
 export const EXTENSION_FILES = ['constraints', 'rules', 'statemachines', 'workflows'] as const
 
-/** Skeleton YAML for one extension kind. Honest placeholder: empty doc + provenance. */
+/** Skeleton YAML for one extension kind. Honest placeholder: empty doc + provenance.
+ *  Top-level MUST be a YAML sequence: constraints/rules/statemachines/workflows
+ *  deserialize into `Vec<T>` at the Gateway ExtensionLoader (2026-08-23 contract
+ *  fix — `constraints: []` map wrappers crash Gateway startup). */
 export function generateExtension(kind: string, code: string): string {
-  return `# dsh-alioth generated skeleton — ${kind} for app ${code}.\n# Shape follows the Alioth model extensions/*.yaml contract; extend before import.\n{}\n`
+  return `# dsh-alioth generated skeleton — ${kind} for app ${code}.\n# Shape follows the Alioth model extensions/*.yaml contract; extend before import.\n[]\n`
 }
 
 /** Extension file names → skeleton content for an app. */
@@ -85,8 +88,8 @@ export function generateModule(
     id: spec.id,
     namespace: owner.namespace,
     name: spec.name,
-    category: 'app',
-    status: 'draft',
+    category: 'business',
+    status: 'planned',
     routePrefix: `/${spec.id}`,
     icon: spec.icon ?? 'AppstoreOutlined',
     hasBackend: false,

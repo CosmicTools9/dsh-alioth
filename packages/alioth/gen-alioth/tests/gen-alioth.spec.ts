@@ -26,8 +26,8 @@ const VALID_MODULE = {
   id: 'inventory',
   namespace: 'Demo',
   name: '库存',
-  category: 'app',
-  status: 'draft',
+  category: 'business',
+  status: 'planned',
   routePrefix: '/inventory',
   icon: 'AppstoreOutlined',
   hasBackend: false,
@@ -171,6 +171,8 @@ describe('gen-alioth generateModule', () => {
       id: 'alpha',
       namespace: 'Demo',
       name: 'A',
+      category: 'business',
+      status: 'planned',
       version: '2.3.0',
       routePrefix: '/alpha',
       icon: 'Cpu',
@@ -195,6 +197,9 @@ describe('gen-alioth app tree skeletons', () => {
       expect(content).toContain('dsh-alioth')
     }
     expect(extensions['constraints.yaml']).toContain('constraints')
+    // Gateway ExtensionLoader contract: the four standard files must be
+    // top-level YAML sequences (`Vec<T>`), not map wrappers (2026-08-23 fix).
+    expect(extensions['constraints.yaml']!.trimEnd()).toMatch(/\[\]\s*$/)
   })
 
   it('lists one source module dir per module', () => {

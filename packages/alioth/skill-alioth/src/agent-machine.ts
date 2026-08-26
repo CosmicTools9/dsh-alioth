@@ -8,6 +8,14 @@
  * Each stage executes through injected primitives (the plugin tools /
  * libraries); LLM is used ONLY at the semantic-analysis stage (the sanctioned
  * seam). No LLM anywhere else — the machine is deterministic and testable.
+ *
+ * Alignment note (2026-08-25, remove-appagent-hollow-analysis-stages): the
+ * active Meta line deprecated the three analysis states (SemanticAnalysis /
+ * FunctionDecomposition / OntologyAnalysis — keyword shells and passthrough)
+ * and moved real analysis into Planning (LLM ontology output). dsh-alioth
+ * keeps the stages because they carry real deterministic work here — audit
+ * confirmation, registry grounding, entity registration — and the pipeline
+ * order stays wire-compatible with the Meta serde enum.
  * @module @dsh-alioth/skill-alioth/agent-machine
  */
 

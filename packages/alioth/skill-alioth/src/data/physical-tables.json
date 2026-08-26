@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/physical-tables.json",
  "description": "isahl physical table index [table, parent] + root-family common columns, generated offline from the Alioth model repo.",
- "source": "Alioth repo v10.0.2 (2026-08-21T03:37:26.459622+00:00) + vendored isahl_meta seed",
+ "source": "Alioth repo v10.0.6 (2026-08-25T05:49:01.958175+00:00) + vendored isahl_meta seed",
  "root_columns": [
   "created_at",
   "created_by_id",
@@ -129,22 +129,6 @@
   [
    "zc_ad_tensor_r_scalar",
    "zc_ad_relation"
-  ],
-  [
-   "zc_id-deta-maintenance",
-   "zc_id_detail"
-  ],
-  [
-   "zc_id_prod-data",
-   "zc_id_production"
-  ],
-  [
-   "zc_id_prod-purchase",
-   "zc_id_production"
-  ],
-  [
-   "zc_id-prod-openapi-purchase",
-   "zc_id_prod-data"
   ],
   [
    "zc_id_agreement",
@@ -348,6 +332,10 @@
   ],
   [
    "zc_id_bill-pricing",
+   "zc_id_bill"
+  ],
+  [
+   "zc_id_bill-ticket",
    "zc_id_bill"
   ],
   [
@@ -859,6 +847,10 @@
    "zc_id_detail"
   ],
   [
+   "zc_id_deta-maintenance",
+   "zc_id_detail"
+  ],
+  [
    "zc_id_deta-opinion",
    "zc_id_detail"
   ],
@@ -873,6 +865,10 @@
   [
    "zc_id_deta-training_rr_matter",
    "zc_id_lifecycle_rr_non_self"
+  ],
+  [
+   "zc_id_deta-tsp",
+   "zc_id_detail"
   ],
   [
    "zc_id_device",
@@ -896,6 +892,10 @@
   ],
   [
    "zc_id_devi-measure",
+   "zc_id_device"
+  ],
+  [
+   "zc_id_devi-seal",
    "zc_id_device"
   ],
   [
@@ -995,12 +995,16 @@
    "zc_id_lifecycle_rr_non_self"
   ],
   [
-   "zc_id_event-accident_rr_statement",
+   "zc_id_event_rr_bill",
    "zc_id_lifecycle_rr_foreign"
   ],
   [
    "zc_id_event_rr_matter",
    "zc_id_master_rr_slave"
+  ],
+  [
+   "zc_id_event_rr_reason",
+   "zc_id_lifecycle_rr_foreign"
   ],
   [
    "zc_id_event_rr_standard",
@@ -1009,6 +1013,10 @@
   [
    "zc_id_factor",
    "zc_id_object"
+  ],
+  [
+   "zc_id_prod-data",
+   "zc_id_production"
   ],
   [
    "zc_id_prod-file",
@@ -1539,6 +1547,18 @@
    "zc_id_operation"
   ],
   [
+   "zc_id_oper-sign",
+   "zc_id_operation"
+  ],
+  [
+   "zc_id_oper-sign_rr_agreement",
+   "zc_id_master_rr_slave"
+  ],
+  [
+   "zc_id_oper-sign_rr_contract",
+   "zc_id_master_rr_slave"
+  ],
+  [
    "zc_id_oper-smtv_review",
    "zc_id_operation"
   ],
@@ -1593,6 +1613,10 @@
   [
    "zc_id_operation_rr_standard",
    "zc_id_lifecycle_rr_non_self"
+  ],
+  [
+   "zc_id_operation_rr_statement",
+   "zc_id_master_rr_slave"
   ],
   [
    "zc_id_operation_rr_task",
@@ -1655,8 +1679,28 @@
    "zc_id_stat-trade_order"
   ],
   [
-   "zc_id_order_rr_foreign",
+   "zc_id_orde-traffic_rr_ticket",
+   "zc_id_master_rr_slave"
+  ],
+  [
+   "zc_id_orde-traffic_rr_tsp-voucher",
+   "zc_id_lifecycle_rr_non_self"
+  ],
+  [
+   "zc_id_statement_rr_reason",
    "zc_id_lifecycle_rr_foreign"
+  ],
+  [
+   "zc_id_order_rr_contract",
+   "zc_id_statement_rr_reason"
+  ],
+  [
+   "zc_id_order_rr_foreign",
+   "zc_id_statement_rr_reason"
+  ],
+  [
+   "zc_id_order_rr_demand",
+   "zc_id_order_rr_foreign"
   ],
   [
    "zc_id_order_rr_issue_invoice",
@@ -1871,6 +1915,10 @@
    "zc_id_prod-pub_affairs"
   ],
   [
+   "zc_id_prod-purchase",
+   "zc_id_production"
+  ],
+  [
    "zc_id_prod-customs_cle_fo-purchase",
    "zc_id_prod-customs-clearance"
   ],
@@ -1896,7 +1944,7 @@
   ],
   [
    "zc_id_prod-dev-tools-made",
-   "zc_id_device"
+   "zc_id_prod-made"
   ],
   [
    "zc_id_prod-digital_cert-sales",
@@ -1935,8 +1983,16 @@
    "zc_id_prod-sales"
   ],
   [
+   "zc_id_prod-freight_inland-made",
+   "zc_id_prod-traffic"
+  ],
+  [
    "zc_id_prod-freight_inland-purchase",
    "zc_id_prod-purchase"
+  ],
+  [
+   "zc_id_prod-freight_inland-request",
+   "zc_id_prod-traffic"
   ],
   [
    "zc_id_prod-freight_inland-sales",
@@ -2057,6 +2113,10 @@
   [
    "zc_id_prod-openapi-made",
    "zc_id_prod-made"
+  ],
+  [
+   "zc_id_prod-openapi-purchase",
+   "zc_id_prod-data"
   ],
   [
    "zc_id_prod-openapi-sales",
@@ -2811,12 +2871,16 @@
    "zc_id_stat-sto-voucher"
   ],
   [
-   "zc_id_stat-whs-voucher",
-   "zc_id_stat-sto-voucher"
+   "zc_id_stat-volume",
+   "zc_id_statement"
   ],
   [
-   "zc_id_statement_rr_reason",
-   "zc_id_lifecycle_rr_non_self"
+   "zc_id_stat-weight",
+   "zc_id_statement"
+  ],
+  [
+   "zc_id_stat-whs-voucher",
+   "zc_id_stat-sto-voucher"
   ],
   [
    "zc_id_status",
@@ -3475,8 +3539,20 @@
    "zc_id_task"
   ],
   [
+   "zc_id_task-storage",
+   "zc_id_task"
+  ],
+  [
    "zc_id_task-testing",
    "zc_id_task"
+  ],
+  [
+   "zc_id_task_rr_bill",
+   "zc_id_lifecycle_rr_foreign"
+  ],
+  [
+   "zc_id_task_rr_reason",
+   "zc_id_lifecycle_rr_foreign"
   ],
   [
    "zc_id_threads",
@@ -3499,8 +3575,12 @@
    "zc_id_lifecycle_rr_non_self"
   ],
   [
-   "zc_id_trade_order_rr_contract",
-   "zc_id_statement_rr_reason"
+   "zc_id_tick-pickup",
+   "zc_id_bill-ticket"
+  ],
+  [
+   "zc_id_tsp-voucher_rr_devi-seal",
+   "zc_id_master_rr_slave"
   ],
   [
    "zc_id_unit",
@@ -3560,6 +3640,10 @@
   ],
   [
    "zc_id_unit-frequency",
+   "zc_id_unit"
+  ],
+  [
+   "zc_id_unit-geo",
    "zc_id_unit"
   ],
   [
