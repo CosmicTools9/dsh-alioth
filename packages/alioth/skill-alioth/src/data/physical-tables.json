@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/physical-tables.json",
  "description": "isahl physical table index [table, parent] + root-family common columns, generated offline from the Alioth model repo.",
- "source": "Alioth repo v10.0.6 (2026-08-25T05:49:01.958175+00:00) + vendored isahl_meta seed",
+ "source": "Alioth repo v10.0.7 (2026-08-28T17:16:37.337368+00:00) + vendored isahl_meta seed",
  "root_columns": [
   "created_at",
   "created_by_id",
@@ -95,18 +95,6 @@
    "zc_id_segment"
   ],
   [
-   "zc_id_version",
-   "zc_id_lifecycle"
-  ],
-  [
-   "zc_id_production",
-   "zc_id_version"
-  ],
-  [
-   "zc_id_prod-request",
-   "zc_id_production"
-  ],
-  [
    "zc_ad_relation_r_isolate-tensor",
    "zc_ad_relation"
   ],
@@ -163,8 +151,12 @@
    "zc_id_statement"
   ],
   [
-   "zc_id_event",
+   "zc_id_proc-context",
    "zc_id_lifecycle"
+  ],
+  [
+   "zc_id_event",
+   "zc_id_proc-context"
   ],
   [
    "zc_id_even-approve",
@@ -345,6 +337,10 @@
   [
    "zc_id_bill_rr_recipients",
    "zc_id_lifecycle_rr_non_self"
+  ],
+  [
+   "zc_id_version",
+   "zc_id_lifecycle"
   ],
   [
    "zc_id_bom",
@@ -584,6 +580,10 @@
   ],
   [
    "zc_id_cate-project",
+   "zc_id_category"
+  ],
+  [
+   "zc_id_cate-seal",
    "zc_id_category"
   ],
   [
@@ -855,6 +855,14 @@
    "zc_id_detail"
   ],
   [
+   "zc_id_deta-plan",
+   "zc_id_detail"
+  ],
+  [
+   "zc_id_deta-task",
+   "zc_id_detail"
+  ],
+  [
    "zc_id_deta-trade_order",
    "zc_id_detail"
   ],
@@ -865,6 +873,10 @@
   [
    "zc_id_deta-training_rr_matter",
    "zc_id_lifecycle_rr_non_self"
+  ],
+  [
+   "zc_id_deta-tsk",
+   "zc_id_detail"
   ],
   [
    "zc_id_deta-tsp",
@@ -999,6 +1011,10 @@
    "zc_id_lifecycle_rr_foreign"
   ],
   [
+   "zc_id_event_rr_container",
+   "zc_id_master_rr_slave"
+  ],
+  [
    "zc_id_event_rr_matter",
    "zc_id_master_rr_slave"
   ],
@@ -1013,6 +1029,10 @@
   [
    "zc_id_factor",
    "zc_id_object"
+  ],
+  [
+   "zc_id_production",
+   "zc_id_version"
   ],
   [
    "zc_id_prod-data",
@@ -1333,6 +1353,10 @@
   [
    "zc_id_leve-org",
    "zc_id_leve-structure"
+  ],
+  [
+   "zc_id_leve-plan",
+   "zc_id_level"
   ],
   [
    "zc_id_leve-post-resp",
@@ -1955,6 +1979,10 @@
    "zc_id_prod-sales"
   ],
   [
+   "zc_id_prod-electric-eng-made",
+   "zc_id_prod-combine"
+  ],
+  [
    "zc_id_prod-financial",
    "zc_id_prod-lease"
   ],
@@ -1965,6 +1993,10 @@
   [
    "zc_id_prod-fo_insurance-purchase",
    "zc_id_prod-purchase"
+  ],
+  [
+   "zc_id_prod-request",
+   "zc_id_production"
   ],
   [
    "zc_id_prod-fo_insurance-request",
@@ -2863,8 +2895,16 @@
    "zc_id_stat-smt-voucher"
   ],
   [
+   "zc_id_stat-task",
+   "zc_id_statement"
+  ],
+  [
    "zc_id_stat-training",
    "zc_id_statement"
+  ],
+  [
+   "zc_id_stat-tsk-requisition",
+   "zc_id_stat-task"
   ],
   [
    "zc_id_stat-tsp-voucher",
@@ -2971,6 +3011,10 @@
    "zc_id_stor-container"
   ],
   [
+   "zc_id_stor-ctn-subj",
+   "zc_id_stor-container"
+  ],
+  [
    "zc_id_stor-ctn-tote",
    "zc_id_stor-container"
   ],
@@ -3045,6 +3089,10 @@
   [
    "zc_id_stor-traffic_line",
    "zc_id_storage"
+  ],
+  [
+   "zc_id_stor-traffic_line_rr_stop",
+   "zc_id_lifecycle_rr_non_self"
   ],
   [
    "zc_id_storage_rr_stock-in",

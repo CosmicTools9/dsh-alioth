@@ -1,7 +1,7 @@
 /**
  * Generate the semantic-mapping library as files, fully offline:
  * - coordinates.json: scene/factor/function codes from the Alioth repo's
- *   `003_seed_dimensions.sql` (version anchor from `latest.json`)
+ *   `seed-dimensions.sql` (version anchor from `latest.json`)
  * - physical-tables.json: isahl tables + inheritance + root columns from
  *   `002_isahl_tables.sql`
  * - fk-index.json: physical FK references from the vendored isahl_meta seed
@@ -175,7 +175,7 @@ async function read(pathStr: string): Promise<string> {
 export async function generateDicts(targetDir: string, repoDir = ALIOTH_REPO): Promise<{ source: string }> {
   const latest = JSON.parse(await read(path.join(repoDir, 'latest.json'))) as { version: string; published_at: string }
   const versionDir = path.join(repoDir, latest.version)
-  const seeds = await read(path.join(versionDir, '003_seed_dimensions.sql'))
+  const seeds = await read(path.join(versionDir, 'seed-dimensions.sql'))
   const tablesDdl = await read(path.join(versionDir, '002_isahl_tables.sql'))
   const fkSeed = await read(path.join(VENDOR_DDL, '004_isahl_meta_seed_fields.sql'))
 
