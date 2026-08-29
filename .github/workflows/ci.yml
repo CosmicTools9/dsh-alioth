@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 24
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
       # bun is a declared deployment dependency (prototype gates run on it);
       # the skill-alioth probe asserts availability on the toolchain.
       - uses: oven-sh/setup-bun@v2
@@ -58,7 +58,7 @@ jobs:
         with:
           node-version: 24
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
       - name: install (frozen)
         run: pnpm install --frozen-lockfile
       - name: clone the Alioth model repo
@@ -79,7 +79,7 @@ jobs:
         with:
           node-version: 24
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
       - name: install (frozen)
         run: pnpm install --frozen-lockfile
       - name: lint commit range
@@ -101,7 +101,7 @@ jobs:
         with:
           node-version: 24
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
       - name: install (frozen)
         run: pnpm install --frozen-lockfile
       - name: pnpm audit (moderate floor, overrides in pnpm-workspace.yaml)

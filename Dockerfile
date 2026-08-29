@@ -10,11 +10,11 @@
 # Self-check (keyless): docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth
 
 # ── build stage: install the workspace with production binaries ──
-FROM node:24.19-slim AS build
+FROM node:24.20-slim AS build
 # node-pty/koffi compile native bits when prebuilds are missing (linux-arm64).
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages ./packages
@@ -33,7 +33,7 @@ RUN pnpm --filter '@dsh-alioth/env-alioth' deploy --legacy --prod /app/runtime-e
   && pnpm --filter '@dsh-alioth/bundle-alioth' deploy --legacy --prod /app/runtime-bundle
 
 # ── runtime stage: slim, no toolchain ──
-FROM node:24.19-slim AS runtime
+FROM node:24.20-slim AS runtime
 # bun — the declared prototype-gate runtime (distribution dependency).
 # bun pinned to the AliothStudio stack version (prototype gates must match).
 RUN npm install -g bun@1.3.14 --silent

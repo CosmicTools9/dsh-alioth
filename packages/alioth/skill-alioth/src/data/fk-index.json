@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/fk-index.json",
  "description": "Physical FK reference index [table, field, target, local_key] from the vendored isahl_meta seed.",
- "source": "Alioth repo v10.0.7 (2026-08-28T17:16:37.337368+00:00) + vendored isahl_meta seed",
+ "source": "Alioth repo v10.0.8 (2026-08-29T10:00:23.271160+00:00) + vendored isahl_meta seed",
  "refs": [
   [
    "zc_id_appr-authorization",

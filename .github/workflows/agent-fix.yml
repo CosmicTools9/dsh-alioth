@@ -46,7 +46,7 @@ jobs:
           node-version: 24
 
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.22.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
 
       - name: guard — secret present and attempt cap not reached
         id: guard

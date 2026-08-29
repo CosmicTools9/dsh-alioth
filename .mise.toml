@@ -6,15 +6,15 @@
 
 #
 # 工具链钉住，与交付环境对齐（避免迁移/对齐成本）:
-#   node 24.19.0 — 对齐 Docker `node:24.19-slim` 与 AliothStudio 栈（覆盖全局 mise 的 24.16.0）。
-# pnpm 不进 mise：由 corepack 按 package.json 的 packageManager 字段单源解析（11.22.0，
+#   node 24.20.0 — 对齐 Docker `node:24.20-slim` 与 AliothStudio 栈（2026-08-29 对齐）。
+# pnpm 不进 mise：由 corepack 按 package.json 的 packageManager 字段单源解析（11.24.0，
 #   装第二份 pnpm 只会制造版本漂移。
 # bun 同样不进 mise：它是各环境各自的部署依赖（mac 宿主走 brew，Docker 走
 #   `npm i -g bun@1.3.14`），钉在这里会迫使每次换机的 mise install/exec 慢速拉取
 #   GitHub release（本机实测 >5min 未完成）。版本真理源在 Dockerfile。
 
 [tools]
-node = "24.19.0"
+node = "24.20.0"
 [tasks]
 launch = "bash scripts/launch-web.sh"
 "alioth:doctor" = "pnpm exec tsx scripts/alioth-doctor.ts"
