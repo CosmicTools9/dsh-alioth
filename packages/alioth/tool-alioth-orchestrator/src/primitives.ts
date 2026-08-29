@@ -11,7 +11,13 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+// Type-only: the value factory was renamed `ToolCallId` in harness 0.1.2 —
+// the harness loader resolves our bare imports against the installation's own
+// dsh-llm via the profile fallback (ESM never realpaths the plugin symlink),
+// so a runtime import breaks plugin loading there. The branded type keeps
+// compile-time safety against our pinned rc.8 devDeps; a future pin bump past
+// the rename fails compilation here and forces the migration.
+import type { CallId } from '@deepseek-ai/dsh-llm'
 import type { AgentPrimitives, StageOutput } from '@dsh-alioth/skill-alioth/agent-machine'
 import type { BuildResult, FlowPlan } from '@dsh-alioth/skill-alioth/agent-contract'
 import { validateEntitySpec, type EntitySpec, type FieldSpec, type RegistryView } from '@dsh-alioth/skill-alioth'
@@ -50,7 +56,7 @@ async function runTool(
 ): Promise<Record<string, unknown>> {
   const result = await ctx.tools.execute({
     signal: exec.signal,
-    callId: CallId(`${toolName}-pipeline`),
+    callId: `${toolName}-pipeline` as CallId,
     name: toolName,
     arguments: args,
     ...(exec.agent === undefined ? {} : { agent: exec.agent }),
