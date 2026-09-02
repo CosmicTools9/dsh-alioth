@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as workflow from '../src/index.ts'
 
@@ -49,7 +49,7 @@ let counter = 0
 function callTool(name: string, args: unknown) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`wf-${++counter}`),
+    callId: ToolCallId(`wf-${++counter}`),
     name,
     arguments: args,
   })

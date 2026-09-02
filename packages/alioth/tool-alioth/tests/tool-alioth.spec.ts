@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { type Agent } from '@deepseek-ai/dsh-agent'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 
@@ -41,7 +41,7 @@ let counter = 0
 function callInspect(args: unknown) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`call-${++counter}`),
+    callId: ToolCallId(`call-${++counter}`),
     name: 'alioth_app_inspect',
     arguments: args,
   })
@@ -50,7 +50,7 @@ function callInspect(args: unknown) {
 function callList(args: unknown) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`list-${++counter}`),
+    callId: ToolCallId(`list-${++counter}`),
     name: 'alioth_app_list',
     arguments: args,
   })
@@ -209,7 +209,7 @@ let writeCounter = 0
 function callWrite(args: unknown) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`write-${++writeCounter}`),
+    callId: ToolCallId(`write-${++writeCounter}`),
     name: 'alioth_app_write',
     arguments: args,
   })
@@ -305,7 +305,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
       const fiber = await bare.plugin(tool, { preProcRoot: approvalRoot, approvalMode: 'required' })
       const result = await bare.tools.execute({
         signal,
-        callId: CallId('approval-missing'),
+        callId: ToolCallId('approval-missing'),
         name: 'alioth_app_write',
         arguments: { namespace: 'Alioth', code: 'no-approval', name: 'X', modules: [] },
       })
@@ -322,7 +322,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
     approvalCtx = await bootWithApproval('allowed-once')
     const result = await approvalCtx.tools.execute({
       signal,
-      callId: CallId('approval-grant'),
+      callId: ToolCallId('approval-grant'),
       name: 'alioth_app_write',
       arguments: { namespace: 'Alioth', code: 'granted-app', name: 'Granted', modules: [{ id: 'm1', name: 'M1' }] },
       agent: fakeAgent() as never,
@@ -334,7 +334,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
   it('writes brand/goal/non_scope through app_write parameters', async () => {
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('write-branded'),
+      callId: ToolCallId('write-branded'),
       name: 'alioth_app_write',
       arguments: {
         namespace: 'Alioth', code: 'branded-app', name: 'Branded',
@@ -354,7 +354,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
   it('alioth_app_configure merges enrichment fields into an existing app', async () => {
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('configure-app'),
+      callId: ToolCallId('configure-app'),
       name: 'alioth_app_configure',
       arguments: {
         namespace: 'Alioth', app: 'ai-i-need-a',
@@ -375,7 +375,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
 
   it('alioth_app_configure is idempotent and refuses unknown config', async () => {
     const noop = await ctx.tools.execute({
-      signal, callId: CallId('configure-noop'),
+      signal, callId: ToolCallId('configure-noop'),
       name: 'alioth_app_configure',
       arguments: { namespace: 'Alioth', app: 'ai-i-need-a' },
     })
@@ -383,7 +383,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
     expect(noop.value).toMatchObject({ updated: [] })
 
     const invalid = await ctx.tools.execute({
-      signal, callId: CallId('configure-invalid'),
+      signal, callId: ToolCallId('configure-invalid'),
       name: 'alioth_app_configure',
       arguments: { namespace: 'Alioth', app: 'ai-i-need-a', defaultRoles: 'admin' },
     })
@@ -392,7 +392,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
 
   it('alioth_app_configure fails loud when the app does not exist', async () => {
     const result = await ctx.tools.execute({
-      signal, callId: CallId('configure-missing'),
+      signal, callId: ToolCallId('configure-missing'),
       name: 'alioth_app_configure',
       arguments: { namespace: 'Alioth', app: 'no-such-app', goal: 'x' },
     })
@@ -404,7 +404,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
     approvalCtx = await bootWithApproval('rejected')
     const result = await approvalCtx.tools.execute({
       signal,
-      callId: CallId('approval-deny'),
+      callId: ToolCallId('approval-deny'),
       name: 'alioth_app_write',
       arguments: { namespace: 'Alioth', code: 'denied-app', name: 'Denied', modules: [{ id: 'm1', name: 'M1' }] },
       agent: fakeAgent() as never,
@@ -433,7 +433,7 @@ describe('dsh-alioth app growth + discovery', () => {
 
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('configure-grow'),
+      callId: ToolCallId('configure-grow'),
       name: 'alioth_app_configure',
       arguments: {
         namespace: 'Alioth', app: 'grow-app',
@@ -466,7 +466,7 @@ describe('dsh-alioth app growth + discovery', () => {
   it('alioth_app_configure module growth is idempotent', async () => {
     const again = await ctx.tools.execute({
       signal,
-      callId: CallId('configure-grow-again'),
+      callId: ToolCallId('configure-grow-again'),
       name: 'alioth_app_configure',
       arguments: {
         namespace: 'Alioth', app: 'grow-app',
@@ -480,7 +480,7 @@ describe('dsh-alioth app growth + discovery', () => {
   it('alioth_app_configure rejects invalid module ids before writing', async () => {
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('configure-bad-module'),
+      callId: ToolCallId('configure-bad-module'),
       name: 'alioth_app_configure',
       arguments: {
         namespace: 'Alioth', app: 'grow-app',
@@ -502,7 +502,7 @@ describe('dsh-alioth app growth + discovery', () => {
   it('alioth_app_configure sets lifecycle status', async () => {
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('configure-status'),
+      callId: ToolCallId('configure-status'),
       name: 'alioth_app_configure',
       arguments: { namespace: 'Alioth', app: 'grow-app', status: 'archived' },
     })
@@ -523,7 +523,7 @@ describe('dsh-alioth app growth + discovery', () => {
     if (created.isError) throw new Error(`expected app_write success: ${created.error.message}`)
     const configured = await ctx.tools.execute({
       signal,
-      callId: CallId('roundtrip-status'),
+      callId: ToolCallId('roundtrip-status'),
       name: 'alioth_app_configure',
       arguments: { namespace: 'Alioth', app: 'roundtrip', status: 'developing' },
     })
@@ -549,7 +549,7 @@ describe('dsh-alioth alioth_app_delete', () => {
   function callDelete(args: unknown) {
     return ctx.tools.execute({
       signal,
-      callId: CallId(`delete-${++deleteCounter}`),
+      callId: ToolCallId(`delete-${++deleteCounter}`),
       name: 'alioth_app_delete',
       arguments: args,
     })
@@ -625,7 +625,7 @@ describe('dsh-alioth alioth_app_delete', () => {
       const approvalCtx = await bootDeleteApproval('rejected')
       const result = await approvalCtx.tools.execute({
         signal,
-        callId: CallId('delete-approval-deny'),
+        callId: ToolCallId('delete-approval-deny'),
         name: 'alioth_app_delete',
         arguments: { namespace: 'Alioth', app: 'delete-approval', confirm: true },
         agent: fakeAgent() as never,
@@ -639,7 +639,7 @@ describe('dsh-alioth alioth_app_delete', () => {
       const approvalCtx = await bootDeleteApproval('allowed-once')
       const result = await approvalCtx.tools.execute({
         signal,
-        callId: CallId('delete-approval-grant'),
+        callId: ToolCallId('delete-approval-grant'),
         name: 'alioth_app_delete',
         arguments: { namespace: 'Alioth', app: 'delete-approval', confirm: true },
         agent: fakeAgent() as never,

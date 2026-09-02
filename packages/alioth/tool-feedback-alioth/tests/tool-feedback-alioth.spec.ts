@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as feedbackAlioth from '@dsh-alioth/feedback-alioth'
 import * as toolFeedback from '../src/index.ts'
 
@@ -16,7 +16,7 @@ let counter = 0
 function callTool(name: string, args: unknown) {
   return ctx.tools.execute({
     signal: new AbortController().signal,
-    callId: CallId(`fb-${++counter}`),
+    callId: ToolCallId(`fb-${++counter}`),
     name,
     arguments: args,
   })

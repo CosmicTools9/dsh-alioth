@@ -14,7 +14,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
@@ -100,7 +100,7 @@ try {
   // 3. Real tool call round-trip
   const result = await ctx.tools.execute({
     signal: new AbortController().signal,
-    callId: CallId('smoke-schema-info'),
+    callId: ToolCallId('smoke-schema-info'),
     name: 'alioth_schema_info',
     arguments: { action: 'entities', limit: 5 },
   })

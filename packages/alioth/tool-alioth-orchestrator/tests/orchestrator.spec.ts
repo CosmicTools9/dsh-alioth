@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
@@ -49,7 +49,7 @@ let counter = 0
 function callCreate(args: unknown) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`create-${++counter}`),
+    callId: ToolCallId(`create-${++counter}`),
     name: 'alioth_app_create',
     arguments: args,
   })
@@ -210,7 +210,7 @@ tracks:
 
     const result = await workflowCtx.tools.execute({
       signal,
-      callId: CallId('create-wf'),
+      callId: ToolCallId('create-wf'),
       name: 'alioth_app_create',
       arguments: { namespace: 'Demo', code: 'wf-app', name: 'WF 应用', modules: [{ id: 'm1', name: 'M1' }] },
     })

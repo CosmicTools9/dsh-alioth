@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as auth from '../src/index.ts'
@@ -50,7 +50,7 @@ let counter = 0
 function callTool(name: string, args: unknown, agent?: Agent) {
   return ctx.tools.execute({
     signal: new AbortController().signal,
-    callId: CallId(`auth-${++counter}`),
+    callId: ToolCallId(`auth-${++counter}`),
     name,
     arguments: args,
     ...(agent === undefined ? {} : { agent }),

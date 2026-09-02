@@ -5,7 +5,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as toolMeta from '../src/index.ts'
@@ -71,7 +71,7 @@ let counter = 0
 function callSchemaInfo(args: unknown) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`call-${++counter}`),
+    callId: ToolCallId(`call-${++counter}`),
     name: 'alioth_schema_info',
     arguments: args,
   })
@@ -224,7 +224,7 @@ let entityCounter = 0
 function callEntityWrite(args: unknown, over: { agent?: unknown } = {}) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`entity-${++entityCounter}`),
+    callId: ToolCallId(`entity-${++entityCounter}`),
     name: 'alioth_entity_write',
     arguments: args,
     ...(over.agent === undefined ? {} : { agent: over.agent }),
@@ -350,7 +350,7 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     const approvalCtx = await bootWithApproval('allowed-once')
     const result = await approvalCtx.tools.execute({
       signal,
-      callId: CallId('entity-grant'),
+      callId: ToolCallId('entity-grant'),
       name: 'alioth_entity_write',
       arguments: { table: 'zc_id_scene', name: '操作', inherits: ['zc_id_object'], fields: [] },
       agent: { id: SessionId('parent-2'), session: Session.create(SessionId('parent-2')) } as never,
@@ -363,7 +363,7 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     const approvalCtx = await bootWithApproval('rejected')
     const result = await approvalCtx.tools.execute({
       signal,
-      callId: CallId('entity-deny'),
+      callId: ToolCallId('entity-deny'),
       name: 'alioth_entity_write',
       arguments: { table: 'zc_id_stus-employ', name: '雇员状态', inherits: ['zc_id_object'], fields: [] },
       agent: { id: SessionId('parent-2'), session: Session.create(SessionId('parent-2')) } as never,
