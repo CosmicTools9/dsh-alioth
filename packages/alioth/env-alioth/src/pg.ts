@@ -8,7 +8,7 @@
  * @module @dsh-alioth/env-alioth/pg
  */
 
-import { access } from 'node:fs/promises'
+import { access, readFile } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import EmbeddedPostgres from 'embedded-postgres'
@@ -63,6 +63,38 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+/**
+ * Fail loud when the cluster's data dir is held by a LIVE postmaster.
+ * Without this guard the failure mode is a silent infinite hang: the start
+ * attempt fails, and the `stop()` in the retry path waits for the OTHER
+ * instance's healthy postmaster to exit — which never happens.
+ * A stale lock (dead pid) is left for postgres itself to clear on start.
+ */
+async function assertClusterFree(dataDir: string): Promise<void> {
+  const lockFile = path.join(dataDir, 'postmaster.pid')
+  if (!await pathExists(lockFile)) {
+    return
+  }
+  const firstLine = (await readFile(lockFile, 'utf8')).split('\n')[0] ?? ''
+  const pid = Number.parseInt(firstLine, 10)
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return
+  }
+  let alive = true
+  try {
+    process.kill(pid, 0)
+  } catch (error) {
+    alive = (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+  if (alive) {
+    throw new Error(
+      `env-alioth: the embedded cluster at ${dataDir} is already running (postmaster pid ${pid}). `
+      + 'Another dsh instance holds this data root — stop that instance first, '
+      + 'or point this deployment at a different data root (ALIOTH_DATA_ROOT / Config.dataRoot).',
+    )
+  }
+}
+
 async function acquireExternal(url: string): Promise<PgHandle> {
   const client = new Client({ connectionString: url })
   await client.connect()
@@ -71,6 +103,7 @@ async function acquireExternal(url: string): Promise<PgHandle> {
 
 async function acquireEmbedded(options: PgOptions): Promise<PgHandle> {
   const dataDir = path.join(options.dataRoot, 'postgres')
+  await assertClusterFree(dataDir)
   const fresh = !await pathExists(path.join(dataDir, 'PG_VERSION'))
   // reservePort is TOCTOU (probe port, release, then PG binds): under
   // parallel boot (test suite) the probed port can be taken between probe and

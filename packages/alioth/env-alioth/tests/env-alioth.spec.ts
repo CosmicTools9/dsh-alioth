@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import { spawn } from 'node:child_process'
+import { acquirePostgres } from '../src/pg.ts'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -439,4 +441,49 @@ describe('env-alioth doctor observability', () => {
       await rm(dataRoot, { recursive: true, force: true })
     }
   }, 120_000)
+})
+
+describe('env-alioth embedded cluster lock', () => {
+  it('fails loud (no hang) when another instance holds the data root', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'env-pg-lock-'))
+    try {
+      const fixture = path.resolve(__dirname, 'fixtures', 'hold-cluster.mts')
+      const child = spawn(process.execPath, ['--import', 'tsx', fixture, root, '15000'], { stdio: ['ignore', 'pipe', 'pipe'] })
+      const readyPromise = new Promise<void>((resolveReady, rejectReady) => {
+        child.stdout.on('data', (chunk: Buffer) => {
+          if (chunk.toString().includes('HOLD-CLUSTER-READY')) resolveReady()
+        })
+        child.stderr.on('data', (chunk: Buffer) => rejectReady(new Error(chunk.toString())))
+        child.on('exit', code => rejectReady(new Error(`holder exited early: ${code}`)))
+      })
+      await Promise.race([readyPromise, new Promise((_, reject) => setTimeout(() => reject(new Error('holder never became ready')), 30_000))])
+
+      // The holder owns the cluster; a second acquire must fail FAST with the
+      // lock error (regression: this used to hang forever in stop()).
+      const started = Date.now()
+      let lockError: Error | undefined
+      while (Date.now() - started < 30_000) {
+        try {
+          await acquirePostgres({ dataRoot: root })
+          // Acquired despite the holder — the lock guard missed; treat as failure.
+          throw new Error('env-alioth: second acquire unexpectedly succeeded against a held cluster')
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          if (message.includes('already running (postmaster pid')) {
+            lockError = new Error(message)
+            break
+          }
+          // Transient (cluster still initialising / port churn) — retry.
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
+      child.kill('SIGTERM')
+      expect(lockError?.message).toContain('already running (postmaster pid')
+      // Fast-fail assertion: well under any hang horizon.
+      expect(Date.now() - started).toBeLessThan(30_000)
+      await new Promise(resolve => setTimeout(resolve, 16_000))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 90_000)
 })
