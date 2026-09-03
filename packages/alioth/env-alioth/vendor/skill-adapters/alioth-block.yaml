@@ -1,25 +1,32 @@
 name: alioth-block
 description: "Block Capability 原型设计与前端实现 — 提取 → 原型 → 实现"
 version: "2.0"
+reference_paths:
+  - ".agents/skills/alioth-design/references/gateway-shell.tsx"
+  - ".agents/skills/alioth-design/references/prototype-base.css"
+  - ".agents/skills/alioth-design/references/shells/block-shell.tsx"
+  - "docs/specs/BLOCK_SCHEMA.md"
 tracks:
   - name: Block 原型
     steps:
       - id: "1.1"
-        instruction: Track 0 — 从 Module 提取未构建的 Block，创建 block.json + 骨架
-        tools: [read_file, write_file, search_file]
-        schema: { type: object, required: [module_id, block_ids] }
+        instruction: "Track 0 — Block 骨架确认：block.json 已由 BlockCreation 脚手架创建（Pre-Proc/{ns}/Sources/Blocks/{block}/block.json，含扁平顶层字段 id/namespace/name/version/services/prototypeVersion/sharing/block/coordinates，符合 BLOCK_SCHEMA 规范），门禁将按 check-config-json.mjs 校验（block required = id/namespace/name/version 字符串 + services 数组）。禁止把 block.json 重构为 schema/metadata 嵌套格式（实测 LLM 自造 {schema, metadata:{ns}} 结构导致 5 次门禁失败）；禁止整体重写 block.json 丢字段（实测 5 次重试不收敛）。仅当 read_file 确认顶层缺必填字段时用 write_file 补写，且必须保留全部既有字段（id/namespace/name/version/services 缺一不可）。其余骨架文件无需创建。"
+        tools: [read_file, write_file, search_file, code_intel]
+        schema: {type: object, required: [module_id, block_ids]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Sources/Blocks/{block}/block.json"
+          - program: "bun"
+            args: ["scripts/check/check-config-json.mjs", "block", "Pre-Proc/{ns}/Sources/Blocks/{block}/block.json"]
+            timeout_sec: 30
       - id: "1.2"
-        instruction: Track 1 — Block 原型业务内容填充（Step 1-19）
+        instruction: Track 1 — Block 原型业务内容填充（Step 1-19）— 在 Pre-Proc/{ns}/Prototypes/Blocks/{block}/llm-tsx/block.tsx 写入业务内容实现（可基于骨架扩展，保持 displayName 与零 props 契约）
         tools: [read_file, write_file]
-        schema: { type: object, required: [block_prototypes] }
+        schema: {type: object, required: [block_prototypes]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Prototypes/Blocks/{block}/b-v*.html"
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Blocks/{block}/llm-tsx/block.tsx"
       - id: "1.3"
         instruction: 构建 + 验证 — prototype-tool.js build → prototype-check
         tools: [read_file, run_command]
-        schema: { type: object, required: [build_output] }
+        schema: {type: object, required: [build_output]}
         gates:
           - program: "bun"
             args: ["scripts/prototype-tool.js", "build", "Pre-Proc/{ns}/Prototypes/Blocks/{block}/llm-tsx/block.tsx"]
@@ -27,4 +34,6 @@ tracks:
             timeout_sec: 180
           - program: "target/debug/ontology-mapping"
             args: ["prototype-check", "Pre-Proc/{ns}/Prototypes/Blocks/{block}"]
-            timeout_sec: 60
+            timeout_sec: 240
+source:
+  content_sha256: b8feab26457f089dbbf6db82284f8f363f6e4dcc5f7c72303598eca2db90131e

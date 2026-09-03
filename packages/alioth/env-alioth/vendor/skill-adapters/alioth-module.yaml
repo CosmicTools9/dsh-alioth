@@ -1,37 +1,59 @@
 name: alioth-module
 description: "Module 级高保真原型设计 — 能力发现 → Block 分发 → 组装构建 → 视觉验证"
 version: "2.0"
+reference_paths:
+  - ".agents/skills/alioth-design/references/gateway-shell.tsx"
+  - ".agents/skills/alioth-design/references/prototype-base.css"
+  - ".agents/skills/alioth-design/references/shells/module-shell.tsx"
+  - ".agents/skills/alioth-design/references/shells/block-shell.tsx"
+  - "docs/specs/MODULE_SPEC.md"
 tracks:
   - name: 原型设计
     steps:
       - id: "1.1"
-        instruction: preflight — 清理产物、验证原型、提取 mock、字段覆盖
-        tools: [read_file, write_file, search_file]
-        schema: { type: object, required: [namespace, module] }
+        instruction: "preflight — 清理产物、验证原型、提取 mock、字段覆盖。module.json 已由 ModuleCreation 脚手架创建（含顶层 id/namespace/name/version/status/routePrefix，符合 check-config-json.mjs 校验），禁止重构为其他格式；仅当顶层缺字段时补写，保持扁平结构。"
+        tools: [read_file, write_file, search_file, code_intel]
+        schema: {type: object, required: [namespace, module]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
+          - program: "bun"
+            args: ["scripts/check/check-config-json.mjs", "module", "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"]
+            timeout_sec: 30
       - id: "1.2"
-        instruction: Phase 1 能力发现 — 输出 capability-map.md
+        instruction: "Phase 1 能力发现 — 用 write_file 直接写入 Pre-Proc/{ns}/Prototypes/Modules/{module}/capability-map.md（markdown 表格：能力/场景 → 建议 Block 或模块映射，基于输入 module.json 的 blockAssembly 与业务语义；内容完整可读，禁止 '...' 占位）。基于已注入的输入文件直接产出，禁止探索。completed 必须为 true 且文件已写入。"
         tools: [read_file, write_file]
-        schema: { type: object, required: [capability_map] }
+        schema: {type: object, required: [capability_map]}
+        inputs:
+          - "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
         gates:
           - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/capability-map.md"
       - id: "1.3"
-        instruction: Phase 2 组装设计 — 编写 Block Brief，更新 module.json blockAssembly
+        instruction: "Phase 2 组装设计 — 本步骤目标产物只有两个，必须用 write_file 写入：(A) 更新 Pre-Proc/{ns}/Sources/Modules/{module}/module.json 的 blockAssembly——【必须是 JSON 对象，禁止数组形态（check-config-json.mjs 门禁会拒绝数组）】，结构：{\"mode\":\"multi-block\",\"shell\":\"ModuleLayout\",\"navigation\":{\"groups\":[{\"id\":\"business\",\"label\":\"业务处理\",\"icon\":\"Package\"}]},\"defaultBlock\":\"<首块id>\",\"collapseBehavior\":\"width\",\"stateContract\":{\"shared\":[\"globalQuery\",\"userContext\"],\"isolated\":[\"search\",\"filter\",\"page\",\"selectedId\"]},\"blocks\":[{\"id\":\"<块id>\",\"label\":\"<中文块名>\",\"group\":\"business\",\"order\":0,\"icon\":\"layout\"},…],\"serviceBindings\":{\"<块id>\":{\"services\":[\"<service-id>\"],\"dtoTypes\":[\"<PascalCaseDto>\"]}}}——至少 1 个 block，块语义与输入文件中的现有内容合并；(B) 在 Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx 写入完整模块级原型，直接基于注入的 system-settings 范式（输入文件）改写结构。module.tsx 必须满足 prototype-tool.js 契约检查（失败则门禁拒绝）：(1) 第一行 import（useState）from 'react'；(2) 从 ../../../../../../.agents/skills/alioth-design/references/gateway-shell 导入（GatewayShell, Navigation, WorkspaceDock, NavGroup, ModuleTab）——注意：**禁止 import Pre-Proc/{ns}/Prototypes/Blocks/* 下的 block 原型（链路尚未构建，esbuild 必然失败——实测 5 次重试不收敛）；模块业务内容直接内联在 module.tsx 中（自包含页面），提供 export default function ModuleLayout({embedded}) 默认导出（含 embedded 分支与 useState(DEFAULT_ID)）——注意 import 路径必须与 system-settings 范式一致，使用 6 级相对路径 ../../../../../../.agents/skills/alioth-design/references/gateway-shell（从 llm-tsx/ 目录上溯到项目根），禁止使用 .agents/... 开头的项目根相对路径（esbuild 无法解析）；(3) 组件签名含 embedded 参数（默认 false）；(4) 用内部 useState(DEFAULT_ID) 管理 activeId（DEFAULT_ID = 首个导航项 id）；(5) 定义 embedded 分支：embedded=true 时只渲染 Navigation + content 容器（不含 TopBar/Footer）。Block 组件路径约定：../../../Blocks/{blockId}/llm-tsx/block（blockId 来自 blockAssembly.blocks[].id）。禁止 run_command 探索或 bun -e。completed 必须为 true 且两个产物都已写入。禁止使用 '...' 或空内容占位——write_file 的 content 必须包含完整可编译代码。"
         tools: [read_file, write_file]
-        schema: { type: object, required: [block_briefs] }
+        schema: {type: object, required: [block_briefs]}
+        inputs:
+          - "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
+          - "Pre-Proc/Alioth/Prototypes/Modules/system-settings/llm-tsx/module.tsx"
         gates:
+          - program: "bun"
+            args: ["scripts/check/check-module-contract.mjs", "Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx"]
+            timeout_sec: 30
           - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx"
       - id: "1.4"
-        instruction: Phase 2.5 Block 并行分发 — 创建 block.tsx 骨架 + block.json
+        instruction: "Phase 2.5 Block 并行分发 — 必须为输入 module.json 的 blockAssembly 中【每一个 block id】创建 Pre-Proc/{ns}/Sources/Blocks/{blockId}/block.json + llm-tsx/block.tsx 骨架（block.tsx 内容为：export default function BlockXxx() 返回 null 的骨架函数，displayName = blockId）。block id 必须与 blockAssembly 完全一致，禁止自创其他 id。本步骤【禁止】写 module.json 或 module.tsx（那是步骤 1.3 的产物，已存在，不要再写）——本步骤唯一产出是每个 block 的 block.json + llm-tsx/block.tsx 骨架，【同时】必须为每个 block 创建原型骨架 Pre-Proc/{ns}/Prototypes/Blocks/{blockId}/llm-tsx/block.tsx（同内容骨架函数，路径与 Sources 版本不同，Prototypes 目录需要时由 write_file 自动创建）。三条路径：Pre-Proc/{ns}/Sources/Blocks/{blockId}/block.json、Pre-Proc/{ns}/Sources/Blocks/{blockId}/llm-tsx/block.tsx、Pre-Proc/{ns}/Prototypes/Blocks/{blockId}/llm-tsx/block.tsx。completed 必须为 true 且所有 block 骨架都已写入。"
         tools: [read_file, write_file]
-        schema: { type: object, required: [blocks] }
+        schema: {type: object, required: [blocks]}
+        inputs:
+          - "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
         gates:
+          - program: "bun"
+            args: ["scripts/check/check-module-blocks.mjs", "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"]
+            timeout_sec: 30
           - output_glob: "Pre-Proc/{ns}/Sources/Blocks/*/block.json"
       - id: "1.5"
-        instruction: Phase 3 组装构建 — prototype-tool.js build → m-v{N}.html
-        tools: [read_file, write_file, run_command]
-        schema: { type: object, required: [prototype_path] }
+        instruction: "Phase 3 组装构建 — 本步骤由门禁自动执行 bun build 与原型检查，你【不需要】自己运行 run_command 构建。只需确认 Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx 及 Block 骨架已存在（若缺失则用 write_file 补全），然后输出 completed: true。禁止探索或重复构建。"
+        tools: [read_file, write_file]
+        schema: {type: object, required: [prototype_path]}
         gates:
           - program: "bun"
             args: ["scripts/prototype-tool.js", "build", "Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx"]
@@ -39,10 +61,12 @@ tracks:
             timeout_sec: 180
           - program: "target/debug/ontology-mapping"
             args: ["prototype-check", "Pre-Proc/{ns}/Prototypes/Modules/{module}"]
-            timeout_sec: 60
+            timeout_sec: 240
       - id: "1.6"
-        instruction: Phase 4 视觉验证 — 截图 7 帧 + 6 维度评分 ≥90
+        instruction: "Phase 4 交付确认 — 确认 1.5 构建产物 Pre-Proc/{ns}/Prototypes/Modules/{module}/m-v*.html 已存在（read_file 确认即可），输出 completed: true。视觉验证（ego-browser 截图 + 6 维度评分）由人工/平台侧执行，不属于本步骤。"
         tools: [read_file]
-        schema: { type: object, required: [visual_report] }
+        schema: {type: object, required: [prototype_confirmed]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Prototypes/visual-verify/{module}/v*/report.json"
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/m-v*.html"
+source:
+  content_sha256: 2e29a256579f24f312addb17e536062af43372f0dbf1c6c08259d2db229fe3aa

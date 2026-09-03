@@ -23,10 +23,21 @@ export {
   type RunState,
   type RunTransition,
 } from './state.ts'
-export { checkGate, checkStepGates, type GateContext, type GateResult } from './gates.ts'
+export {
+  checkGate,
+  checkStepGates,
+  classifyGateError,
+  isLlmFixable,
+  type GateContext,
+  type GateErrorKind,
+  type GateResult,
+  type GateStatus,
+  type ProgramResult,
+  type ProgramRunner,
+} from './gates.ts'
 export { loadRun, saveRun, type RunMeta } from './workspace.ts'
 export { ADAPTER_TOOL_TO_DSH, missingToolSurface, type MissingTool } from './mapping.ts'
-export { createProgramRunner, bunAvailable, type ProgramResult, type ProgramRunnerOptions } from './bun.ts'
+export { createProgramRunner, bunAvailable, type ProgramRunnerOptions } from './bun.ts'
 export {
   validateEntitySpec,
   validateMappedColumn,
@@ -40,3 +51,10 @@ export {
   type RegistryView,
   type ValidationIssue,
 } from './entity-validate.ts'
+export {
+  buildE2eReport,
+  writeE2eReport,
+  E2E_REPORT_SCHEMA_VERSION,
+  type E2eCheck,
+  type E2eReport,
+} from './e2e-report.ts'

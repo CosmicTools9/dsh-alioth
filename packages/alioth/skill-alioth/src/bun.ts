@@ -7,51 +7,61 @@
  * a missing binary fails the gate with a clear message, never silently.
  * @module @dsh-alioth/skill-alioth/bun
  */
-
+import type { ProgramResult, ProgramRunner } from './gates.ts'
 import { spawn } from 'node:child_process'
-
-export interface ProgramResult {
-  readonly ok: boolean
-  readonly detail: string
-}
 
 export interface ProgramRunnerOptions {
   /** Working directory for spawned programs (adapter scripts resolve relative to it). */
   readonly cwd?: string
-  /** Kill the program after this many ms. */
+  /** Kill the program after this many ms (overridden by the gate's `timeout_sec`). */
   readonly timeoutMs?: number
 }
 
+const DEFAULT_TIMEOUT_MS = 300_000
+
 /**
  * Create a `runProgram` hook: spawn, capture output tails, resolve on close.
- * ENOENT and non-zero exits become `ok: false` with evidence.
+ * ENOENT and non-zero exits become `ok: false` with evidence; the gate's
+ * `timeout_sec` (× 1000 ms) wins over the default when set.
  */
-export function createProgramRunner(options: ProgramRunnerOptions = {}): (program: string, args: readonly string[]) => Promise<ProgramResult> {
-  return (program, args) => new Promise((resolve) => {
+export function createProgramRunner(options: ProgramRunnerOptions = {}): ProgramRunner {
+  return (program, args, gate) => {
+    const timeoutMs = gate.kind === 'program' && gate.timeoutSec > 0
+      ? gate.timeoutSec * 1000
+      : options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const { promise, resolve } = Promise.withResolvers<ProgramResult>()
     const child = spawn(program, [...args], {
       cwd: options.cwd,
-      timeout: options.timeoutMs ?? 300_000,
+      timeout: timeoutMs,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
     let stderr = ''
     child.stdout?.on('data', chunk => { stdout += String(chunk) })
     child.stderr?.on('data', chunk => { stderr += String(chunk) })
-    child.on('error', error => resolve({ ok: false, detail: `spawn ${program} failed: ${error.message}` }))
+    child.on('error', error => resolve({ ok: false, exitCode: null, detail: `spawn ${program} failed: ${error.message}` }))
     child.on('close', code => {
       if (code === 0) {
-        resolve({ ok: true, detail: `${program} exited 0${stdout.length > 0 ? `: ${stdout.trim().slice(-300)}` : ''}` })
+        resolve({ ok: true, exitCode: 0, detail: `${program} exited 0${stdout.length > 0 ? `: ${stdout.trim().slice(-300)}` : ''}` })
         return
       }
-      resolve({
-        ok: false,
-        detail: `${program} exited ${String(code)}${stderr.length > 0 ? `: ${stderr.trim().slice(-300)}` : ''}`,
-      })
+      if (code === null) {
+        resolve({ ok: false, exitCode: null, detail: `${program} timed out after ${Math.round(timeoutMs / 1000)}s${stderr.length > 0 ? `: ${stderr.trim().slice(-300)}` : ''}` })
+        return
+      }
+      resolve({ ok: false, exitCode: code, detail: `${program} exited ${String(code)}${stderr.length > 0 ? `: ${stderr.trim().slice(-300)}` : ''}` })
     })
-  })
+    return promise
+  }
 }
 
 /** Probe whether `bun` is on PATH. */
 export function bunAvailable(): Promise<boolean> {
-  return createProgramRunner({ timeoutMs: 15_000 })('bun', ['--version']).then(result => result.ok)
+  return createProgramRunner({ timeoutMs: 15_000 })('bun', ['--version'], {
+    kind: 'program',
+    program: 'bun',
+    args: ['--version'],
+    expectedExitCode: 0,
+    timeoutSec: 15,
+  }).then(result => result.ok)
 }

@@ -64,6 +64,8 @@ describe('skill-alioth adapter parsing', () => {
       kind: 'program',
       program: 'bun',
       args: ['scripts/prototype-tool.js', 'build', 'Pre-Proc/{ns}/Apps/{app}/llm-tsx/app.tsx'],
+      expectedExitCode: 0,
+      timeoutSec: 120,
       outputGlob: 'Pre-Proc/{ns}/Prototypes/Apps/{app}/a-v*.html',
     })
     expect(adapter.tracks[0]!.steps[0]!.gates[0]).toEqual({ kind: 'output-glob', outputGlob: 'Pre-Proc/{ns}/Apps/{app}/' })
@@ -146,12 +148,12 @@ describe('skill-alioth gates', () => {
         context,
       )
       expect(results).toHaveLength(1)
-      expect(results[0]?.ok).toBe(true)
+      expect(results[0]?.status).toBe('pass')
       const missing = await checkStepGates(
         [{ kind: 'output-glob', outputGlob: 'Pre-Proc/{ns}/Apps/{app}/nope.json' }],
         context,
       )
-      expect(missing[0]?.ok).toBe(false)
+      expect(missing[0]?.status).toBe('fail')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -159,12 +161,13 @@ describe('skill-alioth gates', () => {
 
   it('runs program gates through the hook and declares them otherwise', async () => {
     const context = { preProcRoot: '/tmp/x', variables: { ns: 'Alioth', app: 'demo' } }
-    const gate = { kind: 'program', program: 'bun', args: ['build'] } as const
+    const gate = { kind: 'program', program: 'bun', args: ['build'], expectedExitCode: 0, timeoutSec: 120 } as const
     const declared = await checkStepGates([gate], context)
-    expect(declared[0]?.ok).toBe(true)
+    expect(declared[0]?.status).toBe('not-attempted')
     expect(declared[0]?.detail).toContain('not executed')
-    const run = await checkStepGates([gate], context, async () => ({ ok: true, detail: 'built' }))
-    expect(run[0]).toEqual({ gate, ok: true, detail: 'built' })
+    const run = await checkStepGates([gate], context, async () => ({ ok: true, exitCode: 0, detail: 'built' }))
+    expect(run[0]?.status).toBe('pass')
+    expect(run[0]?.detail).toBe('built')
   })
 
   it('rejects globs escaping preProcRoot', async () => {
@@ -173,7 +176,7 @@ describe('skill-alioth gates', () => {
       [{ kind: 'output-glob', outputGlob: '../../../etc/passwd' }],
       context,
     )
-    expect(results[0]?.ok).toBe(false)
+    expect(results[0]?.status).toBe('fail')
     expect(results[0]?.detail).toContain('escapes')
   })
 })
@@ -235,21 +238,30 @@ describe('skill-alioth program runner', () => {
   const run = createProgramRunner({ timeoutMs: 15_000 })
 
   it('resolves ok on exit 0 with stdout evidence', async () => {
-    const result = await run('node', ['-e', 'console.log("runner-ok")'])
+    const result = await run('node', ['-e', 'console.log("runner-ok")'], {
+      kind: 'program', program: 'node', args: [], expectedExitCode: 0, timeoutSec: 15,
+    })
     expect(result.ok).toBe(true)
+    expect(result.exitCode).toBe(0)
     expect(result.detail).toContain('runner-ok')
   })
 
   it('reports non-zero exits with stderr evidence', async () => {
-    const result = await run('node', ['-e', 'console.error("boom"); process.exit(3)'])
+    const result = await run('node', ['-e', 'console.error("boom"); process.exit(3)'], {
+      kind: 'program', program: 'node', args: [], expectedExitCode: 0, timeoutSec: 15,
+    })
     expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(3)
     expect(result.detail).toContain('exited 3')
     expect(result.detail).toContain('boom')
   })
 
   it('reports missing binaries as spawn failures', async () => {
-    const result = await run('definitely-not-a-real-binary-xyz', [])
+    const result = await run('definitely-not-a-real-binary-xyz', [], {
+      kind: 'program', program: 'x', args: [], expectedExitCode: 0, timeoutSec: 15,
+    })
     expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(null)
     expect(result.detail).toContain('spawn')
   })
 

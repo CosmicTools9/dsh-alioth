@@ -13,3 +13,7 @@ allowed_programs:
   - bun
   - npx
   - cargo
+  - codegraph
+  - git
+  - node
+  - bash

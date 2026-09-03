@@ -82,7 +82,7 @@ beforeAll(async () => {
   disposers.push(() => appTool.dispose())
   const meta = await ctx.plugin(toolMeta, {})
   disposers.push(() => meta.dispose())
-  const orchestration = await ctx.plugin(orchestrator, {})
+  const orchestration = await ctx.plugin(orchestrator, { preProcRoot })
   disposers.push(() => orchestration.dispose())
 }, 120_000)
 
@@ -205,7 +205,7 @@ tracks:
     workflowDisposers.push(() => meta.dispose())
     const wf = await workflowCtx.plugin(workflowTool, { preProcRoot: workflowPreProc })
     workflowDisposers.push(() => wf.dispose())
-    const orchestration = await workflowCtx.plugin(orchestrator, { adapter: 'alioth-app.yaml' })
+    const orchestration = await workflowCtx.plugin(orchestrator, { adapter: 'alioth-app.yaml', preProcRoot: workflowPreProc })
     workflowDisposers.push(() => orchestration.dispose())
 
     const result = await workflowCtx.tools.execute({

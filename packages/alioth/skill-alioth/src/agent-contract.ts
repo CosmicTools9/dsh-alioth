@@ -2,31 +2,37 @@
  * Unified data contracts with AliothStudio Meta's AppAgent.
  *
  * The source of truth is the ACTIVE `Meta/backend/app-agent` pipeline
- * (AliothStudio `state.rs` / `pipeline/stage.rs`), NOT the frozen vendor
- * copy — the active line has evolved past it: AppCreation (stage 0),
- * E2EVerification (ego-browser E2E with retry), and the PipelineAdvance /
- * PipelineGateAwaiting metadata gate sweep after publishing. Serialization
- * aligns with the Rust `serde` shapes including aliases
- * (`created_scenes`/`created_factors`, `SceneCreation`).
+ * (AliothStudio), NOT the frozen vendor copy. Alignment note (2026-09-03,
+ * dialog-loop refactor): Meta demolished the old session state machine
+ * (orchestrator/state torn out, sessions converged into a dialog loop where
+ * turn state is message-derived — no business state enum survives). The
+ * shared wire surface that remains is: `FlowPlan` (state.rs, planning-phase
+ * artifact), the 7 metadata `StageId`s (pipeline/stage.rs), the skill
+ * Track/Step/Gate schema (skills/mod.rs), and the e2e evidence report
+ * (dialog_tools/e2e_verify.rs). This module keeps a LOCAL deterministic
+ * 9-stage machine (real deterministic work per stage — dsh-alioth's PTC
+ * posture) whose stage vocabulary and shared artifacts stay aligned with
+ * those surviving shapes; the retired Meta state enum is no longer a wire
+ * target. Serialization aligns with the Rust `serde` shapes including
+ * aliases (`created_scenes`/`created_factors`, `SceneCreation`).
  * @module @dsh-alioth/skill-alioth/agent-contract
  */
 
-/** The AppAgent pipeline state (active Meta line: 9 stages + gates + terminals). */
+/** The AppAgent pipeline state (local deterministic machine: 9 stages + gates + terminals). */
 export type AgentState =
   // 0. App creation: namespace + raw intent → app container (code/name/goal).
   | { readonly kind: 'app-creation' }
-  // 1. Semantic analysis — DEPRECATED in the active Meta line
-  //    (remove-appagent-hollow-analysis-stages, 2026-08-25): the keyword-
-  //    matching shell was dropped, legacy sessions passthrough to Planning,
-  //    and real analysis is the Planning LLM ontology output. dsh-alioth
-  //    keeps the stage with real work — semantic_search audit confirmation
-  //    (dialogue precondition) — and advances straight through.
+  // 1. Semantic analysis — DEPRECATED upstream (remove-appagent-hollow-analysis-stages,
+  //    2026-08-25): the keyword-matching shell was dropped, legacy sessions
+  //    passthrough to Planning, and real analysis is the Planning LLM ontology
+  //    output. dsh-alioth keeps the stage with real work — semantic_search
+  //    audit confirmation (dialogue precondition) — and advances straight through.
   | { readonly kind: 'semantic-analysis' }
-  // 2. Function decomposition — DEPRECATED in Meta (keyword-template shell,
+  // 2. Function decomposition — DEPRECATED upstream (keyword-template shell,
   //    products overwritten by Planning); units now derive from the ontology
   //    output. dsh-alioth keeps the stage: registry-inventory grounding.
   | { readonly kind: 'function-decomposition' }
-  // 3. Ontology analysis — DEPRECATED in Meta (pure passthrough). dsh-alioth
+  // 3. Ontology analysis — DEPRECATED upstream (pure passthrough). dsh-alioth
   //    keeps the stage: deterministic entity registration (alioth_entity_write).
   | { readonly kind: 'ontology-analysis'; readonly ontologyRound: number }
   // 4. Module creation/assembly.
@@ -38,7 +44,7 @@ export type AgentState =
   // 7. Service API generation (serde aliases `factor_api`/`FactorAPI`).
   | { readonly kind: 'service-api' }
   // 7.5 E2E verification: real browser full chain (frontend→API→DB); failure
-  //     loops back for repair (≤3 attempts).
+  //     loops back for repair (≤3 attempts). Evidence: e2e-report.json.
   | { readonly kind: 'e2e-verification'; readonly attempt: number }
   // Publish: compile validation + release to Gateway.
   | { readonly kind: 'publishing'; readonly publishAttempt: number; readonly lastError?: string }
@@ -85,7 +91,9 @@ export const STAGE_IDS = [
 
 export type StageId = typeof STAGE_IDS[number]
 
-/** FlowPlan — the planning-phase artifact shared with the Meta AppAgent. */
+/** FlowPlan — the planning-phase artifact shared with the Meta AppAgent
+ * (state.rs `FlowPlan`; new dialog-loop-era planning fields are optional and
+ * serde-defaulted upstream). */
 export interface FlowPlan {
   readonly usedModules: readonly string[]
   readonly namespace: string
@@ -100,6 +108,18 @@ export interface FlowPlan {
   readonly ontologyModelJson?: string
   /** Function decomposition result: functional unit list. */
   readonly functionalUnits?: readonly FunctionalUnit[]
+  /** Semantic analysis: extracted key concepts (`semantic_concepts`). */
+  readonly semanticConcepts?: readonly string[]
+  /** Computation planning: target fields, formulas, dependencies, triggers. */
+  readonly computations?: readonly ComputationPlan[]
+  /** Constraint validation planning: field-level and cross-field. */
+  readonly constraints?: readonly ConstraintPlan[]
+  /** Business-rule planning: condition-action rules. */
+  readonly businessRules?: readonly BusinessRulePlan[]
+  /** LLM-derived app-level metadata driving app.json fields (`app_meta`). */
+  readonly appMeta?: AppMeta
+  /** Core constraints distilled from the request (≤2 `name：fact` lines). */
+  readonly coreConstraints?: readonly string[]
 }
 
 /** Functional unit from FunctionDecomposition (deterministic id from name). */
@@ -112,6 +132,48 @@ export interface FunctionalUnit {
   readonly suggestedModule?: string
   /** serde alias `suggested_scenes`. */
   readonly suggestedBlocks: readonly string[]
+}
+
+/** Computation planning (state.rs `ComputationPlan`). */
+export interface ComputationPlan {
+  readonly entity: string
+  readonly targetField: string
+  readonly formula: string
+  readonly dependsOn: readonly string[]
+  /** `onCreate` | `onUpdate` | `onCreateOrUpdate`. */
+  readonly trigger: string
+}
+
+/** Constraint validation planning (state.rs `ConstraintPlan`). */
+export interface ConstraintPlan {
+  readonly entity: string
+  readonly field?: string
+  readonly expression: string
+  /** `error` | `warning`. */
+  readonly level: string
+  readonly message: string
+}
+
+/** Business-rule planning (state.rs `BusinessRulePlan`). */
+export interface BusinessRulePlan {
+  readonly entity: string
+  readonly ruleName: string
+  /** `onCreate` | `onUpdate` | `onTransition` | `always`. */
+  readonly trigger: string
+  readonly condition: string
+  readonly action: string
+  readonly priority: number
+  readonly errorMessage: string
+}
+
+/** App-level metadata (state.rs `AppMeta`; `deploymentMode` camelCase on the wire). */
+export interface AppMeta {
+  readonly name?: string
+  readonly description?: string
+  /** `development` | `staging` | `production`. */
+  readonly environment?: string
+  /** `standalone` | `embedded` — null means auto. */
+  readonly deploymentMode?: string
 }
 
 /** BuildResult — the published artifact descriptor (Meta wire shape). */

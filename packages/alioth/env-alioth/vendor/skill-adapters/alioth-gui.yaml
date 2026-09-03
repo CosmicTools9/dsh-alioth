@@ -1,38 +1,43 @@
 name: alioth-gui
 description: "前端业务代码开发 — 类型 → API hooks → 页面组件 → 路由 → 视觉验证"
 version: "2.0"
+reference_paths:
+  - ".agents/skills/alioth-design/references/gateway-shell.tsx"
+  - ".agents/skills/alioth-design/references/prototype-base.css"
 tracks:
   - name: 前端开发
     steps:
       - id: "1.1"
         instruction: Track 0 — 模块分析，读取 module.json/block.json → 数据模型文档
         tools: [read_file, write_file]
-        schema: { type: object, required: [data_model_doc] }
+        schema: {type: object, required: [data_model_doc]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/module.json"
       - id: "1.2"
         instruction: Track 1 — 类型定义 + API hooks + mapper 函数
-        tools: [read_file, write_file, search_file]
-        schema: { type: object, required: [types_api_hooks] }
+        tools: [read_file, write_file, search_file, code_intel]
+        schema: {type: object, required: [types_api_hooks]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/frontend/src/types/*.ts"
       - id: "1.3"
         instruction: Track 2 — 页面组件：列表页 → 表单页 → 详情页 → 通用组件
-        tools: [read_file, write_file, search_file]
-        schema: { type: object, required: [page_components] }
+        tools: [read_file, write_file, search_file, code_intel]
+        schema: {type: object, required: [page_components]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Modules/{module}/frontend/src/pages/*.tsx"
       - id: "1.4"
-        instruction: Track 3 — 路由集成：App.tsx + ModuleLayout + i18n + theme.css
+        instruction: "Track 3 — 路由集成：App.tsx + ModuleLayout + i18n + theme.css。本步 MUST 同时补齐前端工程骨架（缺失才写，禁止覆盖已存在文件）：(A) package.json — 参照 Pre-Proc/WZ/Sources/Blocks/outgo-payment/frontend/package.json 的结构与依赖版本（react ^19.2.8、react-dom ^19.2.8、@tanstack/react-query ^5.101.4、jotai ^2.20.2、lucide-react、tailwind-merge、zod、react-router、single-spa、@alioth/{api,components,hooks,i18n,types} 均为 workspace:*；devDependencies 含 typescript、@types/react、@types/react-dom、vite、@vitejs/plugin-react、@alioth/config），name 用 @alioth/{module}-frontend，scripts.lint = tsc --noEmit；(B) tsconfig.json — compilerOptions.moduleResolution MUST 为 \"bundler\"（TS 7 已移除 node/node10 值，写 node 会触发 TS5108 门禁失败），其余选项参照 Framework/frontend/config/typescript/tsconfig.base.json（module ESNext、jsx react-jsx、strict、noEmit、isolatedModules、skipLibCheck、allowImportingTsExtensions、resolveJsonModule、include [\"src\"]）。完成后再写 App.tsx/ModuleLayout/i18n/theme.css。"
         tools: [read_file, write_file]
-        schema: { type: object, required: [routing_integration] }
+        schema: {type: object, required: [routing_integration]}
         gates:
           - program: "npx"
             args: ["tsc", "--noEmit"]
             timeout_sec: 180
       - id: "1.5"
-        instruction: Track 4 — 原型代码对齐：差距分析 → Block 修正 → 视觉验证
-        tools: [read_file, write_file]
-        schema: { type: object, required: [alignment_report] }
+        instruction: Track 4 — 原型代码对齐：差距分析 → Block 修正 → 视觉验证（调用 visual_verify 对最新 v{N}.html 执行截图评分；失败则修复后重跑）
+        tools: [read_file, write_file, visual_verify]
+        schema: {type: object, required: [alignment_report]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Prototypes/visual-verify/{module}/v*/report.json"
+source:
+  content_sha256: a5074360d8864af0ae5a091c76a58cf7cb55d5091ffeef406ff6be5680a33446

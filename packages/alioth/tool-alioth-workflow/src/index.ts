@@ -18,6 +18,7 @@ import {
   completeCurrentStep,
   createProgramRunner,
   currentStep,
+  isLlmFixable,
   loadAdapter,
   loadRun,
   parseRuntimeAllowedPrograms,
@@ -25,6 +26,8 @@ import {
   type Adapter,
   type GateContext,
   type RunState,
+  type Step,
+  type StepGate,
 } from '@dsh-alioth/skill-alioth'
 
 export const name = 'tool-alioth-workflow'
@@ -82,6 +85,39 @@ export function apply(ctx: Context, config: Config): void {
 
   function gateContext(namespace: string, app: string): GateContext {
     return { preProcRoot, variables: { ns: namespace, app } }
+  }
+
+  /** Human-facing gate summary: glob form, or program form with contract fields. */
+  function formatGates(gates: readonly StepGate[]): string[] {
+    return gates.map(gate => {
+      if (gate.kind === 'output-glob') {
+        return `output_glob: ${gate.outputGlob}`
+      }
+      const exit = gate.expectedExitCode === 0 ? '' : ` expected_exit=${gate.expectedExitCode}`
+      return `program: ${gate.program} ${gate.args.join(' ')}${exit} timeout=${gate.timeoutSec}s`
+    })
+  }
+
+  const MAX_INPUT_CHARS = 4000
+
+  /** Engine-injected step inputs (upstream `Step.inputs`): the engine reads
+   * each template path under preProcRoot so the model doesn't have to
+   * explore; unreadable files are reported without content. */
+  async function readStepInputs(step: Step, context: GateContext): Promise<{ path: string; content?: string }[]> {
+    const resolved: { path: string; content?: string }[] = []
+    for (const template of step.inputs) {
+      const target = template.replace(/\{(\w+)\}/g, (match, key: string) => context.variables[key] ?? match)
+      const candidate = target.startsWith('Pre-Proc/')
+        ? path.join(context.preProcRoot, target.slice('Pre-Proc/'.length))
+        : path.resolve(context.preProcRoot, target)
+      const content = candidate.startsWith(path.resolve(context.preProcRoot) + path.sep)
+        ? await readFile(candidate, 'utf8')
+          .then(text => text.length > MAX_INPUT_CHARS ? `${text.slice(0, MAX_INPUT_CHARS)}\n…(truncated)` : text)
+          .catch(() => undefined)
+        : undefined
+      resolved.push(content === undefined ? { path: target } : { path: target, content })
+    }
+    return resolved
   }
 
   ctx.tools.register(defineTool({
@@ -149,9 +185,7 @@ export function apply(ctx: Context, config: Config): void {
             id: step.id,
             instruction: step.instruction,
             tools: [...step.tools],
-            gates: step.gates.map(gate => gate.kind === 'output-glob'
-              ? `output_glob: ${gate.outputGlob}`
-              : `program: ${gate.program} ${gate.args.join(' ')}`),
+            gates: formatGates(step.gates),
           })),
         })),
         runtime: { allowedPrograms: parseRuntimeAllowedPrograms(runtimeSource) },
@@ -197,6 +231,18 @@ export function apply(ctx: Context, config: Config): void {
           instruction: { type: 'string', required: true },
           tools: { type: 'array', required: true, items: { type: 'string' } },
           gates: { type: 'array', required: true, items: { type: 'string' } },
+          referencePaths: { type: 'array', required: true, items: { type: 'string' } },
+          inputs: {
+            type: 'array', required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                path: { type: 'string', required: true },
+                content: { type: 'string' },
+              },
+            },
+          },
         },
       },
       render: (_args, value) => [{
@@ -211,7 +257,7 @@ export function apply(ctx: Context, config: Config): void {
       const state = await stateFor(args.namespace, args.app)
       const current = currentStep(state)
       if (current === undefined) {
-        return { finished: true, track: '', stepId: '', instruction: '', tools: [], gates: [] }
+        return { finished: true, track: '', stepId: '', instruction: '', tools: [], gates: [], referencePaths: [], inputs: [] }
       }
       return {
         finished: false,
@@ -219,9 +265,9 @@ export function apply(ctx: Context, config: Config): void {
         stepId: current.step.id,
         instruction: current.step.instruction,
         tools: [...current.step.tools],
-        gates: current.step.gates.map(gate => gate.kind === 'output-glob'
-          ? `output_glob: ${gate.outputGlob}`
-          : `program: ${gate.program} ${gate.args.join(' ')}`),
+        gates: formatGates(current.step.gates),
+        referencePaths: [...current.step.referencePaths],
+        inputs: await readStepInputs(current.step, gateContext(args.namespace, args.app)),
       }
     },
     presentCall: args => ({
@@ -264,8 +310,9 @@ export function apply(ctx: Context, config: Config): void {
               type: 'object',
               additionalProperties: false,
               properties: {
-                ok: { type: 'boolean', required: true },
+                status: { type: 'string', required: true },
                 detail: { type: 'string', required: true },
+                errorKind: { type: 'string' },
               },
             },
           },
@@ -289,9 +336,10 @@ export function apply(ctx: Context, config: Config): void {
       const context = gateContext(args.namespace, args.app)
       const runner = createProgramRunner({ cwd: preProcRoot })
       const results = await checkStepGates(current.step.gates, context, runner)
-      if (results.some(result => !result.ok)) {
+      const failed = results.filter(result => result.status === 'fail')
+      if (failed.length > 0) {
         throw new Error(`alioth_workflow: gates failed for step ${current.step.id}:\n`
-          + results.filter(result => !result.ok).map(result => `- ${result.detail}`).join('\n'))
+          + failed.map(result => `- [${result.errorKind ?? 'other'}/${isLlmFixable(result.errorKind ?? 'other') ? 'llm-fixable' : 'environment'}] ${result.detail}`).join('\n'))
       }
       const advanced = completeCurrentStep(state)
       const workflowRoot = config.workflowRoot ?? path.join(ctx.aliothEnv.dataRoot(), 'workflows')
@@ -300,7 +348,11 @@ export function apply(ctx: Context, config: Config): void {
       return {
         finished: advanced.transition.finished,
         completedStep: current.step.id,
-        gateResults: results.map(result => ({ ok: result.ok, detail: result.detail })),
+        gateResults: results.map(result => ({
+          status: result.status,
+          detail: result.detail,
+          ...(result.errorKind === undefined ? {} : { errorKind: result.errorKind }),
+        })),
         nextStep: next === undefined ? '' : next.step.id,
       }
     },

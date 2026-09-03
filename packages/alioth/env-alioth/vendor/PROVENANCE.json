@@ -10,14 +10,12 @@
     "scripts/check/audit-css-framework.mjs": "53ba9576f048c5040ffff831ef6c371a635c66902301e84da91a30242af3f481",
     "scripts/eval/evaluate-prototype-reference.ts": "7eb5d59908b5d597851caec9bd6f949eea1c58c69e76c9d55443a832aa6cb8fc",
     "scripts/prototype-tool.js": "9d32dc8d5663e5754249a48a87ae8b92cbb3547a631b6b53a6b210701ab0c1bb",
-    "skill-adapters/_runtime.yaml": "f6ef08bdc22931b4a756c5caadfbc40586651e5967e56c779606daafdc8e633c",
-    "skill-adapters/alioth-app.yaml": "daeb345bf2698997a5bcb52a70f7d8d84b92977e6a28f8314d457913443fc2c8",
-    "skill-adapters/alioth-block.yaml": "4b51ca37da19a5054bd7d71d1d67907532ad51826569d425e95c7428571e9fd2",
-    "skill-adapters/alioth-compose.yaml": "8a3f8a8c4fdd8fd865ddb43fa73524c776841bfdd37ba887f3699f49bd52618d",
-    "skill-adapters/alioth-gui.yaml": "1692ce3bb7e444423e9180d14a86211041606e6183f2d349516de8ae1b2edd72",
-    "skill-adapters/alioth-module.yaml": "dd7b87083ced570597d08729ab805f1a466072de1ac9ad1a7fdb850fd2fc0277",
-    "skill-adapters/alioth-ontology.yaml": "630e299d3aa37ca47a0c35a5ffa73b747c9d18ebe69c4db0c90071de0673363e",
-    "skill-adapters/alioth-service.yaml": "19b036aef9bbef8d2cd3054da0d3ad92bff36574c7ffd2470c7378d708107a75",
-    "skill-adapters/spec-audit.yaml": "4de755f06c511b37c9483d42928857fb97f45484727967a7ed852ed450e0797b"
+    "skill-adapters/_runtime.yaml": "5f1315404df256f9d177ca2a8beeb2b3eaad9d05807f2442bededb2d8f5c8a75",
+    "skill-adapters/alioth-app.yaml": "9f4b27deefd4cf691362201443091bef3fbb89f124cfdec9b338edc7ddc13a50",
+    "skill-adapters/alioth-block.yaml": "c268794b0ba4820cce347d6bddbe03d0fe0c9fe9331c7372fd22312472cbc6fb",
+    "skill-adapters/alioth-compose.yaml": "03a6517401a2e54f3f3a4c071e1a86add25c12560a326348a05353fcd792e5f7",
+    "skill-adapters/alioth-gui.yaml": "d3209b73f9583a952ee6daac6497e954b4dfa5103e918af244fd869cd50da68b",
+    "skill-adapters/alioth-module.yaml": "89154f30ab72de763962ec99ed2135fce21e642cc4617876d7ab856cc840c054",
+    "skill-adapters/alioth-service.yaml": "ade63b560ce2afa877e3fc6250437affa3607bedcdeaeeb0d20b68058b04a0b5"
   }
 }

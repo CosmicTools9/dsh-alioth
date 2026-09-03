@@ -9,6 +9,8 @@
  * @module @dsh-alioth/tool-alioth-orchestrator/primitives
  */
 
+import { homedir } from 'node:os'
+import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 // Type-only: the harness loader resolves our bare imports against the
@@ -20,7 +22,7 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { AgentPrimitives, StageOutput } from '@dsh-alioth/skill-alioth/agent-machine'
 import type { BuildResult, FlowPlan } from '@dsh-alioth/skill-alioth/agent-contract'
-import { validateEntitySpec, type EntitySpec, type FieldSpec, type RegistryView } from '@dsh-alioth/skill-alioth'
+import { validateEntitySpec, writeE2eReport, type EntitySpec, type FieldSpec, type RegistryView } from '@dsh-alioth/skill-alioth'
 
 export interface CreateArgs {
   readonly namespace: string
@@ -127,6 +129,7 @@ export function buildPrimitives(
   exec: ToolRunContext,
   args: CreateArgs,
   workflowAdapter: string | undefined,
+  preProcRoot: string | undefined,
 ): AgentPrimitives {
   /** Phase 2/3/4 share one app_write (write-once); later stages verify. */
   let writtenFiles: string[] = []
@@ -246,23 +249,38 @@ export function buildPrimitives(
     // 8. E2E verification — real-browser full chain is a manual acceptance
     //    item; the deterministic equivalent checks the runnable artifacts
     //    (prototype + contract files). Failure evidence starts with
-    //    "E2E failed" to drive the machine's repair loop.
+    //    "E2E failed" to drive the machine's repair loop. Evidence lands in
+    //    the upstream e2e-report.json shape (write_e2e_report contract) at
+    //    Pre-Proc/{ns}/Apps/{app}/.
     async e2eVerification(attempt) {
-      // Deterministic equivalent of the real-browser E2E: the artifact chain
-      // must be complete (app + module + block). The prototype build (bun
-      // gate) and real-browser run are manual acceptance items — they run
-      // after publishing, not inside the write pipeline.
       const appJson = writtenFiles.some(f => f.endsWith('app.json'))
       const moduleJson = writtenFiles.some(f => f.endsWith('module.json'))
-      if (!appJson || !moduleJson) {
-        return {
-          evidence: `E2E failed (attempt ${attempt}): app.json=${appJson}, module.json=${moduleJson}`,
-          artifacts: writtenFiles,
-        }
+      const checks = [
+        { id: 'app-json', passed: appJson, description: 'app.json artifact present' },
+        { id: 'module-json', passed: moduleJson, description: 'module.json artifacts present' },
+      ]
+      const passed = appJson && moduleJson
+      const root = preProcRoot ?? process.env.ALIOTH_PRE_PROC_ROOT ?? path.join(homedir(), '.dsh-alioth', 'Pre-Proc')
+      let reportPath = ''
+      try {
+        reportPath = await writeE2eReport(path.join(root, args.namespace, 'Apps', args.code), {
+          app: args.code,
+          namespace: args.namespace,
+          attempt,
+          passed,
+          checks,
+          note: 'dsh-alioth deterministic equivalent — prototype build chain and real-browser run are manual acceptance items',
+        })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'unknown'
+        return passed
+          ? { evidence: `E2E verification (attempt ${attempt}): artifacts complete; evidence report write failed (${detail})`, artifacts: writtenFiles }
+          : { evidence: `E2E failed (attempt ${attempt}): app.json=${appJson}, module.json=${moduleJson}; evidence report write failed (${detail})`, artifacts: writtenFiles }
       }
+      const outcome = passed ? 'artifacts complete' : `app.json=${appJson}, module.json=${moduleJson}`
       return {
-        evidence: `E2E verification (attempt ${attempt}): app + module artifacts complete; prototype/browser run is a manual acceptance item`,
-        artifacts: writtenFiles,
+        evidence: `E2E ${passed ? 'verification' : 'failed'} (attempt ${attempt}): ${outcome}; evidence ${path.basename(reportPath)} written`,
+        artifacts: [...writtenFiles, reportPath],
       }
     },
 

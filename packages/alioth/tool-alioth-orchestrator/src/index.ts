@@ -1,14 +1,15 @@
 /**
  * PTC orchestrator: `alioth_app_create` — the complete AppAgent pipeline
- * driven deterministically. The 7-stage machine (semantic analysis → function
- * decomposition → ontology analysis → module/block creation → ontology
- * transfer → service API → publishing) runs through `ctx.tools.execute` —
- * the same path the model uses, so approvals, gates, and the session log
- * apply per stage. No LLM calls inside; semantic alignment is a PRE-condition
- * the model completes in dialogue via alioth_schema_* tools and passes in as
- * parameters (re-confirmed by the semantic-analysis stage for the audit
- * trail). Data contracts are unified with the Meta AppAgent
- * (`@dsh-alioth/skill-alioth/agent-contract`).
+ * driven deterministically. The stages (app creation → semantic analysis →
+ * function decomposition → ontology analysis → module/block creation →
+ * ontology transfer → service API → E2E verification → publishing) run
+ * through `ctx.tools.execute` — the same path the model uses, so approvals,
+ * gates, and the session log apply per stage. No LLM calls inside; semantic
+ * alignment is a PRE-condition the model completes in dialogue via
+ * alioth_schema_* tools and passes in as parameters (re-confirmed by the
+ * semantic-analysis stage for the audit trail). Data contracts are unified
+ * with the Meta AppAgent (`@dsh-alioth/skill-alioth/agent-contract`); the
+ * E2E stage writes the upstream `e2e-report.json` evidence file.
  * @module @dsh-alioth/tool-alioth-orchestrator
  */
 
@@ -30,15 +31,22 @@ export interface Config {
    * create (artifacts stay; fix them and re-run workflow_complete).
    */
   readonly adapter?: string
+  /**
+   * Pre-Proc artifact tree root — anchors the e2e evidence report
+   * (`Pre-Proc/{ns}/Apps/{app}/e2e-report.json`). Defaults to
+   * ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (the workspace convention).
+   */
+  readonly preProcRoot?: string
 }
 
 export const Config: z<Config> = z.object({
   adapter: z.string(),
+  preProcRoot: z.string(),
 })
-
 
 export function apply(ctx: Context, config: Config): void {
   const adapterName = config.adapter
+  const preProcRoot = config.preProcRoot
   ctx.tools.register(defineTool({
     name: 'alioth_app_create',
     description:
@@ -151,7 +159,7 @@ export function apply(ctx: Context, config: Config): void {
       // registry (deterministic, zero LLM). Stage history is returned for
       // audit; the terminal state decides success.
       const plan = buildPlan(args)
-      const run = await runPipeline('app creation request', buildPrimitives(ctx, exec, args, adapterName), plan)
+      const run = await runPipeline('app creation request', buildPrimitives(ctx, exec, args, adapterName, preProcRoot), plan)
       const transitions = run.history
       const stages = transitions.map(t => `${t.from.kind}->${stageOf(t.to) ?? t.to.kind}`)
       if (run.state.kind !== 'published') {

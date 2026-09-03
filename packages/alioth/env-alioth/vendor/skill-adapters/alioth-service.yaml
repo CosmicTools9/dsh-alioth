@@ -1,43 +1,57 @@
 name: alioth-service
 description: "Service API 生成 — DTO → Service → Handler → TDD → 合规审计"
 version: "2.0"
+reference_paths:
+  - ".agents/skills/alioth-service/references/inventory-voucher-contracts.md"
 tracks:
   - name: API 开发
     steps:
-      - id: "1.1"
-        instruction: Phase 0 — 校验 ONTOLOGY_SPEC.md 映射完整性
-        tools: [read_file]
-        schema: { type: object, required: [ontology_spec_path] }
+      - id: "1.0"
+        instruction: Phase 0 — 共享内核探测 + 既有 Service 包探测（2026-08-12 缺陷修复：593 会话曾为实体新建独立 crate 致 cargo gate 失败；2026-08-20 裁定：isahl 全局表实现必须单一持有于 Framework 共享内核，ns 只允许壳）。先跑 `bun scripts/check/check-shared-kernel.ts --report` 建表→内核映射：若目标实体表已由 Framework/backend/{crate} 持有（如 approval/status/measurement/version/identity-org/dict），MUST NOT 新建本地实现——{mode}=shell（仅 scope + configure_routes + 契约投影/请求 DTO），实体 MUST import 内核 crate；仅当表无内核持有时 {mode}=full（常规生成）。随后 list Pre-Proc/{ns}/Sources/Services/：若已有 service 包，{service} 取既有包名并追加（DTO/Handler 进既有包，绝不新建 crate）；仅当目录为空时才新建。探测结果写入 {service}/{mode} 变量供后续步骤与 gate 使用。
+        tools: [read_file, search_file, run_command]
+        schema: {type: object, required: [service, mode]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Services/{service}/service.json"
+      - id: "1.1"
+        instruction: Phase 0 — 校验 ONTOLOGY_SPEC.md 映射完整性（沿用 1.0 探测的 {service}，禁止新建 crate）
+        tools: [read_file]
+        schema: {type: object, required: [ontology_spec_path]}
+        gates:
+          - program: "bun"
+            args: ["scripts/check/check-config-json.mjs", "service", "Pre-Proc/{ns}/Sources/Services/{service}/service.json"]
+            timeout_sec: 30
       - id: "1.2"
         instruction: Phase 1 — DTO 规格与冲突标识
         tools: [read_file, write_file]
-        schema: { type: object, required: [dto_files] }
+        schema: {type: object, required: [dto_files]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Services/{service}/dto/*.ts"
       - id: "1.3"
-        instruction: Phase 2 — TDD 模式开发 Service (test→impl→refactor)
-        tools: [read_file, write_file, search_file, run_command]
-        schema: { type: object, required: [service_code, test_code] }
+        instruction: Phase 2 — TDD 模式开发 Service (test→impl→refactor)；写路径 MUST dk 静态绑定——从 ontology-output.json 的 prototype_semantics[].coordinates 抄录三元组（每个 API 固定；同表不同 dk 拆 API；禁前端传值/共享默认值/硬编码 ZUID，§7.3.3）
+        tools: [read_file, write_file, search_file, run_command, code_intel]
+        schema: {type: object, required: [service_code, test_code]}
         gates:
           - program: "cargo"
             args: ["test", "-p", "{crate}"]
             timeout_sec: 300
-          - program: "cargo"
-            args: ["check"]
+          # 隔离编译：cargo-check.sh 在独立 target 目录执行，避免裸 cargo check
+          # 编译全部 workspace member（2min+）并触发 [CARGO-BARE] 门禁
+          - program: "bash"
+            args: ["scripts/cargo-check.sh", "-p", "{crate}"]
             timeout_sec: 180
       - id: "1.4"
         instruction: Phase 3 — Block 前端绑定 service.json + API hooks
         tools: [read_file, write_file]
-        schema: { type: object, required: [block_json_updated] }
+        schema: {type: object, required: [block_json_updated]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Blocks/{block}/block.json"
       - id: "1.5"
         instruction: Phase 4 — Service 规约合规审计 (F1-F8)
         tools: [read_file]
-        schema: { type: object, required: [audit_report] }
+        schema: {type: object, required: [audit_report]}
         gates:
           - program: "npx"
             args: ["tsc", "--noEmit"]
             timeout_sec: 180
+source:
+  content_sha256: 90d020b0b2fe303e4b10eed29d5b36c47710827c0098bdf8776b8d59799dcaea

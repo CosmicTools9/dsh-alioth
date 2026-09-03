@@ -1,30 +1,36 @@
 name: alioth-app
-description: "App 级配置富化 — 从 FlowPlan/OntologyModel 推导 brand/navigation/routing/permissions/goal/non_scope 写入 app.json"
+description: "App 级原型集成 — AppLayout 设计（llm-tsx/app.tsx）+ a-v{N}.html 构建与验证"
 version: "2.0"
+reference_paths:
+  - ".agents/skills/alioth-design/references/gateway-shell.tsx"
+  - ".agents/skills/alioth-design/references/prototype-base.css"
+  - ".agents/skills/alioth-design/references/shells/app-shell.tsx"
 tracks:
-  - name: App 配置富化
+  - name: App 原型集成
     steps:
       - id: "1.1"
-        instruction: preflight — 读取 FlowPlan 与 OntologyModel，提取 App 级元数据
-        tools: [read_file]
-        schema: { type: object, required: [ns, app] }
+        instruction: "preflight — 确认 App 上下文：读取 Pre-Proc/{ns}/Apps/{app}/app.json（若已生成，config.modules 即模块列表）；否则用 search_files 扫描 Pre-Proc/{ns}/Sources/Modules/*/module.json 发现模块 id。App 骨架目录由 AppCreation 创建，本步骤只确认模块清单，不写文件。"
+        tools: [read_file, search_files]
+        schema: {type: object, required: [ns, app, modules]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/"
       - id: "1.2"
-        instruction: 推导并写入 brand（primary/logo）与 navigation（分组/模块映射）
+        instruction: "AppLayout 设计 — 在 Pre-Proc/{ns}/Prototypes/Apps/{app}/llm-tsx/app.tsx 写入 App 级原型，必须满足：(1) export default function AppLayout()（named export 不行）；(2) 第一行 import { useState } from 'react'；(3) 从 ../../../../../../.agents/skills/alioth-design/references/gateway-shell 导入（6 级相对路径，禁止 .agents/ 项目根相对路径）；(4) 组件签名含 embedded 参数（默认 false）；(5) TopBar ModuleTabs 从步骤 1.1 确认的模块列表推导（label 用模块业务名）；(6) DOM 对齐 gateway-shell.tsx：root(flex h-screen flex-col overflow-hidden bg-background) → TopBar(h-14 border-b px-6 bg-background shrink-0，左 Logo+ModuleTabs 右 SearchSlot+ActionGroup+UserMenu) → body(flex flex-1 min-h-0 overflow-hidden，main + WorkspaceDock 二子节点) → main(flex flex-col min-w-0 overflow-hidden flex-1，无 accent-bar 无外层滚动)；推荐直接组合 GatewayShell（hideNavigation/hideFooter/noContentScroll）。App 层禁止包含 Module/Block 内部 UI。"
         tools: [read_file, write_file]
-        schema: { type: object, required: [brand, navigation] }
+        schema: {type: object, required: [app_tsx_path]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Apps/{app}/llm-tsx/app.tsx"
       - id: "1.3"
-        instruction: 推导并写入 routing（base/default_route）与 permissions（default_roles/public_paths/admin_roles）
+        instruction: "构建 + 验证 — 本步骤由门禁自动执行 bun build 与导航校验，你只需确认 llm-tsx/app.tsx 存在（缺失则用 write_file 补全），然后输出 completed: true。禁止探索或重复构建。"
         tools: [read_file, write_file]
-        schema: { type: object, required: [routing, permissions] }
+        schema: {type: object, required: [prototype_path]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
-      - id: "1.4"
-        instruction: 推导并写入 goal 与 non_scope，完成 17 字段对齐
-        tools: [read_file, write_file]
-        schema: { type: object, required: [goal, non_scope] }
-        gates:
-          - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
+          - program: "bun"
+            args: ["scripts/prototype-tool.js", "build", "Pre-Proc/{ns}/Prototypes/Apps/{app}/llm-tsx/app.tsx"]
+            output_glob: "Pre-Proc/{ns}/Prototypes/Apps/{app}/a-v*.html"
+            timeout_sec: 180
+          - program: "bun"
+            args: ["scripts/check/check-nav-hrefs.ts", "--fail", "--ns", "{ns}"]
+            timeout_sec: 120
+source:
+  content_sha256: 77bf067c37fdad8118817307d23325e79cd864bf75dac86c60c69b383d3101c7
