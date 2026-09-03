@@ -8,6 +8,7 @@ import { checkStepGates } from '../src/gates.ts'
 import { loadRun, saveRun } from '../src/workspace.ts'
 import { ADAPTER_TOOL_TO_DSH, missingToolSurface } from '../src/mapping.ts'
 import { bunAvailable, createProgramRunner } from '../src/bun.ts'
+import { validateCoordinates } from '../src/entity-validate.ts'
 
 /** The real `alioth-app.yaml` shape: tracks with steps carrying tools/schema/gates. */
 const APP_ADAPTER = `
@@ -269,5 +270,25 @@ describe('skill-alioth program runner', () => {
     // The model distribution executes prototype gates with bun; a dev machine
     // for Alioth work has it. This asserts the probe agrees with reality.
     expect(available).toBe(true)
+  })
+})
+
+describe('skill-alioth coordinate discipline (G3.5)', () => {
+  it('accepts real dictionary codes', () => {
+    const issues = validateCoordinates({ scene: 'CA', factor: 'CDA', function: '!.AA' })
+    expect(issues).toEqual([])
+  })
+
+  it('allows omitted coordinates (honest Unclear state)', () => {
+    expect(validateCoordinates(undefined)).toEqual([])
+  })
+
+  it('rejects codes outside the dictionary instead of guessing', () => {
+    const issues = validateCoordinates({ scene: 'NOT-A-CODE', factor: 'ALSO-FAKE', function: '盘 点' })
+    expect(issues.map(issue => issue.code)).toEqual([
+      'coordinate-scene',
+      'coordinate-factor',
+      'coordinate-function',
+    ])
   })
 })

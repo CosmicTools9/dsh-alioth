@@ -188,8 +188,12 @@ function validateReferences(spec: EntitySpec, registry: RegistryView): Validatio
   return issues
 }
 
-function validateCoordinates(spec: EntitySpec): ValidationIssue[] {
-  const coordinates = spec.coordinates
+/**
+ * Validate one entity's coordinates against the real dictionary snapshots
+ * (G3.5 discipline: present codes MUST be real; absent codes are the honest
+ * "Unclear" state — never guess, never fall back to placeholder codes).
+ */
+export function validateCoordinates(coordinates?: CoordinatesSpec): readonly ValidationIssue[] {
   if (coordinates === undefined) {
     return []
   }
@@ -204,6 +208,10 @@ function validateCoordinates(spec: EntitySpec): ValidationIssue[] {
     issues.push(issue('coordinate-function', `function code ${JSON.stringify(coordinates.function)} not in the coordinate dictionary`))
   }
   return issues
+}
+
+function validateEntityCoordinates(spec: EntitySpec): readonly ValidationIssue[] {
+  return validateCoordinates(spec.coordinates)
 }
 
 function validateConflicts(spec: EntitySpec, registry: RegistryView): ValidationIssue[] {
@@ -237,7 +245,7 @@ export function validateEntitySpec(spec: EntitySpec, registry: RegistryView): re
     ...validateConflicts(spec, registry),
     ...validateInherits(spec, registry),
     ...validateReferences(spec, registry),
-    ...validateCoordinates(spec),
+    ...validateEntityCoordinates(spec),
   ]
 }
 

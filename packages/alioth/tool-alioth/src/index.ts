@@ -20,6 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { generateApp, generateExtensions, generateModule, generateNamespaceWorkspace, generateService, generateServiceCrate, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
+import { validateCoordinates } from '@dsh-alioth/skill-alioth'
 import type {} from '@deepseek-ai/dsh-user-approval'
 
 export const name = 'tool-alioth'
@@ -965,6 +966,17 @@ export function apply(ctx: Context, config: Config): void {
           })),
         },
       }))
+      // G3.5 discipline, deterministically enforced: declared coordinates MUST
+      // be real dictionary codes; omitted coordinates stay the honest Unclear
+      // state (never guess, never accept placeholder codes).
+      for (const service of args.services) {
+        for (const entity of service.entities ?? []) {
+          const issues = validateCoordinates(entity.coordinates)
+          if (issues.length > 0) {
+            throw new Error(`alioth_sources_scaffold: entity ${entity.name} (service ${service.id}) coordinate check failed — align via alioth_schema_semantic_search or omit the coordinates (Unclear): ${issues.map(issue => issue.message).join('; ')}`)
+          }
+        }
+      }
       for (const [index, service] of specs.entries()) {
         const validation = validateArtifact('service', service)
         if (!validation.valid) {

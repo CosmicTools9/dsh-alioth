@@ -39,6 +39,7 @@ export { loadRun, saveRun, type RunMeta } from './workspace.ts'
 export { ADAPTER_TOOL_TO_DSH, missingToolSurface, type MissingTool } from './mapping.ts'
 export { createProgramRunner, bunAvailable, type ProgramRunnerOptions } from './bun.ts'
 export {
+  validateCoordinates,
   validateEntitySpec,
   validateMappedColumn,
   LOCAL_KEYS_BY_TABLE as physicalLocalKeys,

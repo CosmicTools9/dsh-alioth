@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.2",
-    "@dsh-alioth/gen-alioth": "workspace:*"
+    "@dsh-alioth/gen-alioth": "workspace:*",
+    "@dsh-alioth/skill-alioth": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

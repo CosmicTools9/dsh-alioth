@@ -364,6 +364,9 @@ importers:
       '@dsh-alioth/gen-alioth':
         specifier: workspace:*
         version: link:../gen-alioth
+      '@dsh-alioth/skill-alioth':
+        specifier: workspace:*
+        version: link:../skill-alioth
 
   packages/alioth/tool-alioth-meta:
     dependencies:
