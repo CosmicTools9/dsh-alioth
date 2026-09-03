@@ -1,0 +1,25 @@
+[package]
+name = "quality"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+name = "quality"
+path = "src/lib.rs"
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true, features = ["macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }
+# scheduler 引用 common::serde_zuid（in-flight 修复所需依赖）
+common = { path = "../common" }

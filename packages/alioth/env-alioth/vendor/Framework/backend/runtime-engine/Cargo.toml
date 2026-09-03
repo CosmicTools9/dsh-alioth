@@ -1,0 +1,29 @@
+[package]
+name = "runtime-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Alioth 运行时表达式、约束与规则引擎"
+
+[lib]
+name = "runtime_engine"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+yaml_serde = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+runtime-contract = { path = "../runtime-contract" }
+rhai = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "runtime_benchmarks"
+harness = false
+

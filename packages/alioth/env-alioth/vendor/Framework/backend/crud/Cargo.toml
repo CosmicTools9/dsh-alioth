@@ -1,0 +1,31 @@
+[package]
+name = "crud"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+common = { path = "../common" }
+ontology-binding = { path = "../ontology-binding" }
+runtime-engine = { path = "../runtime-engine" }
+trigger-registry = { path = "../trigger-registry" }
+log = { workspace = true }
+tokio = { workspace = true, features = ["rt", "time", "sync"] }
+
+[dev-dependencies]
+criterion = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+[[bench]]
+name = "crud_benchmarks"
+harness = false
+
+[lib]
+path = "src/lib.rs"

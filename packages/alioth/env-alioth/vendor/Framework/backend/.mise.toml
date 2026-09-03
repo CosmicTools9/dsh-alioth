@@ -1,0 +1,38 @@
+# Framework/backend mise 配置
+# Rust workspace 共享库
+# 使用本机系统 Rust 1.95.0（通过 rustup）
+
+[tasks]
+# 安装/验证依赖
+setup = { description = "下载依赖并验证编译", run = [
+  "cargo fetch",
+  "cargo check --workspace",
+] }
+
+# 构建 workspace（发布模式）
+build = { description = "构建整个 workspace", run = [
+  "cargo build --workspace --release",
+] }
+
+# 运行 workspace 测试
+test = { description = "运行 workspace 所有测试", run = ["cargo test --workspace"] }
+
+# 代码检查和格式化验证
+lint = { description = "运行 clippy 和格式化检查", run = [
+  "cargo clippy --workspace -- -D warnings",
+  "cargo fmt --check",
+] }
+
+# 自动格式化
+fmt = { description = "自动格式化代码", run = ["cargo fmt"] }
+
+# 清理构建产物
+clean = { description = "清理构建产物", run = ["cargo clean"] }
+
+[env]
+# _.path 继承自根 .mise.toml（无需重复声明）
+# Rust 日志级别
+RUST_LOG = "info"
+
+# 使用 Git CLI 获取依赖（解决某些网络环境问题）
+CARGO_NET_GIT_FETCH_WITH_CLI = "true"

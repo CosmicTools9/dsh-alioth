@@ -51,9 +51,13 @@ function audit(filePath) {
   const hasBaseLink = links.some(h => h.endsWith('prototype-base.css'));
   const hasTailwindLink = links.some(h => h.endsWith('tailwind-utilities.css'));
   // Base CSS may be inlined by the ESM build pipeline (prototype-tool.js build).
-  // Accept either a link tag or an inline <style> block that contains the marker.
-  const hasBaseInline = html.includes('prototype-base.css');
-  const hasTailwindInline = !hasBaseInline && html.includes('tailwind-utilities.css');
+  // Detect inline framework CSS by inspecting <style> block contents only —
+  // matching against the whole HTML would false-positive on the <link> href itself.
+  const blocks = runParser('extract-styles', filePath) || [];
+  // prototype-base.css 的唯一生成标记（文件头注释）；直接匹配 'prototype-base.css'
+  // 会被文件内 'Legacy fallback: .../tailwind-utilities.css' 注释绕过，反之亦然。
+  const hasBaseInline = blocks.some(b => b.includes('generate-prototype-base-css.mjs') || b.includes('prototype-base.css'));
+  const hasTailwindInline = !hasBaseInline && blocks.some(b => b.includes('tailwind-utilities.css'));
   const hasBase = hasBaseLink || hasBaseInline;
   const hasTailwind = hasTailwindLink || hasTailwindInline;
   const banned = links.filter(h => BANNED_LINKS.some(b => h.endsWith(b)));
@@ -89,8 +93,7 @@ function audit(filePath) {
     errors++;
   }
 
-  // ── 3. <style> 块审计（通过 parser-utils） ──
-  const blocks = runParser('extract-styles', filePath);
+  // ── 3. <style> 块审计（blocks 已在上方提取） ──
   if (Array.isArray(blocks)) {
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];

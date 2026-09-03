@@ -1,0 +1,17 @@
+[package]
+name = "ngac-contract"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "NGAC (Next Generation Access Control) contract crate — shared types and HTTP client for Policy Decision Point"
+
+[lib]
+name = "ngac_contract"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+common = { path = "../common" }

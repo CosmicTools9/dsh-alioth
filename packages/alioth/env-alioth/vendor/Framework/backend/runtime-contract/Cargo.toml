@@ -1,0 +1,15 @@
+[package]
+name = "runtime-contract"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Alioth 运行时行为接口契约 — 仅包含 trait 定义和纯数据类型"
+
+[lib]
+name = "runtime_contract"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

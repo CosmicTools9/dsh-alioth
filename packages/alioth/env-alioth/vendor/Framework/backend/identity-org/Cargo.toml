@@ -1,0 +1,21 @@
+[package]
+name = "identity-org"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+common = { path = "../common" }
+crud = { path = "../crud" }
+framework-contacts = { path = "../contacts" }
+ontology-binding = { path = "../ontology-binding" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

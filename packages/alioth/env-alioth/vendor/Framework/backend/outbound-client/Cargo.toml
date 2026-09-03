@@ -1,0 +1,22 @@
+[package]
+name = "outbound-client"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+reqwest = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+aes-gcm = { workspace = true }
+base64 = { workspace = true }
+rand = { workspace = true }
+common = { path = "../common" }
+
+[lib]
+path = "src/lib.rs"

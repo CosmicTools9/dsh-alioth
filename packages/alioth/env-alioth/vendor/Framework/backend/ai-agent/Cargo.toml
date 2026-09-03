@@ -1,0 +1,22 @@
+[package]
+name = "ai-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+async-trait = { workspace = true }
+regex = { workspace = true }
+sqlparser = "0.62"
+
+llm = { path = "../llm" }

@@ -1,0 +1,26 @@
+[package]
+name = "approval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+rust_decimal = { workspace = true }
+common = { path = "../common" }
+crud = { path = "../crud" }
+ontology-binding = { path = "../ontology-binding" }
+framework-scheduler = { path = "../scheduler" }
+runtime-contract = { path = "../runtime-contract" }
+runtime-engine = { path = "../runtime-engine" }
+tokio = { workspace = true, features = ["time", "rt", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+actix-rt = { workspace = true }

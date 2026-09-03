@@ -877,7 +877,7 @@ export function apply(ctx: Context, config: Config): void {
       'Deterministic backend Sources scaffold (mirror layout): per declared service writes '
       + 'Sources/Apps/Services/{id}/service.json (contract-validated; entities with coordinates '
       + 'from your semantic alignment) plus a mount-only backend crate shell (Cargo.toml + '
-      + 'src/lib.rs), and the namespace workspace Sources/Cargo.toml joining the crates. '
+      + 'src/lib.rs), and the namespace workspace Cargo.toml (namespace root) joining the crates. '
       + 'Business/DTO code is NOT generated here — author it in gated workflow steps '
       + '(alioth-service track); the shell only mounts the service scope. Refuses overwrite: '
       + 'an existing service.json or namespace Cargo.toml stops the scaffold (inspect first). '
@@ -990,9 +990,11 @@ export function apply(ctx: Context, config: Config): void {
       const written: string[] = []
       const refused: string[] = []
 
-      const workspaceManifest = path.join(sourcesRoot, 'Cargo.toml')
+      // Upstream layout: the namespace workspace manifest sits at the
+      // namespace root (Pre-Proc/{ns}/Cargo.toml), members reference Sources/.
+      const workspaceManifest = path.join(nsRoot, 'Cargo.toml')
       if (existsSync(workspaceManifest)) {
-        refused.push('Sources/Cargo.toml')
+        refused.push('Cargo.toml (namespace workspace)')
       }
       const planned: { readonly relative: string; readonly content: string }[] = []
       for (const [serviceIndex, service] of args.services.entries()) {
@@ -1022,7 +1024,7 @@ export function apply(ctx: Context, config: Config): void {
           summary: 'Sources already scaffolded (workspace manifest present; every declared service exists)',
         }
       }
-      planned.push({ relative: 'Sources/Cargo.toml', content: generateNamespaceWorkspace(args.namespace, args.services.map(service => service.id)) })
+      planned.push({ relative: 'Cargo.toml', content: generateNamespaceWorkspace(args.namespace, args.services.map(service => service.id)) })
       for (const file of planned) {
         const target = path.join(nsRoot, file.relative)
         if (!target.startsWith(nsRoot + path.sep)) {

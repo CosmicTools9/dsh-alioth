@@ -11,7 +11,7 @@
  * @module @dsh-alioth/env-alioth/prototype-root
  */
 
-import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, statSync, unlinkSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -48,18 +48,133 @@ export function provisionPrototypeRoot(preProcRoot: string, contentRoot = path.d
   const resolvedPreProc = path.resolve(preProcRoot)
   mkdirSync(resolvedContent, { recursive: true })
 
+  // Merge copy: fills in files the content root is missing (e.g. a vendor
+  // sync added Framework/backend) while keeping every pre-existing file.
   for (const dir of ['.agents', 'Framework', 'scripts']) {
     const target = path.join(resolvedContent, dir)
     const source = path.join(VENDOR_ROOT, dir)
-    if (!existsSync(target) && existsSync(source)) {
+    if (existsSync(source)) {
       mkdirSync(path.dirname(target), { recursive: true })
-      cpSync(source, target, { recursive: true })
+      cpSync(source, target, { recursive: true, force: false })
     }
+  }
+
+  // The vendored Framework crates inherit [workspace.package] from the
+  // upstream repo-root manifest (AliothStudio/Cargo.toml). Provision a
+  // minimal root workspace so that inheritance resolves without the
+  // AliothStudio checkout — Pre-Proc trees stay excluded from it.
+  const rootManifest = path.join(resolvedContent, 'Cargo.toml')
+  if (!existsSync(rootManifest)) {
+    writeFileSync(
+      rootManifest,
+      '# Provisioned content-root workspace (dsh-alioth): resolves the vendored\n'
+      + '# Framework crates without the AliothStudio checkout.\n'
+      + '[workspace]\n'
+      + 'resolver = "2"\n'
+      + 'members = ["Framework/backend/*"]\n'
+      + 'exclude = ["Pre-Proc/**"]\n'
+      + '\n'
+      + '[workspace.dependencies]\n'
+      + 'tokio = { version = "1", features = ["full"] }\n'
+      + 'actix-web = "4"\n'
+      + 'sqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "uuid", "chrono", "macros", "migrate", "rust_decimal"] }\n'
+      + 'serde = { version = "1", features = ["derive"] }\n'
+      + 'serde_json = "1"\n'
+      + 'chrono = { version = "0.4", features = ["serde"] }\n'
+      + 'uuid = { version = "1", features = ["v4", "serde"] }\n'
+      + 'yaml_serde = "0.10"\n'
+      + 'thiserror = "2"\n'
+      + 'anyhow = "1"\n'
+      + 'base64 = "0.23"\n'
+      + 'aes-gcm = "0.11"\n'
+      + 'rand = "0.10"\n'
+      + 'petgraph = { version = "0.8", features = ["serde"] }\n'
+      + 'bcrypt = "0.19"\n'
+      + 'jsonwebtoken = { version = "10", features = ["rust_crypto"] }\n'
+      + 'log = "0.4"\n'
+      + 'actix-cors = "0.7"\n'
+      + 'dotenvy = "0.15"\n'
+      + 'futures = "0.3"\n'
+      + 'futures-util = "0.3"\n'
+      + 'zip = "2"\n'
+      + 'convert_case = "0.11"\n'
+      + 'pluralizer = "0.5"\n'
+      + 'rust_decimal = { version = "1", features = ["serde"] }\n'
+      + 'rust_decimal_macros = "1"\n'
+      + 'moka = { version = "0.12", features = ["future"] }\n'
+      + 'reqwest = { version = "0.13", features = ["json"] }\n'
+      + 'regex = "1"\n'
+      + 'walkdir = "2"\n'
+      + 'crc32fast = "1"\n'
+      + 'pdf-extract = "0.12"\n'
+      + 'async-trait = "0.1"\n'
+      + 'sha2 = "0.11"\n'
+      + 'p256 = { version = "0.14", features = ["ecdh"] }\n'
+      + 'criterion = { version = "0.8", features = ["html_reports"] }\n'
+      + '\n'
+      + 'urlencoding = "2"\n'
+      + 'url = "2"\n'
+      + 'totp-rs = { version = "5.7", features = ["otpauth"] }\n'
+      + 'toml = "0.8"\n'
+      + 'time = "0.3"\n'
+      + 'tempfile = "3"\n'
+      + 'similar = "3.1"\n'
+      + 'prometheus = "0.14"\n'
+      + 'md5 = "0.8"\n'
+      + 'ldap3 = "0.12"\n'
+      + 'json5 = "1.3"\n'
+      + 'hex = "0.4"\n'
+      + 'env_logger = "0.11"\n'
+      + 'dashmap = "6"\n'
+      + 'arc-swap = "1"\n'
+      + 'base32 = "0.5"\n'
+      + 'argon2 = "0.6.0-rc.8"\n'
+      + 'actix-web-actors = "4"\n'
+      + 'actix-rt = "2"\n'
+      + 'actix = "0.13"\n'
+      + '\n'
+      + '# Deps migrated from Framework/Cargo.toml\n'
+      + 'bincode = "1.3"\n'
+      + 'bytes = "1.11"\n'
+      + 'crc = "3"\n'
+      + 'crossbeam-utils = "0.8"\n'
+      + 'disruptor = "4.3.0"\n'
+      + 'ecdsa = "0.17"\n'
+      + 'fs2 = "0.4"\n'
+      + 'mio = { version = "1.1", features = ["net", "os-poll", "os-ext"] }\n'
+      + 'once_cell = "1.21"\n'
+      + 'pem = "3"\n'
+      + 'proc-macro2 = "1.0"\n'
+      + 'quote = "1.0"\n'
+      + 'ring = "0.17"\n'
+      + 'rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }\n'
+      + 'rustls-native-certs = "0.8"\n'
+      + 'rustls-pemfile = "2"\n'
+      + 'sha1 = "0.11"\n'
+      + 'sha3 = "0.10"\n'
+      + 'subtle = "2.6"\n'
+      + 'tokio-postgres = "0.7"\n'
+      + 'aws-sdk-s3 = "1.67"\n'
+      + 'aws-config = { version = "1.5", features = ["behavior-version-latest"] }\n'
+      + '\n'
+      + '# ---------------------------------------------------------------------------\n'
+      + '# PATCH: webauthn-rs-core 0.5.5 passes the assertion signature straight to\n'
+      + '# OpenSSL EVP verify, which expects DER (X9.62) ECDSA signatures, while the\n'
+      + '# WebAuthn standard mandates raw 64-byte r||s. Real browsers therefore fail\n'
+      + '# passkey login with "An OpenSSL Error". vendor/webauthn-rs-core adds a\n'
+      + '# raw->DER conversion for ES256 in pkey_verify_signature.\n'
+      + '# ---------------------------------------------------------------------------\n'
+      + '[workspace.package]\n'
+      + 'version = "0.1.0"\n'
+      + 'edition = "2021"\n'
+      + 'authors = ["The Alioth Authors"]\n'
+      + 'license = "Apache-2.0"\n',
+    )
   }
 
   let preProcLinked = false
   const preProcLink = path.join(resolvedContent, 'Pre-Proc')
-  if (path.resolve(preProcRoot) !== preProcLink) {
+  if (resolvedPreProc !== preProcLink) {
     let state: 'dir' | 'symlink' | 'missing' = 'missing'
     try {
       state = lstatSync(preProcLink).isSymbolicLink() ? 'symlink' : isDir(preProcLink) ? 'dir' : 'missing'

@@ -1,0 +1,17 @@
+[package]
+name = "dict"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+common = { path = "../common" }
+crud = { path = "../crud" }
+
+[lib]
+path = "src/lib.rs"

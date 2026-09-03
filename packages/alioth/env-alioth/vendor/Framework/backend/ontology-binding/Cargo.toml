@@ -1,0 +1,15 @@
+[package]
+name = "ontology-binding"
+description = "本体坐标静态绑定基础设施——dk_scene/dk_factor/dk_function 的 code→ZUID 解析（BACKEND_FRAMEWORK §7.3.3 2026-08-12 裁定：每个 API 静态绑定固定三元组）"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+common = { path = "../common" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
