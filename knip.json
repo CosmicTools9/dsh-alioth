@@ -16,12 +16,12 @@
       ],
       "ignoreDependencies": [
         "@deepseek-ai/dsh",
-        "@deepseek-ai/dsh-agent-spine-demo",
         "@deepseek-ai/dsh-credentials-local",
         "@deepseek-ai/dsh-llm-deepseek",
         "@deepseek-ai/dsh-session-persistence-jsonl",
         "@deepseek-ai/dsh-settings-file",
-        "@deepseek-ai/dsh-tool-todo"
+        "@deepseek-ai/dsh-tool-todo",
+        "pg"
       ]
     },
     "packages/alioth/bundle-alioth": {
@@ -42,7 +42,15 @@
         "@embedded-postgres/darwin-arm64",
         "@embedded-postgres/darwin-x64",
         "@embedded-postgres/linux-arm64",
-        "@embedded-postgres/linux-x64"
+        "@embedded-postgres/linux-x64",
+        "acorn",
+        "cheerio",
+        "css-tree",
+        "meriyah",
+        "postcss-selector-parser"
+      ],
+      "entry": [
+        "tests/fixtures/*.mts"
       ]
     },
     "examples/*": {
