@@ -156,17 +156,25 @@ export interface ServiceEntitySpec {
   readonly relationships?: readonly { readonly target: string; readonly type: string; readonly via: string }[]
 }
 
-/** The service.json artifact (contract: `service`). */
+/** The service.json artifact (contract: `service`; layout-faithful to the
+ *  upstream mirror output — all 15 keys). */
 export interface ServiceSpec {
   readonly id: string
+  readonly namespace: string
   readonly domain: string
   readonly services: readonly string[]
   readonly layer: number
   readonly dtoDependencies: readonly string[]
+  /** DTO surface; defaults to the generic refs/queries contract. */
+  readonly dtoExposes?: { readonly refs?: readonly string[]; readonly queries?: readonly string[] }
   readonly backendCrate: string
   readonly hasBackend: boolean
   readonly hasFrontend: boolean
   readonly version?: string
+  /** Alioth model version the service targets; defaults to the minimum. */
+  readonly aliothVersion?: string
+  readonly publishes?: readonly string[]
+  readonly subscribes?: readonly string[]
   readonly ontology: { readonly entities: readonly ServiceEntitySpec[] }
 }
 
@@ -174,14 +182,22 @@ export interface ServiceSpec {
 export function generateService(spec: ServiceSpec): Record<string, unknown> {
   return {
     id: spec.id,
+    namespace: spec.namespace,
     domain: spec.domain,
     services: [...spec.services],
     layer: spec.layer,
     dtoDependencies: [...spec.dtoDependencies],
+    dtoExposes: {
+      refs: [...(spec.dtoExposes?.refs ?? [])],
+      queries: [...(spec.dtoExposes?.queries ?? ['list_refs', 'get_refs'])],
+    },
     backendCrate: spec.backendCrate,
     hasBackend: spec.hasBackend,
     hasFrontend: spec.hasFrontend,
     version: spec.version ?? DEFAULT_VERSION,
+    aliothVersion: spec.aliothVersion ?? DEFAULT_MIN_ALIOTH_VERSION,
+    publishes: [...(spec.publishes ?? [])],
+    subscribes: [...(spec.subscribes ?? [])],
     ontology: {
       entities: spec.ontology.entities.map(entity => ({
         name: entity.name,

@@ -950,6 +950,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       const specs = args.services.map(service => generateService({
         id: service.id,
+        namespace: args.namespace,
         domain: service.domain,
         services: [],
         layer: service.layer,

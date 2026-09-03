@@ -5,50 +5,117 @@
   "description": "Alioth service artifact (ontology-mapping input). Evidence: the real `service.json` fixture of the vendored ontology-mapping crate in the model distribution.",
   "type": "object",
   "additionalProperties": true,
-  "required": ["id", "domain", "version", "ontology"],
+  "required": [
+    "id",
+    "namespace",
+    "domain",
+    "version",
+    "aliothVersion",
+    "ontology"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
-    "domain": { "type": "string" },
-    "services": { "type": "array", "items": { "type": "string" } },
-    "layer": { "type": "integer" },
-    "dtoDependencies": { "type": "array", "items": { "type": "string" } },
-    "backendCrate": { "type": "string" },
-    "hasBackend": { "type": "boolean" },
-    "hasFrontend": { "type": "boolean" },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "domain": {
+      "type": "string"
+    },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "layer": {
+      "type": "integer"
+    },
+    "dtoDependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "backendCrate": {
+      "type": "string"
+    },
+    "hasBackend": {
+      "type": "boolean"
+    },
+    "hasFrontend": {
+      "type": "boolean"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
     "ontology": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["entities"],
+      "required": [
+        "entities"
+      ],
       "properties": {
         "entities": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": true,
-            "required": ["name", "table", "inherits"],
+            "required": [
+              "name",
+              "table",
+              "inherits"
+            ],
             "properties": {
-              "name": { "type": "string", "minLength": 1 },
-              "table": { "type": "string", "minLength": 1 },
-              "inherits": { "type": "string", "minLength": 1 },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "table": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inherits": {
+                "type": "string",
+                "minLength": 1
+              },
               "coordinates": {
                 "type": "object",
-                "required": ["scene", "factor", "function"],
+                "required": [
+                  "scene",
+                  "factor",
+                  "function"
+                ],
                 "properties": {
-                  "scene": { "type": "string" },
-                  "factor": { "type": "string" },
-                  "function": { "type": "string" }
+                  "scene": {
+                    "type": "string"
+                  },
+                  "factor": {
+                    "type": "string"
+                  },
+                  "function": {
+                    "type": "string"
+                  }
                 }
               },
               "field_mappings": {
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["json_path", "column"],
+                  "required": [
+                    "json_path",
+                    "column"
+                  ],
                   "properties": {
-                    "json_path": { "type": "string" },
-                    "column": { "type": "string" },
-                    "scalar": { "type": "string" }
+                    "json_path": {
+                      "type": "string"
+                    },
+                    "column": {
+                      "type": "string"
+                    },
+                    "scalar": {
+                      "type": "string"
+                    }
                   }
                 }
               },
@@ -56,17 +123,53 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["target", "type", "via"],
+                  "required": [
+                    "target",
+                    "type",
+                    "via"
+                  ],
                   "properties": {
-                    "target": { "type": "string" },
-                    "type": { "type": "string" },
-                    "via": { "type": "string" }
+                    "target": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "via": {
+                      "type": "string"
+                    }
                   }
                 }
               }
             }
           }
         }
+      }
+    },
+    "namespace": {
+      "type": "string",
+      "description": "Owning namespace (mirror layout constant across the service tree)."
+    },
+    "aliothVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Alioth model version the service targets."
+    },
+    "dtoExposes": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "DTO surface: refs[] + queries[] (queries follow the generic list_refs/get_refs contract)."
+    },
+    "publishes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "subscribes": {
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     }
   }

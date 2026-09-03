@@ -40,6 +40,8 @@ const VALID_MODULE = {
 /** Valid service.json (hand-written test data, service-contract shape). */
 const VALID_SERVICE = {
   id: 'test-service',
+  namespace: 'Demo',
+  aliothVersion: '10.0.0',
   domain: '测试',
   services: ['FA'],
   layer: 1,
@@ -213,6 +215,7 @@ describe('gen-alioth generateService', () => {
   it('generates a service.json that passes the service contract', () => {
     const service = generateService({
       id: 'demo-inventory-service',
+      namespace: 'Demo',
       domain: '库存',
       services: ['FA'],
       layer: 1,
@@ -235,6 +238,15 @@ describe('gen-alioth generateService', () => {
       },
     })
     expect(validateArtifact('service', service).valid).toBe(true)
+    // Layout fidelity: all 15 keys of the upstream mirror output.
+    expect(Object.keys(service).sort()).toEqual([
+      'aliothVersion', 'backendCrate', 'domain', 'dtoDependencies', 'dtoExposes',
+      'hasBackend', 'hasFrontend', 'id', 'layer', 'namespace', 'ontology',
+      'publishes', 'services', 'subscribes', 'version',
+    ])
+    expect(service.namespace).toBe('Demo')
+    expect(service.dtoExposes).toEqual({ refs: [], queries: ['list_refs', 'get_refs'] })
+    expect(service.aliothVersion).toBe('10.0.0')
     const entity = (service.ontology as { entities: Array<Record<string, unknown>> }).entities[0]
     expect(entity).toMatchObject({
       name: 'BillCheck',
