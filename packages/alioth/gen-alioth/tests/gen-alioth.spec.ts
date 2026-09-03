@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXTENSION_FILES, generateApp, generateExtensions, generateModule, generateService, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
+import { EXTENSION_FILES, generateApp, generateExtensions, generateModule, generateService, generateNamespaceWorkspace, generateServiceCrate, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
 
 /** Self-contained valid app artifact (hand-written test data). */
 const VALID_APP = {
@@ -204,7 +204,7 @@ describe('gen-alioth app tree skeletons', () => {
 
   it('lists one source module dir per module', () => {
     const spec = { id: '1', namespace: 'Demo', code: 'demo', name: 'Demo', modules: [{ id: 'alpha', name: 'A' }] }
-    expect(sourceModuleDirs(spec.modules)).toEqual(['Sources/Modules/alpha'])
+    expect(sourceModuleDirs(spec.modules)).toEqual(['Sources/Apps/Modules/alpha'])
     expect(sourceModuleDirs([])).toEqual([])
   })
 })
@@ -243,8 +243,27 @@ describe('gen-alioth generateService', () => {
     })
   })
 
-  it('lists one service source dir per service id', () => {
-    expect(sourceServiceDirs([{ id: 'demo-inventory-service' }])).toEqual(['Sources/Services/demo-inventory-service'])
+  it('lists one service source dir per service id (mirror layout)', () => {
+    expect(sourceServiceDirs([{ id: 'demo-inventory-service' }])).toEqual(['Sources/Apps/Services/demo-inventory-service'])
+  })
+})
+
+describe('gen-alioth sources scaffold generators', () => {
+  it('generates a namespace workspace manifest with one member per service', () => {
+    const manifest = generateNamespaceWorkspace('Demo', ['inventory', 'sales-order'])
+    expect(manifest).toContain('members = [')
+    expect(manifest).toContain('"Sources/Apps/Services/inventory/backend"')
+    expect(manifest).toContain('"Sources/Apps/Services/sales-order/backend"')
+    expect(manifest).toContain('edition = "2021"')
+  })
+
+  it('generates a mount-only service crate shell', () => {
+    const files = generateServiceCrate('Demo', 'inventory')
+    expect(Object.keys(files).sort()).toEqual(['backend/Cargo.toml', 'backend/src/lib.rs'])
+    expect(files['backend/Cargo.toml']).toContain('name = "alioth-service-inventory"')
+    expect(files['backend/Cargo.toml']).toContain('../../../../../../..//Framework/backend/common')
+    expect(files['backend/src/lib.rs']).toContain('pub fn register_service_routes')
+    expect(files['backend/src/lib.rs']).toContain('/service/inventory')
   })
 })
 

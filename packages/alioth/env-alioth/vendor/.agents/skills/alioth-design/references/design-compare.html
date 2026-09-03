@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>设计原型对比 · AliothStudio</title>
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #1a1d23;
+        --panel-2: #232830;
+        --text: #e6e9ef;
+        --text-dim: #8b94a3;
+        --border: #2d3340;
+        --accent: #7c9eff;
+        --warn: #f7b955;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+      }
+      header {
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      header h1 {
+        font-size: 14px;
+        margin: 0;
+        font-weight: 600;
+      }
+      header h1 .accent {
+        color: var(--accent);
+      }
+      .group {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      label {
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+      select,
+      input[type='checkbox'] {
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 8px;
+        font-family: inherit;
+        font-size: 12px;
+        min-width: 180px;
+      }
+      select:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      button {
+        background: var(--accent);
+        color: #0b0d12;
+        border: none;
+        border-radius: 4px;
+        padding: 5px 12px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      button.secondary {
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+      button:hover {
+        filter: brightness(1.1);
+      }
+      .path-row {
+        padding: 8px 20px;
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--border);
+        color: var(--text-dim);
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 11px;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .path-row a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      .path-row a:hover {
+        text-decoration: underline;
+      }
+      .frame-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        height: calc(100vh - 100px);
+      }
+      .frame-cell {
+        border-right: 1px solid var(--border);
+        position: relative;
+        overflow: hidden;
+      }
+      .frame-cell:last-child {
+        border-right: none;
+      }
+      .frame-label {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        z-index: 10;
+        background: rgba(15, 17, 21, 0.85);
+        color: var(--accent);
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        pointer-events: none;
+      }
+      iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+        background: white;
+      }
+      .empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-dim);
+        padding: 40px;
+      }
+      .help {
+        color: var(--text-dim);
+        font-size: 11px;
+        margin-left: auto;
+      }
+      kbd {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        padding: 1px 5px;
+        font-size: 11px;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        设计原型对比 <span class="accent">·</span>
+        <span style="color: var(--text-dim); font-weight: 400">alioth-design</span>
+      </h1>
+
+      <div class="group">
+        <label>模块：</label>
+        <select id="module"></select>
+      </div>
+
+      <div class="group">
+        <label>左：</label>
+        <select id="left"></select>
+      </div>
+
+      <div class="group">
+        <label>右：</label>
+        <select id="right"></select>
+      </div>
+
+      <button id="load" onclick="render()">对比</button>
+
+      <div class="group">
+        <label><input type="checkbox" id="sync" checked /> 同步滚动</label>
+      </div>
+
+      <div class="help"><kbd>←</kbd> <kbd>→</kbd> 切换版本 · <kbd>⇧</kbd> + 选版本切换最新</div>
+    </header>
+
+    <div class="path-row">
+      <span id="leftPath"></span>
+      <span id="rightPath"></span>
+    </div>
+
+    <div class="frame-grid">
+      <div class="frame-cell">
+        <div class="frame-label" id="leftLabel">—</div>
+        <iframe id="leftFrame" sandbox="allow-same-origin allow-scripts"></iframe>
+      </div>
+      <div class="frame-cell">
+        <div class="frame-label" id="rightLabel">—</div>
+        <iframe id="rightFrame" sandbox="allow-same-origin allow-scripts"></iframe>
+      </div>
+    </div>
+
+    <script>
+      /* ---------------------------------------------------------------------------
+       * design-compare.html
+       * ---------------------------------------------------------------------------
+       * 用途：并排渲染同模块下两个不同版本的 `.agents/skills/alioth-design/references/vendor/{module}/{module}-v*.html`，
+       *      方便人工做视觉对比（git diff 无法替代眼睛对像素的判断）。
+       *
+       * 加载方式（必须从项目根启动 server，因为同源策略禁止 `..` 跨目录 fetch）：
+       *   bun .agents/skills/alioth-design/scripts/design-compare-server.ts
+       *   浏览器自动打开 http://localhost:8766/.agents/skills/alioth-design/references/design-compare.html
+       * 或使用项目根目录下 `bun .agents/skills/alioth-design/scripts/design-compare-server.ts` 一键启动。
+       *
+       * 索引数据来源：
+       *   /api/modules   (fetch 失败时使用内嵌的 bootstrap 列表)
+       *   /api/versions?module=...
+       *
+       * 服务端：.agents/skills/alioth-design/scripts/design-compare-server.ts
+       * ---------------------------------------------------------------------------
+       */
+
+      const modules = [
+        'access',
+        'ai',
+        'approve',
+        'channel',
+        'clients',
+        'contacts',
+        'criterion',
+        'demand',
+        'develop',
+        'devices',
+        'devtools',
+        'finance',
+        'hr',
+        'inventory',
+        'logistics',
+        'measurement',
+        'meta',
+        'orders',
+        'plan',
+        'process',
+        'product',
+        'purchase',
+        'shop',
+        'structure',
+        'transport',
+        'vendors',
+      ];
+
+      const moduleSelect = document.getElementById('module');
+      const leftSelect = document.getElementById('left');
+      const rightSelect = document.getElementById('right');
+      const leftFrame = document.getElementById('leftFrame');
+      const rightFrame = document.getElementById('rightFrame');
+
+      moduleSelect.innerHTML = modules.map((m) => `<option value="${m}">${m}</option>`).join('');
+
+      async function loadVersions(module) {
+        let versions = [];
+        try {
+          const r = await fetch(`/api/versions?module=${module}`);
+          if (r.ok) versions = await r.json();
+        } catch (e) {}
+        const probe = await fetch(`/Pre-Proc/${module}/${module}-v1.html`, { method: 'HEAD' });
+        if (!probe.ok) {
+          leftSelect.innerHTML = rightSelect.innerHTML = '';
+          return [];
+        }
+        for (let i = 1; i <= 60; i++) {
+          const p = await fetch(`/Pre-Proc/${module}/${module}-v${i}.html`, { method: 'HEAD' });
+          if (!p.ok) break;
+          versions.push(`v${i}`);
+        }
+        leftSelect.innerHTML = versions.map((v) => `<option value="${v}">${v}</option>`).join('');
+        rightSelect.innerHTML = versions.map((v) => `<option value="${v}">${v}</option>`).join('');
+        /* 默认：左 = 第二新，右 = 最新 */
+        if (versions.length >= 2) {
+          leftSelect.value = versions[versions.length - 2];
+          rightSelect.value = versions[versions.length - 1];
+        } else if (versions.length === 1) {
+          leftSelect.value = rightSelect.value = versions[0];
+        }
+        return versions;
+      }
+
+      function fileUrl(module, version) {
+        /* 假定 server 在项目根启动，路径以 /Pre-Proc 开头 */
+        return `/Pre-Proc/${module}/${module}-${version}.html`;
+      }
+
+      function render() {
+        const m = moduleSelect.value;
+        const l = leftSelect.value;
+        const r = rightSelect.value;
+        if (!m || !l || !r) return;
+        const leftUrl = fileUrl(m, l);
+        const rightUrl = fileUrl(m, r);
+        leftFrame.src = leftUrl;
+        rightFrame.src = rightUrl;
+        document.getElementById('leftLabel').textContent = `${m} · ${l}`;
+        document.getElementById('rightLabel').textContent = `${m} · ${r}`;
+        document.getElementById('leftPath').innerHTML =
+          `← <a href="${leftUrl}"  target="_blank">${leftUrl}</a>`;
+        document.getElementById('rightPath').innerHTML =
+          `<a href="${rightUrl}" target="_blank">${rightUrl}</a> →`;
+      }
+
+      moduleSelect.addEventListener('change', () => loadVersions(moduleSelect.value).then(render));
+      leftSelect.addEventListener('change', render);
+      rightSelect.addEventListener('change', render);
+
+      let syncing = false;
+      const syncCb = document.getElementById('sync');
+      leftFrame.addEventListener('load', () => {
+        if (!syncCb.checked) return;
+        leftFrame.contentWindow.addEventListener('scroll', () => {
+          if (syncing) return;
+          syncing = true;
+          rightFrame.contentWindow.scrollTo(
+            leftFrame.contentWindow.scrollX,
+            leftFrame.contentWindow.scrollY,
+          );
+          requestAnimationFrame(() => {
+            syncing = false;
+          });
+        });
+      });
+      rightFrame.addEventListener('load', () => {
+        if (!syncCb.checked) return;
+        rightFrame.contentWindow.addEventListener('scroll', () => {
+          if (syncing) return;
+          syncing = true;
+          leftFrame.contentWindow.scrollTo(
+            rightFrame.contentWindow.scrollX,
+            rightFrame.contentWindow.scrollY,
+          );
+          requestAnimationFrame(() => {
+            syncing = false;
+          });
+        });
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+        const versions = Array.from(leftSelect.options).map((o) => o.value);
+        if (!versions.length) return;
+        const lIdx = versions.indexOf(leftSelect.value);
+        const rIdx = versions.indexOf(rightSelect.value);
+        if (e.key === 'ArrowLeft' && lIdx > 0) {
+          leftSelect.value = versions[lIdx - 1];
+          render();
+        }
+        if (e.key === 'ArrowRight' && lIdx < versions.length - 1) {
+          leftSelect.value = versions[lIdx + 1];
+          render();
+        }
+        if (e.key === 'ArrowLeft' && e.shiftKey && rIdx > 0) {
+          rightSelect.value = versions[rIdx - 1];
+          render();
+        }
+        if (e.key === 'ArrowRight' && e.shiftKey && rIdx < versions.length - 1) {
+          rightSelect.value = versions[rIdx + 1];
+          render();
+        }
+      });
+
+      loadVersions(modules[0]).then(render);
+    </script>
+  </body>
+</html>

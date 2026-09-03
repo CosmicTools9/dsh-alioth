@@ -219,18 +219,17 @@ describe('skill-alioth run persistence', () => {
 describe('skill-alioth tool-surface mapping', () => {
   it('reports missing harness tools per adapter reference', () => {
     const missing = missingToolSurface(adapter, new Set(['read', 'write']))
-    expect(missing).toHaveLength(2)
+    // write_file now maps to the harness write surface (gated code authoring);
+    // search_files remains unmapped without glob/grep registered.
+    expect(missing).toHaveLength(1)
     expect(missing[0]).toMatchObject({ adapterTool: 'search_files', usedBy: ['1.1'] })
-    // PROGRAMMATIC-FIRST: write_file is intentionally unmapped — artifact
-    // content comes from programmatic tools, never LLM free-text writes.
-    expect(missing[1]).toMatchObject({ adapterTool: 'write_file', required: [] })
   })
 
-  it('never maps write_file (programmatic-first rule)', () => {
+  it('maps write_file to the harness write surface (code files in gated steps)', () => {
     const registered = new Set(['read', 'tool:read', 'write', 'tool:write', 'glob', 'tool:glob', 'grep', 'tool:grep'])
     const missing = missingToolSurface(adapter, registered)
-    expect(missing.find(item => item.adapterTool === 'write_file')).toBeDefined()
-    expect(ADAPTER_TOOL_TO_DSH.write_file).toEqual([])
+    expect(missing.find(item => item.adapterTool === 'write_file')).toBeUndefined()
+    expect(ADAPTER_TOOL_TO_DSH.write_file).toEqual(['write', 'tool:write'])
   })
 })
 

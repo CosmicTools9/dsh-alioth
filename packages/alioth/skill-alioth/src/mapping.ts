@@ -13,17 +13,19 @@ import type { Adapter } from './adapter.ts'
 /**
  * Adapter tool name → accepted harness tool names (any one satisfies).
  *
- * PROGRAMMATIC-FIRST RULE: `write_file` maps to NOTHING. Artifact content is
- * produced by programmatic generators/tools (alioth_app_write /
- * alioth_app_configure / alioth_entity_write); the LLM must never write
- * artifact files from text instructions. A step requiring write_file fails
- * loud (missing surface) instead of silently delegating content to the model.
+ * PROGRAMMATIC-FIRST RULE (amended 2026-09-03, full-stack surface): contract
+ * artifacts (app.json/module.json/extensions/entity rows) are produced ONLY
+ * by programmatic generators/tools (alioth_app_write / alioth_app_configure /
+ * alioth_entity_write). CODE files under `Sources/` and `Prototypes/` are the
+ * exception: they are authored by the model with the harness `write` tool
+ * inside whitelisted workflow steps and accepted only by programmatic gates
+ * (bun prototype build, nav check, cargo check). `write_file` therefore maps
+ * to the harness write surface; gate failures — not mapping absence — reject
+ * bad code.
  */
 export const ADAPTER_TOOL_TO_DSH: Readonly<Record<string, readonly string[]>> = {
   read_file: ['read', 'tool:read'],
-  // Intentionally unmapped — see module doc. Keeping the key makes the
-  // missing-surface error explicit per step instead of an unknown tool.
-  write_file: [],
+  write_file: ['write', 'tool:write'],
   search_files: ['glob', 'tool:glob', 'grep', 'tool:grep'],
 }
 

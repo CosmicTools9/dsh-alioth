@@ -315,7 +315,10 @@ function fixSVGRefs(code) {
   return code;
 }
 
-const ROOT = resolve(import.meta.dirname, '..');
+// PROTOTYPE_TOOL_ROOT: deployment override for the content root (the dir that
+// contains Pre-Proc/, .agents/skills/alioth-design/references and Framework/).
+// Defaults to the vendored tree's parent for upstream parity.
+var ROOT = resolve(process.env.PROTOTYPE_TOOL_ROOT || resolve(import.meta.dirname, '..'));
 const UTILITIES_JSON = join(ROOT, 'Framework/frontend/components/utilities.json');
 const REFERENCES_DIR = join(ROOT, '.agents/skills/alioth-design/references');
 function rootPathFor(htmlPath) {

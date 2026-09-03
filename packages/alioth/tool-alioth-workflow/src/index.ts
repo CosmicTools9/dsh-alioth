@@ -7,10 +7,10 @@
  * the next step. No LLM inside this path — the model executes the steps.
  * @module @dsh-alioth/tool-alioth-workflow
  */
-
+import type { Context } from '@deepseek-ai/cordis'
+import { provisionPrototypeRoot } from '@dsh-alioth/env-alioth'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
-import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
@@ -64,6 +64,18 @@ function assertNsApp(namespace: string, app: string): void {
 export function apply(ctx: Context, config: Config): void {
   const adapterName = config.adapter ?? 'alioth-app.yaml'
   const preProcRoot = path.resolve(config.preProcRoot)
+  // Content root (upstream repo-root layout): the dir containing Pre-Proc/ +
+  // the provisioned `.agents/` references, `Framework/` utilities and gate
+  // `scripts/`. Program gates run here; PROTOTYPE_TOOL_ROOT points here.
+  const contentRoot = path.dirname(preProcRoot)
+  let provisioned = false
+  function ensureContentRoot(): { contentRoot: string } {
+    if (!provisioned) {
+      provisionPrototypeRoot(preProcRoot, contentRoot)
+      provisioned = true
+    }
+    return { contentRoot }
+  }
   const adapterCache = new Map<string, Adapter>()
 
   async function adapterFor(): Promise<Adapter> {
@@ -334,7 +346,8 @@ export function apply(ctx: Context, config: Config): void {
         return { finished: true, completedStep: '', gateResults: [], nextStep: '' }
       }
       const context = gateContext(args.namespace, args.app)
-      const runner = createProgramRunner({ cwd: preProcRoot })
+      const { contentRoot: gateCwd } = ensureContentRoot()
+      const runner = createProgramRunner({ cwd: gateCwd, env: { PROTOTYPE_TOOL_ROOT: gateCwd } })
       const results = await checkStepGates(current.step.gates, context, runner)
       const failed = results.filter(result => result.status === 'fail')
       if (failed.length > 0) {

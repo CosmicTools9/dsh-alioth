@@ -686,6 +686,97 @@
     }
   },
   {
+    "name": "alioth_sources_scaffold",
+    "description": "Deterministic backend Sources scaffold (mirror layout): per declared service writes Sources/Apps/Services/{id}/service.json (contract-validated; entities with coordinates from your semantic alignment) plus a mount-only backend crate shell (Cargo.toml + src/lib.rs), and the namespace workspace Sources/Cargo.toml joining the crates. Business/DTO code is NOT generated here — author it in gated workflow steps (alioth-service track); the shell only mounts the service scope. Refuses overwrite: an existing service.json or namespace Cargo.toml stops the scaffold (inspect first). Compiles only where the Framework crates resolve (AliothStudio checkout or provisioned content root).",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first."
+        },
+        "services": {
+          "type": "array",
+          "description": "Service declarations (one service per ontology domain group).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "domain": {
+                "type": "string"
+              },
+              "layer": {
+                "type": "number"
+              },
+              "dtoDependencies": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "entities": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "table": {
+                      "type": "string"
+                    },
+                    "inherits": {
+                      "type": "string"
+                    },
+                    "coordinates": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "scene": {
+                          "type": "string"
+                        },
+                        "factor": {
+                          "type": "string"
+                        },
+                        "function": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "scene",
+                        "factor",
+                        "function"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "table",
+                    "inherits"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "id",
+              "domain",
+              "layer",
+              "entities"
+            ]
+          }
+        }
+      },
+      "required": [
+        "namespace",
+        "services"
+      ]
+    }
+  },
+  {
     "name": "alioth_workflow_complete",
     "description": "Run the current workflow step's gates for an app (adapter alioth-app.yaml): artifact globs are checked on disk, program gates execute through the deployment runner. All gates must pass; the state machine then advances and the next step is returned. On gate failure nothing advances and every failed gate is listed.",
     "parameters": {

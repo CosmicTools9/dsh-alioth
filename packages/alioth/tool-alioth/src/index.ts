@@ -13,12 +13,13 @@
  * @module @dsh-alioth/tool-alioth
  */
 
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { generateApp, generateExtensions, generateModule, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
+import { generateApp, generateExtensions, generateModule, generateNamespaceWorkspace, generateService, generateServiceCrate, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
 import type {} from '@deepseek-ai/dsh-user-approval'
 
 export const name = 'tool-alioth'
@@ -579,8 +580,10 @@ export function apply(ctx: Context, config: Config): void {
         await writeFile(path.join(extensionsDir, file), content)
         files.push(`extensions/${file}`)
       }
+      // Namespace-level Sources mirror (fb28b5e02): Sources/Apps/Modules/{id}
+      // lives under the namespace, not inside the app dir.
       for (const sourceDir of sourceModuleDirs(modules)) {
-        await mkdir(path.join(appDir, sourceDir), { recursive: true })
+        await mkdir(path.resolve(root, args.namespace, sourceDir), { recursive: true })
       }
       return {
         namespace: args.namespace,
@@ -864,6 +867,170 @@ export function apply(ctx: Context, config: Config): void {
       title: `Delete Alioth app ${args.namespace}/${args.app}`,
       kind: 'other',
       rawInput: { namespace: args.namespace, app: args.app },
+    }),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'alioth_sources_scaffold',
+    description:
+      'Deterministic backend Sources scaffold (mirror layout): per declared service writes '
+      + 'Sources/Apps/Services/{id}/service.json (contract-validated; entities with coordinates '
+      + 'from your semantic alignment) plus a mount-only backend crate shell (Cargo.toml + '
+      + 'src/lib.rs), and the namespace workspace Sources/Cargo.toml joining the crates. '
+      + 'Business/DTO code is NOT generated here — author it in gated workflow steps '
+      + '(alioth-service track); the shell only mounts the service scope. Refuses overwrite: '
+      + 'an existing service.json or namespace Cargo.toml stops the scaffold (inspect first). '
+      + 'Compiles only where the Framework crates resolve (AliothStudio checkout or provisioned '
+      + 'content root).',
+    parameters: {
+      namespace: {
+        type: 'string',
+        required: true,
+        description: 'The caller\'s own workspace namespace — resolve with alioth_workspace_current first.',
+      },
+      services: {
+        type: 'array',
+        required: true,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            id: { type: 'string', required: true },
+            domain: { type: 'string', required: true },
+            layer: { type: 'number', required: true },
+            dtoDependencies: { type: 'array', items: { type: 'string' } },
+            entities: {
+              type: 'array',
+              required: true,
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  name: { type: 'string', required: true },
+                  table: { type: 'string', required: true },
+                  inherits: { type: 'string', required: true },
+                  coordinates: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      scene: { type: 'string', required: true },
+                      factor: { type: 'string', required: true },
+                      function: { type: 'string', required: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        description: 'Service declarations (one service per ontology domain group).',
+      },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          namespace: { type: 'string', required: true },
+          serviceIds: { type: 'array', required: true, items: { type: 'string' } },
+          files: { type: 'array', required: true, items: { type: 'string' } },
+          summary: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: `Scaffolded ${String(value.namespace)} Sources: ${value.serviceIds.length} service(s), `
+          + `${value.files.length} files (contract shells + workspace manifest)`,
+      }],
+    },
+    async execute(args) {
+      if (args.services.length === 0) {
+        throw new Error('alioth_sources_scaffold: declare at least one service')
+      }
+      const specs = args.services.map(service => generateService({
+        id: service.id,
+        domain: service.domain,
+        services: [],
+        layer: service.layer,
+        dtoDependencies: service.dtoDependencies ?? [],
+        backendCrate: `alioth-service-${service.id}`,
+        hasBackend: true,
+        hasFrontend: false,
+        ontology: {
+          entities: (service.entities ?? []).map(entity => ({
+            name: entity.name,
+            table: entity.table,
+            inherits: entity.inherits,
+            ...(entity.coordinates === undefined ? {} : { coordinates: entity.coordinates }),
+          })),
+        },
+      }))
+      for (const [index, service] of specs.entries()) {
+        const validation = validateArtifact('service', service)
+        if (!validation.valid) {
+          throw new Error(`alioth_sources_scaffold: service ${args.services[index]?.id ?? index} fails contract: ${validation.errors.join('; ')}`)
+        }
+      }
+
+      const nsRoot = path.resolve(root, args.namespace)
+      const sourcesRoot = path.join(nsRoot, 'Sources')
+      const written: string[] = []
+      const refused: string[] = []
+
+      const workspaceManifest = path.join(sourcesRoot, 'Cargo.toml')
+      if (existsSync(workspaceManifest)) {
+        refused.push('Sources/Cargo.toml')
+      }
+      const planned: { readonly relative: string; readonly content: string }[] = []
+      for (const [serviceIndex, service] of args.services.entries()) {
+        const serviceDir = path.join(sourcesRoot, 'Apps', 'Services', service.id)
+        const serviceJson = path.join(serviceDir, 'service.json')
+        if (existsSync(serviceJson)) {
+          refused.push(`Sources/Apps/Services/${service.id}/service.json`)
+          continue
+        }
+        planned.push({ relative: `Sources/Apps/Services/${service.id}/service.json`, content: `${JSON.stringify(specs[serviceIndex], null, 2)}\n` })
+        for (const [relative, content] of Object.entries(generateServiceCrate(args.namespace, service.id))) {
+          planned.push({ relative: `Sources/Apps/Services/${service.id}/${relative}`, content })
+        }
+      }
+      if (refused.length > 0 && planned.length > 0) {
+        throw new Error(`alioth_sources_scaffold: refusing partial scaffold — existing: ${refused.join(', ')} (inspect first, scaffold the rest separately)`)
+      }
+      if (refused.length > 0) {
+        throw new Error(`alioth_sources_scaffold: nothing to scaffold — existing: ${refused.join(', ')}`)
+      }
+      if (existsSync(workspaceManifest)) {
+        // All services exist; only the manifest is present — nothing to do.
+        return {
+          namespace: args.namespace,
+          serviceIds: [],
+          files: [],
+          summary: 'Sources already scaffolded (workspace manifest present; every declared service exists)',
+        }
+      }
+      planned.push({ relative: 'Sources/Cargo.toml', content: generateNamespaceWorkspace(args.namespace, args.services.map(service => service.id)) })
+      for (const file of planned) {
+        const target = path.join(nsRoot, file.relative)
+        if (!target.startsWith(nsRoot + path.sep)) {
+          throw new Error(`alioth_sources_scaffold: path escapes namespace root: ${file.relative}`)
+        }
+        await mkdir(path.dirname(target), { recursive: true })
+        await writeFile(target, file.content)
+        written.push(file.relative)
+      }
+      return {
+        namespace: args.namespace,
+        serviceIds: args.services.map(service => service.id),
+        files: written,
+        summary: `scaffolded ${args.services.length} service(s): contract service.json + mount-only crate shells; author DTO/business code in gated workflow steps (alioth-service track)`,
+      }
+    },
+    presentCall: args => ({
+      card: 'generic',
+      title: `Scaffold Sources ${args.namespace} (${args.services.length} services)`,
+      kind: 'other',
+      rawInput: args as Record<string, unknown>,
     }),
   }))
 }

@@ -159,6 +159,12 @@ export class AliothEnv extends Service {
   }
 }
 export { maskUrl } from './doctor.ts'
+export {
+  provisionPrototypeRoot,
+  removeProvisionedAssets,
+  VENDOR_ROOT,
+  type PrototypeRootInfo,
+} from './prototype-root.ts'
 
 export function apply(ctx: Context, config: Config): void {
   ctx.plugin(AliothEnv, config)

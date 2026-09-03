@@ -1,0 +1,33 @@
+/* JetBrains Mono — Code/IDs/Timestamps font
+ * Local self-hosted woff2. See docs/specs/FRONTEND_SPEC.md §10.0.1.
+ * Source: https://github.com/JetBrains/JetBrainsMono (v2.304)
+ * 2026-06-14 — replaces ui-monospace system stack.
+ */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./jetbrains-mono-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./jetbrains-mono-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./jetbrains-mono-700.woff2") format("woff2");
+}

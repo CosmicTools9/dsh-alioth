@@ -78,17 +78,18 @@ describe('model-visible surface snapshot', () => {
     expect(current, 'model-visible tool surface changed — review, then refresh with UPDATE_SNAPSHOTS=1').toBe(golden)
   })
 
-  it('registers exactly the seventeen Alioth tools', () => {
+  it('registers exactly the eighteen Alioth tools', () => {
     const names = new Set(ctx.tools.schemas().map(s => s.name))
     for (const expected of [
       'alioth_app_list', 'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure', 'alioth_app_delete',
       'alioth_schema_info', 'alioth_schema_semantic_search', 'alioth_entity_write',
+      'alioth_sources_scaffold',
       'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_workflow_info', 'alioth_app_create',
       'alioth_workspace_current',
       'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
     ]) {
       expect(names, `tool ${expected} must be registered`).toContain(expected)
     }
-    expect([...names].filter(n => n.startsWith('alioth_'))).toHaveLength(17)
+    expect([...names].filter(n => n.startsWith('alioth_'))).toHaveLength(18)
   })
 })

@@ -7,14 +7,17 @@
  * a missing binary fails the gate with a clear message, never silently.
  * @module @dsh-alioth/skill-alioth/bun
  */
-import type { ProgramResult, ProgramRunner } from './gates.ts'
+
 import { spawn } from 'node:child_process'
+import type { ProgramResult, ProgramRunner } from './gates.ts'
 
 export interface ProgramRunnerOptions {
   /** Working directory for spawned programs (adapter scripts resolve relative to it). */
   readonly cwd?: string
   /** Kill the program after this many ms (overridden by the gate's `timeout_sec`). */
   readonly timeoutMs?: number
+  /** Extra environment for spawned programs (merged over process.env). */
+  readonly env?: Readonly<Record<string, string>>
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
@@ -33,6 +36,7 @@ export function createProgramRunner(options: ProgramRunnerOptions = {}): Program
     const child = spawn(program, [...args], {
       cwd: options.cwd,
       timeout: timeoutMs,
+      env: options.env === undefined ? process.env : { ...process.env, ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''

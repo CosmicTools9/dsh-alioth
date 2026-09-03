@@ -1,0 +1,33 @@
+/* Inter — Latin Display/Body font
+ * Local self-hosted woff2. See docs/specs/FRONTEND_SPEC.md §10.0.1.
+ * Source: https://github.com/rsms/inter (Inter v4.0)
+ * 2026-06-14 — replaces Plus Jakarta Sans.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./inter-700.woff2") format("woff2");
+}

@@ -68,9 +68,10 @@ export function generateExtensions(code: string): Readonly<Record<string, string
   return Object.fromEntries(EXTENSION_FILES.map(kind => [`${kind}.yaml`, generateExtension(kind, code)]))
 }
 
-/** Source-skeleton directories for an app (modules; services come with service.json generation). */
+/** Source-skeleton directories for an app (modules; services come with service.json generation).
+ *  Mirror layout (fb28b5e02): everything lives under Sources/Apps/. */
 export function sourceModuleDirs(modules: readonly ModuleSpec[]): readonly string[] {
-  return modules.map(module => `Sources/Modules/${module.id}`)
+  return modules.map(module => `Sources/Apps/Modules/${module.id}`)
 }
 
 /**
@@ -204,7 +205,33 @@ export function generateService(spec: ServiceSpec): Record<string, unknown> {
   }
 }
 
-/** Source-skeleton directory for one service. */
+/** Source-skeleton directories for services (mirror layout: Sources/Apps/Services). */
 export function sourceServiceDirs(services: readonly { readonly id: string }[]): readonly string[] {
-  return services.map(service => `Sources/Services/${service.id}`)
+  return services.map(service => `Sources/Apps/Services/${service.id}`)
+}
+
+// ── Sources scaffold generators (backend mirror; 2026-09-03 full-stack) ───
+
+const FRAMEWORK_DEP_LEVELS = '../../../../../../../'
+
+/**
+ * The namespace workspace `Sources/{ns}/Cargo.toml` (mount-only shell).
+ * Members = one crate per service; workspace deps pinned to the versions the
+ * upstream namespace workspaces use. Compiles only where the Framework crates
+ * resolve (AliothStudio checkout or a provisioned content root).
+ */
+export function generateNamespaceWorkspace(namespace: string, serviceIds: readonly string[]): string {
+  const members = serviceIds.map(id => `    "Sources/Apps/Services/${id}/backend",`)
+  return `# ${namespace} 开发 workspace：独立 target/ 和 Cargo.lock（dsh-alioth scaffold 生成）\n[workspace]\nresolver = "2"\nmembers = [\n${members.join('\n')}\n]\n\nexclude = ["**/vendor/**"]\n\n[workspace.package]\nversion = "0.1.0"\nedition = "2021"\nlicense = "Apache-2.0"\n\n[workspace.dependencies]\ntokio = { version = "1", features = ["full"] }\nactix-web = "4"\nsqlx = { version = "0.9.0", features = ["runtime-tokio", "postgres", "uuid", "chrono", "macros", "migrate", "rust_decimal"] }\nserde = { version = "1", features = ["derive"] }\nserde_json = "1"\nchrono = { version = "0.4", features = ["serde"] }\nthiserror = "2"\nasync-trait = "0.1"\ndotenvy = "0.15"\nlog = "0.4"\nuuid = { version = "1", features = ["v4", "serde"] }\n`
+}
+
+/**
+ * Service crate shell: `backend/Cargo.toml` + `backend/src/lib.rs`. The shell
+ * is mount-only (upstream spec: the lib registers the service scope; business
+ * code is authored by the model in gated workflow steps, never scaffolded).
+ */
+export function generateServiceCrate(namespace: string, serviceId: string): Readonly<Record<string, string>> {
+  const cargoToml = `[package]\nname = "alioth-service-${serviceId}"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n[dependencies]\nactix-web = { workspace = true }\nserde = { workspace = true }\nserde_json = { workspace = true }\ncommon = { path = "${FRAMEWORK_DEP_LEVELS}/Framework/backend/common" }\ncrud = { path = "${FRAMEWORK_DEP_LEVELS}/Framework/backend/crud" }\n\n[lib]\npath = "src/lib.rs"\n`
+  const libRs = `//! # ${serviceId} — ${namespace} 服务壳\n//!\n//! 壳纯挂载（gated code authoring）：业务路由/DTO 由模型在 workflow 门禁步骤\n//! 内编写并经 cargo check 验收；本壳只注册服务作用域。\n\nuse actix_web::web;\n\n/// 注册 ${serviceId} 服务的路由作用域。\npub fn register_service_routes(cfg: &mut web::ServiceConfig) {\n    cfg.service(web::scope("/service/${serviceId}"));\n}\n`
+  return { 'backend/Cargo.toml': cargoToml, 'backend/src/lib.rs': libRs }
 }
