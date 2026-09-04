@@ -82,6 +82,24 @@ function asWebServer(value: unknown): WebServerLike | undefined {
     : undefined
 }
 
+/** Structural face of the harness `connection` service — optional like
+ * webServer: present in web profiles (client-connection mounted), absent in
+ * headless ones. authenticatedUrl() appends the process launch token to a
+ * clean origin, which is how the agent console (SPA) admits a browser. */
+interface ConnectionLike {
+  authenticatedUrl(baseUrl: string): string
+}
+
+function asConnection(value: unknown): ConnectionLike | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined
+  }
+  const candidate = value as Record<string, unknown>
+  return typeof candidate.authenticatedUrl === 'function'
+    ? value as ConnectionLike
+    : undefined
+}
+
 // ── request/response helpers ────────────────────────────────────────────
 
 /** Parse the request body for both content types the B/S surface uses:
@@ -420,6 +438,9 @@ nav{display:flex;justify-content:space-between;align-items:center;
 max-width:1080px;width:100%;margin:0 auto;padding:1.25rem 1.5rem}
 .wordmark{font-family:var(--mono);font-weight:700;letter-spacing:.04em}
 .wordmark span{color:var(--accent)}
+.chat{font-size:.9rem;border:1px solid var(--line);border-radius:999px;
+padding:.35rem .9rem;color:var(--accent)}
+.chat:hover{border-color:var(--accent);background:rgba(62,230,168,.06)}
 main{flex:1;width:100%;max-width:1080px;margin:0 auto;padding:0 1.5rem 3rem}
 h1{font-size:1.4rem;margin:1rem 0 1.25rem}
 .ws{background:var(--panel);border:1px solid var(--line);border-radius:10px;
@@ -445,10 +466,11 @@ color:#06251a;font-weight:600;padding:.5rem 1.2rem;cursor:pointer;justify-self:s
 .banner.error{border:1px solid var(--error, #f2718a);color:#f2718a;background:rgba(242,113,138,.08);
 border-radius:6px;padding:.5rem .8rem;font-size:.85rem}
 </style></head><body>
-<nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a></nav>
+<nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a>
+<a class="chat" href="/api/auth/portal">对话 · 创建应用 →</a></nav>
 <main><h1>${title}</h1>${form}
 ${rows === '' ? '<p class="dim">（空）</p>' : rows}
-<p class="back"><a href="/usercenter">← 用户中心</a> · <a href="/">返回首页</a></p></main>
+<p class="back"><a href="/usercenter">← 用户中心</a> · <a href="/workspace">刷新</a> · <a href="/api/auth/portal">进入对话</a></p></main>
 </body></html>`)
 }
 
@@ -515,6 +537,23 @@ export function apply(ctx: Context, config: Config): void {
    * the visitor unauthenticated on the GUI. */
   let guiOrigin: string | undefined
   const workspaceHref = (): string => guiOrigin ?? '/'
+  /**
+   * The agent-console (SPA) URL for one request's origin: the harness
+   * connection service appends its process launch token, admitting the
+   * browser through the device wall. Absent connection (non-web tree) the
+   * caller falls back to the Alioth workspace page.
+   */
+  const portalUrl = (request: IncomingMessage): string | undefined => {
+    const host = request.headers.host
+    if (typeof host !== 'string' || host === '') return undefined
+    const connection = asConnection((ctx.get as (name: string) => unknown).call(ctx, 'connection'))
+    if (connection === undefined) return undefined
+    try {
+      return connection.authenticatedUrl(`http://${host}`)
+    } catch {
+      return undefined
+    }
+  }
   /** Landing capability lookup at request/tap time (optional provider). */
   const landing = (): LandingLike | undefined => {
     const value = (ctx.get as (name: string) => unknown).call(ctx, 'aliothLanding')
@@ -545,7 +584,7 @@ export function apply(ctx: Context, config: Config): void {
           const result = await auth().register(username, password)
           if (sameOrigin) {
             response.writeHead(302, {
-              location: '/workspace',
+              location: portalUrl(request) ?? '/workspace',
               'set-cookie': authCookies(result.token, username, ttlSeconds),
             })
             response.end()
@@ -571,7 +610,7 @@ export function apply(ctx: Context, config: Config): void {
           const result = await auth().login(username, password)
           if (sameOrigin) {
             response.writeHead(302, {
-              location: '/workspace',
+              location: portalUrl(request) ?? '/workspace',
               'set-cookie': authCookies(result.token, username, ttlSeconds),
             })
             response.end()
@@ -600,6 +639,21 @@ export function apply(ctx: Context, config: Config): void {
         return
       }
       sendJson(response, 200, { ...user, workspaceMode: auth().workspaceMode() })
+      return
+    }
+    // Portal into the agent console: the Alioth surfaces (workspace page,
+    // landing) link here; the redirect carries the process launch token so
+    // the SPA device wall admits this browser in one hop.
+    if (request.method === 'GET' && url.pathname === '/api/auth/portal') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        response.writeHead(302, { location: '/login' })
+        response.end()
+        return
+      }
+      const portal = portalUrl(request)
+      response.writeHead(302, { location: portal ?? '/workspace' })
+      response.end()
       return
     }
     // Workspace browser: the mode decides the presentation — 'unlimited'
@@ -658,7 +712,10 @@ export function apply(ctx: Context, config: Config): void {
         response.end()
         return
       }
-      response.writeHead(302, { location: '/workspace', 'set-cookie': authCookies(token, user.username, ttlSeconds) })
+      response.writeHead(302, {
+        location: portalUrl(request) ?? '/workspace',
+        'set-cookie': authCookies(token, user.username, ttlSeconds),
+      })
       response.end()
       return
     }
