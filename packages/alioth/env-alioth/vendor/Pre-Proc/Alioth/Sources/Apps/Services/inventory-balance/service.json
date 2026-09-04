@@ -1,0 +1,91 @@
+{
+  "id": "inventory-balance",
+  "name": "inventory-balance",
+  "namespace": "Alioth",
+  "domain": "库存管理",
+  "layer": 0,
+  "version": "0.1.0",
+  "aliothVersion": "10.0.0",
+  "backendCrate": "alioth-service-inventory-balance",
+  "hasBackend": true,
+  "hasFrontend": true,
+  "consumers": [],
+  "publishes": [],
+  "subscribes": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": ["list_refs", "get_refs"],
+    "refs": []
+  },
+  "ontology": {
+    "entities": [
+      {
+        "name": "InventoryBalance",
+        "table": "isahl.mv_inventory",
+        "inherits": null,
+        "coordinates": {
+          "factor": "",
+          "function": "",
+          "scene": ""
+        },
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "bigint",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "production_id",
+            "column": "production_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar",
+            "notes": "货（production 引用，视图 ref_left）"
+          },
+          {
+            "business_name": "storage_id",
+            "column": "storage_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar",
+            "notes": "储元（storage 引用，视图 ref_right）"
+          },
+          {
+            "business_name": "qty",
+            "column": "qty",
+            "data_type": "numeric",
+            "nullable": false,
+            "semantic_type": "numeric",
+            "category": "scalar",
+            "notes": "现存数量（scal-common.mark 视图层解析）"
+          },
+          {
+            "business_name": "capacity",
+            "column": "capacity",
+            "data_type": "numeric",
+            "nullable": false,
+            "semantic_type": "numeric",
+            "category": "scalar",
+            "notes": "容量（qk_p_capacity 标量解析）"
+          },
+          {
+            "business_name": "unit",
+            "column": "unit",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar",
+            "notes": "单位（sk_unit 标量引用）"
+          }
+        ],
+        "notes": "库存余额（isahl.mv_inventory 物化视图，只读）：货 production_id × 储元 storage_id 现存数量 qty/容量 capacity——视图层已解析标量（zc_id_production_rr_storage LEFT JOIN zc_id_scal-common），qty/capacity 为 numeric 直读。isahl 本体既有设施，零新增 DDL。"
+      }
+    ]
+  },
+  "readonly": true
+}

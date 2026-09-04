@@ -39,10 +39,16 @@ const SYNC_SET: readonly { readonly source: string; readonly dest: string }[] = 
   { source: 'scripts/check/check-module-contract.mjs', dest: 'scripts/check/check-module-contract.mjs' },
   { source: 'scripts/check/check-shared-kernel.ts', dest: 'scripts/check/check-shared-kernel.ts' },
   { source: 'scripts/eval/evaluate-prototype-reference.ts', dest: 'scripts/eval/evaluate-prototype-reference.ts' },
-  { source: 'scripts/lib/parsers.ts', dest: 'scripts/lib/parsers.ts' },
+  { source: 'scripts/lib', dest: 'scripts/lib' },
   { source: '.agents/skills/alioth-design/references', dest: '.agents/skills/alioth-design/references' },
   { source: 'Framework/frontend/components/utilities.json', dest: 'Framework/frontend/components/utilities.json' },
   { source: 'Framework/backend', dest: 'Framework/backend' },
+  { source: 'Gateway/backend', dest: 'Gateway/backend' },
+  { source: 'SSO/backend', dest: 'SSO/backend' },
+  // The gateway's default features path-dep on the Alioth baseline services —
+  // without them the vendored gateway manifest cannot even parse.
+  { source: 'Pre-Proc/Alioth/Sources/Apps/Services', dest: 'Pre-Proc/Alioth/Sources/Apps/Services' },
+  { source: 'Pre-Proc/Alioth/openapi', dest: 'Pre-Proc/Alioth/openapi' },
 ]
 
 /** Directories never synced (build output / dependency trees inside a source dir). */

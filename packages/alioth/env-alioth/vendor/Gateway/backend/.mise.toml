@@ -1,0 +1,55 @@
+[tasks]
+setup = "cargo fetch && cargo check"
+# 显式追加 preproc-proxy：dev 形态保持 /preproc/* 与 /api/pre_proc/* 反代可用
+# （生产构建 build-ns.sh 不含该 feature；openspec fix-gateway-proxy-standalone-auth）
+# 小写化用 tr 而非 ${NS,,}——/bin/bash 3.2 不支持 ${var,,}
+dev = "bash ../../scripts/lib/guard-mise-task.sh Gateway -- bash -c 'NS=${NAMESPACE:-alioth}; NS_LC=$(echo \"$NS\" | tr \"[:upper:]\" \"[:lower:]\"); cargo run --no-default-features --features \"${NS_LC},sso,preproc-proxy\"'"
+build = "bash -c 'NS=${NAMESPACE:-alioth}; cargo build --release --no-default-features --features \"${NS,,},sso\"'"
+test = "bash ../../scripts/lib/guard-mise-task.sh Gateway --mode test -- cargo test"
+lint = "cargo clippy -- -D warnings && cargo fmt --check"
+
+# Gateway no-sso 形态（standalone 认证）编译检查——官方构建全带 sso，
+# 该任务兜底 no-sso 形态零构建零测试的缺口（openspec fix-gateway-proxy-standalone-auth）
+"check:standalone" = { description = "Gateway no-sso 形态编译检查（standalone 认证链路）", run = "cargo check -p alioth-gateway --no-default-features --features alioth" }
+
+[env]
+# ns 形态（2026-08-14 收敛）：env 真相源 = Deploy/{NAMESPACE}/.env（decrypt-env.sh 按
+# NAMESPACE 加载，每 ns 独立端口/库/sso 配置，ENVIRONMENT_SPEC §6.9）；backend 不再持有 .env。
+# 启动须显式 NAMESPACE：`NAMESPACE=WZ mise run dev`。
+
+# 自动解密 .env 中的 enc: 前缀敏感值
+_.source = "../../scripts/env/decrypt-env.sh"
+
+RUST_LOG = "info"
+
+# 内网域绕过本地代理（macOS 系统代理 127.0.0.1:10808 会被 reqwest
+# macos-system-configuration 自动拾取,导致内网 ERP(共享/业财)请求被代理重置;
+# 实测 fssctestxc.wzgroup.cn 经代理 Connection reset。env 级绕过,不影响外网请求)
+NO_PROXY = "localhost,127.0.0.1,::1,.wzgroup.cn,10.0.0.0/8"
+no_proxy = "localhost,127.0.0.1,::1,.wzgroup.cn,10.0.0.0/8"
+
+# 数据库配置
+DATABASE_POOL_SIZE = "10"
+DATABASE_TIMEOUT = "30"
+
+# NGAC 授权配置
+NGAC_ROUTING_STRATEGY = "auto"
+NGAC_CACHE_SIZE = "10000"
+NGAC_CACHE_TTL = "60"
+AGE_ENABLE = "true"
+AGE_GRAPH_NAME = "isahl_auth"
+NGAC_FAIL_OPEN = "true"
+# 应用配置
+APP_DIR = "../../Pre-Proc"
+DEFAULT_APP = "my-app"
+
+# CORS 配置
+CORS_ALLOWED_ORIGINS = "http://localhost:13000,http://localhost:49494"
+
+# 监控配置
+METRICS_ENABLED = "true"
+OTEL_ENABLED = "false"
+
+# 调试配置
+DEBUG_MODE = "false"
+VERBOSE_LOGGING = "false"

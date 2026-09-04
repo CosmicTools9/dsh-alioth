@@ -1,0 +1,85 @@
+{
+  "aliothVersion": "0.7.0",
+  "backendCrate": "alioth-service-version",
+  "domain": "本体基础",
+  "dtoDependencies": [
+    "isahl-db"
+  ],
+  "dtoExposes": {
+    "queries": [
+      "list_versions"
+    ],
+    "refs": [
+      "version"
+    ]
+  },
+  "hasBackend": true,
+  "hasFrontend": false,
+  "id": "version",
+  "layer": 1,
+  "namespace": "Alioth",
+  "ontology": {
+    "entities": [
+      {
+        "coordinates": {
+          "factor": "GEB",
+          "function": "↑_DA",
+          "scene": "JE"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "tk_version",
+            "json_path": "version_number"
+          },
+          {
+            "column": "tk_batch_no",
+            "json_path": "batch_no"
+          },
+          {
+            "column": "fk_previous",
+            "json_path": "previous_version_id"
+          },
+          {
+            "column": "ck_branch",
+            "json_path": "branch"
+          }
+        ],
+        "inherits": "zc_id_lifecycle",
+        "name": "VersionRecord",
+        "relationships": [
+          {
+            "target": "Identity",
+            "type": "belongsTo",
+            "via": "fk_entity"
+          }
+        ],
+        "table": "isahl.zc_id_version"
+      }
+    ]
+  },
+  "publishes": [
+    "version.created",
+    "version.rolled_back"
+  ],
+  "services": [
+    "identity"
+  ],
+  "subscribes": [],
+  "version": "0.1.0"
+}

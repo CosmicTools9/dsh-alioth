@@ -1,0 +1,30 @@
+[package]
+name = "alioth-service-isahl-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+dotenvy = { workspace = true }
+common = { path = "../../../../../../../Framework/backend/common" }
+crud = { path = "../../../../../../../Framework/backend/crud" }
+identity-org = { path = "../../../../../../../Framework/backend/identity-org" }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "alioth-isahl-db-seed"
+path = "src/bin/seed.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

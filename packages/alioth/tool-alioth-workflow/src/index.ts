@@ -41,12 +41,20 @@ export interface Config {
   readonly adapter?: string
   /** Run-state root; default `<dataRoot>/workflows`. */
   readonly workflowRoot?: string
+  /**
+   * Content root (upstream repo-root layout): the dir that contains Pre-Proc/
+   * plus the provisioned `.agents/` references, `Framework/` utilities and
+   * gate `scripts/`. Defaults to the parent of preProcRoot — set it explicitly
+   * when preProcRoot lives under a shared temp root (tests).
+   */
+  readonly contentRoot?: string
 }
 
 export const Config: z<Config> = z.object({
   preProcRoot: z.string().required(),
   adapter: z.string().default('alioth-app.yaml'),
   workflowRoot: z.string(),
+  contentRoot: z.string(),
 })
 
 const NAMESPACE_PATTERN_RE = /^[A-Z][a-zA-Z0-9-]*$/
@@ -67,7 +75,7 @@ export function apply(ctx: Context, config: Config): void {
   // Content root (upstream repo-root layout): the dir containing Pre-Proc/ +
   // the provisioned `.agents/` references, `Framework/` utilities and gate
   // `scripts/`. Program gates run here; PROTOTYPE_TOOL_ROOT points here.
-  const contentRoot = path.dirname(preProcRoot)
+  const contentRoot = path.resolve(config.contentRoot ?? path.dirname(preProcRoot))
   let provisioned = false
   function ensureContentRoot(): { contentRoot: string } {
     if (!provisioned) {

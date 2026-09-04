@@ -1,0 +1,31 @@
+[package]
+name = "alioth-service-version"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+dotenvy = { workspace = true }
+common = { path = "../../../../../../../Framework/backend/common" }
+crud = { path = "../../../../../../../Framework/backend/crud" }
+version = { path = "../../../../../../../Framework/backend/version" }
+runtime-engine = { path = "../../../../../../../Framework/backend/runtime-engine" }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "alioth-version-seed"
+path = "src/bin/seed.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

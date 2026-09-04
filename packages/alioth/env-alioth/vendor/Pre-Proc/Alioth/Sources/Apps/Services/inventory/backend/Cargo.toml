@@ -1,0 +1,28 @@
+[package]
+name = "alioth-service-inventory"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+dotenvy = { workspace = true }
+log = { workspace = true }
+rust_decimal = { workspace = true }
+common = { path = "../../../../../../../Framework/backend/common" }
+crud = { path = "../../../../../../../Framework/backend/crud" }
+trigger-registry = { path = "../../../../../../../Framework/backend/trigger-registry" }
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -1,0 +1,433 @@
+{
+  "aliothVersion": "0.7.0",
+  "backendCrate": "alioth-service-approval",
+  "backendDelegates": true,
+  "backendSource": "Framework/backend/approval",
+  "description": "审批全生命周期服务——实现范例(ApprovalFlow.zc_id_process)→事件触发(ApprovalInstance.zc_id_even-approve)→节点推进(FlowNode.zc_id_operation)→操作记录(ApprovalAction.zc_id_deta-opinion)。后端逻辑委托到 Framework/backend/approval。",
+  "dtoDependencies": [],
+  "id": "approval",
+  "name": "审批服务",
+  "namespace": "Alioth",
+  "ontology": {
+    "entities": [
+      {
+        "coordinates": {
+          "factor": "FTA",
+          "function": "↑_NA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "description"
+          },
+          {
+            "column": "tk_version",
+            "json_path": "version"
+          },
+          {
+            "column": "tk_batch_no",
+            "json_path": "batch_no"
+          },
+          {
+            "column": "fk_previous",
+            "json_path": "previous"
+          },
+          {
+            "column": "ck_branch",
+            "json_path": "branch"
+          },
+          {
+            "column": "fk_subject",
+            "json_path": "subject"
+          },
+          {
+            "column": "fk_subj-define",
+            "json_path": "subj-define"
+          },
+          {
+            "column": "p_number",
+            "json_path": "p_number"
+          },
+          {
+            "column": "mermaid",
+            "json_path": "mermaid"
+          },
+          {
+            "column": "ck_category",
+            "json_path": "category"
+          },
+          {
+            "column": "fk_context",
+            "json_path": "fk_context"
+          }
+        ],
+        "name": "ApprovalFlow",
+        "notes": "流程本体——设计实例与实现范例共用 zc_id_process 表。草稿(status=draft)为设计实例，发布(status=active)为实现范例。tk_version 递增标记版本，fk_previous 链接前版。FlowBinding.fk_right → zc_id_process.id (实现范例)。范畴化（add-flow-scope-selection）：create 按 branch 落 7 个 proc 叶表之一（缺省 proc-approve），fk_context 绑定流程输入范畴（zc_id_proc-context 族 _t_='scope-definition' 行）；branch 由 tableoid 派生，context_concept 经 proc-context 读聚合解析；GET /approval-flows/scope-options 提供分支+三域（task/event/approve）叶表选项。",
+        "relationships": [
+          {
+            "name": "nodes",
+            "target_entity": "FlowNode",
+            "target_field": "flow_id",
+            "type": "hasMany"
+          },
+          {
+            "name": "versions",
+            "target_entity": "FlowVersion",
+            "target_field": "flow_id",
+            "type": "hasMany"
+          }
+        ],
+        "table": "isahl.zc_id_process"
+      },
+      {
+        "coordinates": {
+          "factor": "FTA",
+          "function": "↑_NA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "node_config"
+          },
+          {
+            "column": "tk_version",
+            "json_path": "version"
+          },
+          {
+            "column": "tk_batch_no",
+            "json_path": "batch_no"
+          },
+          {
+            "column": "fk_previous",
+            "json_path": "previous"
+          },
+          {
+            "column": "ck_branch",
+            "json_path": "branch"
+          },
+          {
+            "column": "qk_work_duration",
+            "json_path": "work_duration"
+          },
+          {
+            "column": "fk_operator",
+            "json_path": "operator"
+          },
+          {
+            "column": "fk_subject",
+            "json_path": "subject"
+          },
+          {
+            "column": "op_number",
+            "json_path": "op_number"
+          },
+          {
+            "column": "qk_period",
+            "json_path": "period"
+          },
+          {
+            "column": "ck_cate-wh",
+            "json_path": "cate-wh"
+          },
+          {
+            "column": "sk_unit-working",
+            "json_path": "unit-working"
+          },
+          {
+            "column": "qk_arrived",
+            "json_path": "arrived"
+          },
+          {
+            "column": "qk_sla",
+            "json_path": "sla"
+          },
+          {
+            "column": "lk_urgent",
+            "json_path": "urgent"
+          },
+          {
+            "column": "ck_cate-proc_op",
+            "json_path": "cate-proc_op"
+          }
+        ],
+        "inherits": "zc_id_version",
+        "name": "FlowNode",
+        "notes": "操作节点——流程的构成单元，process + operation 关联组合。人工节点(审批/抄送) → zc_id_oper-approve；自动节点(条件/并行/网关) → zc_id_oper-gate。publish 后节点运行事件落 zc_id_even-approve 表。",
+        "relationships": [
+          {
+            "name": "flow",
+            "target_entity": "ApprovalFlow",
+            "target_field": "fk_process",
+            "type": "belongsTo"
+          }
+        ],
+        "table": "isahl.zc_id_even-approve"
+      },
+      {
+        "coordinates": {
+          "factor": "FTA",
+          "function": "↓_NA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "qk_date",
+            "json_path": "arrived_at"
+          },
+          {
+            "column": "fk_place",
+            "json_path": "place"
+          },
+          {
+            "column": "fk_subject",
+            "json_path": "node_id"
+          },
+          {
+            "column": "timeline",
+            "json_path": "timeline"
+          },
+          {
+            "column": "fk_process",
+            "json_path": "flow_id"
+          },
+          {
+            "column": "lk_urgent",
+            "json_path": "urgency"
+          },
+          {
+            "column": "qk_sla",
+            "json_path": "sla"
+          },
+          {
+            "column": "lk_health",
+            "json_path": "health"
+          }
+        ],
+        "inherits": "zc_id_event",
+        "name": "ApprovalInstance",
+        "notes": "审批事件/运行时实例——流程运行时产生的审批事项，实例记录落 zc_id_oper-approve 表。fk_process → zc_id_process (所属流程)，fk_subject → zc_id_oper-approve (操作定义)。p_number = 业务单号，sprint = 迭代标记，revision = 修订号。",
+        "relationships": [
+          {
+            "name": "flow",
+            "target_entity": "ApprovalFlow",
+            "target_field": "flow_id",
+            "type": "belongsTo"
+          },
+          {
+            "name": "node",
+            "target_entity": "FlowNode",
+            "target_field": "node_id",
+            "type": "belongsTo"
+          },
+          {
+            "name": "binding",
+            "target_entity": "FlowBinding",
+            "target_field": "binding_id",
+            "type": "belongsTo"
+          }
+        ],
+        "table": "isahl.\"zc_id_oper-approve\""
+      },
+      {
+        "coordinates": {
+          "factor": "FTA",
+          "function": "↓_NC",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "summary"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "opinion"
+          },
+          {
+            "column": "qk_date",
+            "json_path": "actedAt"
+          },
+          {
+            "column": "ck_category",
+            "json_path": "category"
+          },
+          {
+            "column": "fk_list",
+            "json_path": "instanceId"
+          },
+          {
+            "column": "opinion",
+            "json_path": "opinion_opinion"
+          },
+          {
+            "column": "fk_biller",
+            "json_path": "biller"
+          },
+          {
+            "column": "fk_place",
+            "json_path": "place"
+          },
+          {
+            "column": "ak_addition",
+            "json_path": "ak_addition"
+          },
+          {
+            "column": "ak_forwarding",
+            "json_path": "ak_forwarding"
+          }
+        ],
+        "name": "ApprovalAction",
+        "notes": "审批操作意见。fk_list → zc_id_even-approve (事件) 或 zc_id_oper-approve (操作)。",
+        "relationships": [
+          {
+            "target": "ApprovalEvent",
+            "target_table": "zc_id_even-approve",
+            "type": "belongsTo",
+            "via": "fk_list"
+          }
+        ],
+        "table": "isahl.zc_id_deta-opinion"
+      },
+      {
+        "coordinates": {
+          "factor": "FTA",
+          "function": "↑_NA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "tk_version",
+            "json_path": "version"
+          },
+          {
+            "column": "tk_batch_no",
+            "json_path": "batch_no"
+          },
+          {
+            "column": "fk_previous",
+            "json_path": "previous"
+          },
+          {
+            "column": "ck_branch",
+            "json_path": "branch"
+          },
+          {
+            "column": "qk_work_duration",
+            "json_path": "work_duration"
+          },
+          {
+            "column": "fk_operator",
+            "json_path": "operator"
+          },
+          {
+            "column": "fk_subject",
+            "json_path": "subject"
+          },
+          {
+            "column": "op_number",
+            "json_path": "op_number"
+          },
+          {
+            "column": "qk_period",
+            "json_path": "period"
+          },
+          {
+            "column": "ck_cate-wh",
+            "json_path": "cate-wh"
+          },
+          {
+            "column": "sk_unit-working",
+            "json_path": "unit-working"
+          },
+          {
+            "column": "qk_arrived",
+            "json_path": "arrived"
+          },
+          {
+            "column": "qk_sla",
+            "json_path": "sla"
+          },
+          {
+            "column": "lk_urgent",
+            "json_path": "urgent"
+          },
+          {
+            "column": "ck_cate-proc_op",
+            "json_path": "cate-proc_op"
+          }
+        ],
+        "name": "DelegationRule",
+        "notes": "委托规则——公式驱动的审批代理配置。",
+        "relationships": [],
+        "table": "isahl.zc_id_operation"
+      }
+    ]
+  },
+  "version": "0.2.0"
+}

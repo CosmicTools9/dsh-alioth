@@ -1,0 +1,526 @@
+{
+  "aliothVersion": "v10.0.0",
+  "backendCrate": "alioth-service-inventory",
+  "consumers": [],
+  "domain": "库存管理",
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": ["statistics"],
+    "refs": ["stock_stat", "voucher", "counting", "storage_nest"]
+  },
+  "hasBackend": true,
+  "hasFrontend": false,
+  "id": "inventory",
+  "layer": 0,
+  "namespace": "Alioth",
+  "ontology": {
+    "entities": [
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "ref_left",
+            "json_path": "ref_left"
+          },
+          {
+            "column": "ref_right",
+            "json_path": "ref_right"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "qk_p_capacity",
+            "json_path": "p_capacity"
+          },
+          {
+            "column": "qk_s_capacity",
+            "json_path": "s_capacity"
+          },
+          {
+            "column": "sk_unit",
+            "json_path": "unit"
+          },
+          {
+            "column": "qk_qty",
+            "json_path": "qty"
+          },
+          {
+            "column": "sk_currency",
+            "json_path": "currency"
+          },
+          {
+            "column": "qk_amount",
+            "json_path": "amount"
+          },
+          {
+            "column": "qk_v_qty",
+            "json_path": "v_qty"
+          },
+          {
+            "column": "qk_w_qty",
+            "json_path": "w_qty"
+          },
+          {
+            "column": "qk_vp_capacity",
+            "json_path": "vp_capacity"
+          },
+          {
+            "column": "qk_vs_capacity",
+            "json_path": "vs_capacity"
+          },
+          {
+            "column": "qk_wp_capacity",
+            "json_path": "wp_capacity"
+          },
+          {
+            "column": "qk_ws_capacity",
+            "json_path": "ws_capacity"
+          },
+          {
+            "column": "qk_period",
+            "json_path": "period"
+          },
+          {
+            "column": "qk_w_total",
+            "json_path": "w_total"
+          }
+        ],
+        "fields": [
+          {
+            "column": "ref_left",
+            "dto": "production_id",
+            "type": "bigint"
+          },
+          {
+            "column": "ref_right",
+            "dto": "storage_id",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_period",
+            "dto": "period_id",
+            "scalar_table": "zc_id_segm-date",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_qty",
+            "dto": "qty",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          }
+        ],
+        "name": "StockStat",
+        "table": "zc_id_production_rr_storage"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "fk_subject",
+            "json_path": "subject"
+          },
+          {
+            "column": "fk_object",
+            "json_path": "object"
+          },
+          {
+            "column": "qk_date",
+            "json_path": "date"
+          },
+          {
+            "column": "qk_total",
+            "json_path": "total"
+          },
+          {
+            "column": "qk_qty",
+            "json_path": "qty"
+          },
+          {
+            "column": "fk_subj-storage",
+            "json_path": "subj-storage"
+          },
+          {
+            "column": "fk_obj-storage",
+            "json_path": "obj-storage"
+          },
+          {
+            "column": "fk_journal",
+            "json_path": "journal"
+          },
+          {
+            "column": "qk_forcast_period",
+            "json_path": "forcast_period"
+          },
+          {
+            "column": "qk_balance",
+            "json_path": "balance"
+          },
+          {
+            "column": "ck_sto-title",
+            "json_path": "sto-title"
+          },
+          {
+            "column": "qk_pre_balance",
+            "json_path": "pre_balance"
+          },
+          {
+            "column": "fk_production",
+            "json_path": "production"
+          },
+          {
+            "column": "sk_unit",
+            "json_path": "unit"
+          },
+          {
+            "column": "qk_write-off",
+            "json_path": "write-off"
+          },
+          {
+            "column": "qk_income",
+            "json_path": "income"
+          },
+          {
+            "column": "qk_outgo",
+            "json_path": "outgo"
+          }
+        ],
+        "fields": [
+          {
+            "column": "fk_production",
+            "dto": "production_id",
+            "type": "bigint"
+          },
+          {
+            "column": "fk_subj-storage",
+            "dto": "from_storage_id",
+            "type": "bigint"
+          },
+          {
+            "column": "fk_obj-storage",
+            "dto": "to_storage_id",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_qty",
+            "dto": "qty",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_income",
+            "dto": "income",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_outgo",
+            "dto": "outgo",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_balance",
+            "dto": "balance",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_pre_balance",
+            "dto": "pre_balance",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          }
+        ],
+        "name": "Voucher",
+        "table": "zc_id_stat-sto-voucher"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "qk_date",
+            "json_path": "date"
+          },
+          {
+            "column": "fk_place",
+            "json_path": "place"
+          },
+          {
+            "column": "fk_subject",
+            "json_path": "subject"
+          },
+          {
+            "column": "timeline",
+            "json_path": "timeline"
+          },
+          {
+            "column": "fk_storage",
+            "json_path": "storage"
+          },
+          {
+            "column": "summary",
+            "json_path": "summary"
+          }
+        ],
+        "fields": [
+          {
+            "column": "fk_place",
+            "dto": "place_id",
+            "type": "bigint"
+          },
+          {
+            "column": "_t_",
+            "dto": "t",
+            "notes": "抽象层级（后端按范例/实例规则注入：'范例' / '实例'）",
+            "type": "text"
+          },
+          {
+            "column": "tpl_id",
+            "dto": "tpl_id",
+            "notes": "范例引用（实例 → 范例盘点行）；盘点范围 matters 经 zc_id_event_rr_matter m2n（ref_left=事件 / ref_right=产品）",
+            "type": "bigint"
+          }
+        ],
+        "name": "Counting",
+        "table": "zc_id_even-counting"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "qk_date",
+            "json_path": "date"
+          },
+          {
+            "column": "ck_category",
+            "json_path": "category"
+          },
+          {
+            "column": "fk_list",
+            "json_path": "list"
+          },
+          {
+            "column": "fk_biller",
+            "json_path": "biller"
+          },
+          {
+            "column": "fk_production",
+            "json_path": "production"
+          },
+          {
+            "column": "fk_storage",
+            "json_path": "storage"
+          },
+          {
+            "column": "qk_qty",
+            "json_path": "qty"
+          },
+          {
+            "column": "qk_w_qty",
+            "json_path": "w_qty"
+          },
+          {
+            "column": "qk_v_qty",
+            "json_path": "v_qty"
+          },
+          {
+            "column": "fk_voucher",
+            "json_path": "voucher"
+          }
+        ],
+        "fields": [
+          {
+            "column": "fk_list",
+            "dto": "counting_id",
+            "type": "bigint"
+          },
+          {
+            "column": "fk_production",
+            "dto": "production_id",
+            "type": "bigint"
+          },
+          {
+            "column": "fk_storage",
+            "dto": "storage_id",
+            "type": "bigint"
+          },
+          {
+            "column": "fk_voucher",
+            "dto": "voucher_id",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_qty",
+            "dto": "qty",
+            "scalar_table": "zc_id_scal-common",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_w_qty",
+            "dto": "w_qty",
+            "scalar_table": "zc_id_scal-weight",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_v_qty",
+            "dto": "v_qty",
+            "scalar_table": "zc_id_scal-volume",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_date",
+            "dto": "counted_date",
+            "scalar_table": "zc_id_scal-date",
+            "type": "bigint"
+          },
+          {
+            "column": "fk_biller",
+            "dto": "biller_id",
+            "type": "bigint"
+          }
+        ],
+        "name": "CountingDetail",
+        "table": "zc_id_deta-counting"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "ref_left",
+            "json_path": "ref_left"
+          },
+          {
+            "column": "ref_right",
+            "json_path": "ref_right"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "qk_period",
+            "json_path": "period"
+          }
+        ],
+        "fields": [
+          {
+            "column": "ref_left",
+            "dto": "parent_id",
+            "type": "bigint"
+          },
+          {
+            "column": "ref_right",
+            "dto": "child_id",
+            "type": "bigint"
+          },
+          {
+            "column": "qk_period",
+            "dto": "period_id",
+            "scalar_table": "zc_id_segm-date",
+            "type": "bigint"
+          }
+        ],
+        "name": "StorageNest",
+        "table": "zc_id_storage_rr_stock-in"
+      }
+    ]
+  },
+  "publishes": [],
+  "services": [
+    {
+      "endpoint": "GET /service/inventory/statistics",
+      "purpose": "库存统计查询（读物化储量，按 产品/储元 过滤；时空伴随：仅统计 rr_storage.qk_period 覆盖 now() 的生效关系；读侧对照：附带最近盘点实盘截止值与盘盈盘亏差异）"
+    },
+    {
+      "endpoint": "GET /service/inventory/statistics/{id}",
+      "purpose": "单条库存统计"
+    },
+    {
+      "endpoint": "CRUD /service/inventory/vouchers",
+      "purpose": "货 stock in/out 储元（写触发物化：净变 + 余额链回填）"
+    },
+    {
+      "endpoint": "CRUD /service/inventory/countings",
+      "purpose": "盘点事件头（范例/实例，盘哪些货经 event_rr_matter，实盘数在明细 deta-counting）"
+    },
+    {
+      "endpoint": "CRUD /service/inventory/counting-details",
+      "purpose": "盘点明细（实盘截止值记录；创建时自动校准：账实差异生成校准凭证，经 voucher 链路自动触发物化）"
+    },
+    {
+      "endpoint": "CRUD /service/inventory/storage-nests",
+      "purpose": "储元⇲储元 时空嵌套（行存在=置入，删除=取出）"
+    }
+  ],
+  "subscribes": [],
+  "version": "0.2.0"
+}

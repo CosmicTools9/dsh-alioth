@@ -44,6 +44,7 @@ CREATE TABLE isahl_meta.meta_collections (
 let ctx: Context
 const disposers: Array<() => Promise<void>> = []
 let preProcRoot: string
+let contentRoot: string
 let counter = 0
 
 function callTool(name: string, args: unknown) {
@@ -59,6 +60,7 @@ beforeAll(async () => {
   const modelDir = await mkdtemp(path.join(tmpdir(), 'wf-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'wf-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'wf-preproc-'))
+  contentRoot = await mkdtemp(path.join(tmpdir(), 'wf-content-'))
   await mkdir(path.join(modelDir, 'backend', 'ddl'), { recursive: true })
   await mkdir(path.join(modelDir, 'backend', 'vendor', 'alioth-gen', 'src'), { recursive: true })
   await mkdir(path.join(modelDir, 'skill-adapters'), { recursive: true })
@@ -80,7 +82,7 @@ beforeAll(async () => {
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
   disposers.push(() => env.dispose())
-  const wf = await ctx.plugin(workflow, { preProcRoot })
+  const wf = await ctx.plugin(workflow, { preProcRoot, contentRoot })
   disposers.push(() => wf.dispose())
 }, 120_000)
 
@@ -89,6 +91,7 @@ afterAll(async () => {
     await dispose().catch(() => {})
   }
   await rm(preProcRoot, { recursive: true, force: true })
+  await rm(contentRoot, { recursive: true, force: true })
 })
 
 function expectOk(result: Awaited<ReturnType<typeof callTool>>): Record<string, unknown> {

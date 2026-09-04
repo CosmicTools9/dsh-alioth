@@ -1,0 +1,288 @@
+{
+  "aliothVersion": "0.7.0",
+  "backendCrate": "alioth-service-measurement",
+  "domain": "量纲基础",
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": ["list_refs", "get_refs"],
+    "refs": ["scalar_price", "measurement_unit", "exchange_rate"]
+  },
+  "hasBackend": true,
+  "hasFrontend": false,
+  "id": "measurement",
+  "layer": 0,
+  "namespace": "Alioth",
+  "ontology": {
+    "entities": [
+      {
+        "coordinates": {
+          "factor": "FGA",
+          "function": "↑_DA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "symbol",
+            "json_path": "symbol"
+          },
+          {
+            "column": "fk_suffix",
+            "json_path": "suffix"
+          },
+          {
+            "column": "fk_prefix",
+            "json_path": "prefix"
+          },
+          {
+            "column": "precision_",
+            "json_path": "precision"
+          },
+          {
+            "column": "system",
+            "json_path": "system"
+          },
+          {
+            "column": "base",
+            "json_path": "base"
+          },
+          {
+            "column": "formatter",
+            "json_path": "formatter"
+          }
+        ],
+        "inherits": "zc_id_unit",
+        "name": "MeasurementUnit",
+        "notes": "量纲单位，按 dimension 路由到 zc_id_unit-{dimension} 叶表；市制需要扩展 system enum 或作为独立分类处理",
+        "relationships": [],
+        "table": "isahl.zc_id_unit"
+      },
+      {
+        "coordinates": {
+          "factor": "FGA",
+          "function": "↑_GA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "ref_count",
+            "json_path": "ref_count"
+          },
+          {
+            "column": "multiply",
+            "json_path": "multiply"
+          },
+          {
+            "column": "division",
+            "json_path": "division"
+          },
+          {
+            "column": "ck_left",
+            "json_path": "left"
+          },
+          {
+            "column": "ck_right",
+            "json_path": "right"
+          },
+          {
+            "column": "precision_",
+            "json_path": "precision"
+          },
+          {
+            "column": "intrinsic",
+            "json_path": "intrinsic"
+          },
+          {
+            "column": "uncertainty",
+            "json_path": "uncertainty"
+          }
+        ],
+        "inherits": "zc_id_rate",
+        "name": "UnitConversionRate",
+        "notes": "原型中的 unit.mult（相对于基本单位的乘数）通过 left→base 单位的 Rate 记录表达",
+        "relationships": [
+          {
+            "target": "MeasurementUnit",
+            "type": "belongsTo",
+            "via": "ck_left"
+          },
+          {
+            "target": "MeasurementUnit",
+            "type": "belongsTo",
+            "via": "ck_right"
+          }
+        ],
+        "table": "isahl.zc_id_rate"
+      },
+      {
+        "coordinates": {
+          "factor": "FGA",
+          "function": "↑_GA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "source"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "ref_count",
+            "json_path": "ref_count"
+          },
+          {
+            "column": "multiply",
+            "json_path": "bidPrice"
+          },
+          {
+            "column": "division",
+            "json_path": "askPrice"
+          },
+          {
+            "column": "ck_left",
+            "json_path": "left"
+          },
+          {
+            "column": "ck_right",
+            "json_path": "right"
+          },
+          {
+            "column": "precision_",
+            "json_path": "precision_"
+          },
+          {
+            "column": "intrinsic",
+            "json_path": "intrinsic"
+          },
+          {
+            "column": "uncertainty",
+            "json_path": "uncertainty"
+          },
+          {
+            "column": "date",
+            "json_path": "date"
+          },
+          {
+            "column": "fk_source",
+            "json_path": "source_fk_source"
+          }
+        ],
+        "inherits": "zc_ad_scalar",
+        "name": "ExchangeRate",
+        "notes": "货币汇率配对：原型 rate.bidPrice/askPrice 分别映射到 multiply/division",
+        "relationships": [
+          {
+            "target": "MeasurementUnit",
+            "type": "belongsTo",
+            "via": "ck_left"
+          },
+          {
+            "target": "MeasurementUnit",
+            "type": "belongsTo",
+            "via": "ck_right"
+          }
+        ],
+        "table": "isahl.zc_id_rate-exchange"
+      },
+      {
+        "coordinates": {
+          "factor": "FGA",
+          "function": "↑_DA",
+          "scene": "JE"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "ref_count",
+            "json_path": "ref_count"
+          },
+          {
+            "column": "mark",
+            "json_path": "value"
+          },
+          {
+            "column": "sk_unit",
+            "json_path": "unit"
+          },
+          {
+            "column": "precision_",
+            "json_path": "precision_"
+          },
+          {
+            "column": "retain_signal",
+            "json_path": "retain_signal"
+          }
+        ],
+        "inherits": "zc_id_scale",
+        "name": "ScalarPrice",
+        "relationships": [],
+        "table": "isahl.zc_id_scal-price"
+      }
+    ]
+  },
+  "publishes": [
+    "measurement.scalar.created",
+    "measurement.unit.updated",
+    "measurement.rate.updated"
+  ],
+  "services": [],
+  "subscribes": [],
+  "version": "0.1.0"
+}

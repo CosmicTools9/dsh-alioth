@@ -1,0 +1,19 @@
+{
+  "error.generic.title": "An error occurred",
+  "error.generic.retry": "Please try again",
+  "error.unauthorized": "Unauthorized, please log in",
+  "error.forbidden": "Forbidden",
+  "error.notFound": "Resource not found",
+  "error.validation": "Request validation failed",
+  "error.internal": "Internal server error",
+  "error.badRequest": "Bad request",
+  "ai.assistant.systemPrompt": "You are an intelligent enterprise assistant. Please reply in English, concise and professional.\n",
+  "ai.assistant.contextLabel": "\nCurrent Page Context: {ctx}\n",
+  "ai.assistant.historyLabel": "\nConversation History:\n",
+  "ai.assistant.roleAssistant": "Assistant",
+  "ai.assistant.roleUser": "User",
+  "ai.assistant.userPrefix": "\nUser: {msg}\n",
+  "ai.assistant.assistantPrefix": "Assistant: ",
+  "chat.session.defaultTitle": "New Chat",
+  "chat.session.aiContactName": "EmpAgent"
+}

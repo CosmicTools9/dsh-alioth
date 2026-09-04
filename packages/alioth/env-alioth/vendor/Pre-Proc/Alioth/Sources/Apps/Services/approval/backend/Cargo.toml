@@ -1,0 +1,7 @@
+[package]
+name = "alioth-service-approval"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+approval = { path = "../../../../../../../Framework/backend/approval" }
+actix-web = { workspace = true }

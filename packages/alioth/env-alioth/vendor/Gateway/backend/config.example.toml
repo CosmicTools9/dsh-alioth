@@ -1,0 +1,88 @@
+# Gateway Backend Configuration Template
+# 复制此文件为 config.toml 并根据实际环境修改
+
+[server]
+# 服务器监听地址
+SERVER_ADDR=127.0.0.1:9001
+
+# 日志级别 (debug, info, warn, error)
+LOG_LEVEL=info
+
+# CORS 允许的来源 (多应用实例部署时配置)
+# CORS_ORIGINS=http://localhost:13000,http://app1.example.com,http://app2.example.com
+CORS_ORIGINS=http://localhost:13000
+
+[database]
+# PostgreSQL 连接字符串
+DATABASE_URL=postgres://localhost:5432/aliothstudio_dev
+
+# 连接池大小 (多应用实例部署时每个实例独立连接池)
+DATABASE_POOL_SIZE=10
+
+# 连接超时 (秒)
+DATABASE_TIMEOUT=30
+
+[sso]
+# SSO 服务地址
+SSO_SERVICE_URL=http://127.0.0.1:9002
+
+# SSO 认证路径前缀
+SSO_AUTH_PREFIX=/auth
+
+# SSO ES256 公钥（PEM，用于验证 access/refresh/logout token；EC P-256）
+# 生产环境应使用 enc: 密文，公钥可明文存储
+SSO_JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEUO++sXdlU6ULl2fRCkLcpORqIbBE\nybnY34BwcfqdtNbPONiliRhhUFpmRBuC8EVPpLB9Z3S3k+ThIM7d/MygKA==\n-----END PUBLIC KEY-----
+
+# JWT Access Token 过期时间 (秒)
+JWT_ACCESS_EXPIRY=900
+
+# JWT Refresh Token 过期时间 (秒)
+JWT_REFRESH_EXPIRY=604800
+
+[ngac]
+# NGAC 服务地址 (通常与 Gateway 同服务)
+NGAC_SERVICE_URL=http://127.0.0.1:9001
+
+# NGAC 查询路由策略
+# sql_only: 仅使用 SQL
+# age_only: 仅使用 AGE
+# prefer_sql: 优先 SQL，失败时用 AGE
+# prefer_age: 优先 AGE，失败时用 SQL
+# auto: 根据查询类型自动选择 (推荐)
+NGAC_ROUTING_STRATEGY=auto
+
+# NGAC 决策缓存大小 (条目数)
+NGAC_CACHE_SIZE=10000
+
+# NGAC 决策缓存 TTL (秒)
+NGAC_CACHE_TTL=60
+
+[apps]
+# 生成的应用目录 (多应用实例部署时配置)
+# 支持多个应用实例
+APP_DIRS=Pre-Proc/Apps/app1,Pre-Proc/Apps/app2,Pre-Proc/Apps/app3
+
+# 默认应用
+DEFAULT_APP=app1
+
+# 应用路由前缀
+# 格式：app_name=path_prefix
+APP_ROUTES=app1=/api/app1,app2=/api/app2,app3=/api/app3
+
+[monitoring]
+# Prometheus 指标端点
+METRICS_ENDPOINT=/metrics
+
+# OpenTelemetry 追踪
+OTEL_ENABLED=false
+OTEL_EXPORTER_URL=http://localhost:4317
+
+[debug]
+# 调试模式 (生产环境设为 false)
+DEBUG_MODE=true
+
+# 详细日志
+VERBOSE_LOGGING=false
+
+# 请求追踪
+REQUEST_TRACING=false

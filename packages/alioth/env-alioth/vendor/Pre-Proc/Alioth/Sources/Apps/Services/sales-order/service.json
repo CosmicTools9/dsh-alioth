@@ -1,0 +1,804 @@
+{
+  "id": "sales-order",
+  "namespace": "Alioth",
+  "version": "0.1.0",
+  "domain": "销售接单",
+  "layer": 1,
+  "hasBackend": true,
+  "hasFrontend": false,
+  "factors": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "detail"
+    ],
+    "refs": [
+      "SalesOrder"
+    ]
+  },
+  "publishes": [],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "SalesOrder",
+        "table": "isahl.zc_id_oper-sales_order",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "oper",
+          "function": "sales_order"
+        },
+        "inherits": null,
+        "notes": "操作-销售接单：销售订单主记录，含订单头信息、业务分类、操作员、审批等字段",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "bigint",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "code",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "projection",
+            "column": "projection",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "_f_",
+            "column": "_f_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "_t_",
+            "column": "_t_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_source",
+            "column": "ak_source",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_scene",
+            "column": "dk_scene",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_factor",
+            "column": "dk_factor",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_function",
+            "column": "dk_function",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tpl_id",
+            "column": "tpl_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tk_version",
+            "column": "tk_version",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tk_batch_no",
+            "column": "tk_batch_no",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_previous",
+            "column": "fk_previous",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ck_branch",
+            "column": "ck_branch",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_work_duration",
+            "column": "qk_work_duration",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_operator",
+            "column": "fk_operator",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_subject",
+            "column": "fk_subject",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_period",
+            "column": "qk_period",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ck_cate-wh",
+            "column": "ck_cate-wh",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "sk_unit-working",
+            "column": "sk_unit-working",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_arrived",
+            "column": "qk_arrived",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ck_cate-biz",
+            "column": "ck_cate-biz",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_approve",
+            "column": "fk_approve",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar",
+            "derived": "zc_id_operation_rr_event 桥（ref_left=实例 → ref_right=even-approve）；物理列 fk_approve 已移除"
+          },
+          {
+            "business_name": "qk_sla",
+            "column": "qk_sla",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "lk_urgent",
+            "column": "lk_urgent",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ck_cate-proc_op",
+            "column": "ck_cate-proc_op",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          }
+        ],
+        "relationships": []
+      }
+    ]
+  },
+  "entities": {
+    "dto": {
+      "SalesOrder": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64",
+            "via_ref": true
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64",
+            "via_ref": true
+          },
+          "lk_urgent": {
+            "column": "lk_urgent",
+            "type": "i64"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64",
+            "via_ref": true
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64",
+            "via_ref": true
+          },
+          "fk_previous": {
+            "column": "fk_previous",
+            "type": "i64",
+            "via_ref": true
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64",
+            "via_ref": true
+          },
+          "qk_work_duration": {
+            "column": "qk_work_duration",
+            "type": "i64",
+            "via_ref": true
+          },
+          "fk_operator": {
+            "column": "fk_operator",
+            "type": "i64",
+            "via_ref": true
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64",
+            "via_ref": true
+          },
+          "qk_period": {
+            "column": "qk_period",
+            "type": "i64",
+            "via_ref": true
+          },
+          "ck_cate-wh": {
+            "column": "ck_cate-wh",
+            "type": "i64",
+            "via_ref": true
+          },
+          "sk_unit-working": {
+            "column": "sk_unit-working",
+            "type": "i64",
+            "via_ref": true
+          },
+          "qk_arrived": {
+            "column": "qk_arrived",
+            "type": "i64",
+            "via_ref": true
+          },
+          "ck_cate-biz": {
+            "column": "ck_cate-biz",
+            "type": "i64",
+            "via_ref": true
+          },
+          "fk_approve": {
+            "column": "fk_approve",
+            "type": "i64",
+            "via_ref": true,
+            "derived": "zc_id_operation_rr_event 桥派生；物理列 fk_approve 已移除"
+          },
+          "qk_sla": {
+            "column": "qk_sla",
+            "type": "i64",
+            "via_ref": true
+          },
+          "lk_urgent": {
+            "column": "lk_urgent",
+            "type": "i64"
+          },
+          "ck_cate-proc_op": {
+            "column": "ck_cate-proc_op",
+            "type": "i64",
+            "via_ref": true
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64"
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64"
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64"
+          },
+          "qk_work_duration": {
+            "column": "qk_work_duration",
+            "type": "i64"
+          },
+          "fk_operator": {
+            "column": "fk_operator",
+            "type": "i64"
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64"
+          },
+          "qk_period": {
+            "column": "qk_period",
+            "type": "i64"
+          },
+          "ck_cate-wh": {
+            "column": "ck_cate-wh",
+            "type": "i64"
+          },
+          "sk_unit-working": {
+            "column": "sk_unit-working",
+            "type": "i64"
+          },
+          "qk_arrived": {
+            "column": "qk_arrived",
+            "type": "i64"
+          },
+          "ck_cate-biz": {
+            "column": "ck_cate-biz",
+            "type": "i64"
+          },
+          "fk_approve": {
+            "column": "fk_approve",
+            "type": "i64",
+            "derived": "zc_id_operation_rr_event 桥派生；物理列 fk_approve 已移除"
+          },
+          "qk_sla": {
+            "column": "qk_sla",
+            "type": "i64"
+          },
+          "lk_urgent": {
+            "column": "lk_urgent",
+            "type": "i64"
+          },
+          "ck_cate-proc_op": {
+            "column": "ck_cate-proc_op",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64"
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64"
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64"
+          },
+          "qk_work_duration": {
+            "column": "qk_work_duration",
+            "type": "i64"
+          },
+          "fk_operator": {
+            "column": "fk_operator",
+            "type": "i64"
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64"
+          },
+          "qk_period": {
+            "column": "qk_period",
+            "type": "i64"
+          },
+          "ck_cate-wh": {
+            "column": "ck_cate-wh",
+            "type": "i64"
+          },
+          "sk_unit-working": {
+            "column": "sk_unit-working",
+            "type": "i64"
+          },
+          "qk_arrived": {
+            "column": "qk_arrived",
+            "type": "i64"
+          },
+          "ck_cate-biz": {
+            "column": "ck_cate-biz",
+            "type": "i64"
+          },
+          "fk_approve": {
+            "column": "fk_approve",
+            "type": "i64",
+            "derived": "zc_id_operation_rr_event 桥派生；物理列 fk_approve 已移除"
+          },
+          "qk_sla": {
+            "column": "qk_sla",
+            "type": "i64"
+          },
+          "lk_urgent": {
+            "column": "lk_urgent",
+            "type": "i64"
+          },
+          "ck_cate-proc_op": {
+            "column": "ck_cate-proc_op",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        }
+      }
+    }
+  },
+  "aliothVersion": "0.7.0"
+}

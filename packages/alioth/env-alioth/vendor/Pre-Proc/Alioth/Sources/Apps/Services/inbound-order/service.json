@@ -1,0 +1,1112 @@
+{
+  "id": "inbound-order",
+  "namespace": "Alioth",
+  "version": "0.1.0",
+  "domain": "入库订单",
+  "layer": 1,
+  "hasBackend": true,
+  "hasFrontend": false,
+  "factors": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "detail"
+    ],
+    "refs": [
+      "InboundOrder",
+      "InboundBom"
+    ]
+  },
+  "publishes": [],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "InboundOrder",
+        "table": "isahl.zc_id_plan-inbound",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "id",
+          "function": "plan-inbound"
+        },
+        "inherits": null,
+        "notes": "计划-入库：入库订单主记录，含单号、供应商、仓库、渠道、进度、优先级等字段",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "order_no",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "projection",
+            "column": "projection",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "_f_",
+            "column": "_f_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "_t_",
+            "column": "_t_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "dk_scene",
+            "column": "dk_scene",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "dk_factor",
+            "column": "dk_factor",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "dk_function",
+            "column": "dk_function",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "tpl_id",
+            "column": "tpl_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_source",
+            "column": "ak_source",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "cron",
+            "column": "cron",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "exclude",
+            "column": "exclude",
+            "data_type": "json",
+            "nullable": true,
+            "semantic_type": "jsonb",
+            "category": "scalar"
+          },
+          {
+            "business_name": "sort",
+            "column": "sort",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_date_segm",
+            "column": "qk_date-segm",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_time_segm",
+            "column": "qk_time-segm",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_progress",
+            "column": "qk_progress",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "progress_pct",
+            "column": "progress_pct",
+            "data_type": "numeric",
+            "nullable": true,
+            "semantic_type": "decimal",
+            "category": "scalar"
+          },
+          {
+            "business_name": "schedule_pct",
+            "column": "schedule_pct",
+            "data_type": "numeric",
+            "nullable": true,
+            "semantic_type": "decimal",
+            "category": "scalar"
+          },
+          {
+            "business_name": "lk_health",
+            "column": "lk_health",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          }
+        ],
+        "relationships": [
+          {
+            "name": "boms",
+            "target": "InboundBom",
+            "relationship_type": "has_many",
+            "foreign_key": "fk_previous",
+            "note": "入库订单明细 BOM，通过 fk_previous（parent_id）关联到 InboundOrder.id"
+          }
+        ]
+      },
+      {
+        "name": "InboundBom",
+        "table": "isahl.zc_id_bom-inbound",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "id",
+          "function": "bom-inbound"
+        },
+        "inherits": null,
+        "notes": "BOM-入库单：入库订单明细行，含 SKU、批次、版本、编辑人等字段",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "code",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "projection",
+            "column": "projection",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "_f_",
+            "column": "_f_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "_t_",
+            "column": "_t_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "dk_scene",
+            "column": "dk_scene",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "dk_factor",
+            "column": "dk_factor",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "dk_function",
+            "column": "dk_function",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "tpl_id",
+            "column": "tpl_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_source",
+            "column": "ak_source",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tk_version",
+            "column": "tk_version",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tk_batch_no",
+            "column": "tk_batch_no",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "parent_id",
+            "column": "fk_previous",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ck_branch",
+            "column": "ck_branch",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "sku_code",
+            "column": "b_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_editor",
+            "column": "fk_editor",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "channel",
+            "column": "type",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          }
+        ],
+        "relationships": []
+      }
+    ]
+  },
+  "entities": {
+    "dto": {
+      "InboundOrder": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "order_no": {
+            "column": "code",
+            "type": "String"
+          },
+          "qk_progress": {
+            "column": "qk_progress",
+            "type": "i64"
+          },
+          "lk_health": {
+            "column": "lk_health",
+            "type": "i64"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "order_no": {
+            "column": "code",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "cron": {
+            "column": "cron",
+            "type": "String"
+          },
+          "exclude": {
+            "column": "exclude",
+            "type": "serde_json::Value"
+          },
+          "sort": {
+            "column": "sort",
+            "type": "i64"
+          },
+          "qk_date_segm": {
+            "column": "qk_date-segm",
+            "type": "i64"
+          },
+          "qk_time_segm": {
+            "column": "qk_time-segm",
+            "type": "i64"
+          },
+          "qk_progress": {
+            "column": "qk_progress",
+            "type": "i64"
+          },
+          "progress_pct": {
+            "column": "progress_pct",
+            "type": "rust_decimal::Decimal"
+          },
+          "schedule_pct": {
+            "column": "schedule_pct",
+            "type": "rust_decimal::Decimal"
+          },
+          "lk_health": {
+            "column": "lk_health",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "order_no": {
+            "column": "code",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "sort": {
+            "column": "sort",
+            "type": "i64"
+          },
+          "qk_date_segm": {
+            "column": "qk_date-segm",
+            "type": "i64"
+          },
+          "qk_time_segm": {
+            "column": "qk_time-segm",
+            "type": "i64"
+          },
+          "qk_progress": {
+            "column": "qk_progress",
+            "type": "i64"
+          },
+          "progress_pct": {
+            "column": "progress_pct",
+            "type": "rust_decimal::Decimal"
+          },
+          "schedule_pct": {
+            "column": "schedule_pct",
+            "type": "rust_decimal::Decimal"
+          },
+          "lk_health": {
+            "column": "lk_health",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "order_no": {
+            "column": "code",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "sort": {
+            "column": "sort",
+            "type": "i64"
+          },
+          "qk_date_segm": {
+            "column": "qk_date-segm",
+            "type": "i64"
+          },
+          "qk_time_segm": {
+            "column": "qk_time-segm",
+            "type": "i64"
+          },
+          "qk_progress": {
+            "column": "qk_progress",
+            "type": "i64"
+          },
+          "progress_pct": {
+            "column": "progress_pct",
+            "type": "rust_decimal::Decimal"
+          },
+          "schedule_pct": {
+            "column": "schedule_pct",
+            "type": "rust_decimal::Decimal"
+          },
+          "lk_health": {
+            "column": "lk_health",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        }
+      },
+      "InboundBom": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "parent_id": {
+            "column": "fk_previous",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "sku_code": {
+            "column": "b_number",
+            "type": "String"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64"
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64"
+          },
+          "fk_editor": {
+            "column": "fk_editor",
+            "type": "i64"
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64"
+          },
+          "channel": {
+            "column": "type",
+            "type": "String"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64"
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64"
+          },
+          "parent_id": {
+            "column": "fk_previous",
+            "type": "i64"
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64"
+          },
+          "sku_code": {
+            "column": "b_number",
+            "type": "String"
+          },
+          "fk_editor": {
+            "column": "fk_editor",
+            "type": "i64"
+          },
+          "channel": {
+            "column": "type",
+            "type": "String"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "b_number": {
+            "column": "b_number",
+            "type": "String"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64"
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64"
+          },
+          "fk_editor": {
+            "column": "fk_editor",
+            "type": "i64"
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64"
+          },
+          "channel": {
+            "column": "type",
+            "type": "String"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "b_number": {
+            "column": "b_number",
+            "type": "String"
+          },
+          "tk_version": {
+            "column": "tk_version",
+            "type": "i64"
+          },
+          "tk_batch_no": {
+            "column": "tk_batch_no",
+            "type": "i64"
+          },
+          "fk_editor": {
+            "column": "fk_editor",
+            "type": "i64"
+          },
+          "ck_branch": {
+            "column": "ck_branch",
+            "type": "i64"
+          },
+          "channel": {
+            "column": "type",
+            "type": "String"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        }
+      }
+    }
+  },
+  "aliothVersion": "0.7.0"
+}

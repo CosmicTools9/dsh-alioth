@@ -1,0 +1,80 @@
+{
+  "id": "environment",
+  "namespace": "Alioth",
+  "domain": "\u57fa\u7840\u8bbe\u65bd",
+  "layer": 0,
+  "dtoDependencies": [
+    "isahl-db"
+  ],
+  "dtoExposes": {
+    "refs": [
+      "environment"
+    ],
+    "queries": [
+      "list_refs",
+      "get_refs"
+    ]
+  },
+  "backendCrate": "alioth-service-environment",
+  "hasBackend": true,
+  "hasFrontend": false,
+  "version": "0.1.0",
+  "publishes": [
+    "environment.created",
+    "environment.updated",
+    "environment.deleted",
+    "environment.health_changed"
+  ],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "Environment",
+        "table": "isahl.zc_id_prot-env_config",
+        "inherits": "zc_id_lifecycle",
+        "coordinates": {
+          "factor": "GEC",
+          "function": "\u2191_DA",
+          "scene": "JE"
+        },
+        "field_mappings": [
+          {
+            "json_path": "name",
+            "column": "notice"
+          },
+          {
+            "json_path": "t_color_",
+            "column": "t_color_"
+          },
+          {
+            "json_path": "host",
+            "column": "code"
+          },
+          {
+            "json_path": "comments",
+            "column": "comments"
+          },
+          {
+            "json_path": "enc_fields",
+            "column": "enc_fields"
+          },
+          {
+            "json_path": "uptime",
+            "column": "settings"
+          }
+        ],
+        "relationships": [
+          {
+            "target": "Category",
+            "type": "belongsToMany",
+            "via": "zc_id_lifecycle_r_category",
+            "notes": "\u73af\u5883\u7c7b\u578b: \u5f00\u53d1/\u6d4b\u8bd5/\u9884\u53d1\u5e03/\u751f\u4ea7"
+          }
+        ],
+        "notes": "\u8fd0\u884c\u65f6\u73af\u5883\u5b9e\u4f8b\uff0c\u9644\u5e26\u5065\u5eb7\u72b6\u6001\u68c0\u6d4b\uff1bservices/uptime/status \u6682\u5b58 settings JSONB"
+      }
+    ]
+  },
+  "services": [],
+  "aliothVersion": "0.7.0"
+}

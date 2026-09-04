@@ -1,0 +1,19 @@
+[package]
+name = "alioth-service-authority"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+authority = { path = "../../../../../../../Framework/backend/authority" }
+common = { path = "../../../../../../../Framework/backend/common" }
+serde = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+common = { path = "../../../../../../../Framework/backend/common" }
+authority = { path = "../../../../../../../Framework/backend/authority" }

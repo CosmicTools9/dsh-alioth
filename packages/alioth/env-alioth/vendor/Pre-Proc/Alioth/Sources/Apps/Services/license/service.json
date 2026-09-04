@@ -1,0 +1,147 @@
+{
+  "aliothVersion": "0.7.0",
+  "backendCrate": "alioth-service-license",
+  "domain": "基础设施",
+  "dtoDependencies": [
+    "isahl-db"
+  ],
+  "dtoExposes": {
+    "queries": [
+      "list_refs",
+      "get_refs"
+    ],
+    "refs": [
+      "license"
+    ]
+  },
+  "hasBackend": true,
+  "hasFrontend": false,
+  "id": "license",
+  "layer": 0,
+  "namespace": "Alioth",
+  "ontology": {
+    "entities": [
+      {
+        "coordinates": {
+          "factor": "GID",
+          "function": "↑_DA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "tk_version",
+            "json_path": "version"
+          },
+          {
+            "column": "tk_batch_no",
+            "json_path": "batch_no"
+          },
+          {
+            "column": "fk_previous",
+            "json_path": "previous"
+          },
+          {
+            "column": "ck_branch",
+            "json_path": "branch"
+          },
+          {
+            "column": "sk_unit",
+            "json_path": "unit"
+          },
+          {
+            "column": "p_number",
+            "json_path": "p_number"
+          },
+          {
+            "column": "fk_subj-demand",
+            "json_path": "subj-demand"
+          },
+          {
+            "column": "fk_subj-provider",
+            "json_path": "subj-provider"
+          },
+          {
+            "column": "qk_price",
+            "json_path": "price"
+          },
+          {
+            "column": "fk_process",
+            "json_path": "process"
+          },
+          {
+            "column": "sk_currency",
+            "json_path": "currency"
+          },
+          {
+            "column": "qk_duration",
+            "json_path": "duration"
+          },
+          {
+            "column": "qk_period",
+            "json_path": "expires"
+          },
+          {
+            "column": "ck_category",
+            "json_path": "category"
+          },
+          {
+            "column": "qk_capacity",
+            "json_path": "seats"
+          },
+          {
+            "column": "qk_qty",
+            "json_path": "qty"
+          }
+        ],
+        "inherits": "zc_id_lifecycle",
+        "name": "License",
+        "relationships": [
+          {
+            "notes": "valid/expiring/expired",
+            "target": "Status",
+            "type": "belongsToMany",
+            "via": "zc_id_lifecycle_r_primary-status"
+          },
+          {
+            "notes": "vendor/provider",
+            "target": "Identity",
+            "type": "belongsToMany",
+            "via": "zc_id_lifecycle_r_license-purchase_subject"
+          },
+          {
+            "notes": "执照类目 (subscription/perpetual) → zc_id_cons-license-cate",
+            "target": "Category",
+            "type": "belongsTo",
+            "via": "ck_category"
+          }
+        ],
+        "table": "isahl.zc_id_prod-license-purchase"
+      }
+    ]
+  },
+  "publishes": [
+    "license.created",
+    "license.updated",
+    "license.deleted",
+    "license.expiring"
+  ],
+  "services": [],
+  "subscribes": [],
+  "version": "0.1.0"
+}

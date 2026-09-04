@@ -163,10 +163,12 @@ describe('alioth_app_create with workflow adapter', () => {
   let workflowCtx: Context
   const workflowDisposers: Array<() => Promise<void>> = []
   let workflowPreProc: string
+let workflowContentRoot: string
 
   it('runs the workflow gate after writing artifacts', async () => {
     // app_write generates the artifacts; the workflow gate then verifies them.
     workflowPreProc = await mkdtemp(path.join(tmpdir(), 'ptc-wf-preproc-'))
+    workflowContentRoot = path.dirname(workflowPreProc)
 
     const modelDir = await mkdtemp(path.join(tmpdir(), 'ptc-wf-model-'))
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'ptc-wf-data-'))
@@ -203,7 +205,7 @@ tracks:
     workflowDisposers.push(() => appTool.dispose())
     const meta = await workflowCtx.plugin(toolMeta, {})
     workflowDisposers.push(() => meta.dispose())
-    const wf = await workflowCtx.plugin(workflowTool, { preProcRoot: workflowPreProc })
+    const wf = await workflowCtx.plugin(workflowTool, { preProcRoot: workflowPreProc, contentRoot: workflowContentRoot })
     workflowDisposers.push(() => wf.dispose())
     const orchestration = await workflowCtx.plugin(orchestrator, { adapter: 'alioth-app.yaml', preProcRoot: workflowPreProc })
     workflowDisposers.push(() => orchestration.dispose())

@@ -1,0 +1,375 @@
+{
+  "id": "customer",
+  "namespace": "Alioth",
+  "version": "0.1.0",
+  "domain": "客户",
+  "layer": 1,
+  "hasBackend": true,
+  "hasFrontend": false,
+  "factors": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "detail"
+    ],
+    "refs": [
+      "Customer"
+    ]
+  },
+  "publishes": [],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "Customer",
+        "table": "isahl.zc_id_cate-organization",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "cate",
+          "function": "organization"
+        },
+        "inherits": null,
+        "notes": "类目-组织：客户主记录，含编码、名称、分类、联系人、状态等字段",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "bigint",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "code",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "auto"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "enable",
+            "column": "enable",
+            "data_type": "boolean",
+            "nullable": true,
+            "semantic_type": "boolean",
+            "category": "scalar"
+          },
+          {
+            "business_name": "c_sort_",
+            "column": "c_sort_",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          }
+        ],
+        "relationships": []
+      }
+    ]
+  },
+  "entities": {
+    "dto": {
+      "Customer": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "c_sort_": {
+            "column": "c_sort_",
+            "type": "i64"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "c_sort_": {
+            "column": "c_sort_",
+            "type": "i64"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "deleted_at": {
+            "column": "deleted_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          },
+          "deleted_by_id": {
+            "column": "deleted_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "c_sort_": {
+            "column": "c_sort_",
+            "type": "i64"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "c_sort_": {
+            "column": "c_sort_",
+            "type": "i64"
+          }
+        }
+      }
+    }
+  },
+  "aliothVersion": "0.7.0"
+}

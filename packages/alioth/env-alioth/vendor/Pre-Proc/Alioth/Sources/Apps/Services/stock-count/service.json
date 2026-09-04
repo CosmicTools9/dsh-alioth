@@ -1,0 +1,1576 @@
+{
+  "id": "stock-count",
+  "namespace": "Alioth",
+  "version": "0.1.0",
+  "domain": "库存盘点",
+  "layer": 1,
+  "hasBackend": true,
+  "hasFrontend": false,
+  "factors": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "detail"
+    ],
+    "refs": [
+      "StockCount",
+      "StockCountDetail",
+      "StockCountStatus"
+    ]
+  },
+  "publishes": [],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "StockCount",
+        "table": "isahl.zc_id_even-counting",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "even",
+          "function": "counting"
+        },
+        "inherits": null,
+        "notes": "事件-盘点：库存盘点主记录，含盘点单号、日期、仓库、科目等字段",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "bigint",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "code",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "projection",
+            "column": "projection",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "_f_",
+            "column": "_f_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "_t_",
+            "column": "_t_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_source",
+            "column": "ak_source",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_scene",
+            "column": "dk_scene",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_factor",
+            "column": "dk_factor",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_function",
+            "column": "dk_function",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tpl_id",
+            "column": "tpl_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_date",
+            "column": "qk_date",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_place",
+            "column": "fk_place",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_subject",
+            "column": "fk_subject",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "timeline",
+            "column": "timeline",
+            "data_type": "jsonb",
+            "nullable": true,
+            "semantic_type": "jsonb",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_storage",
+            "column": "fk_storage",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "summary",
+            "column": "summary",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          }
+        ],
+        "relationships": [
+          {
+            "name": "CountingRCountStatus",
+            "target": "StockCountStatus",
+            "table": "isahl.zc_id_counting_r_cnt-status",
+            "notes": "关系-盘点→盘点状态：盘点主记录与盘点状态的多对多关联表，通过 ref_left (StockCount.id) / ref_right (StockCountStatus.id) 关联"
+          }
+        ]
+      },
+      {
+        "name": "StockCountDetail",
+        "table": "isahl.zc_id_deta-counting",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "deta",
+          "function": "counting"
+        },
+        "inherits": null,
+        "notes": "明细-盘点纪录：库存盘点明细记录，含商品、仓库、数量（账面/盘点/差异）等字段",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "bigint",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "code",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "projection",
+            "column": "projection",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "_f_",
+            "column": "_f_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "_t_",
+            "column": "_t_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_source",
+            "column": "ak_source",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_scene",
+            "column": "dk_scene",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_factor",
+            "column": "dk_factor",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "dk_function",
+            "column": "dk_function",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "tpl_id",
+            "column": "tpl_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_date",
+            "column": "qk_date",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ck_category",
+            "column": "ck_category",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_list",
+            "column": "fk_list",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_biller",
+            "column": "fk_biller",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_production",
+            "column": "fk_production",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_storage",
+            "column": "fk_storage",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_qty",
+            "column": "qk_qty",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_w_qty",
+            "column": "qk_w_qty",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "qk_v_qty",
+            "column": "qk_v_qty",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          },
+          {
+            "business_name": "fk_voucher",
+            "column": "fk_voucher",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "scalar"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "StockCountStatus",
+        "table": "isahl.zc_id_stus-counting",
+        "coordinates": {
+          "scene": "zc",
+          "factor": "stus",
+          "function": "counting"
+        },
+        "inherits": null,
+        "notes": "状态-盘点：库存盘点状态字典，含状态编码、名称、启用标记等",
+        "field_mappings": [
+          {
+            "business_name": "id",
+            "column": "id",
+            "data_type": "bigint",
+            "nullable": false,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_at",
+            "column": "created_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_at",
+            "column": "updated_at",
+            "data_type": "timestamp with time zone",
+            "nullable": false,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_at",
+            "column": "deleted_at",
+            "data_type": "timestamp with time zone",
+            "nullable": true,
+            "semantic_type": "timestamptz",
+            "category": "auto"
+          },
+          {
+            "business_name": "created_by_id",
+            "column": "created_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "updated_by_id",
+            "column": "updated_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "deleted_by_id",
+            "column": "deleted_by_id",
+            "data_type": "bigint",
+            "nullable": true,
+            "semantic_type": "bigint",
+            "category": "auto"
+          },
+          {
+            "business_name": "notice",
+            "column": "notice",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "t_color_",
+            "column": "t_color_",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "code",
+            "column": "code",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "o_number",
+            "column": "o_number",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "comments",
+            "column": "comments",
+            "data_type": "text",
+            "nullable": true,
+            "semantic_type": "text",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_benefit_user",
+            "column": "ak_benefit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_permit_user",
+            "column": "ak_permit_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "ak_access_user",
+            "column": "ak_access_user",
+            "data_type": "ARRAY",
+            "nullable": true,
+            "semantic_type": "array",
+            "category": "scalar"
+          },
+          {
+            "business_name": "enable",
+            "column": "enable",
+            "data_type": "boolean",
+            "nullable": true,
+            "semantic_type": "boolean",
+            "category": "scalar"
+          },
+          {
+            "business_name": "flag",
+            "column": "flag",
+            "data_type": "USER-DEFINED",
+            "nullable": true,
+            "semantic_type": "user_defined",
+            "category": "scalar"
+          }
+        ],
+        "relationships": []
+      }
+    ]
+  },
+  "entities": {
+    "dto": {
+      "StockCount": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "fk_place": {
+            "column": "fk_place",
+            "type": "i64"
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "fk_place": {
+            "column": "fk_place",
+            "type": "i64"
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "timeline": {
+            "column": "timeline",
+            "type": "String"
+          },
+          "summary": {
+            "column": "summary",
+            "type": "String"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "fk_place": {
+            "column": "fk_place",
+            "type": "i64"
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "summary": {
+            "column": "summary",
+            "type": "String"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "fk_place": {
+            "column": "fk_place",
+            "type": "i64"
+          },
+          "fk_subject": {
+            "column": "fk_subject",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "timeline": {
+            "column": "timeline",
+            "type": "String"
+          },
+          "summary": {
+            "column": "summary",
+            "type": "String"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          }
+        }
+      },
+      "StockCountDetail": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "fk_list": {
+            "column": "fk_list",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "qk_qty": {
+            "column": "qk_qty",
+            "type": "i64"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "ck_category": {
+            "column": "ck_category",
+            "type": "i64"
+          },
+          "fk_list": {
+            "column": "fk_list",
+            "type": "i64"
+          },
+          "fk_biller": {
+            "column": "fk_biller",
+            "type": "i64"
+          },
+          "fk_production": {
+            "column": "fk_production",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "qk_qty": {
+            "column": "qk_qty",
+            "type": "i64"
+          },
+          "qk_w_qty": {
+            "column": "qk_w_qty",
+            "type": "i64"
+          },
+          "qk_v_qty": {
+            "column": "qk_v_qty",
+            "type": "i64"
+          },
+          "fk_voucher": {
+            "column": "fk_voucher",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "ck_category": {
+            "column": "ck_category",
+            "type": "i64"
+          },
+          "fk_list": {
+            "column": "fk_list",
+            "type": "i64"
+          },
+          "fk_biller": {
+            "column": "fk_biller",
+            "type": "i64"
+          },
+          "fk_production": {
+            "column": "fk_production",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "qk_qty": {
+            "column": "qk_qty",
+            "type": "i64"
+          },
+          "qk_w_qty": {
+            "column": "qk_w_qty",
+            "type": "i64"
+          },
+          "qk_v_qty": {
+            "column": "qk_v_qty",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "projection": {
+            "column": "projection",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "ak_source": {
+            "column": "ak_source",
+            "type": "Vec<i64>"
+          },
+          "tpl_id": {
+            "column": "tpl_id",
+            "type": "i64"
+          },
+          "qk_date": {
+            "column": "qk_date",
+            "type": "i64"
+          },
+          "ck_category": {
+            "column": "ck_category",
+            "type": "i64"
+          },
+          "fk_list": {
+            "column": "fk_list",
+            "type": "i64"
+          },
+          "fk_biller": {
+            "column": "fk_biller",
+            "type": "i64"
+          },
+          "fk_production": {
+            "column": "fk_production",
+            "type": "i64"
+          },
+          "fk_storage": {
+            "column": "fk_storage",
+            "type": "i64"
+          },
+          "qk_qty": {
+            "column": "qk_qty",
+            "type": "i64"
+          },
+          "qk_w_qty": {
+            "column": "qk_w_qty",
+            "type": "i64"
+          },
+          "qk_v_qty": {
+            "column": "qk_v_qty",
+            "type": "i64"
+          },
+          "fk_voucher": {
+            "column": "fk_voucher",
+            "type": "i64"
+          },
+          "dk_scene": {
+            "column": "dk_scene",
+            "type": "i64"
+          },
+          "dk_factor": {
+            "column": "dk_factor",
+            "type": "i64"
+          },
+          "dk_function": {
+            "column": "dk_function",
+            "type": "i64"
+          },
+          "_f_": {
+            "column": "_f_",
+            "type": "String"
+          },
+          "_t_": {
+            "column": "_t_",
+            "type": "String"
+          }
+        }
+      },
+      "StockCountStatus": {
+        "list": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          }
+        },
+        "detail": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "flag": {
+            "column": "flag",
+            "type": "String"
+          },
+          "created_at": {
+            "column": "created_at",
+            "type": "DateTime"
+          },
+          "updated_at": {
+            "column": "updated_at",
+            "type": "DateTime"
+          },
+          "created_by_id": {
+            "column": "created_by_id",
+            "type": "i64"
+          },
+          "updated_by_id": {
+            "column": "updated_by_id",
+            "type": "i64"
+          }
+        },
+        "create": {
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "flag": {
+            "column": "flag",
+            "type": "String"
+          }
+        },
+        "update": {
+          "id": {
+            "column": "id",
+            "type": "i64"
+          },
+          "code": {
+            "column": "code",
+            "type": "String"
+          },
+          "o_number": {
+            "column": "o_number",
+            "type": "String"
+          },
+          "notice": {
+            "column": "notice",
+            "type": "String"
+          },
+          "t_color_": {
+            "column": "t_color_",
+            "type": "String"
+          },
+          "comments": {
+            "column": "comments",
+            "type": "String"
+          },
+          "ak_benefit_user": {
+            "column": "ak_benefit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_permit_user": {
+            "column": "ak_permit_user",
+            "type": "Vec<i64>"
+          },
+          "ak_access_user": {
+            "column": "ak_access_user",
+            "type": "Vec<i64>"
+          },
+          "enable": {
+            "column": "enable",
+            "type": "bool"
+          },
+          "flag": {
+            "column": "flag",
+            "type": "String"
+          }
+        }
+      }
+    }
+  },
+  "aliothVersion": "0.7.0"
+}

@@ -1,0 +1,70 @@
+{
+  "id": "language",
+  "namespace": "Alioth",
+  "domain": "外观与语言",
+  "layer": 0,
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "refs": [
+      "language"
+    ],
+    "queries": [
+      "list_refs",
+      "get_refs"
+    ]
+  },
+  "backendCrate": "alioth-service-language",
+  "hasBackend": true,
+  "hasFrontend": false,
+  "version": "0.1.0",
+  "publishes": [
+    "language.created",
+    "language.updated",
+    "language.deleted"
+  ],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "Language",
+        "table": "isahl.zc_id_prot-env_config",
+        "inherits": "zc_id_lifecycle",
+        "coordinates": {
+          "factor": "GEA",
+          "function": "↑_DA",
+          "scene": "JC"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "t_color_",
+            "column": "t_color_"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          },
+          {
+            "json_path": "comments",
+            "column": "comments"
+          },
+          {
+            "json_path": "enc_fields",
+            "column": "enc_fields"
+          },
+          {
+            "json_path": "settings",
+            "column": "settings"
+          }
+        ],
+        "relationships": [],
+        "notes": "已安装的语言包；通过 code LIKE 'lang:%' 过滤；enabled/coverage 存于 notice JSON"
+      }
+    ]
+  },
+  "services": [],
+  "aliothVersion": "0.7.0"
+}

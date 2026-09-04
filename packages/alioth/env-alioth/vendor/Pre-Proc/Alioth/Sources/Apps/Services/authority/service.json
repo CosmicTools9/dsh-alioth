@@ -1,0 +1,170 @@
+{
+  "aliothVersion": "0.7.0",
+  "backendCrate": "alioth-service-authority",
+  "domain": "组织管理 - 人员与角色",
+  "dtoDependencies": [],
+  "hasBackend": true,
+  "id": "authority",
+  "layer": 0,
+  "namespace": "Alioth",
+  "ontology": {
+    "entities": [
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "fk_user",
+            "json_path": "user"
+          },
+          {
+            "column": "sk_currency",
+            "json_path": "currency"
+          },
+          {
+            "column": "ck_category",
+            "json_path": "category"
+          },
+          {
+            "column": "sk_unit",
+            "json_path": "unit"
+          }
+        ],
+        "inherits": "zc_id_lifecycle",
+        "name": "Employee",
+        "notes": "工程师/员工管理",
+        "table": "isahl.zc_id_subj-employee"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "v_group",
+            "json_path": "v_group"
+          },
+          {
+            "column": "t_sort_",
+            "json_path": "t_sort_"
+          },
+          {
+            "column": "v_filter",
+            "json_path": "v_filter"
+          }
+        ],
+        "inherits": "zc_id_tags",
+        "name": "SkillTag",
+        "notes": "技能标签",
+        "table": "isahl.zc_id_tags-skill"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "enable",
+            "json_path": "enable"
+          }
+        ],
+        "inherits": "zc_id_lifecycle",
+        "name": "ApprovalRole",
+        "notes": "审批岗位",
+        "table": "isahl.zc_id_category"
+      },
+      {
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "t_color_",
+            "json_path": "t_color_"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "fk_user",
+            "json_path": "user"
+          },
+          {
+            "column": "sk_currency",
+            "json_path": "currency"
+          },
+          {
+            "column": "ck_category",
+            "json_path": "category"
+          },
+          {
+            "column": "sk_unit",
+            "json_path": "unit"
+          },
+          {
+            "column": "parent_id",
+            "json_path": "parent_id"
+          },
+          {
+            "column": "lk_respo",
+            "json_path": "respo"
+          }
+        ],
+        "inherits": "zc_id_lifecycle",
+        "name": "Approver",
+        "notes": "CCB 变更委员会成员",
+        "table": "isahl.zc_id_subj-position"
+      }
+    ]
+  },
+  "publishes": [],
+  "services": [],
+  "subscribes": [],
+  "version": "0.1.0"
+}

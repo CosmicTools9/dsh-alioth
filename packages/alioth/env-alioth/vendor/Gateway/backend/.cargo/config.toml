@@ -1,0 +1,3 @@
+[test]
+# DB 集成测试共享 aliothstudio_test 测试库，必须串行避免 TRUNCATE/数据污染互踩
+test-threads = 1

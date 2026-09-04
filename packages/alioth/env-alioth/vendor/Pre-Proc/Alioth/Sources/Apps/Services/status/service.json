@@ -1,0 +1,71 @@
+{
+  "id": "status",
+  "namespace": "Alioth",
+  "domain": "本体基础",
+  "layer": 0,
+  "dtoDependencies": [
+    "isahl-db"
+  ],
+  "dtoExposes": {
+    "refs": [
+      "status"
+    ],
+    "queries": [
+      "list_refs",
+      "get_refs"
+    ]
+  },
+  "backendCrate": "alioth-service-status",
+  "hasBackend": true,
+  "hasFrontend": false,
+  "version": "0.1.0",
+  "publishes": [
+    "status.transitioned"
+  ],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "Status",
+        "table": "isahl.zc_id_status",
+        "inherits": "zc_id_lifecycle",
+        "coordinates": {
+          "factor": "FTB",
+          "function": "↑_DA",
+          "scene": "JE"
+        },
+        "field_mappings": [
+          {
+            "json_path": "name",
+            "column": "notice"
+          },
+          {
+            "json_path": "t_color_",
+            "column": "t_color_"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          },
+          {
+            "json_path": "comments",
+            "column": "comments"
+          },
+          {
+            "json_path": "enable",
+            "column": "enable"
+          },
+          {
+            "json_path": "flag",
+            "column": "flag"
+          }
+        ],
+        "relationships": []
+      }
+    ]
+  },
+  "services": [
+    "identity"
+  ],
+  "aliothVersion": "0.7.0"
+}

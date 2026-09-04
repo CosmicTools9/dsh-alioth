@@ -1,0 +1,131 @@
+{
+  "id": "demand",
+  "name": "demand",
+  "namespace": "Alioth",
+  "domain": "需求管理",
+  "layer": 0,
+  "version": "0.2.0",
+  "aliothVersion": "0.7.0",
+  "backendCrate": "alioth-service-demand",
+  "hasBackend": true,
+  "hasFrontend": false,
+  "consumers": [],
+  "publishes": [],
+  "subscribes": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": ["list_refs", "get_refs"],
+    "refs": ["requirement"]
+  },
+  "ontology": {
+    "entities": [
+      {
+        "name": "Requirement",
+        "table": "isahl.zc_id_event",
+        "inherits": "zc_id_lifecycle",
+        "coordinates": {
+          "factor": "",
+          "function": "",
+          "scene": ""
+        },
+        "field_mappings": [
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "fk_place",
+            "json_path": "place"
+          },
+          {
+            "column": "timeline",
+            "json_path": "timeline"
+          }
+        ],
+        "fields": [
+          {
+            "column": "id",
+            "dto": "id",
+            "type": "bigint"
+          },
+          {
+            "column": "code",
+            "dto": "code",
+            "type": "string"
+          },
+          {
+            "column": "notice",
+            "dto": "name",
+            "type": "string"
+          },
+          {
+            "column": "comments",
+            "dto": "comments",
+            "type": "string"
+          },
+          {
+            "column": "fk_place",
+            "dto": "place",
+            "type": "bigint"
+          },
+          {
+            "column": "created_at",
+            "dto": "created_at",
+            "type": "datetime"
+          },
+          {
+            "column": "updated_at",
+            "dto": "updated_at",
+            "type": "datetime"
+          }
+        ],
+        "relationships": [
+          {
+            "target": "Category",
+            "type": "belongsToMany",
+            "via": "zc_id_lifecycle_r_category"
+          },
+          {
+            "target": "Place",
+            "type": "belongsTo",
+            "via": "zc_id_lifecycle"
+          }
+        ]
+      }
+    ]
+  },
+  "services": [
+    {
+      "endpoint": "GET /service/demand/requirements",
+      "name": "requirement_list"
+    },
+    {
+      "endpoint": "POST /service/demand/requirements",
+      "name": "requirement_create"
+    },
+    {
+      "endpoint": "GET /service/demand/requirements/{id}",
+      "name": "requirement_get"
+    },
+    {
+      "endpoint": "PUT /service/demand/requirements/{id}",
+      "name": "requirement_update"
+    },
+    {
+      "endpoint": "DELETE /service/demand/requirements/{id}",
+      "name": "requirement_delete"
+    },
+    {
+      "endpoint": "GET /service/demand/requirements/dimensions",
+      "name": "requirement_dimensions"
+    }
+  ]
+}

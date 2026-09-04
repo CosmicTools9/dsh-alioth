@@ -1,0 +1,269 @@
+[package]
+name = "alioth-gateway"
+version = "0.1.0"
+edition = "2021"
+default-run = "alioth-gateway"
+
+[dependencies]
+actix-web = "4.13"
+actix-multipart = "0.8"
+awc = "3"
+tokio = { workspace = true, features = ["full"] }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+yaml_serde = { workspace = true }
+walkdir = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+
+# Utilities
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+regex = { workspace = true }
+dotenvy = { workspace = true }
+
+# Cryptography
+argon2 = { workspace = true }
+aes-gcm = { workspace = true }
+base32 = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+
+# TOTP and QR code
+totp-rs = { workspace = true }
+
+# WebSocket
+actix-web-actors = { workspace = true }
+actix = { workspace = true }
+dashmap = { workspace = true }
+
+
+# JWT
+jsonwebtoken = { workspace = true }
+
+# CORS 支持
+actix-cors = { workspace = true }
+
+# OAuth2/OIDC
+reqwest = { workspace = true, features = ["json", "stream"] }
+urlencoding = { workspace = true }
+
+# NGAC contract (解耦 Gateway ↔ SSO 编译依赖)
+ngac-contract = { path = "../../Framework/backend/ngac-contract" }
+
+# JSONC 解析（JSON5 支持）
+json5 = { workspace = true }
+
+# Token 计数
+tiktoken-rs = "0.12"
+
+# JSON Schema 生成
+schemars = "1.2"
+
+# Prometheus metrics
+prometheus = { workspace = true }
+
+# LDAP
+ldap3 = { version = "0.12", features = ["tls-native"] }
+
+
+mime_guess = "2"
+
+# 安全相关
+zeroize = "1"
+secrecy = "0.10"
+
+
+rust_decimal = { workspace = true }
+
+# Framework modules (local paths)
+common = { path = "../../Framework/backend/common" }
+outbound-client = { path = "../../Framework/backend/outbound-client" }
+i18n = { path = "../../Framework/backend/i18n" }
+llm = { path = "../../Framework/backend/llm" }
+ai-agent = { path = "../../Framework/backend/ai-agent" }
+version = { path = "../../Framework/backend/version" }
+quality = { path = "../../Framework/backend/quality" }
+encoding = { path = "../../Framework/backend/encoding" }
+system-config = { path = "../../Framework/backend/system-config" }
+crud = { path = "../../Framework/backend/crud" }
+runtime-engine = { path = "../../Framework/backend/runtime-engine" }
+trigger-registry = { path = "../../Framework/backend/trigger-registry" }
+framework-schedule = { path = "../../Framework/backend/schedule" }
+framework-inbox = { path = "../../Framework/backend/inbox" }
+framework-contacts = { path = "../../Framework/backend/contacts" }
+framework-presence = { path = "../../Framework/backend/presence" }
+framework-workspace-approval = { path = "../../Framework/backend/workspace-approval" }
+framework-file-manager = { path = "../../Framework/backend/file-manager", features = ["s3"] }
+approval = { path = "../../Framework/backend/approval" }
+framework-scheduler = { path = "../../Framework/backend/scheduler" }
+gateway-sso = { path = "../../SSO/backend", optional = true }
+
+
+alioth-service-isahl-db = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/isahl-db/backend", optional = true }
+alioth-service-measurement = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/measurement/backend", optional = true }
+alioth-service-status = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/status/backend", optional = true }
+alioth-service-environment = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/environment/backend", optional = true }
+alioth-service-license = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/license/backend", optional = true }
+alioth-service-language = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/language/backend", optional = true }
+alioth-service-approval = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/approval/backend", optional = true }
+alioth-service-inventory-balance = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/inventory-balance/backend", optional = true }
+
+alioth-service-version = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/version/backend", optional = true }
+alioth-service-authority = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/authority/backend", optional = true }
+alioth-service-inventory = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/inventory/backend", optional = true }
+alioth-service-demand = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/demand/backend", optional = true }
+alioth-service-customer = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/customer/backend", optional = true }
+alioth-service-inbound-order = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/inbound-order/backend", optional = true }
+alioth-service-ledger-entry = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/ledger-entry/backend", optional = true }
+alioth-service-sales-order = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/sales-order/backend", optional = true }
+alioth-service-stock-count = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/stock-count/backend", optional = true }
+alioth-service-warehouse = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/warehouse/backend", optional = true }
+alioth-service-openapi = { path = "../../Pre-Proc/Alioth/openapi/backend", optional = true }
+wz-service-openapi = { path = "../../Pre-Proc/WZ/openapi/backend", optional = true }
+wz-service-isahl-db = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/isahl-db/backend", optional = true }
+wz-service-status = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/status/backend", optional = true }
+wz-service-measurement = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/measurement/backend", optional = true }
+wz-service-version = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/version/backend", optional = true }
+wz-service-zc-id-stus-inventory-service = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/zc-id-stus-inventory-service/backend", optional = true }
+wz-service-transport-dispatch = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/transport-dispatch/backend", optional = true }
+wz-service-transport-operations = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/transport-operations/backend", optional = true }
+wz-service-logi-consignment = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/logi-consignment/backend", optional = true }
+wz-service-accounts-payable = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/accounts-payable/backend", optional = true }
+wz-service-accounts-receivable = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/accounts-receivable/backend", optional = true }
+wz-service-invoice-sync = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/invoice-sync/backend", optional = true }
+wz-service-receipt-sync = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/receipt-sync/backend", optional = true }
+wz-service-contract = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/contract/backend", optional = true }
+wz-service-approval = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/approval/backend", optional = true }
+# Cosmic-Tools factors
+cosmic-tools-service-ct-git = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/ct-git/backend", optional = true }
+# AVIC-CAASEC factors
+avic-caasec-service-isahl-db = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/isahl-db/backend", optional = true }
+avic-caasec-service-authority = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/authority/backend", optional = true }
+avic-caasec-service-metrology = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend", optional = true }
+avic-caasec-service-monitor = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/monitor/backend", optional = true }
+avic-caasec-service-documentary = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/documentary/backend", optional = true }
+avic-caasec-service-interfaces = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/interfaces/backend", optional = true }
+avic-caasec-service-valuation = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/valuation/backend", optional = true }
+avic-caasec-service-orchestration = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend", optional = true }
+avic-caasec-service-commitment = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/commitment/backend", optional = true }
+avic-caasec-service-airworthiness = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/airworthiness/backend", optional = true }
+wz-service-wz-yy-wms-service = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/wz-yy-wms-service/backend", optional = true }
+cosmic-tools-service-zc-id-plan-material-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/zc-id-plan-material-service/backend", optional = true }
+cosmic-tools-service-inventory_balance = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/inventory_balance/backend", package = "cosmic-tools-service-inventory-balance", optional = true }
+cosmic-tools-service-inventory_document = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/inventory_document/backend", package = "cosmic-tools-service-inventory-document", optional = true }
+
+[build-dependencies]
+serde_json = { workspace = true }
+
+[dev-dependencies]
+actix-rt = { workspace = true }
+tempfile = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json", "macros"] }
+
+[features]
+alioth = ["alioth-service-isahl-db", "alioth-service-measurement", "alioth-service-status", "alioth-service-environment", "alioth-service-license", "alioth-service-language", "alioth-service-version", "alioth-service-approval", "alioth-service-inventory-balance", "alioth-service-authority", "alioth-service-inventory", "alioth-service-demand", "alioth-service-customer", "alioth-service-inbound-order", "alioth-service-ledger-entry", "alioth-service-sales-order", "alioth-service-stock-count", "alioth-service-warehouse", "alioth-service-openapi"]
+# preproc-proxy：Pre-Proc 未认证透明反代（/preproc/*、/api/pre_proc/*）——dev 形态默认开启；
+# 生产构建（scripts/build-ns.sh --no-default-features）不含 → 生产二进制无此路由（404）。
+default = ["alioth", "sso", "preproc-proxy"]
+# Cosmic-Tools：ai-erp 走 Alioth service 组（别名）+ 自有 ct-git service
+cosmic-tools = ["alioth", "cosmic-tools-service-ct-git", "cosmic-tools-service-zc-id-plan-material-service", "cosmic-tools-service-inventory_balance", "cosmic-tools-service-inventory_document"]
+wz = [
+    "wz-service-isahl-db",
+    "wz-service-status",
+    "wz-service-measurement",
+    "wz-service-version",
+    "wz-service-zc-id-stus-inventory-service",
+    "wz-service-transport-dispatch",
+    "wz-service-transport-operations",
+    "wz-service-logi-consignment",
+    "wz-service-accounts-payable",
+    "wz-service-accounts-receivable",
+    "wz-service-invoice-sync",
+    "wz-service-receipt-sync",
+    "wz-service-contract",
+    "wz-service-approval",
+    "wz-service-wz-yy-wms-service",
+    "wz-service-openapi",
+]
+avic-caasec = [
+    "avic-caasec-service-isahl-db",
+    "avic-caasec-service-authority",
+    "avic-caasec-service-metrology",
+    "avic-caasec-service-monitor",
+    "avic-caasec-service-documentary",
+    "avic-caasec-service-interfaces",
+    "avic-caasec-service-valuation",
+    "avic-caasec-service-orchestration",
+    "avic-caasec-service-commitment",
+    "avic-caasec-service-airworthiness",
+]
+
+# Individual factor crate features
+alioth-service-isahl-db = ["dep:alioth-service-isahl-db"]
+alioth-service-environment = ["dep:alioth-service-environment"]
+alioth-service-license = ["dep:alioth-service-license"]
+alioth-service-approval = ["dep:alioth-service-approval"]
+alioth-service-inventory-balance = ["dep:alioth-service-inventory-balance"]
+alioth-service-authority = ["dep:alioth-service-authority"]
+alioth-service-inventory = ["dep:alioth-service-inventory"]
+alioth-service-demand = ["dep:alioth-service-demand"]
+alioth-service-customer = ["dep:alioth-service-customer"]
+alioth-service-inbound-order = ["dep:alioth-service-inbound-order"]
+alioth-service-ledger-entry = ["dep:alioth-service-ledger-entry"]
+alioth-service-sales-order = ["dep:alioth-service-sales-order"]
+alioth-service-stock-count = ["dep:alioth-service-stock-count"]
+alioth-service-warehouse = ["dep:alioth-service-warehouse"]
+alioth-service-openapi = ["dep:alioth-service-openapi"]
+wz-service-openapi = ["dep:wz-service-openapi"]
+
+cosmic-tools-service-ct-git = ["dep:cosmic-tools-service-ct-git"]
+
+wz-service-isahl-db = ["dep:wz-service-isahl-db"]
+wz-service-status = ["dep:wz-service-status"]
+wz-service-measurement = ["dep:wz-service-measurement"]
+wz-service-version = ["dep:wz-service-version"]
+wz-service-zc-id-stus-inventory-service = ["dep:wz-service-zc-id-stus-inventory-service"]
+wz-service-transport-dispatch = ["dep:wz-service-transport-dispatch"]
+wz-service-transport-operations = ["dep:wz-service-transport-operations"]
+wz-service-logi-consignment = ["dep:wz-service-logi-consignment"]
+wz-service-accounts-payable = ["dep:wz-service-accounts-payable"]
+wz-service-accounts-receivable = ["dep:wz-service-accounts-receivable"]
+wz-service-invoice-sync = ["dep:wz-service-invoice-sync"]
+wz-service-receipt-sync = ["dep:wz-service-receipt-sync"]
+wz-service-contract = ["dep:wz-service-contract"]
+wz-service-approval = ["dep:wz-service-approval"]
+# AVIC-CAASEC factor features
+avic-caasec-service-isahl-db = ["dep:avic-caasec-service-isahl-db"]
+avic-caasec-service-authority = ["dep:avic-caasec-service-authority"]
+avic-caasec-service-metrology = ["dep:avic-caasec-service-metrology"]
+avic-caasec-service-monitor = ["dep:avic-caasec-service-monitor"]
+avic-caasec-service-documentary = ["dep:avic-caasec-service-documentary"]
+avic-caasec-service-interfaces = ["dep:avic-caasec-service-interfaces"]
+avic-caasec-service-valuation = ["dep:avic-caasec-service-valuation"]
+avic-caasec-service-orchestration = ["dep:avic-caasec-service-orchestration"]
+avic-caasec-service-commitment = ["dep:avic-caasec-service-commitment"]
+avic-caasec-service-airworthiness = ["dep:avic-caasec-service-airworthiness"]
+sso = ["gateway-sso"]
+# E2E 测试专用：启用 PEP 的 E2E_TEST_MODE 认证绕过分支（仅测试环境构建）。
+# 生产/常规 release 构建不启用此 feature → 认证绕过代码不被编译。
+e2e-test-mode = []
+# 远程 SSO 模式：Gateway 不内嵌 SSO 路由，仅通过远程 PDP(SSO_SERVICE_URL) 与
+# JWT 公钥校验(SSO_JWT_PUBLIC_KEY/ISSUER) 委托给独立部署的 SSO 服务。
+# 与 `sso` 互斥——两者不能同时开启（见 main.rs 顶部 compile_error 守卫）。
+sso-remote = []
+# Pre-Proc 未认证透明反代（/preproc/* 与 /api/pre_proc/*）——仅 dev 形态启用：
+# 加入 default features 保持 dev 行为；生产构建（build-ns.sh --no-default-features）
+# 与 no-sso 形态不启用 → 路由完全不注册（404）。见 openspec change fix-gateway-proxy-standalone-auth。
+preproc-proxy = []
+wz-service-wz-yy-wms-service = ["dep:wz-service-wz-yy-wms-service"]
+cosmic-tools-service-zc-id-plan-material-service = ["dep:cosmic-tools-service-zc-id-plan-material-service"]
+cosmic-tools-service-inventory_balance = ["dep:cosmic-tools-service-inventory_balance"]
+cosmic-tools-service-inventory_document = ["dep:cosmic-tools-service-inventory_document"]

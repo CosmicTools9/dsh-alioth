@@ -1,0 +1,29 @@
+[package]
+name = "alioth-service-customer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "alioth_service_customer"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+log = { workspace = true }
+rust_decimal = { workspace = true }
+uuid = { workspace = true }
+common = { path = "../../../../../../../Framework/backend/common" }
+crud = { path = "../../../../../../../Framework/backend/crud" }
+
+[dev-dependencies]
+actix-rt = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

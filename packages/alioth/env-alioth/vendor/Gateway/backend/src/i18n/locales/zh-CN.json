@@ -1,0 +1,19 @@
+{
+  "error.generic.title": "发生错误",
+  "error.generic.retry": "请重试",
+  "error.unauthorized": "未授权，请先登录",
+  "error.forbidden": "禁止访问",
+  "error.notFound": "资源未找到",
+  "error.validation": "请求参数验证失败",
+  "error.internal": "服务器内部错误",
+  "error.badRequest": "请求格式错误",
+  "ai.assistant.systemPrompt": "你是一个智能企业助手。请用中文回复，简洁专业。\n",
+  "ai.assistant.contextLabel": "\n当前页面上下文：{ctx}\n",
+  "ai.assistant.historyLabel": "\n对话历史：\n",
+  "ai.assistant.roleAssistant": "助手",
+  "ai.assistant.roleUser": "用户",
+  "ai.assistant.userPrefix": "\n用户: {msg}\n",
+  "ai.assistant.assistantPrefix": "助手: ",
+  "chat.session.defaultTitle": "新对话",
+  "chat.session.aiContactName": "EmpAgent"
+}

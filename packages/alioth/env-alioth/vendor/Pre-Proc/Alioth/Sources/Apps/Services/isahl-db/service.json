@@ -1,0 +1,241 @@
+{
+  "id": "isahl-db",
+  "namespace": "Alioth",
+  "domain": "本体基础",
+  "layer": 0,
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "refs": [
+      "identity",
+      "SubjectGroup",
+      "SubjectEmployee",
+      "EmploymentAgent",
+      "SubjectBank",
+      "SubjectCountry",
+      "SubjectMinistry",
+      "SubjectSovereign",
+      "SubjectSupranational"
+    ],
+    "queries": [
+      "list_refs",
+      "get_refs"
+    ]
+  },
+  "backendCrate": "alioth-service-isahl-db",
+  "hasBackend": true,
+  "hasFrontend": false,
+  "version": "0.2.0",
+  "publishes": [
+    "entity.created",
+    "entity.updated",
+    "entity.deleted"
+  ],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "Identity",
+        "table": "isahl.zc_id_subjects",
+        "inherits": "zc_id_subjects",
+        "coordinates": {
+          "factor": "FJA",
+          "function": "↑_DA",
+          "scene": "JE"
+        },
+        "field_mappings": [
+          {
+            "json_path": "name",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "SubjectGroup",
+        "table": "isahl.zc_id_subj-group",
+        "inherits": "zc_id_subjects",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_DA",
+          "scene": "ZB"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": [
+          {
+            "target": "Subject",
+            "type": "belongsToMany",
+            "via": "zc_id_subj-group_rr_member"
+          }
+        ]
+      },
+      {
+        "name": "SubjectEmployee",
+        "table": "isahl.zc_id_subj-employee",
+        "inherits": "zc_id_subjects",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_EH",
+          "scene": "ZJ"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": [
+          {
+            "target": "EmployStatus",
+            "type": "belongsTo",
+            "via": "zc_id_subj-employee_r_employ-status"
+          }
+        ]
+      },
+      {
+        "name": "EmploymentAgent",
+        "table": "isahl.zc_id_empl-agent",
+        "inherits": "zc_id_subj-employee",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_EH",
+          "scene": "ZJ"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "SubjectBank",
+        "table": "isahl.zc_id_subj-bank",
+        "inherits": "zc_id_subjects",
+        "coordinates": {
+          "factor": "LNK",
+          "function": "↓_DA",
+          "scene": "ZH"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "SubjectCountry",
+        "table": "isahl.zc_id_subj-country",
+        "inherits": "zc_id_subj-sovereign",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_DA",
+          "scene": "UB"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "SubjectMinistry",
+        "table": "isahl.zc_id_subj-ministry",
+        "inherits": "zc_id_subj-hierarchy",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_DA",
+          "scene": "UB"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "SubjectSovereign",
+        "table": "isahl.zc_id_subj-sovereign",
+        "inherits": "zc_id_subjects",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_DA",
+          "scene": "UB"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      },
+      {
+        "name": "SubjectSupranational",
+        "table": "isahl.zc_id_subj-supranational",
+        "inherits": "zc_id_subjects",
+        "coordinates": {
+          "factor": "LNC",
+          "function": "↓_DA",
+          "scene": "UB"
+        },
+        "field_mappings": [
+          {
+            "json_path": "notice",
+            "column": "notice"
+          },
+          {
+            "json_path": "code",
+            "column": "code"
+          }
+        ],
+        "relationships": []
+      }
+    ]
+  },
+  "services": [],
+  "aliothVersion": "0.7.0"
+}

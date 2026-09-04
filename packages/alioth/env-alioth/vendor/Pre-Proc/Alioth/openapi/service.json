@@ -1,0 +1,171 @@
+{
+  "id": "openapi",
+  "namespace": "Alioth",
+  "domain": "数据服务产品",
+  "layer": 0,
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "get",
+      "list_refs",
+      "get_refs"
+    ],
+    "refs": [
+      "OpenApiConfig",
+      "OpenApiSales",
+      "OpenApiPurchase",
+      "OpenApiMade"
+    ]
+  },
+  "backendCrate": "alioth-service-openapi",
+  "hasBackend": true,
+  "hasFrontend": false,
+  "version": "0.1.0",
+  "publishes": [],
+  "subscribes": [],
+  "ontology": {
+    "entities": [
+      {
+        "name": "OpenApiConfig",
+        "table": "isahl.\"zc_id_prot-openapi_config\"",
+        "inherits": "zc_id_protocol",
+        "coordinates": {
+          "factor": "FJA",
+          "function": "↓_HF",
+          "scene": "FF"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "settings",
+            "json_path": "settings"
+          },
+          {
+            "column": "enc_fields",
+            "json_path": "enc_fields"
+          }
+        ]
+      },
+      {
+        "name": "OpenApiSales",
+        "table": "isahl.\"zc_id_prod-openapi-sales\"",
+        "inherits": "zc_id_prod-sales",
+        "coordinates": {
+          "factor": "FJA",
+          "function": "↓.HA",
+          "scene": "FF"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "projection",
+            "json_path": "projection"
+          },
+          {
+            "column": "tpl_id",
+            "json_path": "tpl_id"
+          },
+          {
+            "column": "settings",
+            "json_path": "settings"
+          }
+        ]
+      },
+      {
+        "name": "OpenApiPurchase",
+        "table": "isahl.\"zc_id_prod-openapi-purchase\"",
+        "inherits": "zc_id_prod-purchase",
+        "coordinates": {
+          "factor": "FJA",
+          "function": "↓.HB",
+          "scene": "FF"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "projection",
+            "json_path": "projection"
+          },
+          {
+            "column": "tpl_id",
+            "json_path": "tpl_id"
+          },
+          {
+            "column": "settings",
+            "json_path": "settings"
+          }
+        ]
+      },
+      {
+        "name": "OpenApiMade",
+        "table": "isahl.\"zc_id_prod-openapi-made\"",
+        "inherits": "zc_id_prod-made",
+        "coordinates": {
+          "factor": "FJB",
+          "function": "↓.HB",
+          "scene": "FF"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "comments",
+            "json_path": "comments"
+          },
+          {
+            "column": "projection",
+            "json_path": "projection"
+          },
+          {
+            "column": "tpl_id",
+            "json_path": "tpl_id"
+          },
+          {
+            "column": "settings",
+            "json_path": "settings"
+          }
+        ]
+      }
+    ]
+  }
+}
