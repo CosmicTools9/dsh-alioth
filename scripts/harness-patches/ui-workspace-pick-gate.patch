@@ -1,8 +1,38 @@
+diff --git a/packages/client/ui-workspace/src/client/WorkspacePicker.tsx b/packages/client/ui-workspace/src/client/WorkspacePicker.tsx
+index b1801cc3d9..6868a3b668 100644
+--- a/packages/client/ui-workspace/src/client/WorkspacePicker.tsx
++++ b/packages/client/ui-workspace/src/client/WorkspacePicker.tsx
+@@ -9,6 +9,7 @@
+  * occupant's own create-folder affordance already covers creating one.
+  */
+ import type { ReactNode, RefObject } from 'react'
++import { workspaceNamespaceFilter, workspacePathInNamespace } from './navigation.ts'
+ import { useCallback, useEffect, useState } from 'react'
+ import {
+   Button, IconFolderClose16, IconPlusOutline16, Menu, Modal, type MenuEntry,
+@@ -103,9 +104,15 @@ export function WorkspacePickFlow({
+     : []
+   // With workspaces listed, the add action pins below the scroll region
+   // (divider + always visible); otherwise it IS the menu.
+-  const pinAdd = !addOnly && workspaces.length > 0
++  // AppCreator namespace isolation: only workspaces of the caller's
++  // namespace are offered (see workspaceNamespaceFilter in navigation.ts).
++  const visibleWorkspaces = workspaceNamespaceFilter() === undefined
++    ? workspaces
++    : workspaces.filter(workspace =>
++      workspace.path === undefined || workspacePathInNamespace(workspace.path, workspaceNamespaceFilter() as string))
++  const pinAdd = !addOnly && visibleWorkspaces.length > 0
+   const items: MenuEntry[] = pinAdd
+-    ? workspaces.map(workspace => ({
++    ? visibleWorkspaces.map(workspace => ({
+       id: workspace.workspaceId,
+       label: workspace.title,
+       icon: <IconFolderClose16 size={16} />,
 diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
-index a460afe23a..43414f9a65 100644
+index a460afe23a..5cded508c1 100644
 --- a/packages/client/ui-workspace/src/client/navigation.ts
 +++ b/packages/client/ui-workspace/src/client/navigation.ts
-@@ -11,6 +11,19 @@ import type {
+@@ -11,6 +11,39 @@ import type {
  } from '@deepseek-ai/dsh-api-workspace-controller/client'
  import type { SessionId } from '@deepseek-ai/dsh-session/types'
  
@@ -19,10 +49,30 @@ index a460afe23a..43414f9a65 100644
 +  }
 +}
 +
++/**
++ * AppCreator namespace isolation: when the web gate script records the
++ * caller's namespace (`dsh.uiWorkspace.namespaceFilter`), workspace lists
++ * show only workspaces whose path belongs to that namespace. Opt-in by
++ * deployment, default off.
++ */
++export function workspaceNamespaceFilter(): string | undefined {
++  try {
++    const value = globalThis.localStorage?.getItem('dsh.uiWorkspace.namespaceFilter')
++    return typeof value === 'string' && value !== '' ? value : undefined
++  } catch {
++    return undefined
++  }
++}
++
++/** True when a workspace path belongs to the namespace (path-segment match). */
++export function workspacePathInNamespace(path: string, namespace: string): boolean {
++  return new RegExp(`/(?:^|/)${namespace}(?:/|$)`).test(path)
++}
++
  /** Workspace archive and directory operations consumed by Client UI domains. */
  export interface UiWorkspace {
    /**
-@@ -118,6 +131,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+@@ -118,6 +151,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
      const currentWorkspaceId = current === undefined
        ? undefined
        : workspace.items.find(item => item.sessionIds.includes(current))?.workspaceId
@@ -37,3 +87,40 @@ index a460afe23a..43414f9a65 100644
      const recent = workspace.phase === 'ready' && sessions.phase === 'ready'
        ? recentWorkspace(workspace.items, sessions.byId)
        : undefined
+diff --git a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+index 0ef21ddb82..e51676c660 100644
+--- a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
++++ b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
+@@ -10,6 +10,7 @@
+  * (same package — direct composition, no slot between them).
+  */
+ import { useEffect, useMemo, useRef, useState } from 'react'
++import { workspaceNamespaceFilter, workspacePathInNamespace } from '../navigation.ts'
+ import clsx from 'clsx'
+ import {
+   Button, IconCloseFill14, IconPersonalizationOutline16,
+@@ -350,14 +351,22 @@ function SessionTree({
+     () => reconciledSessionOrder(ungroupedSessionIds, sessionOrderByAccount[UNGROUPED_KEY]),
+     [sessionOrderByAccount, ungroupedSessionIds],
+   )
++  // AppCreator namespace isolation (deployment opt-in via localStorage):
++  // only workspaces whose path belongs to the caller's namespace render.
++  const visibleOrderedWorkspaces = useMemo(() => {
++    const namespace = workspaceNamespaceFilter()
++    if (namespace === undefined) return orderedWorkspaces
++    return orderedWorkspaces.filter(workspace =>
++      workspace.path === undefined || workspacePathInNamespace(workspace.path, namespace))
++  }, [orderedWorkspaces])
+   const groups = useMemo(
+-    () => deriveGroups(list, orderedWorkspaces, archivedSessionIds, pendingInteractions, {
++    () => deriveGroups(list, visibleOrderedWorkspaces, archivedSessionIds, pendingInteractions, {
+       expandedGroups,
+       ...(sessionOrderByAccount[UNGROUPED_KEY] === undefined
+         ? {}
+         : { ungroupedOrder: sessionOrderByAccount[UNGROUPED_KEY] }),
+     }),
+-    [list, orderedWorkspaces, archivedSessionIds, pendingInteractions, expandedGroups, sessionOrderByAccount],
++    [list, visibleOrderedWorkspaces, archivedSessionIds, pendingInteractions, expandedGroups, sessionOrderByAccount],
+   )
+   useEffect(() => {
+     if (revealGroup === undefined || groupExpansion[revealGroup] === true) return
