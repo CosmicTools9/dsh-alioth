@@ -227,15 +227,14 @@ export function apply(ctx: Context, config: Config): void {
       if (occupied !== null) {
         throw new Error(`aliothAuth.register: namespace ${namespace} already allocated`)
       }
-      // First registered user bootstraps as admin (single-tenant start);
-      // subsequent users are plain users.
-      const count = await ctx.aliothEnv.sql<{ count: string }>(`SELECT count(*) AS count FROM ${AUTH_SCHEMA}.users`)
+      // AppCreator has no super-admin: every registered user is equal and
+      // owns exactly their U-<username> namespace.
       const user = {
         id: randomUUID(),
         username,
         passwordHash: await hashPassword(password),
         namespace,
-        role: (Number(count.rows[0]?.count ?? 0) === 0 ? 'admin' : 'user') as 'admin' | 'user',
+        role: 'user' as const,
       }
       await insertUser(ctx, user)
       // 自动为用户创建同名 namespace 工作区（AliothStudio 路径结构）：
@@ -298,7 +297,7 @@ export function apply(ctx: Context, config: Config): void {
       if (user === null) {
         return effectiveMode !== 'enforce'
       }
-      return user.role === 'admin' || user.namespace === namespace
+      return user.namespace === namespace
     },
 
     /** Bind a user's session token to a dsh agent session id. */
@@ -365,7 +364,9 @@ export function apply(ctx: Context, config: Config): void {
       // roots changed since) may lack their dirs — guarantee the caller's own
       // workspace exists on every read (idempotent).
       await ensureWorkspace(identity.namespace)
-      const namespaceDirs = mode === 'unlimited' || identity.role === 'admin'
+      // AppCreator: standard locks every account to its own namespace; only
+      // unlimited mode (AppAgent-style deployments) lists every namespace.
+      const namespaceDirs = mode === 'unlimited'
         ? await readdir(preProcRoot, { withFileTypes: true }).then(entries =>
           entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
         : [identity.namespace]
@@ -449,23 +450,8 @@ export function apply(ctx: Context, config: Config): void {
     readyPromise ??= (async () => {
       await ensureAuthSchema(ctx)
       await deleteExpiredSessions(ctx)
-      const adminUsername = process.env.ALIOTH_ADMIN_USERNAME
-      const adminPassword = process.env.ALIOTH_ADMIN_PASSWORD
-      if (adminUsername !== undefined && adminPassword !== undefined && adminUsername !== '') {
-        const existing = await userByUsername(ctx, adminUsername)
-        if (existing === null) {
-          const user = {
-            id: randomUUID(),
-            username: adminUsername,
-            passwordHash: await hashPassword(adminPassword),
-            namespace: namespaceFor(adminUsername),
-            role: 'admin' as const,
-          }
-          await insertUser(ctx, user)
-          await ensureWorkspace(user.namespace)
-          ctx.logger.info(`auth-alioth: bootstrap admin ${adminUsername} created (namespace ${user.namespace})`)
-        }
-      }
+      // No super-admin concept: registration is the only user path (the old
+      // ALIOTH_ADMIN_* bootstrap was removed with the role privileges).
     })()
     return readyPromise
   }

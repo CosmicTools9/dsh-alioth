@@ -106,7 +106,7 @@ export function currentPeriod(now: Date = new Date()): string {
  * in Maps inside this closure and resets on process restart. The backend
  * integration replaces exactly this provider (same interface).
  */
-export function createMemoryBilling(opts: { resolveUsername?: (userId: string) => Promise<string | null> } = {}): AliothBillingService {
+export function createMemoryBilling(_opts: { resolveUsername?: (userId: string) => Promise<string | null> } = {}): AliothBillingService {
   const subscriptions = new Map<string, Subscription>()
   const bills = new Map<string, Bill>()
   const invoices = new Map<string, Invoice>()
@@ -154,7 +154,7 @@ export function createMemoryBilling(opts: { resolveUsername?: (userId: string) =
     async payBill(billId, actor) {
       const bill = bills.get(billId)
       if (bill === undefined) throw new Error('aliothBilling.payBill: bill not found')
-      if (bill.userId !== actor.id && actor.role !== 'admin') throw new Error('aliothBilling.payBill: not your bill')
+      if (bill.userId !== actor.id) throw new Error('aliothBilling.payBill: not your bill')
       if (bill.status === 'paid') return bill // idempotent
       const paid: Bill = { ...bill, status: 'paid', paidAt: new Date() }
       bills.set(billId, paid)
@@ -169,38 +169,29 @@ export function createMemoryBilling(opts: { resolveUsername?: (userId: string) =
       if (title.trim() === '') throw new Error('aliothBilling.requestInvoice: 发票抬头不能为空')
       const bill = bills.get(billId)
       if (bill === undefined) throw new Error('aliothBilling.requestInvoice: bill not found')
-      if (bill.userId !== actor.id && actor.role !== 'admin') throw new Error('aliothBilling.requestInvoice: not your bill')
+      if (bill.userId !== actor.id) throw new Error('aliothBilling.requestInvoice: not your bill')
       if (bill.status !== 'paid') throw new Error('aliothBilling.requestInvoice: 仅已支付账单可申请发票')
       if ([...invoices.values()].some(i => i.billId === billId)) {
         throw new Error('aliothBilling.requestInvoice: 该账单已有发票申请')
       }
+      // No super-admin review queue: requesting issues the invoice directly.
       const invoice: Invoice = {
         id: randomUUID(), billId, userId: bill.userId,
         title: title.trim(), taxId: taxId.trim(),
-        status: 'pending', requestedAt: new Date(), issuedAt: null,
+        status: 'issued', requestedAt: new Date(), issuedAt: new Date(),
       }
       invoices.set(invoice.id, invoice)
       return invoice
     },
 
-    async pendingInvoices(actor) {
-      if (actor.role !== 'admin') throw new Error('aliothBilling.pendingInvoices: admin only')
-      const rows: PendingInvoice[] = []
-      for (const invoice of invoices.values()) {
-        if (invoice.status !== 'pending') continue
-        const bill = bills.get(invoice.billId)
-        if (bill === undefined) continue
-        const username = opts.resolveUsername === undefined ? undefined : await opts.resolveUsername(invoice.userId)
-        rows.push({
-          ...invoice, amountCents: bill.amountCents, period: bill.period,
-          ...(username === undefined || username === null ? {} : { username }),
-        })
-      }
-      return rows.sort((a, b) => a.requestedAt.getTime() - b.requestedAt.getTime())
+    async pendingInvoices(_actor): Promise<PendingInvoice[]> {
+      // No admin review queue in the no-super-admin product: requests issue
+      // directly, so this queue is always empty.
+      return []
     },
 
-    async issueInvoice(invoiceId, actor) {
-      if (actor.role !== 'admin') throw new Error('aliothBilling.issueInvoice: admin only')
+    async issueInvoice(invoiceId, _actor) {
+      // Idempotent self-service issuance (requests already issue directly).
       const invoice = invoices.get(invoiceId)
       if (invoice === undefined) throw new Error('aliothBilling.issueInvoice: invoice not found')
       if (invoice.status === 'issued') return invoice // idempotent

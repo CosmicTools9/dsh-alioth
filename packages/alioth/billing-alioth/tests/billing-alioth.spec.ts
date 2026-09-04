@@ -29,12 +29,11 @@ describe('billing capability (memory provider)', () => {
     await plugin.dispose()
   })
 
-  it('pay → invoice request → duplicate/guard rails → admin issues', async () => {
+  it('pay → invoice request → duplicate/guard rails (self-service issuance)', async () => {
     const ctx = new Context()
     const plugin = await ctx.plugin(billing, {})
     const svc = ctx.aliothBilling
     const user = { id: 'u2', role: 'user' as const }
-    const admin = { id: 'admin', role: 'admin' as const }
 
     await svc.subscribe(user.id)
     const bill = (await svc.bills(user.id))[0]!
@@ -50,20 +49,15 @@ describe('billing capability (memory provider)', () => {
     expect((await svc.payBill(bill.id, user)).status).toBe('paid') // idempotent
 
     const invoice = await svc.requestInvoice(bill.id, user, '杭州示例科技', '91330100MA27X00000')
-    expect(invoice.status).toBe('pending')
+    // Self-service: requesting issues directly — no admin queue exists.
+    expect(invoice.status).toBe('issued')
+    expect(invoice.issuedAt).not.toBeNull()
     await expect(svc.requestInvoice(bill.id, user, '抬头', '')).rejects.toThrow(/已有发票申请/)
     await expect(svc.requestInvoice(bill.id, user, ' ', '')).rejects.toThrow(/抬头不能为空/)
 
-    // Admin queue + issuance; non-admin denied.
-    await expect(svc.pendingInvoices(user)).rejects.toThrow(/admin only/)
-    const queue = await svc.pendingInvoices(admin)
-    expect(queue).toHaveLength(1)
-    expect(queue[0]!.amountCents).toBe(139900)
-    await expect(svc.issueInvoice(queue[0]!.id, user)).rejects.toThrow(/admin only/)
-    const issued = await svc.issueInvoice(queue[0]!.id, admin)
-    expect(issued.status).toBe('issued')
-    expect((await svc.issueInvoice(queue[0]!.id, admin)).status).toBe('issued') // idempotent
-    expect(await svc.pendingInvoices(admin)).toHaveLength(0)
+    // Queue is always empty (no super-admin); issue stays idempotent.
+    expect(await svc.pendingInvoices(user)).toHaveLength(0)
+    expect((await svc.issueInvoice(invoice.id, user)).status).toBe('issued')
     await plugin.dispose()
   })
 })

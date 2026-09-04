@@ -80,8 +80,8 @@ beforeAll(async () => {
   const carrier = await ctx.plugin(billingWeb, {})
   disposers.push(() => carrier.dispose())
 
-  // First user → admin; keep the session cookie for the cookie-authenticated
-  // user-center flow under test.
+  // Equal users (no super-admin); keep the session cookie for the
+  // cookie-authenticated user-center flow under test.
   const register = await fetch(`http://127.0.0.1:${ctx.webServer.port}/api/auth/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -116,7 +116,7 @@ describe('user center (web carrier)', () => {
     expect(html).toContain('L0 社区版')
   })
 
-  it('full loop over the JSON API: subscribe → pay → invoice → admin issues', async () => {
+  it('full loop over the JSON API: subscribe → pay → invoice (issued on request)', async () => {
     const api = (path: string, init: RequestInit = {}): Promise<Response> =>
       fetch(`${webBase()}${path}`, {
         ...init,
@@ -144,18 +144,14 @@ describe('user center (web carrier)', () => {
     })
     expect(invoice.status).toBe(200)
     const invBody = await invoice.json() as { id: string; status: string }
-    expect(invBody.status).toBe('pending')
+    // Self-service: no admin review queue — requesting issues directly.
+    expect(invBody.status).toBe('issued')
 
     const dup = await api('/api/billing/invoice', {
       method: 'POST',
       body: JSON.stringify({ bill: billId, title: 'again', tax: '' }),
     })
     expect(dup.status).toBe(400)
-
-    const issued = await api('/api/billing/issue', { method: 'POST', body: JSON.stringify({ invoice: invBody.id }) })
-    expect(issued.status).toBe(200)
-    const issuedBody = await issued.json() as { status: string }
-    expect(issuedBody.status).toBe('issued')
   })
 
   it('form posts redirect back with a notice banner', async () => {
@@ -181,7 +177,7 @@ describe('user center (web carrier)', () => {
     const invoicesHtml = await invoices.text()
     expect(invoicesHtml).toContain('杭州示例科技')
     expect(invoicesHtml).toContain('已开具')
-    // ada is admin (first user) — the issuance queue panel renders too.
-    expect(invoicesHtml).toContain('开具队列')
+    // No super-admin: the issuance queue panel does not render.
+    expect(invoicesHtml).not.toContain('开具队列')
   })
 })

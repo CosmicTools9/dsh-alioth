@@ -44,7 +44,9 @@
 - insert:
     - id: directory-picker-app
       name: '@dsh-alioth/app-picker'
-      config: {}
+      config:
+        namespace: !!js "process.env.ALIOTH_PICKER_NAMESPACE"
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT" 
 
     - id: landing-alioth
       name: '@dsh-alioth/landing-alioth'

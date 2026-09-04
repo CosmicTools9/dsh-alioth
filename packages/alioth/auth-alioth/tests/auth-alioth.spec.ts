@@ -121,7 +121,7 @@ describe('auth service', () => {
   it('registers a user and allocates an isolated namespace', async () => {
     const result = await ctx.aliothAuth.register('alice', 'password-123')
     expect(result.namespace).toBe(namespaceFor('alice'))
-    expect(result.role).toBe('admin') // first user bootstraps as admin
+    expect(result.role).toBe('user') // every registered user is equal (no super-admin)
     expect(result.token).toMatch(/^[0-9a-f]{64}$/)
   })
 
@@ -152,7 +152,7 @@ describe('namespace authorization guard', () => {
   let aliceToken: string
 
   beforeAll(async () => {
-    // bob is a plain user (second registration); alice is admin.
+    // No super-admin: alice and bob are equal users in their own namespaces.
     const bob = await ctx.aliothAuth.register('bob', 'password-456')
     void bob
     const alice = await ctx.aliothAuth.login('alice', 'password-123')
@@ -193,16 +193,15 @@ describe('namespace authorization guard', () => {
     expect(result.error.message).toContain('not authorized')
   })
 
-  it('allows an admin across namespaces', async () => {
-    // alice is admin (first user); bind her token to an agent session.
-    const adminSession = 'session-alice-1'
-    await ctx.aliothAuth.bind(aliceToken, adminSession)
-    const agent = fakeAgent(adminSession)
+  it('rejects writing into another user namespace (no admin escape)', async () => {
+    // Equal users: alice's session cannot act inside U-bob.
+    await ctx.aliothAuth.bind(aliceToken, 'session-alice-1')
+    const agent = fakeAgent('session-alice-1')
     const result = await callTool('alioth_app_write', {
-      namespace: 'U-bob', code: 'admin-app', name: '管理写入', modules: [{ id: 'm1', name: 'M1' }],
+      namespace: 'U-bob', code: 'sneaky-app', name: '越权写入', modules: [{ id: 'm1', name: 'M1' }],
     }, agent)
-    if (result.isError) throw new Error(`expected admin write success: ${result.error.message}`)
-    expect(result.value).toMatchObject({ code: 'admin-app' })
+    if (!result.isError) throw new Error('expected denial for cross-namespace write')
+    expect(result.error.message).toContain('not authorized')
   })
 
   it('rejects unauthenticated calls in enforce mode', async () => {
@@ -375,7 +374,7 @@ describe('workspace (namespace = user workspace)', () => {
     await rm(path.join(deployRoot, 'U-ghost'), { recursive: true, force: true })
   })
 
-  it('workspaces scopes users to their own namespace in standard mode and admins to all', async () => {
+  it('workspaces scope every account to its own namespace in standard mode', async () => {
     // erin (already registered above) is a plain user; put an app in her workspace.
     const appsDir = path.join(preProcRoot, 'U-erin', 'Apps', 'demo-app')
     await mkdir(appsDir, { recursive: true })
@@ -390,8 +389,11 @@ describe('workspace (namespace = user workspace)', () => {
       apps: [{ code: 'demo-app', name: 'Demo 应用' }],
     })
 
-    const admin = await ctx.aliothAuth.workspaces({ namespace: 'U-alice', role: 'admin' })
-    expect(admin.workspaces.map(ws => ws.namespace)).toEqual(expect.arrayContaining(['U-alice', 'U-carol', 'U-erin']))
-    expect(admin.workspaces.find(ws => ws.namespace === 'U-erin')?.apps).toEqual([{ code: 'demo-app', name: 'Demo 应用' }])
+    // No super-admin: an equal user (role field kept for compatibility) also
+    // sees exactly their own namespace — never another account's apps.
+    const alice = await ctx.aliothAuth.workspaces({ namespace: 'U-alice', role: 'user' })
+    expect(alice.workspaces.map(ws => ws.namespace)).toEqual(['U-alice'])
+    const adminRole = await ctx.aliothAuth.workspaces({ namespace: 'U-alice', role: 'admin' })
+    expect(adminRole.workspaces.map(ws => ws.namespace)).toEqual(['U-alice'])
   })
 })

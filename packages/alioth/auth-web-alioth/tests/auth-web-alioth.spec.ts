@@ -231,7 +231,7 @@ describe('B/S HTTP surface (real server)', () => {
       headers: { authorization: `Bearer ${session.token}` },
     })
     expect(me.status).toBe(200)
-    expect(await me.json()).toMatchObject({ username: 'carol', namespace: 'U-carol', role: 'admin' })
+    expect(await me.json()).toMatchObject({ username: 'carol', namespace: 'U-carol', role: 'user' })
   })
 
   it('rejects invalid credentials over HTTP', async () => {
@@ -460,9 +460,9 @@ describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
       workspaces: Array<{ namespace: string; preProcPath: string; deployPath: string; apps: Array<{ code: string; name: string }> }>
     }
     expect(body.mode).toBe('standard')
-    // carol is the admin here — standard mode spans all namespaces for admins.
+    // Equal users: standard mode shows exactly the caller's own namespace.
     const names = body.workspaces.map(ws => ws.namespace)
-    expect(names).toEqual(expect.arrayContaining(['U-carol']))
+    expect(names).toEqual(['U-carol'])
     const carolWs = body.workspaces.find(ws => ws.namespace === 'U-carol')
     expect(carolWs).toMatchObject({
       namespace: 'U-carol',
