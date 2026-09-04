@@ -77,9 +77,15 @@ case "$NS" in
     NEEDS_RESIGN=true
     ;;
   *)
-    echo "❌ Unknown namespace: $NS"
-    echo "   Supported: Alioth, WZ, AVIC-CAASEC, Cosmic-Tools, Meta"
-    exit 1
+    # Generic namespace fallback (dsh-alioth): any namespace whose
+    # {ns_lower} feature exists in the gateway manifest builds here.
+    TARGET_DIR="$PROJECT_ROOT/Deploy/$NS/bin"
+    BINARY_NAME="${NS_LOWER}-server"
+    echo "→ Building Gateway (features=$NS_LOWER, target=Deploy/$NS/target/)..."
+    cd "$PROJECT_ROOT/Gateway/backend"
+    BINARY_SRC="$PROJECT_ROOT/Deploy/$NS/target/$TARGET_DIR_SUFFIX/alioth-gateway"
+    cargo build $CARGO_FLAGS -p alioth-gateway --no-default-features --features "$NS_LOWER,sso" --target-dir "$PROJECT_ROOT/Deploy/$NS/target"
+    NEEDS_RESIGN=true
     ;;
 esac
 

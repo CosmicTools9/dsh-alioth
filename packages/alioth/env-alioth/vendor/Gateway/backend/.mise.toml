@@ -7,6 +7,8 @@ dev = "bash ../../scripts/lib/guard-mise-task.sh Gateway -- bash -c 'NS=${NAMESP
 build = "bash -c 'NS=${NAMESPACE:-alioth}; cargo build --release --no-default-features --features \"${NS,,},sso\"'"
 test = "bash ../../scripts/lib/guard-mise-task.sh Gateway --mode test -- cargo test"
 lint = "cargo clippy -- -D warnings && cargo fmt --check"
+# 无独立 workspace（根 workspace 成员）：-p 限定只清本包产物，避免清空共享 target/
+clean = "cargo clean -p alioth-gateway"
 
 # Gateway no-sso 形态（standalone 认证）编译检查——官方构建全带 sso，
 # 该任务兜底 no-sso 形态零构建零测试的缺口（openspec fix-gateway-proxy-standalone-auth）

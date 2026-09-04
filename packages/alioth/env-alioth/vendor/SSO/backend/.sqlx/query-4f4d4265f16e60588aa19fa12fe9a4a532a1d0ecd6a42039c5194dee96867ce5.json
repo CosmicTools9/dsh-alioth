@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT EXISTS(\n            SELECT 1 FROM isahl_auth.refresh_tokens\n            WHERE token_hash = $1 AND revoked = FALSE AND expires_at > NOW()\n        ) AS \"exists!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4f4d4265f16e60588aa19fa12fe9a4a532a1d0ecd6a42039c5194dee96867ce5"
+}

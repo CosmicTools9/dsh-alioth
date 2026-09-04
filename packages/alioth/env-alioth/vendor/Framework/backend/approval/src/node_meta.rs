@@ -61,7 +61,7 @@ where
     // （操作.ck_cate-proc_op → 分类.code）；by-value executor 单次 fetch。
     let rows: Vec<(Option<i64>, Option<String>)> = sqlx::query_as(
         r#"WITH cate_rows AS (
-               -- 岗位角色四类（2026-09-03）：rr_approve 行带 ck_cate-role 类别；
+               -- 岗位类别四类（2026-09-03）：rr_approve 行带 ck_cate-role 类别；
                -- review/post 无类别（NULL）。升级/备选桥行不直接产生待办——
                -- 升级由 SLA 超时接管、备选按积压阈值动态并入（见文末 UNION 分支）。
                SELECT r.ref_left, r.ref_right, rc.code AS cate_code

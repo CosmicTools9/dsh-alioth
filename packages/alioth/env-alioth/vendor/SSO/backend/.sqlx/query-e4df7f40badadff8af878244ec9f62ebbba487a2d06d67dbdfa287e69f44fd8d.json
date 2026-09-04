@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE isahl_auth.refresh_tokens\n        SET revoked = TRUE\n        WHERE user_id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e4df7f40badadff8af878244ec9f62ebbba487a2d06d67dbdfa287e69f44fd8d"
+}

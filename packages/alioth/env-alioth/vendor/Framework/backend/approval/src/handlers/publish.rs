@@ -861,23 +861,10 @@ pub(crate) async fn materialize_graph(
                         .fetch_all(&mut *tx)
                         .await
                         .map_err(|e| ApiError::Database(format!("resolve vote engineer[{}]: {}", idx, e)))?
-                    } else {
-                        sqlx::query_scalar(
-                            r#"SELECT u.id FROM isahl_auth.auth_users u
-                               JOIN isahl_auth.ngac_user_rr_attribute rel
-                                 ON rel.fk_user = u.id AND rel.deleted_at IS NULL
-                               JOIN isahl_auth.ngac_user_attribute ua
-                                 ON ua.id = rel.fk_user_attribute AND ua.deleted_at IS NULL
-                               WHERE ua.o_name = $1 AND u.is_active = TRUE
-                               LIMIT 200"#,
-                        )
-                        .bind(id)
-                        .fetch_all(&mut *tx)
-                        .await
-                        .map_err(|e| {
-                            ApiError::Database(format!("resolve vote role[{}]: {}", idx, e))
-                        })?
-                    };
+                                            } else {
+                            // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
+                            common::ngac_org::resolve_member_user_ids(&mut *tx, id, 200).await
+                        };
                     for uid in users {
                         resolved.push(serde_json::json!({ "uid": uid, "weight": weight }));
                     }
@@ -1581,8 +1568,8 @@ pub(crate) async fn materialize_graph(
             if !role.is_empty() {
                 // roleKind：canonical 'role' | 'employee'；历史 'engineer' 别名读兼容（员工解析）
                 let is_employee = role_kind == "employee" || role_kind == "engineer";
-                // 动作桥分表：approve→rr_approve（带角色类别 ck_cate-role 四类语义）/
-                // review→rr_review / action→rr_post（无角色分类，单岗位直配）
+                // 动作桥分表：approve→rr_approve（带岗位类别 ck_cate-role 四类语义）/
+                // review→rr_review / action→rr_post（无岗位类别，单岗位直配）
                 let bridge_sql = match action {
                     "review" => {
                         r#"INSERT INTO isahl."zc_id_operation_rr_review" (ref_left, ref_right, created_by_id)
@@ -1598,7 +1585,7 @@ pub(crate) async fn materialize_graph(
                     }
                 };
                 if action == "approve" {
-                    // 审批岗位角色类别（2026-09-03 语义接线）：字典 code → id；
+                    // 审批岗位类别（2026-09-03 语义接线）：字典 code → id；
                     // 种子缺失（未扩散库）时 None → 桥列 NULL（advance 视同直管，防断链）
                     let cate_err = |e: sqlx::Error| {
                         ApiError::Database(format!("node {action} cate lookup[{}]: {}", idx, e))
@@ -1676,7 +1663,7 @@ pub(crate) async fn materialize_graph(
                             })?;
                     }
                 } else {
-                    // review/action：单岗位直配（无角色分类）
+                    // review/action：单岗位直配（无岗位类别）
                     let pos_ids = resolve_approver_positions(&mut *tx, &role, is_employee)
                         .await
                         .map_err(|e| {
@@ -1717,21 +1704,8 @@ pub(crate) async fn materialize_graph(
                             .await
                             .map_err(|e| ApiError::Database(format!("vote src user[{}]: {}", idx, e)))?
                         } else {
-                            sqlx::query_scalar(
-                                r#"SELECT u.id FROM isahl_auth.auth_users u
-                                   JOIN isahl_auth.ngac_user_rr_attribute rel
-                                     ON rel.fk_user = u.id AND rel.deleted_at IS NULL
-                                   JOIN isahl_auth.ngac_user_attribute ua
-                                     ON ua.id = rel.fk_user_attribute AND ua.deleted_at IS NULL
-                                   WHERE ua.o_name = $1 AND u.is_active = TRUE
-                                   LIMIT 200"#,
-                            )
-                            .bind(id)
-                            .fetch_all(&mut *tx)
-                            .await
-                            .map_err(|e| {
-                                ApiError::Database(format!("vote src role[{}]: {}", idx, e))
-                            })?
+                            // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
+                            common::ngac_org::resolve_member_user_ids(&mut *tx, id, 200).await
                         };
                         for uid in users {
                             let pos_ids: Vec<i64> = sqlx::query_scalar(
@@ -1907,7 +1881,7 @@ async fn resolve_approver_positions(
     }
 }
 
-/// 审批岗位角色类别 id（zc_id_cate-approve_role code → id；字典未种子时 None → 桥列 NULL）
+/// 审批岗位类别 id（zc_id_cate-approve_role code → id；字典未种子时 None → 桥列 NULL）
 async fn approval_role_cate_id(
     tx: &mut sqlx::PgConnection,
     code: &str,

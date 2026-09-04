@@ -1336,19 +1336,14 @@ async fn advance_auto_node(
                         .await
                         .unwrap_or_default()
                     } else {
-                        sqlx::query_scalar(
-                            r#"SELECT u.id FROM isahl_auth.auth_users u
-                               JOIN isahl_auth.ngac_user_rr_attribute rel
-                                 ON rel.fk_user = u.id AND rel.deleted_at IS NULL
-                               JOIN isahl_auth.ngac_user_attribute ua
-                                 ON ua.id = rel.fk_user_attribute AND ua.deleted_at IS NULL
-                               WHERE ua.o_name = $1 AND u.is_active = TRUE
-                               LIMIT 200"#,
-                        )
-                        .bind(id)
-                        .fetch_all(pool)
-                        .await
-                        .unwrap_or_default()
+                        // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
+                        match pool.acquire().await {
+                            Ok(mut conn) => {
+                                common::ngac_org::resolve_member_user_ids(&mut conn, id, 200)
+                                    .await
+                            }
+                            Err(_) => Vec::new(),
+                        }
                     };
                     resolved_users.extend(users);
                 }

@@ -149,8 +149,13 @@ pub async fn require_resource_access(
         .map_err(|e| AliothError::Internal(format!("Permission check: {}", e)))?;
 
     if !permitted {
+        // Bootstrap 判定（fail-open 条件收窄，Phase C hardening）：
+        // 仅当整库从未种入任何 NGAC 策略（无 default policy class **且** association 表空）
+        // 时才按 bootstrap 期放行；任一条件不满足即 deny——防「policy class 已种（种子事务成功）
+        // 但 association 种子部分失败 → 表空」窗口被误判为从未初始化而 fail-open。
         let bootstrap: (bool,) = sqlx::query_as(
-            "SELECT COUNT(*)=0 FROM isahl_auth.ngac_association WHERE deleted_at IS NULL",
+            "SELECT ((SELECT COUNT(*) FROM isahl_auth.ngac_policy_class WHERE o_name='default') = 0)
+                    AND ((SELECT COUNT(*) FROM isahl_auth.ngac_association WHERE deleted_at IS NULL) = 0)",
         )
         .fetch_one(pool)
         .await

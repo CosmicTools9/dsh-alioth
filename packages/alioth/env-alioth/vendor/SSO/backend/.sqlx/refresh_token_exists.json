@@ -1,0 +1,11 @@
+{
+  "db_name": "aliothstudio",
+  "query_text": "\n        SELECT EXISTS(\n            SELECT 1 FROM isahl_auth.refresh_tokens\n            WHERE token_hash = $1 AND revoked = FALSE AND expires_at > NOW()\n        ) AS exists\n        ",
+  "describe": {
+    "columns": [{"name": "exists", "ordinal": 0, "type_info": "Bool"}],
+    "parameters": {
+      "Left": ["Text"]
+    },
+    "nullable": [null]
+  }
+}

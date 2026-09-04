@@ -3,7 +3,7 @@
 //! 端点（挂载在 /service/isahl-db）：
 //! - 部门 CRUD:   `GET/POST /departments`、`GET/PUT/DELETE /departments/{id}`
 //! - 岗位 CRUD:   `GET/POST /positions`、`GET/PUT/DELETE /positions/{id}`
-//! - 岗位编制范例: `POST /positions/templates`、`POST /positions/templates/{id}/instantiate`
+//! - 岗位编制范例: `POST /positions/templates`、`POST /positions/templates/{id}/instantiate`、`DELETE /positions/templates/{id}`
 //! - 部门↔岗位：   `GET /departments/{id}/positions`、`POST /departments/{id}/positions`、`DELETE /departments/{id}/positions/{relId}`
 //!
 //! 零 DDL：复用现有叶表族
@@ -594,10 +594,10 @@ pub async fn create_department(
             )));
         }
     };
-    // 最小列集 INSERT：orga-non-banking-legal 有 fk_representative 可空列（缺省不写）
+    // 最小列集 INSERT（+ created_by_id 落 owner 槽）：orga-non-banking-legal 有 fk_representative 可空列（缺省不写）
     let sql = format!(
-        r#"INSERT INTO {} (notice, code, comments)
-            VALUES ($1, $2, $3)
+        r#"INSERT INTO {} (notice, code, comments, created_by_id)
+            VALUES ($1, $2, $3, $4)
             RETURNING id, notice::text, COALESCE(code, ''), comments"#,
         target
     );
@@ -605,6 +605,7 @@ pub async fn create_department(
         .bind(&body.name)
         .bind(&code)
         .bind(&body.comments)
+        .bind(user_id)
         .fetch_one(pool.get_ref())
         .await
         .map_err(ApiError::from_sqlx)?;
@@ -949,8 +950,8 @@ pub async fn create_position(
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
 
     let base: PositionBaseRow = sqlx::query_as(
-        r#"INSERT INTO isahl."zc_id_subj-position" (notice, code, comments, fk_user, fk_parent, ck_category)
-            VALUES ($1, $2, $3, $4, $5, $6)
+        r#"INSERT INTO isahl."zc_id_subj-position" (notice, code, comments, fk_user, fk_parent, ck_category, created_by_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING id, notice::text, COALESCE(code, ''), COALESCE(comments, ''), fk_user, fk_parent AS parent_id,
                       COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = isahl."zc_id_subj-position".ck_category AND c.deleted_at IS NULL), ck_category::text, ''),
                       NULL::text AS user_name"#,
@@ -961,6 +962,7 @@ pub async fn create_position(
     .bind(body.user_id)
     .bind(body.parent_id)
     .bind(category_id)
+    .bind(user_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
@@ -1297,13 +1299,18 @@ pub async fn instantiate_position_template(
     require_resource_access(pool.get_ref(), user_id, "positions", 0, "create").await?;
     let tpl_id = path.into_inner();
 
+    // handler 无外层事务；序号计算+插入必须原子 → 自包事务，且先锁范例行
+    // （FOR UPDATE）串行化同范例的并发实例化（ReviewerD2aS2 P3 notice 序号竞态）。
+    let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
+
     let tpl: Option<(String, Option<i64>)> = sqlx::query_as(
         r#"SELECT notice::text, ck_category FROM isahl."zc_id_subj-position"
            WHERE id = $1 AND deleted_at IS NULL AND _f_ = '设计' AND _t_ = '范例'
-             AND tpl_id IS NULL"#,
+             AND tpl_id IS NULL
+           FOR UPDATE"#,
     )
     .bind(tpl_id)
-    .fetch_optional(pool.get_ref())
+    .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
     let Some((tpl_name, category_id)) = tpl else {
@@ -1325,7 +1332,7 @@ pub async fn instantiate_position_template(
         "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE tpl_id = $1 AND deleted_at IS NULL",
     )
     .bind(tpl_id)
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
     let notice = if live == 0 {
@@ -1342,9 +1349,11 @@ pub async fn instantiate_position_template(
     .bind(&notice)
     .bind(category_id)
     .bind(tpl_id)
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
+
+    tx.commit().await.map_err(ApiError::from_sqlx)?;
 
     // 读回完整实例 DTO（实例类列 NULL → _f_ IS NULL 视图可见）
     let sql = format!(
@@ -1358,6 +1367,84 @@ pub async fn instantiate_position_template(
         .map_err(ApiError::from_sqlx)?;
 
     Ok(HttpResponse::Created().json(ApiResponse::success(position_row_to_dto(full))))
+}
+
+/// DELETE /positions/templates/{id} — 软删岗位编制范例（D-2a 设计态回收；?10/?14 审计闭环项）
+///
+/// 门控：范例行在册（未删除、`_f_='设计' AND _t_='范例'`、tpl_id NULL）→ 404；
+/// 已有在册实例（`tpl_id=$1 AND deleted_at IS NULL`）→ 400 且消息含实例数——
+/// 实例即真实岗位，须先删尽实例方可回收范例。删除仅软删范例行自身
+/// （deleted_at/deleted_by_id=操作人），不触碰实例行。
+///
+/// 事务内先锁范例行（FOR UPDATE），与 [`instantiate_position_template`] 同锁
+/// 串行化并发：实例化先行则其行锁先取、本端点计数可见；本端点先行则范例软删后
+/// 实例化行锁重读落空 404——计数与删除之间无插入窗口。
+/// 审计留痕：与其余 tpl 端点一致经注释契约（D-2a 端点审计入 ?10/?14 backlog）。
+pub async fn delete_position_template(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    path: web::Path<i64>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = require_auth(&req)?;
+    require_resource_access(pool.get_ref(), user_id, "positions", 0, "delete").await?;
+    let tpl_id = path.into_inner();
+
+    let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
+
+    let tpl: Option<i64> = sqlx::query_scalar(
+        r#"SELECT id FROM isahl."zc_id_subj-position"
+           WHERE id = $1 AND deleted_at IS NULL AND _f_ = '设计' AND _t_ = '范例'
+             AND tpl_id IS NULL
+           FOR UPDATE"#,
+    )
+    .bind(tpl_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    if tpl.is_none() {
+        return Err(ApiError::NotFound(format!(
+            "Position template not found: {}",
+            tpl_id
+        )));
+    }
+
+    // 在册实例计数（含软删行之外的实岗；实例本身不再有派生行）
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE tpl_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(tpl_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    if live > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "岗位范例 {} 仍有 {} 个在册实例，须先删除全部实例方可删除范例",
+            tpl_id, live
+        )));
+    }
+
+    let deleted = sqlx::query(
+        r#"UPDATE isahl."zc_id_subj-position"
+           SET deleted_at = NOW(), deleted_by_id = $2, updated_at = NOW()
+           WHERE id = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(tpl_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?
+    .rows_affected();
+
+    tx.commit().await.map_err(ApiError::from_sqlx)?;
+
+    if deleted == 0 {
+        return Err(ApiError::NotFound(format!(
+            "Position template not found: {}",
+            tpl_id
+        )));
+    }
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2269,6 +2356,10 @@ pub fn register(cfg: &mut actix_web::web::ServiceConfig) {
     .service(
         web::resource("/positions/templates/{id}/instantiate")
             .route(web::post().to(instantiate_position_template)),
+    )
+    .service(
+        web::resource("/positions/templates/{id}")
+            .route(web::delete().to(delete_position_template)),
     )
     .service(
         web::resource("/positions/{id}")

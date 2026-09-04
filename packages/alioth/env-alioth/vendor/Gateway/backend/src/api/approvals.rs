@@ -699,7 +699,7 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
     //    WZ dev 有、Alioth/AVIC-CAASEC/Cosmic-Tools dev 无）。存在则写叶表（继承
     //    even-approve，查询可见），否则写 even-approve 主表——保证无叶表的
     let leaf_table_exists: bool = match sqlx::query_scalar(
-        "SELECT to_regclass('\"isahl.zc_id_appr-authorization\"') IS NOT NULL",
+        "SELECT to_regclass('isahl.\"zc_id_appr-authorization\"') IS NOT NULL",
     )
     .fetch_one(&mut *tx)
     .await

@@ -948,6 +948,9 @@ export function apply(ctx: Context, config: Config): void {
       if (args.services.length === 0) {
         throw new Error('alioth_sources_scaffold: declare at least one service')
       }
+      // Upstream crate-naming convention: {ns_lower}-service-{id} (wz-service-*,
+      // cosmic-tools-service-*) — keeps gateway dep keys per-namespace collision-free.
+      const nsLower = args.namespace.toLowerCase()
       const specs = args.services.map(service => generateService({
         id: service.id,
         namespace: args.namespace,
@@ -955,7 +958,7 @@ export function apply(ctx: Context, config: Config): void {
         services: [],
         layer: service.layer,
         dtoDependencies: service.dtoDependencies ?? [],
-        backendCrate: `alioth-service-${service.id}`,
+        backendCrate: `${nsLower}-service-${service.id}`,
         hasBackend: true,
         hasFrontend: false,
         ontology: {
@@ -1034,11 +1037,55 @@ export function apply(ctx: Context, config: Config): void {
         await writeFile(target, file.content)
         written.push(file.relative)
       }
+      // Gateway wiring (namespace onboarding): the vendored gateway's build.rs
+      // auto-generates route registration from Sources/Services/*/service.json —
+      // the only manual upstream step is the Cargo.toml optional dep + feature.
+      // Wire them here so `build-ns.sh {ns}` builds out of the box.
+      const gatewayManifest = path.join(path.dirname(root), 'Gateway', 'backend', 'Cargo.toml')
+      let gatewayWired = false
+      if (existsSync(gatewayManifest)) {
+        let manifest = await readFile(gatewayManifest, 'utf8')
+        const insertIntoSection = (text: string, section: string, line: string): string => {
+          const header = text.indexOf(section)
+          if (header < 0) return text
+          const next = text.slice(header + 1).search(/^\[/m)
+          const at = next < 0 ? text.length : header + 1 + next
+          return text.slice(0, at) + line + '\n' + text.slice(at)
+        }
+        for (const service of args.services) {
+          const depKey = `${nsLower}-service-${service.id}`
+          const depLine = `${depKey} = { path = "../../Pre-Proc/${args.namespace}/Sources/Apps/Services/${service.id}/backend", optional = true }`
+          if (!manifest.includes(`${depKey} =`)) {
+            manifest = insertIntoSection(manifest, '[dependencies]', depLine)
+            changed('dep', depKey)
+          }
+        }
+        const featureName = args.namespace.toLowerCase()
+        const featureKeys = args.services.map(service => `"${nsLower}-service-${service.id}"`)
+        const featureMatch = new RegExp(`^${featureName} = \\[(.*)\\]`, 'm').exec(manifest)
+        if (featureMatch === null) {
+          manifest = insertIntoSection(manifest, '[features]', `${featureName} = [${featureKeys.join(', ')}]`)
+          changed('feature', featureName)
+        } else {
+          const existing = featureMatch[1] ?? ''
+          const missing = featureKeys.filter(key => !existing.includes(key))
+          if (missing.length > 0) {
+            manifest = manifest.replace(featureMatch[0], `${featureName} = [${existing}${existing.trim().length > 0 ? ', ' : ''}${missing.join(', ')}]`)
+            changed('feature-merge', featureName)
+          }
+        }
+        function changed(kind: string, what: string): void {
+          gatewayWired = true
+          console.log(`alioth_sources_scaffold: gateway ${kind} wired — ${what}`)
+        }
+        if (gatewayWired) await writeFile(gatewayManifest, manifest)
+      }
+
       return {
         namespace: args.namespace,
         serviceIds: args.services.map(service => service.id),
         files: written,
-        summary: `scaffolded ${args.services.length} service(s): contract service.json + mount-only crate shells; author DTO/business code in gated workflow steps (alioth-service track)`,
+        summary: `scaffolded ${args.services.length} service(s): contract service.json + mount-only crate shells; author DTO/business code in gated workflow steps (alioth-service track)${gatewayWired ? '; gateway Cargo.toml wired' : ''}`,
       }
     },
     presentCall: args => ({

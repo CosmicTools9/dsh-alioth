@@ -208,6 +208,8 @@ pub async fn derive_from_class(
               ON oa.resource_type = $2 AND oa.fk_resource = 0
              AND oa.deleted_at IS NULL
             WHERE ua.o_name = $1 AND ua.deleted_at IS NULL
+              AND ua.fk_policy_class = (SELECT id FROM isahl_auth.ngac_policy_class
+                                        WHERE o_name = 'default')
               AND (SELECT count(*) FROM isahl_auth.ngac_access_right ar
                    WHERE ar.o_name = ANY($3::text[])) > 0
               AND NOT EXISTS (

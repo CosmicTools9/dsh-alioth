@@ -77,6 +77,33 @@ function sha256(file: string): string {
  * recorded local patch is never reported as drift.
  */
 function withLocalPatches(relative: string, content: string): string {
+  if (relative === 'scripts/build-ns.sh' && !content.includes('Generic namespace fallback (dsh-alioth)')) {
+    // Arbitrary namespaces build exactly like the known ones (feature
+    // {ns_lower} + sso); namespace-specific seed steps stay upstream-only.
+    const search = [
+      '  *)',
+      '    echo "❌ Unknown namespace: $NS"',
+      '    echo "   Supported: Alioth, WZ, AVIC-CAASEC, Cosmic-Tools, Meta"',
+      '    exit 1',
+      '    ;;',
+    ].join('\n')
+    const replacement = [
+      '  *)',
+      '    # Generic namespace fallback (dsh-alioth): any namespace whose',
+      '    # {ns_lower} feature exists in the gateway manifest builds here.',
+      '    TARGET_DIR="$PROJECT_ROOT/Deploy/$NS/bin"',
+      '    BINARY_NAME="${NS_LOWER}-server"',
+      '    echo "→ Building Gateway (features=$NS_LOWER, target=Deploy/$NS/target/)..."',
+      '    cd "$PROJECT_ROOT/Gateway/backend"',
+      '    BINARY_SRC="$PROJECT_ROOT/Deploy/$NS/target/$TARGET_DIR_SUFFIX/alioth-gateway"',
+      '    cargo build $CARGO_FLAGS -p alioth-gateway --no-default-features --features "$NS_LOWER,sso" --target-dir "$PROJECT_ROOT/Deploy/$NS/target"',
+      '    NEEDS_RESIGN=true',
+      '    ;;',
+    ].join('\n')
+    if (content.includes(search)) {
+      return content.replace(search, replacement)
+    }
+  }
   if (relative === 'scripts/cargo-check.sh' && !content.includes('CARGO_WORKSPACE_DIR')) {
     // The service crates live in the namespace workspace
     // (Pre-Proc/{ns}/Cargo.toml), not at the content root; deployments name
@@ -158,6 +185,21 @@ function main(): number {
     }
     console.log(`framework-sync: OK (${checked} files match AliothStudio)`)
     return 0
+  }
+
+  // Gateway manifest normalization: upstream optional path deps use varying
+  // ../ depth (some resolve OUTSIDE the checkout). Any leading ../ run longer
+  // than two is clamped to ../../ — the content-root depth of Gateway/backend.
+  const gatewayManifest = path.join(VENDOR, 'Gateway', 'backend', 'Cargo.toml')
+  if (existsSync(gatewayManifest)) {
+    const normalized = readFileSync(gatewayManifest, 'utf8').replace(
+      /path = "(\.\.\/){3,}/g,
+      'path = "../../',
+    )
+    if (normalized !== readFileSync(gatewayManifest, 'utf8')) {
+      writeFileSync(gatewayManifest, normalized)
+      console.log('framework-sync: normalized gateway manifest dep paths to content-root depth')
+    }
   }
 
   const patches = reapplyLocalPatches()

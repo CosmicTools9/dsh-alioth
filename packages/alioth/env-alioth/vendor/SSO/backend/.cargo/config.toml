@@ -1,0 +1,8 @@
+[env]
+# sqlx 离线编译：使用已提交的 .sqlx/query-*.json 文件，
+# 编译时无需连接数据库或解密 DATABASE_URL
+SQLX_OFFLINE = "true"
+
+[test]
+# DB 集成测试共享 aliothstudio_test 测试库，必须串行避免 TRUNCATE/数据污染互踩
+test-threads = 1

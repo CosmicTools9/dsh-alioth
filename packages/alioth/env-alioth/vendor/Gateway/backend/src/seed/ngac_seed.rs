@@ -585,8 +585,9 @@ async fn ensure_org_resources(pool: &PgPool) -> Result<i64, sqlx::Error> {
 
     // 3. operator → 三集合 read/create/update 关联（幂等复用多权限 helper）
     for res in ORG_COLLECTIONS {
-        created += ensure_ua_collection_rights_multi(pool, "operator", res, &["read", "create", "update"])
-            .await?;
+        created +=
+            ensure_ua_collection_rights_multi(pool, "operator", res, &["read", "create", "update"])
+                .await?;
     }
 
     Ok(created)

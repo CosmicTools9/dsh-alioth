@@ -1,0 +1,33 @@
+[tasks]
+setup = "cargo fetch && cargo check"
+dev = "bash ../../scripts/lib/guard-mise-task.sh SSO -- cargo run"
+build = "cargo build --release"
+# 独立部署：构建并部署为单独应用（由 scripts/sso/deploy.sh 处理）
+deploy = "bash ../../scripts/sso/deploy.sh --target ${SSO_TARGET:-./Deploy/sso} --release --restart"
+# 测试任务固定指向 aliothstudio_test 层级（ENVIRONMENT_SPEC §6.7）。
+# mise 默认从 .env 加载 dev 库的 DATABASE_URL，会被层级守卫拒绝，因此这里
+# 显式覆盖为规范的测试库连接串（与 scripts/db/reset-db.sh 的 whoami 约定一致）。
+# 需要自定义（如 CI 指定带密码的 URL）时可设 SSO_TEST_DATABASE_URL 环境变量。
+test = "DATABASE_URL=\"${SSO_TEST_DATABASE_URL:-postgres://$(whoami)@localhost:5432/aliothstudio_test}\" bash ../../scripts/lib/guard-mise-task.sh SSO --mode test -- cargo test"
+lint = "cargo clippy -- -D warnings && cargo fmt --check"
+# 无独立 workspace（根 workspace 成员）：-p 限定只清本包产物，避免清空共享 target/
+clean = "cargo clean -p gateway-sso"
+
+[env]
+# ns 形态（2026-08-14 收敛）：env 真相源 = Deploy/{NAMESPACE}/.env（decrypt-env.sh 按
+# NAMESPACE 加载）；backend 不再持有 .env。启动须显式 NAMESPACE。
+# SSO 独立部署（sso-remote 生产形态）同此加载 Deploy/{ns}/.env + SERVER_ADDR 覆盖。
+
+# 自动解密 .env 中的 enc: 前缀敏感值
+_.source = "../../scripts/env/decrypt-env.sh"
+
+# sqlx 离线编译模式（编译时无需解密 DATABASE_URL）
+SQLX_OFFLINE = "true"
+JWT_ACCESS_EXPIRY = "86400"
+JWT_REFRESH_EXPIRY = "6048000"
+
+# OAuth 配置
+OAUTH_REDIRECT_URL = "http://localhost:9002/auth/callback"
+
+# 日志级别
+LOG_LEVEL = "info"

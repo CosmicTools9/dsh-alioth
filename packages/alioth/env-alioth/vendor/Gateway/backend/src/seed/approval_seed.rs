@@ -67,70 +67,11 @@ struct FlowNode {
 }
 
 /// 流程模板：code → (notice, 线性节点链 start→approve→end)
+/// 认证/权限授予域四流（REGISTRATION/VERIFY/AUTHORIZATION/EXTERNAL-SUBJECT）已迁出
+/// 组件——作为 namespace 治理数据预置（add-namespace-approval-seeds：
+/// Pre-Proc/{ns}/seed/seed-{ns}-approval-flows.sql），组件仅保留 VERCTRL
+/// 及运行面一致性自检兜底。
 const FLOW_TEMPLATES: &[(&str, &str, &[FlowNode])] = &[
-    (
-        REGISTRATION_FLOW_CODE,
-        "用户注册审批",
-        &[
-            FlowNode {
-                graph_id: "N1",
-                kind: "start",
-                label: "注册发起",
-            },
-            FlowNode {
-                graph_id: "N2",
-                kind: "approve",
-                label: "访问授权审批",
-            },
-            FlowNode {
-                graph_id: "N3",
-                kind: "end",
-                label: "授权完成",
-            },
-        ],
-    ),
-    (
-        VERIFY_FLOW_CODE,
-        "用户实名审核",
-        &[
-            FlowNode {
-                graph_id: "N1",
-                kind: "start",
-                label: "实名提交",
-            },
-            FlowNode {
-                graph_id: "N2",
-                kind: "approve",
-                label: "实名审核",
-            },
-            FlowNode {
-                graph_id: "N3",
-                kind: "end",
-                label: "审核完成",
-            },
-        ],
-    ),
-    (
-        AUTHORIZATION_FLOW_CODE,
-        "访问授权审批",
-        &[
-            FlowNode {
-                graph_id: "N1",
-                kind: "start",
-                label: "授权申请",
-            },
-            FlowNode {
-                graph_id: "N2",
-                kind: "approve",
-                label: "访问授权审批",
-            },
-            FlowNode {
-                graph_id: "N3",
-                kind: "end",
-                label: "授权完成",
-            },
-        ],
-    ),
     (
         VERCTRL_FLOW_CODE,
         "版控固化审批",
@@ -149,27 +90,6 @@ const FLOW_TEMPLATES: &[(&str, &str, &[FlowNode])] = &[
                 graph_id: "N3",
                 kind: "end",
                 label: "固化完成",
-            },
-        ],
-    ),
-    (
-        EXTERNAL_SUBJECT_FLOW_CODE,
-        "外部主体入驻审批",
-        &[
-            FlowNode {
-                graph_id: "N1",
-                kind: "start",
-                label: "入驻申请",
-            },
-            FlowNode {
-                graph_id: "N2",
-                kind: "approve",
-                label: "外部主体入驻审核",
-            },
-            FlowNode {
-                graph_id: "N3",
-                kind: "end",
-                label: "入驻完成",
             },
         ],
     ),
@@ -622,7 +542,7 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
     // 补建/rebound/SLA/broken_after 照常执行（fix-approval-event-adaptive-write 契约）。
     let mut leaf_check_ok = true;
     let leaf_table_exists: bool = match sqlx::query_scalar(
-        "SELECT to_regclass('\"isahl.zc_id_appr-authorization\"') IS NOT NULL",
+        "SELECT to_regclass('isahl.\"zc_id_appr-authorization\"') IS NOT NULL",
     )
     .fetch_one(pool)
     .await

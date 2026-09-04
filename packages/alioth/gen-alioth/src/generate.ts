@@ -247,7 +247,7 @@ export function generateNamespaceWorkspace(namespace: string, serviceIds: readon
  * code is authored by the model in gated workflow steps, never scaffolded).
  */
 export function generateServiceCrate(namespace: string, serviceId: string): Readonly<Record<string, string>> {
-  const cargoToml = `[package]\nname = "alioth-service-${serviceId}"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n[dependencies]\nactix-web = { workspace = true }\nserde = { workspace = true }\nserde_json = { workspace = true }\ncommon = { path = "${FRAMEWORK_DEP_LEVELS}/Framework/backend/common" }\ncrud = { path = "${FRAMEWORK_DEP_LEVELS}/Framework/backend/crud" }\n\n[lib]\npath = "src/lib.rs"\n`
+  const cargoToml = `[package]\nname = "${namespace.toLowerCase()}-service-${serviceId}"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n[dependencies]\nactix-web = { workspace = true }\nserde = { workspace = true }\nserde_json = { workspace = true }\ncommon = { path = "${FRAMEWORK_DEP_LEVELS}/Framework/backend/common" }\ncrud = { path = "${FRAMEWORK_DEP_LEVELS}/Framework/backend/crud" }\n\n[lib]\npath = "src/lib.rs"\n`
   const libRs = `//! # ${serviceId} — ${namespace} 服务壳\n//!\n//! 壳纯挂载（gated code authoring）：业务路由/DTO 由模型在 workflow 门禁步骤\n//! 内编写并经 cargo check 验收；本壳只注册服务作用域。\n\nuse actix_web::web;\n\n/// 注册 ${serviceId} 服务的路由作用域。\npub fn register_service_routes(cfg: &mut web::ServiceConfig) {\n    cfg.service(web::scope("/service/${serviceId}"));\n}\n`
   return { 'backend/Cargo.toml': cargoToml, 'backend/src/lib.rs': libRs }
 }

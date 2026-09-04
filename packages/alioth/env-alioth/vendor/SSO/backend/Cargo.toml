@@ -1,0 +1,75 @@
+[package]
+name = "gateway-sso"
+version = "0.1.0"
+edition = "2021"
+description = "AliothStudio Single Sign-On Service - Authentication, Authorization, and Audit"
+default-run = "gateway-sso"
+
+[dependencies]
+# Web Framework
+actix-web = "4.13"
+tokio = { workspace = true, features = ["full"] }
+
+# Database
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json"] }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# Utilities
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+time = { workspace = true }
+cookie = "0.18"
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+
+# Cryptography
+argon2 = { workspace = true }
+aes-gcm = { workspace = true }
+base32 = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+md5 = { workspace = true }
+p256 = { workspace = true, features = ["pkcs8", "pem", "alloc"] }
+
+# TOTP and QR Code
+totp-rs = { workspace = true, features = ["otpauth"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+# WebSocket
+actix-web-actors = { workspace = true }
+actix = { workspace = true }
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+jsonwebtoken = { workspace = true }
+
+# HTTP Client for OAuth
+reqwest = { workspace = true, features = ["json", "form"] }
+urlencoding = { workspace = true }
+
+# LDAP
+ldap3 = { workspace = true }
+
+# CORS
+actix-cors = { workspace = true }
+
+# NGAC contract
+ngac-contract = { path = "../../Framework/backend/ngac-contract" }
+
+# Shared infrastructure
+common = { path = "../../Framework/backend/common" }
+
+# SAML 2.0 已移除（remove-saml-sso）：xmlsec/quick-xml/flate2/libxml 依赖链随之下线
+webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
+
+[dev-dependencies]
+actix-rt = { workspace = true }
+sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json", "macros"] }

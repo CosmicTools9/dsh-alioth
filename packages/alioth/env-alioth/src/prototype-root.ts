@@ -112,11 +112,16 @@ export function provisionPrototypeRoot(preProcRoot: string, contentRoot = path.d
   if (existsSync(gatewayManifest)) {
     const deps = gatewayPathDeps(readFileSync(gatewayManifest, 'utf8'))
     for (const dep of deps) {
-      const depManifest = path.join(resolvedContent, 'Gateway', 'backend', dep.relPath)
+      // Canonical content-root location: drop upstream relative depth, place
+      // under Pre-Proc/ (or wherever the tail starts) inside the content root.
+      const depManifest = path.join(resolvedContent, dep.relPath.replace(/^(\.\.\/)+/, ''))
+      // The dep path is relative to Gateway/backend INSIDE the content root;
+      // the vendor copy mirrors the content-root layout from ITS root.
+      const vendorReal = path.join(VENDOR_ROOT, 'Gateway', 'backend', dep.relPath)
       try {
         if (
           readFileSync(depManifest, 'utf8').includes(STUB_MARKER)
-          && existsSync(path.join(VENDOR_ROOT, dep.relPath))
+          && existsSync(vendorReal)
         ) {
           rmSync(path.dirname(depManifest), { recursive: true, force: true })
         }
@@ -139,15 +144,16 @@ export function provisionPrototypeRoot(preProcRoot: string, contentRoot = path.d
   if (existsSync(gatewayManifest)) {
     const deps = gatewayPathDeps(readFileSync(gatewayManifest, 'utf8'))
     for (const dep of deps) {
-      const depManifest = path.join(resolvedContent, 'Gateway', 'backend', dep.relPath)
-      if (existsSync(depManifest)) continue
-      mkdirSync(path.dirname(depManifest), { recursive: true })
-      mkdirSync(path.join(path.dirname(depManifest), 'src'), { recursive: true })
+      // relPath is the CRATE DIR (upstream manifests point at the crate, not
+      // the manifest file): the stub crate lands at <crateDir>/{Cargo.toml, src/lib.rs}.
+      const crateDir = path.join(resolvedContent, dep.relPath.replace(/^(\.\.\/)+/, ''))
+      if (existsSync(path.join(crateDir, 'Cargo.toml'))) continue
+      mkdirSync(path.join(crateDir, 'src'), { recursive: true })
       writeFileSync(
-        depManifest,
+        path.join(crateDir, 'Cargo.toml'),
         `[package]\nname = "${dep.pkgName}"\nversion = "0.1.0"\nedition = "2021"\nlicense = "Apache-2.0"\n\n[lib]\npath = "src/lib.rs"\n\n# ${STUB_MARKER}\n`,
       )
-      writeFileSync(path.join(path.dirname(depManifest), 'src', 'lib.rs'), `//! ${STUB_MARKER}.\n`)
+      writeFileSync(path.join(crateDir, 'src', 'lib.rs'), `//! ${STUB_MARKER}.\n`)
     }
   }
 

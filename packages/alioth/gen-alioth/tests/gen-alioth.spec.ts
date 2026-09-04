@@ -272,7 +272,7 @@ describe('gen-alioth sources scaffold generators', () => {
   it('generates a mount-only service crate shell', () => {
     const files = generateServiceCrate('Demo', 'inventory')
     expect(Object.keys(files).sort()).toEqual(['backend/Cargo.toml', 'backend/src/lib.rs'])
-    expect(files['backend/Cargo.toml']).toContain('name = "alioth-service-inventory"')
+    expect(files['backend/Cargo.toml']).toContain('name = "demo-service-inventory"')
     expect(files['backend/Cargo.toml']).toContain('../../../../../../..//Framework/backend/common')
     expect(files['backend/src/lib.rs']).toContain('pub fn register_service_routes')
     expect(files['backend/src/lib.rs']).toContain('/service/inventory')
