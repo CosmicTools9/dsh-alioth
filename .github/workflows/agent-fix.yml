@@ -60,7 +60,7 @@ jobs:
 
       - name: harness install (frozen) + host build
         working-directory: deepseek-harness
-        run: pnpm install --frozen-lockfile && pnpm run build:lib:host
+        run: pnpm install --frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client && pnpm run build:lib:client
 
       - name: guard — secret present and attempt cap not reached
         id: guard

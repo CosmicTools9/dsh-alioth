@@ -32,7 +32,7 @@ COPY deepseek-harness/packages ./packages
 COPY deepseek-harness/apps ./apps
 COPY deepseek-harness/native ./native
 RUN pnpm install --frozen-lockfile
-RUN pnpm run build:lib:host
+RUN pnpm run build:lib:host && pnpm run build:lib:client
 
 # ── the consumer workspace ──
 WORKDIR /app
