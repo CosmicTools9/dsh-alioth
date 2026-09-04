@@ -327,7 +327,7 @@ describe('web gate (real harness WebServer)', () => {
     const out = ctx.webServer.applyIndexTaps('<html><head></head><body></body></html>')
     expect(out).toContain('alioth_user')
     expect(out).toContain("location.replace('/landing')")
-    expect(out).toContain('/api/sessions.create')
+    expect(out).toContain('/api/session/create')
     // The injected script must be syntactically valid JS — a broken gate
     // silently never redirects (this regressed once on string-concat seams).
     const match = out.match(/<script>([\s\S]*?)<\/script>/)
