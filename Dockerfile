@@ -5,7 +5,13 @@
 # the file-based semantic dictionaries, bun (prototype gates), and the dsh web
 # entry point. Model-visible behavior: `dsh --profile web --patch <bundle>`.
 #
-# Build:  docker build -t dsh-alioth .
+# Harness sourcing (2026-09-04): @deepseek-ai devDependencies resolve to the
+# deepseek-harness source tree (tag dsh-v0.1.3-alpha.1). The build context MUST
+# contain a sibling `deepseek-harness/` checkout (docker.yml provides it; local
+# builds: clone it next to this repo and build from the parent directory, or
+# pass the harness as an additional context).
+#
+# Build (CI layout): docker build -f dsh-alioth/Dockerfile .
 # Run:    docker run --rm -p 3100:3100 -e DEEPSEEK_API_KEY=... -v alioth-data:/data dsh-alioth
 # Self-check (keyless): docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth
 
@@ -15,6 +21,20 @@ FROM node:24.20-slim AS build
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+
+# Host harness source tree first: this workspace's @deepseek-ai devDeps
+# resolve through ../deepseek-harness, and the harness must be built before
+# /app's install links against its lib output.
+WORKDIR /deepseek-harness
+COPY deepseek-harness/package.json deepseek-harness/pnpm-workspace.yaml deepseek-harness/pnpm-lock.yaml deepseek-harness/tsconfig*.json ./
+COPY deepseek-harness/vendor ./vendor
+COPY deepseek-harness/packages ./packages
+COPY deepseek-harness/apps ./apps
+COPY deepseek-harness/native ./native
+RUN pnpm install --frozen-lockfile
+RUN pnpm run build:lib:host
+
+# ── the consumer workspace ──
 WORKDIR /app
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages ./packages
@@ -50,7 +70,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends locales curl ca
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-# Workspace sources (tsx runs .ts directly; strip-only compatible).
+# Workspace sources (tsx runs .ts directly; strip-only compatible). The
+# node_modules tree links @deepseek-ai/* into the harness checkout, so the
+# harness package directories (lib output + manifests, no node_modules —
+# their dependencies resolve through /app/node_modules/.pnpm) must ship too.
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml /app/
 COPY --from=build /app/pnpm-lock.yaml /app/
 COPY --from=build /app/node_modules /app/node_modules
@@ -58,6 +81,11 @@ COPY --from=build /app/packages /app/packages
 COPY --from=build /app/scripts /app/scripts
 COPY --from=build /app/examples /app/examples
 COPY --from=build /app/tsconfig*.json /app/
+COPY --from=build /deepseek-harness/packages /deepseek-harness/packages
+COPY --from=build /deepseek-harness/vendor /deepseek-harness/vendor
+COPY --from=build /deepseek-harness/apps /deepseek-harness/apps
+COPY --from=build /deepseek-harness/native /deepseek-harness/native
+COPY --from=build /deepseek-harness/package.json /deepseek-harness/package.json
 
 # Web GUI port.
 ENV DSH_WEB_PORT=3100 \

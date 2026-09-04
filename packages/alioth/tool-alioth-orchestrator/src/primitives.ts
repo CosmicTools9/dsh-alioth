@@ -18,7 +18,7 @@ import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 // the plugin symlink), so a runtime import would couple plugin loading to
 // the host's dsh-llm version. Type-only keeps loading version-free while
 // staying compile-time honest against the pinned harness devDeps (the value
-// factory is `ToolCallId` since 0.1.2-alpha.1; our pin floor is 0.1.2-alpha.5).
+// factory is `ToolCallId` since 0.1.2-alpha.1; our pin floor is 0.1.3-alpha.1).
 import type { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { AgentPrimitives, StageOutput } from '@dsh-alioth/skill-alioth/agent-machine'
 import type { BuildResult, FlowPlan } from '@dsh-alioth/skill-alioth/agent-contract'
