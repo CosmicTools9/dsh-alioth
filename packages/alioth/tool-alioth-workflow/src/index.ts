@@ -96,7 +96,19 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   function gateContext(namespace: string, app: string): GateContext {
-    return { preProcRoot, variables: { ns: namespace, app } }
+    // Adapter templates use per-track aliases ({service}/{crate}/{block}) for
+    // the run's subject; they all key off the run's {ns}/{app} pair. {crate}
+    // follows the scaffold's crate naming convention.
+    return {
+      preProcRoot,
+      variables: {
+        ns: namespace,
+        app,
+        service: app,
+        block: app,
+        crate: `alioth-service-${app}`,
+      },
+    }
   }
 
   /** Human-facing gate summary: glob form, or program form with contract fields. */

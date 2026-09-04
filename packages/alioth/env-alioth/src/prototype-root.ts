@@ -72,7 +72,7 @@ export function provisionPrototypeRoot(preProcRoot: string, contentRoot = path.d
       + '[workspace]\n'
       + 'resolver = "2"\n'
       + 'members = ["Framework/backend/*"]\n'
-      + 'exclude = ["Pre-Proc/**"]\n'
+      + 'exclude = ["Pre-Proc/**", "Framework/backend/.cargo"]\n'
       + '\n'
       + '[workspace.dependencies]\n'
       + 'tokio = { version = "1", features = ["full"] }\n'
