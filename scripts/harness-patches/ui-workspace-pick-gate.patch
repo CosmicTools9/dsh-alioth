@@ -1,3 +1,44 @@
+diff --git a/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx b/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx
+index d96e513c34..35469a2db5 100644
+--- a/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx
++++ b/packages/client/ui-directory-picker-browse/src/client/DirectoryBrowser.tsx
+@@ -270,6 +270,20 @@ function LevelColumn({ entries, selectedPath, busy, onPick, showHidden, filterPr
+  * @param props - owner-controlled browser props.
+  * @returns the dialog element (null while closed, via Modal).
+  */
++
++/**
++ * AppCreator picker mode (deployment opt-in via localStorage flag set by the
++ * dsh-alioth web gate script): the browser lists apps under a namespace, so
++ * folder-creation and hidden-file controls are meaningless and hidden.
++ */
++function appPickingMode(): boolean {
++  try {
++    return globalThis.localStorage?.getItem('dsh.uiWorkspace.appPicking') === '1'
++  } catch {
++    return false
++  }
++}
++
+ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen, onClose, busy, t }: DirectoryBrowserProps) {
+   // Miller state: the listed level, the selected row in it, and the selected
+   // folder's own listing (the right column; null while nothing is selected).
+@@ -962,6 +976,7 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
+           {error !== null && <div className={css.error} role="alert">{error}</div>}
+         </div>
+         <div className={css.footerBar}>
++          {!appPickingMode() && <>
+           <Button
+             variant="outline"
+             icon={<IconPlusOutline16 size={14} />}
+@@ -990,6 +1005,7 @@ export function DirectoryBrowser({ open, listDirectory, createDirectory, onOpen,
+               * shifts when the pressed state toggles. */}
+             {showHidden && <IconCheckOutline16 size={14} />}
+           </button>
++          </>}
+           <span className={css.footerGap} />
+           <Button variant="outline" className={clsx(css.footerAction)} disabled={parentInert} onClick={onClose}>{t('browser.cancel')}</Button>
+           <Button
 diff --git a/packages/client/ui-workspace/src/client/WorkspacePicker.tsx b/packages/client/ui-workspace/src/client/WorkspacePicker.tsx
 index b1801cc3d9..6868a3b668 100644
 --- a/packages/client/ui-workspace/src/client/WorkspacePicker.tsx

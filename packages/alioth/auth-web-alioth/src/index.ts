@@ -518,6 +518,7 @@ function gateScript(landingPath: string): string {
     // workspace lists (workspace paths carry /Pre-Proc/<namespace>/).
     + `try{var nu=decodeURIComponent((document.cookie.match(/(^|;)\\s*${MARKER_COOKIE}=([^;]*)/)||[])[2]||'');`
     + `localStorage.setItem('dsh.uiWorkspace.pickOnNewSession','1');`
+    + `localStorage.setItem('dsh.uiWorkspace.appPicking','1');`
     + `if(nu){localStorage.setItem('dsh.uiWorkspace.namespaceFilter','U-'+nu)}}catch(e){}`
     // Bind every sessions.create result to the caller's identity: the
     // harness API is in-process — HTTP identity never reaches tool execution;
