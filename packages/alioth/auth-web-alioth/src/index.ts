@@ -527,7 +527,7 @@ function gateScript(landingPath: string): string {
     + `var of=window.fetch;`
     + `window.fetch=function(i){var a=arguments;return of.apply(this,a).then(function(res){`
     + `try{var u=typeof i==='string'?i:(i&&i.url)||'';`
-    + `if(u.indexOf('/api/sessions.create')!==-1&&res.ok){res.clone().json().then(function(b){`
+    + `if(u.indexOf('/api/session/create')!==-1&&res.ok){res.clone().json().then(function(b){`
     + `var p=b&&((b.result&&b.result.ok&&b.result.value)||b.payload||b);var sid=p&&(p.sessionId||p.id);`
     + `if(sid){of('/api/auth/bind',{method:'POST',headers:{'content-type':'application/json'},`
     + `body:JSON.stringify({sessionId:sid})}).catch(function(){});}`
