@@ -33,14 +33,19 @@
       assumptions against returned rows, never a guess.
 
 # AppCreator workspace picker: the SPA 选择工作空间 browses the Alioth app
-# tree instead of the filesystem (namespace → apps → pick an app). Replaces
-# the harness directory-picker-auto row (web profile only; headless trees
-# have no such row and ignore this patch line).
+# tree instead of the filesystem (namespace → apps → pick an app). Patch
+# semantics cannot rename a row (top-level REPLACE requires a matching name),
+# so the harness directory-picker-auto row is disabled and our assembler is
+# inserted under its own id (web profile only; headless trees have no such
+# row — the disabled line is then a no-op skip).
 - id: directory-picker
-  name: '@dsh-alioth/app-picker'
-  config: {}
+  disabled: true
 
 - insert:
+    - id: directory-picker-app
+      name: '@dsh-alioth/app-picker'
+      config: {}
+
     - id: landing-alioth
       name: '@dsh-alioth/landing-alioth'
       config: {}
