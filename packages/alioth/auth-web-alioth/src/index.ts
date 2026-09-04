@@ -787,8 +787,13 @@ async function listVisiblePrototypes(
           await handleAuthApi(req, res)
         },
       }))
+      // Exact only: a prefix here would shadow the harness client-connection
+      // /api route (longest-prefix-wins), swallowing its workspace RPC
+      // namespace (`/api/workspace/create`, `/api/workspace/list`, ...) with
+      // 404s. The Alioth workspace API is exactly GET|POST /api/workspace;
+      // sub-paths belong to the harness.
       webCtx.effect(() => web.register({
-        kind: 'prefix',
+        kind: 'exact',
         path: '/api/workspace',
         handler: async (req, res) => {
           await handleAuthApi(req, res)

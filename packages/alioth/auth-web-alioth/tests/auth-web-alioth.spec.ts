@@ -334,6 +334,27 @@ describe('web gate (real harness WebServer)', () => {
     if (match === null) throw new Error('gate script not injected')
     expect(() => new Function(match[1]!)).not.toThrow()
   })
+
+  it('does not shadow harness workspace RPC sub-paths (/api/workspace/*)', async () => {
+    const login = await fetch(`${webBase()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'carol', password: 'password-789' }),
+    })
+    const { token } = await login.json() as { token: string }
+    const response = await fetch(`${webBase()}/api/workspace/create`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ path: '/tmp/ws' }),
+    })
+    // The Alioth surface registers an EXACT /api/workspace route; a prefix
+    // there would answer sub-paths with its own JSON 404 and starve the
+    // harness client-connection /api route (longest-prefix-wins) of the
+    // workspace RPC namespace. This tree has no harness /api interceptor, so
+    // any non-JSON answer proves the fall-through (WebServer 404), while the
+    // JSON body is the auth surface's signature.
+    expect(response.headers.get('content-type') ?? '').not.toContain('application/json')
+  })
 })
 
 describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
