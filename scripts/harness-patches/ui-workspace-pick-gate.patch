@@ -88,7 +88,7 @@ index a460afe23a..5cded508c1 100644
        ? recentWorkspace(workspace.items, sessions.byId)
        : undefined
 diff --git a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
-index 0ef21ddb82..e51676c660 100644
+index 0ef21ddb82..f632526dec 100644
 --- a/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
 +++ b/packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx
 @@ -10,6 +10,7 @@
@@ -99,7 +99,24 @@ index 0ef21ddb82..e51676c660 100644
  import clsx from 'clsx'
  import {
    Button, IconCloseFill14, IconPersonalizationOutline16,
-@@ -350,14 +351,22 @@ function SessionTree({
+@@ -310,7 +311,15 @@ function SessionTree({
+   )
+   const ungroupedSessionIds = useMemo(() => {
+     const accounted = new Set(workspaces.flatMap(workspace => workspace.sessionIds))
+-    return list.ids.filter((id: SessionId) => list.byId[id] !== undefined && !accounted.has(id))
++    const namespace = workspaceNamespaceFilter()
++    return list.ids.filter((id: SessionId) => {
++      const summary = list.byId[id]
++      if (summary === undefined || accounted.has(id)) return false
++      // Namespace isolation applies to ungrouped sessions too: sessions whose
++      // working directory belongs to another account stay hidden.
++      if (namespace === undefined || summary.cwd === undefined) return true
++      return workspacePathInNamespace(summary.cwd, namespace)
++    })
+   }, [list, workspaces])
+   useEffect(() => {
+     if (list.phase !== 'ready') return
+@@ -350,14 +359,22 @@ function SessionTree({
      () => reconciledSessionOrder(ungroupedSessionIds, sessionOrderByAccount[UNGROUPED_KEY]),
      [sessionOrderByAccount, ungroupedSessionIds],
    )
