@@ -711,7 +711,7 @@ async fn ensure_subject_post(
 ) -> Result<i64, ApiError> {
     if let Some(post_id) = position_id {
         let exists: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM \"isahl\".\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT COUNT(*) > 0 FROM \"isahl\".\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
         )
         .bind(post_id)
         .fetch_one(&mut **tx)

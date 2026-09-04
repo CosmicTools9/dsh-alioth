@@ -3,12 +3,23 @@
 //! 端点（挂载在 /service/isahl-db）：
 //! - 部门 CRUD:   `GET/POST /departments`、`GET/PUT/DELETE /departments/{id}`
 //! - 岗位 CRUD:   `GET/POST /positions`、`GET/PUT/DELETE /positions/{id}`
+//! - 岗位编制范例: `POST /positions/templates`、`POST /positions/templates/{id}/instantiate`
 //! - 部门↔岗位：   `GET /departments/{id}/positions`、`POST /departments/{id}/positions`、`DELETE /departments/{id}/positions/{relId}`
 //!
 //! 零 DDL：复用现有叶表族
 //! - `isahl.zc_id_orga-department`       — 部门（notice=名称, code=编码, comments=备注）
 //! - `isahl.zc_id_subj-position`         — 岗位（notice=名称, code, comments, fk_user, fk_parent, ck_category）
 //! - `isahl.zc_id_subj-org_rr_position`  — 部门↔岗位分配（ref_left=部门, ref_right=岗位）
+//!
+//! D-2a 岗位 tpl 双态（设计/实现分层，tpl_id 同表关联铁律）：
+//! - 编制范例行（模板）= `POST /positions/templates` 建：tpl_id=NULL +
+//!   `_f_='设计' AND _t_='范例'`（类写入契约 §4.3.3 形态 2 显式字面量对）——
+//!   与既有真实岗位行（类列 NULL：legacy 直建 + 实例行）以 `_f_ IS NULL` 判别；
+//! - 实例行 = `instantiate_position_template` 建：tpl_id=范例 id、
+//!   ck_category 继承范例类别、notice=范例名(+序号)；实例即真实岗位。
+//! - 类别校验（B-1 align-cognition-ua-category 同源约束）：ck_category 必须指向
+//!   `zc_id_category` **基表行**（tableoid 过滤），子族字典（zc_id_cate-position 等）
+//!   不派生 `position:{类别code}` UA——岗位读径统一 `_f_ IS NULL` 排除范例行。
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::context::require_auth;
@@ -154,6 +165,45 @@ pub struct UpdatePositionRequest {
     sub_org_ids: Vec<i64>,
 }
 
+/// 岗位编制范例（模板）DTO
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionTemplateDto {
+    #[serde(with = "common::serde_zuid")]
+    id: i64,
+    /// 范例名（notice；实例行 notice 由此派生）
+    name: String,
+    code: String,
+    /// 岗位类别（ck_category 基表行 code）
+    category: String,
+    /// 编制元数据 JSON 文档（comments 列原样：`{"max_heads":…,"note":…}`）
+    comments: String,
+}
+
+/// POST /positions/templates 请求体 — 建岗位编制范例（D-2a 设计态）
+///
+/// 编制元数据（人数上限/任职说明）以 JSON 文档承载于 comments 列——
+/// 文档化契约 `{"max_heads": <i64|null>, "note": "<str|null>"}`（缺省字段省略）。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePositionTemplateRequest {
+    /// 范例名（可选；缺省回退类别 code 作为名——类别即编制语义锚点）
+    #[serde(default)]
+    name: String,
+    /// 业务编号（可选；空 → NULL）
+    #[serde(default)]
+    code: String,
+    /// 必填：岗位类别 code——须为 `zc_id_category` 基表行（B-1 派生同源约束；
+    /// 子族字典如 zc_id_cate-position 不派生 UA，不用于范例）
+    category: String,
+    /// 编制人数上限（可空；并入 comments JSON 文档）
+    #[serde(default)]
+    max_heads: Option<i64>,
+    /// 编制说明/任职规则（可空；并入 comments JSON 文档）
+    #[serde(default)]
+    note: Option<String>,
+}
+
 // ═══════════════════════════════════════════════════════════
 // DTO — 部门↔岗位分配关系
 // ═══════════════════════════════════════════════════════════
@@ -246,10 +296,14 @@ async fn ensure_department_exists(pool: &PgPool, dept_id: i64) -> Result<(), Api
     Ok(())
 }
 
-/// 岗位存在性校验（未删除 → 404）
+/// 真实岗位存在性校验（未删除 → 404）。
+/// D-2a 双态判别：`_f_ IS NULL` = 真实岗位（legacy 直建行 + 实例行）；
+/// 编制范例行（`_f_='设计' AND _t_='范例'`）不视为可引用岗位——
+/// 不得作上级岗位/部门分配/任职挂接目标（防设计态行污染实现态关系）。
 async fn ensure_position_exists(pool: &PgPool, position_id: i64) -> Result<(), ApiError> {
     let exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM isahl.\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*) > 0 FROM isahl.\"zc_id_subj-position\"
+         WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
     )
     .bind(position_id)
     .fetch_one(pool)
@@ -836,8 +890,9 @@ pub async fn list_positions(
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * page_size;
 
+    // _f_ IS NULL：真实岗位视图排除编制范例行（_f_='设计' AND _t_='范例'，D-2a）
     let sql = format!(
-        "{} WHERE p.deleted_at IS NULL ORDER BY p.id LIMIT $1 OFFSET $2",
+        "{} WHERE p.deleted_at IS NULL AND p._f_ IS NULL ORDER BY p.id LIMIT $1 OFFSET $2",
         POSITION_SELECT
     );
     let items: Vec<PositionDto> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
@@ -851,7 +906,7 @@ pub async fn list_positions(
         .collect();
 
     let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE deleted_at IS NULL",
+        "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE deleted_at IS NULL AND _f_ IS NULL",
     )
     .fetch_one(pool.get_ref())
     .await
@@ -942,8 +997,9 @@ pub async fn get_position(
     let id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "positions", id, "read").await?;
 
+    // _f_ IS NULL：岗位详情为真实岗位视图（编制范例行不可经 /positions/{id} 读）
     let sql = format!(
-        "{} WHERE p.id = $1 AND p.deleted_at IS NULL",
+        "{} WHERE p.id = $1 AND p.deleted_at IS NULL AND p._f_ IS NULL",
         POSITION_SELECT
     );
     let row: Option<PositionRow> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
@@ -997,7 +1053,7 @@ pub async fn update_position(
                fk_user = COALESCE($5, fk_user),
                fk_parent = COALESCE($6, fk_parent),
                ck_category = COALESCE($7, ck_category)
-           WHERE id = $1 AND deleted_at IS NULL
+           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL
            RETURNING id, notice::text, code, comments, fk_user, fk_parent AS parent_id,
                      COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = isahl."zc_id_subj-position".ck_category AND c.deleted_at IS NULL), ck_category::text, ''),
                      NULL::text AS user_name"#,
@@ -1050,10 +1106,11 @@ pub async fn delete_position(
     // post_rr_view / post_rr_employee，alive 行；ref 方向见各 UPDATE WHERE）
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
 
+    // _f_ IS NULL：真实岗位视图；编制范例行删除（含实例守卫）暂无删除端点
     let deleted = sqlx::query(
         r#"UPDATE isahl."zc_id_subj-position"
            SET deleted_at = NOW()
-           WHERE id = $1 AND deleted_at IS NULL"#,
+           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL"#,
     )
     .bind(id)
     .execute(&mut *tx)
@@ -1115,6 +1172,192 @@ pub async fn delete_position(
     tx.commit().await.map_err(ApiError::from_sqlx)?;
 
     Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
+}
+
+// ═══════════════════════════════════════════════════════════
+// 岗位编制范例（D-2a 岗位 tpl 双态：建范例 = 设计态，实例化 = 落岗）
+// ═══════════════════════════════════════════════════════════
+
+/// 编制元数据 JSON 文档构建（comments 列承载；缺省字段省略，全缺 → "{}"）。
+/// 文档化契约（D-2a）：`{"max_heads": <i64|null>, "note": "<str|null>"}`——
+/// 读侧（方案发布/派生器）按此解析；本文件不读回，comments 对岗位读径保持不透明文本。
+fn headcount_comments_doc(max_heads: Option<i64>, note: Option<&str>) -> String {
+    let mut doc = serde_json::Map::new();
+    if let Some(n) = max_heads {
+        doc.insert("max_heads".to_string(), serde_json::json!(n));
+    }
+    if let Some(note) = note.map(str::trim).filter(|s| !s.is_empty()) {
+        doc.insert("note".to_string(), serde_json::json!(note));
+    }
+    if doc.is_empty() {
+        return "{}".to_string();
+    }
+    serde_json::to_string(&serde_json::Value::Object(doc))
+        .unwrap_or_else(|_| "{}".to_string())
+}
+
+/// 岗位范例类别校验（D-2a，B-1 align-cognition-ua-category 同源约束）：
+/// code 必须命中 `zc_id_category` **基表行**（tableoid 过滤）——认知派生
+/// `position:{类别code}` UA 只认基表行；子族字典（zc_id_cate-position 等）与
+/// 空 code 一律 400（legacy create_position 的 zc_id_cate-position 字典路径
+/// 不用于设计态范例）。
+async fn resolve_template_category_id(pool: &PgPool, category: &str) -> Result<i64, ApiError> {
+    let category = category.trim();
+    if category.is_empty() {
+        return Err(ApiError::BadRequest(
+            "category 不能为空：岗位范例必须绑定岗位类别（zc_id_category 基表行）".into(),
+        ));
+    }
+    let id: Option<i64> = sqlx::query_scalar(
+        r#"SELECT c.id FROM isahl.zc_id_category c
+           WHERE c.code = $1 AND c.deleted_at IS NULL
+             AND c.tableoid = 'isahl.zc_id_category'::regclass"#,
+    )
+    .bind(category)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    match id {
+        Some(id) => Ok(id),
+        None => Err(ApiError::BadRequest(format!(
+            "未知岗位类别 code: '{}'（须为 zc_id_category 基表行，子族字典不派生）",
+            category
+        ))),
+    }
+}
+
+/// POST /positions/templates — 建岗位编制范例（D-2a 设计态）
+///
+/// 落 `zc_id_subj-position` 范例行：tpl_id=NULL、`_f_='设计' AND _t_='范例'`
+/// （tpl_id 同表关联铁律；类写入契约 §4.3.3 形态 2 显式字面量对——本表无
+/// LifecycleBizTemplate 触发器，列值即落库值）。类别必填（基表行校验见
+/// [`resolve_template_category_id`]）；编制元数据存 comments JSON 文档
+/// （见 [`headcount_comments_doc`]）。实例化经
+/// `POST /positions/templates/{id}/instantiate`，不在此落关系。
+pub async fn create_position_template(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    body: web::Json<CreatePositionTemplateRequest>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = require_auth(&req)?;
+    require_resource_access(pool.get_ref(), user_id, "positions", 0, "create").await?;
+
+    let category = body.category.trim().to_string();
+    let category_id = resolve_template_category_id(pool.get_ref(), &category).await?;
+    // notice 可选：缺省以类别 code 为名（类别 = 编制语义锚点；范例名供实例 notice 派生）
+    let name = if body.name.trim().is_empty() {
+        category.clone()
+    } else {
+        body.name.clone()
+    };
+    validate_name(&name)?;
+    let code = if body.code.trim().is_empty() {
+        None
+    } else {
+        Some(body.code.trim().to_string())
+    };
+    let comments = headcount_comments_doc(body.max_heads, body.note.as_deref());
+
+    let id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_subj-position"
+             (notice, code, comments, ck_category, tpl_id, _f_, _t_)
+           VALUES ($1, $2, $3, $4, NULL, '设计', '范例')
+           RETURNING id"#,
+    )
+    .bind(&name)
+    .bind(code)
+    .bind(&comments)
+    .bind(category_id)
+    .fetch_one(pool.get_ref())
+    .await
+    .map_err(ApiError::from_sqlx)?;
+
+    Ok(HttpResponse::Created().json(ApiResponse::success(PositionTemplateDto {
+        id,
+        name,
+        code: body.code.trim().to_string(),
+        category,
+        comments,
+    })))
+}
+
+/// POST /positions/templates/{id}/instantiate — 岗位范例实例化落岗（D-2a 实现态）
+///
+/// 校验：范例行在册（未删除、`_f_='设计' AND _t_='范例'`、tpl_id NULL）→ 404。
+/// 落实例行：`tpl_id`=范例 id（tpl_id 同表关联铁律）、`ck_category` 继承范例类别、
+/// `notice`=范例名（同范例已有在册实例时追加 `-{序号}` 消歧）。实例行类列 NULL，
+/// 即真实岗位（legacy 直建同判）——后续经部门分配/任职挂接端点接线
+/// （B-2 heal 于分配/任职时触发，实例化本身无关系可 heal）。
+pub async fn instantiate_position_template(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    path: web::Path<i64>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = require_auth(&req)?;
+    require_resource_access(pool.get_ref(), user_id, "positions", 0, "create").await?;
+    let tpl_id = path.into_inner();
+
+    let tpl: Option<(String, Option<i64>)> = sqlx::query_as(
+        r#"SELECT notice::text, ck_category FROM isahl."zc_id_subj-position"
+           WHERE id = $1 AND deleted_at IS NULL AND _f_ = '设计' AND _t_ = '范例'
+             AND tpl_id IS NULL"#,
+    )
+    .bind(tpl_id)
+    .fetch_optional(pool.get_ref())
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    let Some((tpl_name, category_id)) = tpl else {
+        return Err(ApiError::NotFound(format!(
+            "Position template not found: {}",
+            tpl_id
+        )));
+    };
+    let Some(category_id) = category_id else {
+        // 建范例强制类别非空；NULL 仅脏数据可达——fail-closed 拒绝落岗
+        return Err(ApiError::BadRequest(format!(
+            "Position template {} 缺类别（ck_category NULL），不可实例化",
+            tpl_id
+        )));
+    };
+
+    // notice = 范例名；同范例已有在册实例 → 追加序号消歧（首实例不带序号）
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE tpl_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(tpl_id)
+    .fetch_one(pool.get_ref())
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    let notice = if live == 0 {
+        tpl_name
+    } else {
+        format!("{}-{}", tpl_name, live + 1)
+    };
+
+    let instance_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_subj-position" (notice, comments, ck_category, tpl_id)
+           VALUES ($1, '', $2, $3)
+           RETURNING id"#,
+    )
+    .bind(&notice)
+    .bind(category_id)
+    .bind(tpl_id)
+    .fetch_one(pool.get_ref())
+    .await
+    .map_err(ApiError::from_sqlx)?;
+
+    // 读回完整实例 DTO（实例类列 NULL → _f_ IS NULL 视图可见）
+    let sql = format!(
+        "{} WHERE p.id = $1 AND p.deleted_at IS NULL",
+        POSITION_SELECT
+    );
+    let full: PositionRow = sqlx::query_as(AssertSqlSafe(sql.as_str()))
+        .bind(instance_id)
+        .fetch_one(pool.get_ref())
+        .await
+        .map_err(ApiError::from_sqlx)?;
+
+    Ok(HttpResponse::Created().json(ApiResponse::success(position_row_to_dto(full))))
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2018,6 +2261,14 @@ pub fn register(cfg: &mut actix_web::web::ServiceConfig) {
         web::resource("/positions")
             .route(web::get().to(list_positions))
             .route(web::post().to(create_position)),
+    )
+    .service(
+        web::resource("/positions/templates")
+            .route(web::post().to(create_position_template)),
+    )
+    .service(
+        web::resource("/positions/templates/{id}/instantiate")
+            .route(web::post().to(instantiate_position_template)),
     )
     .service(
         web::resource("/positions/{id}")

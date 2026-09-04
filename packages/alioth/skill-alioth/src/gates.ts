@@ -9,7 +9,8 @@
  * @module @dsh-alioth/skill-alioth/gates
  */
 
-import { access } from 'node:fs/promises'
+import { globSync } from 'node:fs'
+import { access as accessPath } from 'node:fs/promises'
 import path from 'node:path'
 import type { StepGate } from './adapter.ts'
 
@@ -94,8 +95,16 @@ async function globExists(glob: string, context: GateContext): Promise<{ ok: boo
   if (!withinRoot(candidate, context.preProcRoot)) {
     return { ok: false, detail: `glob escapes preProcRoot: ${resolved}` }
   }
+  // Glob patterns (a-v*.html) match against the artifact tree; concrete
+  // paths stay a plain existence check.
+  if (/[*?[]/.test(candidate)) {
+    const matches = globSync(candidate)
+    return matches.length > 0
+      ? { ok: true, detail: `matches: ${resolved} (${matches.length} file${matches.length === 1 ? '' : 's'})` }
+      : { ok: false, detail: `no match for glob: ${resolved}` }
+  }
   try {
-    await access(candidate)
+    await accessPath(candidate)
     return { ok: true, detail: `exists: ${resolved}` }
   } catch {
     return { ok: false, detail: `missing: ${resolved}` }
@@ -129,7 +138,11 @@ export async function checkGate(
       detail: `program gate declared (${resolved}) — not executed in this environment`,
     }
   }
-  const result = await runProgram(gate.program, [...gate.args], gate)
+  // Template resolution applies to program gates too: adapter args carry
+  // `{ns}`/`{app}` placeholders that must resolve before invocation.
+  const program = resolveTemplate(gate.program, context)
+  const args = gate.args.map(arg => resolveTemplate(arg, context))
+  const result = await runProgram(program, args, gate)
   if (result.exitCode === null) {
     return {
       gate,

@@ -71,6 +71,15 @@ function sha256(file: string): string {
  * recorded local patch is never reported as drift.
  */
 function withLocalPatches(relative: string, content: string): string {
+  if (relative === 'scripts/cargo-check.sh' && !content.includes('CARGO_WORKSPACE_DIR')) {
+    // The service crates live in the namespace workspace
+    // (Pre-Proc/{ns}/Cargo.toml), not at the content root; deployments name
+    // it via CARGO_WORKSPACE_DIR so `-p <crate>` resolves.
+    return content.replace(
+      'cd "$PROJECT_ROOT"',
+      'cd "${CARGO_WORKSPACE_DIR:-$PROJECT_ROOT}"',
+    )
+  }
   if (relative === 'scripts/prototype-tool.js' && !content.includes('PROTOTYPE_TOOL_ROOT')) {
     return content.replace(
       "const ROOT = resolve(import.meta.dirname, '..');",

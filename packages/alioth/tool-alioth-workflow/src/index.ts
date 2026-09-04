@@ -347,7 +347,15 @@ export function apply(ctx: Context, config: Config): void {
       }
       const context = gateContext(args.namespace, args.app)
       const { contentRoot: gateCwd } = ensureContentRoot()
-      const runner = createProgramRunner({ cwd: gateCwd, env: { PROTOTYPE_TOOL_ROOT: gateCwd } })
+      const runner = createProgramRunner({
+        cwd: gateCwd,
+        env: {
+          PROTOTYPE_TOOL_ROOT: gateCwd,
+          // Service/DTO gates run against the namespace workspace
+          // (Pre-Proc/{ns}/Cargo.toml) where the service crates are members.
+          CARGO_WORKSPACE_DIR: path.join(preProcRoot, args.namespace),
+        },
+      })
       const results = await checkStepGates(current.step.gates, context, runner)
       const failed = results.filter(result => result.status === 'fail')
       if (failed.length > 0) {

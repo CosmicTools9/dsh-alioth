@@ -32,7 +32,7 @@ async fn list_positions<G: NgacGuard + 'static>(
     let _guard = G::default();
     let rows: Vec<(i64, String)> = sqlx::query_as(
         r#"SELECT id, notice AS name FROM isahl."zc_id_subj-position"
-           WHERE deleted_at IS NULL
+           WHERE deleted_at IS NULL AND _f_ IS NULL
            ORDER BY notice, id"#,
     )
     .fetch_all(pool.get_ref())

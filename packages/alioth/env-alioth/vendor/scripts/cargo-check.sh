@@ -103,5 +103,5 @@ fi
 export CARGO_TARGET_DIR="$TARGET"
 mkdir -p "$CARGO_TARGET_DIR"
 
-cd "$PROJECT_ROOT"
+cd "${CARGO_WORKSPACE_DIR:-$PROJECT_ROOT}"
 exec cargo check "$@"

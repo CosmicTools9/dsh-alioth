@@ -176,7 +176,7 @@ pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result
                 ON c.id = sp.ck_category
                AND c.tableoid = 'isahl.zc_id_category'::regclass
                AND c.deleted_at IS NULL
-            WHERE sp.deleted_at IS NULL
+            WHERE sp.deleted_at IS NULL AND sp._f_ IS NULL
               AND c.code IS NOT NULL AND c.code <> ''
         ),
         legacy_ua AS (
@@ -194,7 +194,7 @@ pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result
                    'position:' || c.code AS dst_o_name
             FROM legacy_ua lug
             JOIN isahl."zc_id_subj-position" sp
-                ON sp.code = lug.inst_code AND sp.deleted_at IS NULL
+                ON sp.code = lug.inst_code AND sp.deleted_at IS NULL AND sp._f_ IS NULL
             JOIN isahl.zc_id_category c
                 ON c.id = sp.ck_category
                AND c.tableoid = 'isahl.zc_id_category'::regclass

@@ -493,7 +493,7 @@ impl ApproverRepository {
                     "SELECT id, notice AS name, fk_user, ck_category, comments AS description, \
                      created_at, updated_at, deleted_at \
                      FROM isahl.\"zc_id_subj-position\" \
-                     WHERE deleted_at IS NULL AND id = ANY($1::BIGINT[]) \
+                     WHERE deleted_at IS NULL AND _f_ IS NULL AND id = ANY($1::BIGINT[]) \
                      ORDER BY id DESC LIMIT $2 OFFSET $3",
                 )
                 .bind(ids.to_vec())
@@ -518,7 +518,9 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
     for ApproverRepository
 {
     async fn list(&self, query: &ListQuery) -> Result<PaginatedResponse<Approver>, AliothError> {
+        // D-2a：_f_ IS NULL 排除编制范例行（真实岗位视图，同 identity-org 岗位读径）
         QueryBuilder::<Approver>::from_list_query(&self.pool, query)
+            .raw_filter("_f_ IS NULL".into())
             .fetch(query.page, query.page_size)
             .await
     }
@@ -527,7 +529,7 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
         sqlx::query_as::<_, Approver>(
             "SELECT id, notice AS name, fk_user, ck_category, comments AS description, \
              created_at, updated_at, deleted_at \
-             FROM isahl.\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL",
+             FROM isahl.\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -576,7 +578,7 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
         sqlx::query_as::<_, Approver>(
             r#"UPDATE isahl."zc_id_subj-position"
                SET notice = $1, ck_category = $2, comments = $3, updated_by_id = $4
-               WHERE id = $5 AND deleted_at IS NULL
+               WHERE id = $5 AND deleted_at IS NULL AND _f_ IS NULL
                RETURNING id, notice AS name, fk_user, ck_category, comments AS description,
                          created_at, updated_at, deleted_at"#,
         )
@@ -593,7 +595,7 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
         sqlx::query(
             "UPDATE isahl.\"zc_id_subj-position\" SET deleted_at = NOW(), deleted_by_id = $1 \
-             WHERE id = $2 AND deleted_at IS NULL",
+             WHERE id = $2 AND deleted_at IS NULL AND _f_ IS NULL",
         )
         .bind(user_id)
         .bind(id)
