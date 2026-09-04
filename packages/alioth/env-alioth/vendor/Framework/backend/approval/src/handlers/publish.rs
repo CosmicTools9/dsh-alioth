@@ -1176,17 +1176,26 @@ pub(crate) async fn materialize_graph(
         // advance 执行期物化为 实现·实例，tpl_id 回挂本范例行）
         let op_id: i64 = match node_type {
             // vote 复用 oper-approve 实例链路（我的审批待办可见；投票人经 rr_approve 桥）
-            "approval" | "approve" | "oper-approve" | "vote" => sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_oper-approve"
-                       (notice, code, created_by_id, _f_, _t_)
-                       VALUES ($1, $2, $3, '实现', '范例') RETURNING id"#,
-            )
-            .bind(label)
-            .bind(&graph_id)
-            .bind(user_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| ApiError::Database(format!("node operation[{}]: {}", idx, e)))?,
+            "approval" | "approve" | "oper-approve" | "vote" => {
+                // 备选阈值随范例行物化（2026-09-03）：operation.meta 为运行时读取载体
+                // （resolve_node_assign 备选积压判定）；无配置 → NULL（缺省 10）
+                let op_meta: Option<serde_json::Value> = node
+                    .get("backupThreshold")
+                    .and_then(|v| v.as_i64())
+                    .map(|n| serde_json::json!({ "backupThreshold": n }));
+                sqlx::query_scalar::<_, i64>(
+                    r#"INSERT INTO isahl."zc_id_oper-approve"
+                           (notice, code, created_by_id, _f_, _t_, meta)
+                           VALUES ($1, $2, $3, '实现', '范例', $4) RETURNING id"#,
+                )
+                .bind(label)
+                .bind(&graph_id)
+                .bind(user_id)
+                .bind(op_meta)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| ApiError::Database(format!("node operation[{}]: {}", idx, e)))?
+            }
             "action" => sqlx::query_scalar(
                 r#"INSERT INTO isahl."zc_id_oper-action"
                        (notice, code, created_by_id, _f_, _t_)

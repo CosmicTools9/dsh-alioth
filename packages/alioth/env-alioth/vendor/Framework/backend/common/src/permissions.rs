@@ -1,40 +1,10 @@
 use crate::AliothError;
+use crate::ngac_org::COGNITION_CTE;
 use sqlx::{AssertSqlSafe, PgPool};
 
-/// 认知链推导 CTE 同源副本（NGAC_SPEC §2.2.3 消费同源义务）——
-/// 唯一实现 = `SSO/backend/src/ngac/pip.rs::COGNITION_CTE`；本副本 MUST 保持同构，
-/// 推导链：user → empl-agent/empl-natural(fk_user) → post_rr_employee → position（+view 标签），
-/// 全部边 deleted_at IS NULL；`$1` = fk_user。
-const COGNITION_UA_CTE: &str = r#"my_positions AS (
-            SELECT sp.id, sp.code
-            FROM isahl."zc_id_empl-agent" ea
-            JOIN isahl."zc_id_subj-post_rr_employee" spre
-                ON spre.ref_right = ea.id AND spre.deleted_at IS NULL
-            JOIN isahl."zc_id_subj-position" sp
-                ON sp.id = spre.ref_left AND sp.deleted_at IS NULL
-            WHERE ea.fk_user = $1 AND ea.deleted_at IS NULL
-            UNION
-            SELECT sp.id, sp.code
-            FROM isahl."zc_id_empl-natural" en
-            JOIN isahl."zc_id_subj-post_rr_employee" spre
-                ON spre.ref_right = en.id AND spre.deleted_at IS NULL
-            JOIN isahl."zc_id_subj-position" sp
-                ON sp.id = spre.ref_left AND sp.deleted_at IS NULL
-            WHERE en.fk_user = $1 AND en.deleted_at IS NULL
-        ),
-        cognition_ua_names AS (
-            SELECT 'position:' || mp.code AS o_name
-            FROM my_positions mp
-            WHERE mp.code IS NOT NULL AND mp.code <> ''
-            UNION
-            SELECT 'view:' || vt.code
-            FROM my_positions mp
-            JOIN isahl."zc_id_relation-post_view_r_tags" r
-                ON r.ref_left = mp.id AND r.deleted_at IS NULL
-            JOIN isahl."zc_id_tags-post_view" vt
-                ON vt.id = r.ref_right AND vt.deleted_at IS NULL
-            WHERE vt.code IS NOT NULL AND vt.code <> ''
-        )"#;
+// 认知链推导 CTE 消费方（NGAC_SPEC §2.2.3 消费同源义务）：推导链唯一实现 =
+// `crate::ngac_org::COGNITION_CTE`（B-0 consolidate-ngac-cognition-source 收编），
+// 本模块引用常量拼装，禁止复制 SQL。`$1` = fk_user。
 
 /// 认知派生 UA 行 id 并入 user_attrs（读侧派生——UA 行由 SSO PDP auto-ensure 物化，
 /// 供管理面 association；本决策仅 JOIN 已物化行；未物化 = 无关联 = fail-closed）。
@@ -164,7 +134,7 @@ pub async fn require_resource_access(
               AND EXISTS(SELECT 1 FROM isahl_auth.ngac_access_right ar
                          WHERE ar.id = ANY(a.ak_access_rights) AND ar.o_name = $4)
         ) as permitted",
-        cog_cte = COGNITION_UA_CTE,
+        cog_cte = COGNITION_CTE,
         owner = owner_cte,
         cog_union = COGNITION_UA_UNION,
     );

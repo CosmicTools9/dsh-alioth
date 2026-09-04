@@ -31,6 +31,8 @@ pub const SLA_PLAN_CODE: &str = "approval-sla-timeout";
 const REJECT_NOTICE: &str = "审批驳回";
 /// 自动驳回原因（写入 opinion 字段，留痕区分人工/自动）
 const AUTO_REJECT_REASON: &str = "SLA 超时自动驳回";
+/// 升级转交留痕 notice（防无限转交判据 + 审计可查）
+const ESCALATE_NOTICE: &str = "审批升级";
 
 /// SLA 超时自动驳回 handler（framework-scheduler 注册）
 pub struct ApprovalSlaHandler {
@@ -60,19 +62,36 @@ impl ApprovalSlaHandler {
     }
 }
 
-/// SLA 超时升级通知（fix-approval-engine-gap-closure D6 实装）：只投递**上级岗位**
-/// 成员——升级目标读实例节点载体 `timeline.escalateTo`（publish 从设计器人工节点
-/// 配置物化），成员经收敛解析（`common::ngac_org::resolve_member_user_ids`：
-/// 指派 UA ∪ 岗位直管/任职持有者——认知派生读侧并入，NGAC_SPEC §2.2.3 同源）
-/// 逐人投递；admin UA 是平台管理身份，不作为业务升级目标。
-/// 未配置 escalateTo 或目标岗位无活跃成员 → 不投递，仅 warn 留痕（无目标即静默）。
-/// 投递失败仅 warn——升级通知是增强投递，不是状态契约。
-async fn escalate_timeout(
+/// SLA 超时升级转交（2026-09-03 裁决：SLA 超时 → 升级岗位接管续审）：
+/// - 目标 = 节点载体 timeline.escalateTo 岗位（publish 由 roleEscalate 物化岗位名；旧 escalateTo 读兼容）
+/// - 成员经 common::ngac_org::resolve_member_user_ids 收敛解析（指派 UA ∪ 岗位直管/任职持有者）
+/// - 转交 = 实例 fk_operator 重指派为首位活跃成员 + created_at 刷新（SLA 续期）+ opinion 留痕
+///   （notice='审批升级'）+ audit（sla.escalate_transfer）+ 成员通知（messaging 注入时）
+/// - 未配置升级岗位 / 无活跃成员 / 实例已升级转交过一次（防无限转交）→ Ok(false)，调用方走自动驳回
+async fn try_escalate_transfer(
     pool: &PgPool,
-    messaging: &Arc<dyn common::messaging::MessagingService>,
+    messaging: Option<&Arc<dyn common::messaging::MessagingService>>,
     instance_id: i64,
     node_id: i64,
-) {
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let escalated_before: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS (
+               SELECT 1 FROM isahl."zc_id_deta-opinion"
+               WHERE fk_list = $1 AND notice = $2 AND deleted_at IS NULL
+           )"#,
+    )
+    .bind(instance_id)
+    .bind(ESCALATE_NOTICE)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+    if escalated_before {
+        common::telemetry::warn!(
+            "SLA 超时实例 {}：已升级转交过一次，二轮超时按自动驳回处理",
+            instance_id
+        );
+        return Ok(false);
+    }
     let escalate_role: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         r#"SELECT NULLIF(ea.timeline->>'escalateTo', '')
              FROM isahl."zc_id_even-approve" ea
@@ -82,43 +101,83 @@ async fn escalate_timeout(
     .bind(node_id)
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten()
+    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
     .flatten()
     .filter(|r| !r.trim().is_empty());
     let Some(role) = escalate_role else {
-        common::telemetry::warn!(
-            "SLA 超时实例 {}：节点 {} 未配置 escalateTo 升级岗位，跳过升级通知（仅留痕）",
-            instance_id,
-            node_id
-        );
-        return;
+        return Ok(false);
     };
-    // 升级岗位成员：收敛解析（指派 UA ∪ 岗位直管/任职持有者——common::ngac_org
-    // 认知派生读侧并入，NGAC_SPEC §2.2.3 同源）
-    let members: Vec<i64> = match pool.acquire().await {
-        Ok(mut conn) => common::ngac_org::resolve_member_user_ids(&mut conn, &role, 200).await,
-        Err(_) => Vec::new(),
-    };
-    if members.is_empty() {
-        common::telemetry::warn!(
-            "SLA 超时实例 {}：升级岗位 '{}' 无活跃成员，跳过升级通知（仅留痕）",
-            instance_id,
-            role
-        );
-        return;
-    }
-    let title = "审批超时升级";
-    let label = instance_title(pool, instance_id)
+    {
+        let mut conn = pool
+            .acquire()
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let members: Vec<i64> =
+            common::ngac_org::resolve_member_user_ids(&mut conn, &role, 200).await;
+        drop(conn);
+        if members.is_empty() {
+            common::telemetry::warn!(
+                "SLA 超时实例 {}：升级岗位 '{}' 无活跃成员，按自动驳回处理",
+                instance_id,
+                role
+            );
+            return Ok(false);
+        }
+        let takeover = members[0];
+        // 转交：处理人重指派 + SLA 续期（created_at 为 SLA 时限基准）
+        sqlx::query(
+            r#"UPDATE isahl."zc_id_oper-approve"
+               SET fk_operator = $2, created_at = NOW(), updated_at = NOW()
+               WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(instance_id)
+        .bind(takeover)
+        .execute(pool)
         .await
-        .unwrap_or_else(|| format!("审批实例 {}", instance_id));
-    let content = format!(
-        "审批实例「{}」已超 SLA 未处理，按配置升级至 {} 岗位，请跟进处理（节点 {}）",
-        label, role, node_id
-    );
-    for uid in members {
-        notify_user(messaging, uid, title, &content).await;
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let date_anchor = crate::handlers::approve_reject::today_date_anchor(pool)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        sqlx::query(
+            r#"INSERT INTO isahl."zc_id_deta-opinion"
+               (id, notice, opinion, fk_list, fk_biller, qk_date, created_at)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW())"#,
+        )
+        .bind(ESCALATE_NOTICE)
+        .bind(format!(
+            "SLA 超时升级转交至岗位 {}（接管成员 {}）",
+            role, takeover
+        ))
+        .bind(instance_id)
+        .bind(SYSTEM_USER_ID)
+        .bind(date_anchor)
+        .execute(pool)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        let _ = record_audit_event(
+            pool,
+            SYSTEM_USER_ID,
+            "system@aliothstudio.local",
+            &format!("approval_instances:{}", instance_id),
+            "sla.escalate_transfer",
+            &Decision::Permit,
+        )
+        .await;
+        if let Some(m) = messaging {
+            let title = "审批超时升级";
+            let label = instance_title(pool, instance_id)
+                .await
+                .unwrap_or_else(|| format!("审批实例 {}", instance_id));
+            let content = format!(
+                "审批实例「{}」已超 SLA，升级至 {} 岗位——已转交跟进处理（节点 {}）",
+                label, role, node_id
+            );
+            for uid in &members {
+                notify_user(m, *uid, title, &content).await;
+            }
+        }
     }
+    Ok(true)
 }
 
 #[async_trait]
@@ -213,6 +272,12 @@ pub async fn check_and_reject_with(
             continue;
         }
 
+        // SLA 超时升级转交（2026-09-03 裁决）：升级岗位接管续审（首轮）；
+        // 未配置升级岗位/无活跃成员/已升级过一次 → 走下方自动驳回
+        if try_escalate_transfer(pool, messaging, *id, fk.unwrap_or(0)).await? {
+            continue;
+        }
+
         // 时间锚（flow-process-continuity 规约）：SLA 驳回意见写当日标量；解析失败仅跳过该实例
         let date_anchor = match crate::handlers::approve_reject::today_date_anchor(pool).await {
             Ok(v) => v,
@@ -273,11 +338,6 @@ pub async fn check_and_reject_with(
                             id,
                             e
                         );
-                    }
-
-                    // D7 升级通知：admin 成员可见性（失败仅 warn，不阻断）
-                    if let Some(m) = messaging {
-                        escalate_timeout(pool, m, *id, fk.unwrap_or(0)).await;
                     }
                 }
             }

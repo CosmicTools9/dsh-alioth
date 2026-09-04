@@ -573,6 +573,9 @@ pub async fn create_department(
         .await?;
     }
 
+    // NGAC B-2：部门行 OA + 子集 OA 树链 ensure（事务外幂等 heal，失败仅 warn）
+    crate::ngac_org_ensure::heal_department_scope(pool.get_ref(), row.0).await;
+
     Ok(
         HttpResponse::Created().json(ApiResponse::success(DepartmentDto {
             id: row.0,
@@ -923,6 +926,9 @@ pub async fn create_position(
 
     tx.commit().await.map_err(ApiError::from_sqlx)?;
 
+    // NGAC B-2：岗位行 OA ensure（事务外幂等 heal，失败仅 warn 不阻断主写）
+    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), base.0).await;
+
     Ok(HttpResponse::Created().json(ApiResponse::success(position_row_to_dto(full))))
 }
 
@@ -1252,6 +1258,9 @@ pub async fn assign_position_to_department(
         }
     };
 
+    // NGAC B-2：岗位新增在任分配部门 → 刷新岗位 OA ancestor 域闭包（幂等 heal）
+    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), position_id).await;
+
     Ok(
         HttpResponse::Created().json(ApiResponse::success(DeptPositionRelationDto {
             id: row.0,
@@ -1272,21 +1281,26 @@ pub async fn remove_position_from_department(
     let (dept_id, rel_id) = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "departments", dept_id, "update").await?;
 
-    let deleted = sqlx::query(
+    // 软删并取回被移除岗位（ref_right）——供事务外 NGAC heal 收敛 OA ancestor 域闭包
+    let deleted: Option<(i64,)> = sqlx::query_as(
         r#"UPDATE isahl."zc_id_subj-org_rr_position"
            SET deleted_at = NOW()
-           WHERE id = $1 AND ref_left = $2 AND deleted_at IS NULL"#,
+           WHERE id = $1 AND ref_left = $2 AND deleted_at IS NULL
+           RETURNING ref_right"#,
     )
     .bind(rel_id)
     .bind(dept_id)
-    .execute(pool.get_ref())
+    .fetch_optional(pool.get_ref())
     .await
-    .map_err(ApiError::from_sqlx)?
-    .rows_affected();
+    .map_err(ApiError::from_sqlx)?;
 
-    if deleted == 0 {
+    let Some((position_id,)) = deleted else {
         return Err(ApiError::NotFound("Relation not found".into()));
-    }
+    };
+
+    // NGAC B-2：岗位移除在任分配部门 → 刷新岗位 OA ancestor 域闭包（事务外幂等 heal，失败仅 warn）
+    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), position_id).await;
+
     Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
 }
 
@@ -1548,6 +1562,9 @@ pub async fn add_org_tree_child(
         .map_err(ApiError::from_sqlx)?,
     };
 
+    // NGAC B-2：新 org 节点 → 部门子集 OA 树链 ensure（事务外幂等 heal，失败仅 warn）
+    crate::ngac_org_ensure::heal_department_scope(pool.get_ref(), child_id).await;
+
     Ok(
         HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
             "id": row.0.to_string(),
@@ -1712,6 +1729,9 @@ pub async fn add_position_employee(
         .await
         .map_err(ApiError::from_sqlx)?,
     };
+
+    // NGAC B-2：任职写端后岗位行 OA/层级收敛（事务外幂等 heal，失败仅 warn）
+    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), position_id).await;
 
     Ok(
         HttpResponse::Created().json(ApiResponse::success(serde_json::json!({

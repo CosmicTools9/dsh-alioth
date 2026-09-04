@@ -97,7 +97,7 @@ async fn seed_voters(pool: &PgPool, tag: &str) {
     .unwrap();
     sqlx::query(
         r#"DELETE FROM isahl."zc_id_subj-position"
-           WHERE notice = $1 OR notice = $2"#,
+           WHERE code = $1 OR code = $2"#,
     )
     .bind(&code_a)
     .bind(&code_b)
@@ -106,13 +106,16 @@ async fn seed_voters(pool: &PgPool, tag: &str) {
     .unwrap();
     for (uid, code) in [(u1, code_a), (u2, code_b)] {
         ensure_role_member(pool, &role, uid).await.unwrap();
+        // 2026-09-03 语义接线：节点 role = 岗位名（position.notice 直配）——两投票人
+        // 岗位 notice 同置 role 名（code 保持唯一），resolve 按 notice 命中双岗；
+        // NGAC UA（ensure_role_member）仅为授权保留，不再承担岗位解析。
         sqlx::query(
             r#"INSERT INTO isahl."zc_id_subj-position"
                (id, code, notice, fk_user, created_by_id, created_at, updated_at)
                VALUES (isahl.gen_next_zuid(), $1, $2, $3, $3, NOW(), NOW())"#,
         )
         .bind(&code)
-        .bind(&code)
+        .bind(&role)
         .bind(uid)
         .execute(pool)
         .await

@@ -86,8 +86,7 @@ where
            ),
            -- 备选触发（2026-09-03 裁决：直管岗位成员未决审批数 ≥ 阈值时并入备选岗位成员；
            -- 未决口径 = 岗位成员全局在途（岗位负载语义，非单流程限定）；
-           -- 阈值固定 10；节点可配 backupThreshold 已由 publish 物化至节点模板
-           -- timeline（even-approve.timeline.backupThreshold），resolve 侧模板桥读取待接入）
+           -- 阈值 = 节点范例行 operation.meta.backupThreshold（publish 物化），缺省 10）
            backup_pos AS (
                SELECT br.ref_right FROM cate_rows br WHERE br.ref_left = $1 AND br.cate_code = 'ROLE-BACKUP'
            ),
@@ -102,10 +101,16 @@ where
                      WHERE ls.ref_left = i.id AND ls.deleted_at IS NULL
                        AND st.code IN ('approved', 'rejected', 'withdrawn', 'cancelled', 'abstained')
                  )
+           ),
+           -- 备选触发阈值（2026-09-03）：节点级 backupThreshold 由 publish 物化于
+           -- 节点范例行 operation.meta（approve/vote 行）；缺省 10
+           backup_threshold AS (
+               SELECT COALESCE(NULLIF(o.meta->>'backupThreshold', '')::int, 10) AS n
+               FROM isahl.zc_id_operation o WHERE o.id = $1 AND o.deleted_at IS NULL
            )
            SELECT pos.fk_user, c.code
            FROM isahl.zc_id_operation o
-           JOIN cate_rows brf ON brf.ref_left = o.id
+           LEFT JOIN cate_rows brf ON brf.ref_left = o.id
            LEFT JOIN isahl."zc_id_subj-position" pos
              ON pos.id = brf.ref_right AND pos.deleted_at IS NULL
                 AND pos.fk_user IS NOT NULL
@@ -119,9 +124,8 @@ where
            JOIN isahl."zc_id_subj-position" pos2
              ON pos2.id = bp.ref_right AND pos2.deleted_at IS NULL AND pos2.fk_user IS NOT NULL
            CROSS JOIN in_flight
-           -- 阈值：固定 10（节点级 backupThreshold 已物化于 even-approve 模板 timeline
-           -- （publish timeline.backupThreshold）；resolve 侧经模板桥读取列为引擎下一单元）
-           WHERE in_flight.n >= 10
+           CROSS JOIN backup_threshold
+           WHERE in_flight.n >= backup_threshold.n
            ORDER BY fk_user"#,
     )
     .bind(op_id)

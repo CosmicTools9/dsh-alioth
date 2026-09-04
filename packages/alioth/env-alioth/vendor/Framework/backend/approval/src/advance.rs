@@ -1490,7 +1490,7 @@ async fn advance_auto_node(
             )
             .await?;
         }
-    } else {
+    } else if node_type == "branch" {
         // 局部 all 汇聚（2026-09-02 fix-flow-gateway-semantics A1）：
         // 入边源 = 本流程中 next-ops 反向引用本 branch 的 operation；等待全部
         // 入边源的在途实例终态。legacy 裸数值图（定位不到入边源）回退 flow 级。
@@ -1500,7 +1500,7 @@ async fn advance_auto_node(
                  AND rro2."next-ops" @> $2::jsonb"#,
         )
         .bind(flow_id)
-        .bind(serde_json::json!([{ "id": template_node_id.to_string() }]).to_string())
+        .bind(serde_json::json!([{ "id": template_node_id }]).to_string())
         .fetch_one(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;
@@ -1528,7 +1528,7 @@ async fn advance_auto_node(
                 )"#,
             )
             .bind(flow_id)
-            .bind(serde_json::json!([{ "id": template_node_id.to_string() }]).to_string())
+            .bind(serde_json::json!([{ "id": template_node_id }]).to_string())
             .fetch_one(pool)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?

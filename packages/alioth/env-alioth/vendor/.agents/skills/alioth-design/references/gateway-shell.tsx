@@ -301,10 +301,10 @@ export function ActionGroup({
   );
 }
 
-export function UserMenu({ user, onLogout }: { user: User; onLogout?: () => void }) {
+export function UserMenu({ user, onLogout }: { user?: User; onLogout?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const initial = (user.name || 'U').charAt(0).toUpperCase();
+  const initial = (user?.name || 'U').charAt(0).toUpperCase();
 
   useEffect(() => {
     if (!open) return undefined;
@@ -339,8 +339,8 @@ export function UserMenu({ user, onLogout }: { user: User; onLogout?: () => void
       {open && (
         <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-card shadow-lg py-1 z-50 max-w-[calc(100vw-1rem)]">
           <div className="px-3 py-2 border-b border-border">
-            <p className="text-sm font-medium truncate">{user.name}</p>
-            <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+            <p className="text-sm font-medium truncate">{user?.name ?? '用户'}</p>
+            <p className="text-xs text-muted-foreground truncate">{user?.email ?? ''}</p>
           </div>
           <a
             href="#"
@@ -392,7 +392,7 @@ export function TopBar({
   breadcrumbs?: Breadcrumb[];
   searchPlaceholder?: string;
   triggers?: WorkspaceTrigger[];
-  user: User;
+  user?: User;
   onTrigger?: (id: string) => void;
   onModuleTabChange?: (id: string) => void;
   onMobileMenuToggle?: () => void;
@@ -689,7 +689,7 @@ export interface GatewayShellProps {
   breadcrumbs?: Breadcrumb[];
   searchPlaceholder?: string;
   triggers?: WorkspaceTrigger[];
-  user: User;
+  user?: User;
   onTrigger?: (id: string) => void;
   navGroups?: NavGroup[];
   activeId?: string;

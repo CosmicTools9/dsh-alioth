@@ -8,6 +8,7 @@
 
 pub mod handlers;
 pub mod models;
+pub mod ngac_org_ensure;
 pub mod repository;
 pub mod service;
 

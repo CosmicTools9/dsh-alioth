@@ -36,6 +36,7 @@ pub mod event_bus;
 pub mod messaging;
 pub mod middleware;
 pub mod ngac_org;
+pub mod ngac_policy;
 pub mod ontology;
 pub mod permissions;
 pub mod plan_execution;
