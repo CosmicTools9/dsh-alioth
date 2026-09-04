@@ -1,0 +1,39 @@
+diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
+index a460afe23a..43414f9a65 100644
+--- a/packages/client/ui-workspace/src/client/navigation.ts
++++ b/packages/client/ui-workspace/src/client/navigation.ts
+@@ -11,6 +11,19 @@ import type {
+ } from '@deepseek-ai/dsh-api-workspace-controller/client'
+ import type { SessionId } from '@deepseek-ai/dsh-session/types'
+ 
++/**
++ * AppCreator deployment gate: when the dsh-alioth web gate script sets
++ * `dsh.uiWorkspace.pickOnNewSession`, a bare New Session always lands on the
++ * workspace picker (choose the app first). Opt-in by deployment, default off.
++ */
++function forcePickOnNewSession(): boolean {
++  try {
++    return globalThis.localStorage?.getItem('dsh.uiWorkspace.pickOnNewSession') === '1'
++  } catch {
++    return false
++  }
++}
++
+ /** Workspace archive and directory operations consumed by Client UI domains. */
+ export interface UiWorkspace {
+   /**
+@@ -118,6 +131,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+     const currentWorkspaceId = current === undefined
+       ? undefined
+       : workspace.items.find(item => item.sessionIds.includes(current))?.workspaceId
++    // AppCreator gate (deployment opt-in via localStorage flag set by the
++    // dsh-alioth web gate script): a bare New Session must land on the
++    // picker instead of silently reconnecting the most recent workspace —
++    // the product flow is choose-the-app first, chat second.
++    if (forcePickOnNewSession() && workspaceId === undefined) {
++      this.sessions.clear()
++      return
++    }
+     const recent = workspace.phase === 'ready' && sessions.phase === 'ready'
+       ? recentWorkspace(workspace.items, sessions.byId)
+       : undefined

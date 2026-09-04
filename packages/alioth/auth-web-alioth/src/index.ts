@@ -512,6 +512,9 @@ function cookieToken(request: IncomingMessage): string | null {
 function gateScript(landingPath: string): string {
   return `<script>(function(){`
     + `if(!/(^|;)\\s*${MARKER_COOKIE}=/.test(document.cookie)){location.replace('${landingPath}');return;}`
+    // AppCreator session gate: every New Session must choose the target app
+    // first (the harness picker gate reads this localStorage flag).
+    + `try{localStorage.setItem('dsh.uiWorkspace.pickOnNewSession','1')}catch(e){}`
     // Bind every sessions.create result to the caller's identity: the
     // harness API is in-process — HTTP identity never reaches tool execution;
     // only session binding does. Identity rides the same-origin session
