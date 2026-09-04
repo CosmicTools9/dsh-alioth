@@ -335,6 +335,19 @@ describe('web gate (real harness WebServer)', () => {
     expect(() => new Function(match[1]!)).not.toThrow()
   })
 
+  it('answers form logins on the GUI origin with a same-origin /workspace redirect', async () => {
+    const response = await fetch(`${webBase()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ username: 'carol', password: 'password-789' }),
+      redirect: 'manual',
+    })
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toBe('/workspace')
+    // Cookies land on the caller's origin — no cross-origin token handoff.
+    expect(response.headers.get('set-cookie') ?? '').toContain('alioth_user')
+  })
+
   it('does not shadow harness workspace RPC sub-paths (/api/workspace/*)', async () => {
     const login = await fetch(`${webBase()}/api/auth/login`, {
       method: 'POST',

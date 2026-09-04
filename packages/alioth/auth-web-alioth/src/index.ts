@@ -528,8 +528,13 @@ export function apply(ctx: Context, config: Config): void {
   }
 
   /** Shared auth API surface — the standalone server and the webServer
-   * prefix mount both route here. Owns every /api/auth/* path. */
-  const handleAuthApi = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+   * prefix mount both route here. Owns every /api/auth/* path.
+   * @param sameOrigin - true when mounted on the GUI origin itself (webGate):
+   * cookies land on the caller's origin, so form logins/registers answer a
+   * same-origin 302 to the workspace instead of the cross-origin token
+   * handoff page (whose GUI target cannot be derived from the bind host —
+   * behind a LAN gateway the bind address is loopback and unreachable). */
+  const handleAuthApi = async (request: IncomingMessage, response: ServerResponse, sameOrigin = false): Promise<void> => {
     const url = new URL(request.url ?? '/', 'http://localhost')
     if (request.method === 'POST' && url.pathname === '/api/auth/register') {
       const body = await readBody(request)
@@ -538,8 +543,16 @@ export function apply(ctx: Context, config: Config): void {
       if (isFormPost(request)) {
         try {
           const result = await auth().register(username, password)
-          sendAuthPage(response, 201, '注册', successBody('注册', result.token, result.namespace, workspaceHref()),
-            { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+          if (sameOrigin) {
+            response.writeHead(302, {
+              location: '/workspace',
+              'set-cookie': authCookies(result.token, username, ttlSeconds),
+            })
+            response.end()
+          } else {
+            sendAuthPage(response, 201, '注册', successBody('注册', result.token, result.namespace, workspaceHref()),
+              { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+          }
         } catch (error) {
           sendAuthPage(response, 400, '注册', registerForm(friendlyError(error, 'register')))
         }
@@ -556,8 +569,16 @@ export function apply(ctx: Context, config: Config): void {
       if (isFormPost(request)) {
         try {
           const result = await auth().login(username, password)
-          sendAuthPage(response, 200, '登录', successBody('登录', result.token, result.namespace, workspaceHref()),
-            { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+          if (sameOrigin) {
+            response.writeHead(302, {
+              location: '/workspace',
+              'set-cookie': authCookies(result.token, username, ttlSeconds),
+            })
+            response.end()
+          } else {
+            sendAuthPage(response, 200, '登录', successBody('登录', result.token, result.namespace, workspaceHref()),
+              { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+          }
         } catch (error) {
           sendAuthPage(response, 401, '登录', loginForm(friendlyError(error, 'login')))
         }
@@ -637,7 +658,7 @@ export function apply(ctx: Context, config: Config): void {
         response.end()
         return
       }
-      response.writeHead(302, { location: '/', 'set-cookie': authCookies(token, user.username, ttlSeconds) })
+      response.writeHead(302, { location: '/workspace', 'set-cookie': authCookies(token, user.username, ttlSeconds) })
       response.end()
       return
     }
@@ -784,7 +805,8 @@ async function listVisiblePrototypes(
         kind: 'prefix',
         path: '/api/auth',
         handler: async (req, res) => {
-          await handleAuthApi(req, res)
+          // Mounted on the GUI origin: form auth answers a same-origin 302.
+          await handleAuthApi(req, res, true)
         },
       }))
       // Exact only: a prefix here would shadow the harness client-connection
