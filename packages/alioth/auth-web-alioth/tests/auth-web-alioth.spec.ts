@@ -41,6 +41,7 @@ CREATE TABLE isahl_meta.meta_fields (
 let ctx: Context
 const disposers: Array<() => Promise<void>> = []
 let port: number
+let previewPreProcRoot: string
 
 beforeAll(async () => {
   const modelDir = await mkdtemp(path.join(tmpdir(), 'authweb-model-'))
@@ -72,15 +73,16 @@ beforeAll(async () => {
   disposers.push(() => webServerPlugin.dispose())
   const landing = await ctx.plugin(landingAlioth, {})
   disposers.push(() => landing.dispose())
+  previewPreProcRoot = path.join(dataRoot, 'Pre-Proc')
   const auth = await ctx.plugin(authAlioth, {
     mode: 'enforce',
-    preProcRoot: path.join(dataRoot, 'pre-proc'),
+    preProcRoot: path.join(dataRoot, 'Pre-Proc'),
     deployRoot: path.join(dataRoot, 'deploy'),
   })
   disposers.push(() => auth.dispose())
 
   port = 3987 + Math.floor(Math.random() * 500)
-  const carrier = await ctx.plugin(authWeb, { port })
+  const carrier = await ctx.plugin(authWeb, { port, preProcRoot: previewPreProcRoot })
   disposers.push(() => carrier.dispose())
 }, 120_000)
 
@@ -145,6 +147,76 @@ describe('B/S HTTP surface (real server)', () => {
     const html = await response.text()
     expect(html).toContain('用户名或密码错误')
     expect(html).toContain('/api/auth/login') // form re-rendered for retry
+  })
+
+
+  it('serves 成品预览 builds with namespace isolation (GET /preview/*)', async () => {
+    // Fixture: prototype builds for Demo (carol's namespace U-carol) + a
+    // shared design asset + another namespace's build (must NOT leak).
+    const protoRoot = previewPreProcRoot
+    await mkdir(path.join(protoRoot, 'U-pv-owner', 'Prototypes', 'Apps', 'demo-app'), { recursive: true })
+    await writeFile(
+      path.join(protoRoot, 'U-pv-owner', 'Prototypes', 'Apps', 'demo-app', 'a-v1.html'),
+      '<!doctype html><html lang="zh"><title>成品预览</title><body>demo</body></html>',
+    )
+    await mkdir(path.join(previewPreProcRoot, '..', '.agents', 'skills'), { recursive: true })
+    await writeFile(path.join(previewPreProcRoot, '..', '.agents', 'skills', 'asset.js'), 'shared-asset')
+
+    // Self-contained fixtures: register owner + intruder fresh.
+    const registerUser = async (username: string) => {
+      const response = await fetch(`${base()}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: 'password-789' }),
+      })
+      if (response.status !== 201) throw new Error(`register ${username}: ${response.status}`)
+      return response.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+    }
+    const ownerCookie = await registerUser('pv-owner')
+    const intruderCookie = await registerUser('pv-intruder')
+    const cookie = ownerCookie
+
+    // Session cookie resolves identity (same as /api/auth/me).
+    const me = await fetch(`${base()}/api/auth/me`, { headers: { cookie } })
+    expect(me.status).toBe(200)
+    expect(((await me.json()) as { namespace: string }).namespace).toBe('U-pv-owner')
+
+    // Own-namespace build serves with the html content type.
+    const own = await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/Prototypes/Apps/demo-app/a-v1.html`, {
+      headers: { cookie },
+    })
+    expect(own.status).toBe(200)
+    expect(own.headers.get('content-type')).toContain('text/html')
+    expect(await own.text()).toContain('成品预览')
+
+    // Shared design assets serve for authenticated users…
+    const shared = await fetch(`${base()}/preview/.agents/skills/asset.js`, { headers: { cookie } })
+    expect(shared.status).toBe(200)
+
+    // …but non-allowlisted roots stay 404.
+    expect((await fetch(`${base()}/preview/backend/ddl/002_isahl_meta_schema.sql`, { headers: { cookie } })).status).toBe(404)
+
+    // Another user cannot see carol's builds — silent 404, no existence leak.
+    await fetch(`${base()}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'mallory', password: 'password-789' }),
+    })
+    await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'mallory', password: 'password-789' }),
+    })
+    const leak = await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/Prototypes/Apps/demo-app/a-v1.html`, {
+      headers: { cookie: intruderCookie },
+    })
+    expect(leak.status).toBe(404)
+
+    // Traversal is rejected before any filesystem access.
+    expect((await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/..%2F..%2F..%2Fbackend%2Fddl%2F002_isahl_meta_schema.sql`, { headers: { cookie } })).status).toBe(404)
+
+    // Unauthenticated requests get 401.
+    expect((await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/Prototypes/Apps/demo-app/a-v1.html`)).status).toBe(401)
   })
 
   it('logs in via JSON API and reads /me', async () => {
@@ -362,7 +434,7 @@ describe('workspace surface (工作区 unlimited / 应用 standard)', () => {
       namespace: 'U-carol',
       apps: [],
     })
-    expect(carolWs!.preProcPath).toContain('pre-proc')
+    expect(carolWs!.preProcPath).toContain('Pre-Proc')
     expect(carolWs!.deployPath).toContain('deploy')
   })
 

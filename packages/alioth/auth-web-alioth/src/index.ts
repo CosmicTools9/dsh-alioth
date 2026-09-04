@@ -21,6 +21,9 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { readdir, readFile, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 
@@ -35,12 +38,17 @@ export interface Config {
   /** When the harness `webServer` service is present (web profile), mount the
    * same-origin auth surface + login gate on it. Default true. */
   readonly webGate?: boolean
+  /** Pre-Proc artifact tree root — anchors the 成品预览 static surface
+   * (`/preview/…`, served from its parent content root). Defaults to
+   * ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (the workspace convention). */
+  readonly preProcRoot?: string
 }
 
 export const Config: z<Config> = z.object({
   port: z.number().default(3900),
   sessionTtlSeconds: z.number().default(7 * 24 * 3600),
   webGate: z.boolean().default(true),
+  preProcRoot: z.string(),
 })
 
 /** The landing capability face (structural — landing-alioth provides it). */
@@ -184,6 +192,9 @@ button:hover{filter:brightness(1.1)}
 .banner.error{border:1px solid var(--error);color:var(--error);background:rgba(242,113,138,.08)}
 .banner.ok{border:1px solid var(--accent);color:var(--accent);background:rgba(62,230,168,.08)}
 .alt{margin-top:1.1rem;font-size:.85rem;color:var(--dim)}
+.pv-h{font-size:.85rem;color:var(--dim);margin:1rem 0 .4rem;text-transform:uppercase;letter-spacing:.06em}
+.pv{list-style:none;padding:0;display:grid;gap:.35rem}
+.pv a{font-family:var(--mono);font-size:.85rem}
 .hint{font-size:.85rem;color:var(--dim);margin:.9rem 0 .4rem}
 .token{font-family:var(--mono);font-size:.8rem;word-break:break-all;background:#070b11;
 border:1px solid var(--line);border-radius:6px;padding:.7rem;color:var(--accent);user-select:all}
@@ -225,7 +236,136 @@ function successBody(action: string, token: string, namespace: string, workspace
 ${handoff}`
 }
 
-// ── workspace page (工作区 unlimited / 应用 standard) ────────────────────
+/** Structural auth face the preview surface needs (satisfied by ctx.aliothAuth). */
+interface PreviewAuth {
+  userForToken(token: string | null): Promise<{ namespace: string; role: 'admin' | 'user' } | null>
+}
+
+// ── 成品预览 static surface (/preview/*) ─────────────────────────────────
+
+/** Content root for the preview surface: parent of the Pre-Proc root (the
+ * upstream repo-root layout — built prototypes reference provisioned assets
+ * via relative paths, so the whole content root must be served together). */
+function previewContentRoot(config: Config): string {
+  const configured = config.preProcRoot
+  const preProcRoot = path.resolve(
+    configured === undefined || configured === ''
+      ? path.join(homedir(), '.dsh-alioth', 'Pre-Proc')
+      : configured,
+  )
+  return path.dirname(preProcRoot)
+}
+
+const PREVIEW_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+  '.map': 'application/json',
+}
+
+/** One prototype build (a-v{N}.html) of one app. */
+export interface PrototypeBuild {
+  readonly namespace: string
+  readonly app: string
+  readonly file: string
+  /** `/preview/...` href for the browser. */
+  readonly href: string
+  readonly size: number
+  readonly mtimeMs: number
+}
+
+/** List prototype builds for one namespace, latest first. */
+export async function listPrototypeBuilds(preProcRoot: string, namespace: string): Promise<PrototypeBuild[]> {
+  const appsDir = path.join(preProcRoot, namespace, 'Prototypes', 'Apps')
+  const builds: { app: string; file: string; size: number; mtimeMs: number }[] = []
+  try {
+    for (const appEntry of await readdir(appsDir, { withFileTypes: true })) {
+      if (!appEntry.isDirectory()) continue
+      const appDir = path.join(appsDir, appEntry.name)
+      for (const fileEntry of await readdir(appDir, { withFileTypes: true })) {
+        if (!fileEntry.isFile() || !/^a-v\d+\.html$/.test(fileEntry.name)) continue
+        const full = path.join(appDir, fileEntry.name)
+        const info = await stat(full)
+        builds.push({ app: appEntry.name, file: fileEntry.name, size: info.size, mtimeMs: info.mtimeMs })
+      }
+    }
+  } catch {
+    return []
+  }
+  return builds
+    .sort((a, b) => a.app.localeCompare(b.app) || b.file.localeCompare(a.file, undefined, { numeric: true }))
+    .map(build => ({
+      ...build,
+      href: `/preview/Pre-Proc/${encodeURIComponent(namespace)}/Prototypes/Apps/${encodeURIComponent(build.app)}/${build.file}`,
+      namespace,
+    }))
+}
+
+/**
+ * Serve one `/preview/*` request: session-gated, namespace-isolated
+ * (`Pre-Proc/{ns}/**` only for the owning user or admin; shared design
+ * assets under `.agents/` are read-only for all authenticated users),
+ * traversal-guarded, directories never listed.
+ */
+async function handlePreview(
+  request: IncomingMessage,
+  response: ServerResponse,
+  contentRoot: string,
+  auth: PreviewAuth,
+): Promise<void> {
+  const user = await auth.userForToken(bearerToken(request) ?? cookieToken(request))
+  if (user === null) {
+    sendJson(response, 401, { error: 'unauthorized' })
+    return
+  }
+  const url = new URL(request.url ?? '/', 'http://localhost')
+  const rel = decodeURIComponent(url.pathname.slice('/preview/'.length))
+  if (rel === '' || rel.includes('\0') || rel.split('/').some(segment => segment === '..' || segment === '')) {
+    sendJson(response, 404, { error: 'not found' })
+    return
+  }
+  if (rel.startsWith('Pre-Proc/')) {
+    const ns = rel.split('/')[1] ?? ''
+    if (user.role !== 'admin' && ns !== user.namespace) {
+      // Silent 404 — no existence leak across namespaces.
+      sendJson(response, 404, { error: 'not found' })
+      return
+    }
+  } else if (!rel.startsWith('.agents/')) {
+    // Only the design-asset tree is shared; everything else is 404.
+    sendJson(response, 404, { error: 'not found' })
+    return
+  }
+  const full = path.resolve(contentRoot, rel)
+  if (!full.startsWith(contentRoot + path.sep)) {
+    sendJson(response, 404, { error: 'not found' })
+    return
+  }
+  let info
+  try {
+    info = await stat(full)
+  } catch {
+    sendJson(response, 404, { error: 'not found' })
+    return
+  }
+  if (!info.isFile()) {
+    sendJson(response, 404, { error: 'not found' })
+    return
+  }
+  const type = PREVIEW_CONTENT_TYPES[path.extname(full).toLowerCase()] ?? 'application/octet-stream'
+  response.writeHead(200, { 'content-type': type, 'content-length': info.size, 'cache-control': 'no-cache' })
+  response.end(await readFile(full))
+}
+
+
 
 /** Extended chrome: wider card + list rows for the workspace browser. */
 function sendWorkspacePage(
@@ -238,6 +378,7 @@ function sendWorkspacePage(
     apps: ReadonlyArray<{ code: string; name: string }>
   }>,
   error = '',
+  prototypes: ReadonlyArray<{ namespace: string; app: string; href: string; file: string; size: number }> = [],
 ): void {
   const title = mode === 'unlimited' ? '工作区' : '应用'
   const rows = list.map(ws => `
@@ -249,6 +390,12 @@ function sendWorkspacePage(
   <p class="paths"><code>Deploy/${esc(ws.namespace)}/</code></p>` : ''}
   ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在对话中让 Alioth 助手创建</p>' : `
   <ul class="apps">${ws.apps.map(app => `<li><span class="code">${esc(app.code)}</span>${app.name === '' ? '' : ` — ${esc(app.name)}`}</li>`).join('')}</ul>`}
+  ${(() => {
+    const builds = prototypes.filter(p => p.namespace === ws.namespace)
+    if (builds.length === 0) return ''
+    return `<h3 class="pv-h">成品预览</h3><ul class="pv">${builds.map(b => `
+      <li><a href="${esc(b.href)}">${esc(b.app)} · ${esc(b.file)}</a><span class="dim">（${Math.max(1, Math.round(b.size / 1024))} KB）</span></li>`).join('')}</ul>`
+  })()}
 </article>`).join('')
   const form = mode === 'unlimited' ? `
 <form method="post" action="/api/workspace" class="create">
@@ -514,6 +661,21 @@ export function apply(ctx: Context, config: Config): void {
     sendJson(response, 404, { error: 'not found' })
   }
 
+
+/** Prototype builds across the workspaces visible to this user. */
+async function listVisiblePrototypes(
+  namespaces: readonly string[],
+): Promise<{ namespace: string; app: string; href: string; file: string; size: number }[]> {
+  const contentRoot = previewContentRoot(config)
+  const all: { namespace: string; app: string; href: string; file: string; size: number }[] = []
+  for (const ns of namespaces) {
+    for (const build of await listPrototypeBuilds(path.dirname(path.join(contentRoot, 'Pre-Proc')), ns)) {
+      all.push(build)
+    }
+  }
+  return all
+}
+
   // ── standalone HTTP server ────────────────────────────────────────────
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://localhost')
@@ -545,12 +707,17 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
         const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
-        sendWorkspacePage(response, list.mode, list.workspaces, url.searchParams.get('error') ?? '')
+        const prototypes = await listVisiblePrototypes(list.workspaces.map(ws => ws.namespace))
+        sendWorkspacePage(response, list.mode, list.workspaces, url.searchParams.get('error') ?? '', prototypes)
         return
       }
       if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')
         || url.pathname === '/api/workspace' || url.pathname.startsWith('/api/workspace/')) {
         await handleAuthApi(request, response)
+        return
+      }
+      if (request.method === 'GET' && url.pathname.startsWith('/preview/')) {
+        await handlePreview(request, response, previewContentRoot(config), auth())
         return
       }
       sendJson(response, 404, { error: 'not found' })
@@ -609,7 +776,8 @@ export function apply(ctx: Context, config: Config): void {
           }
           const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
           const error = new URL(req.url ?? '/', 'http://localhost').searchParams.get('error') ?? ''
-          sendWorkspacePage(res, list.mode, list.workspaces, error)
+          const prototypes = await listVisiblePrototypes(list.workspaces.map(ws => ws.namespace))
+          sendWorkspacePage(res, list.mode, list.workspaces, error, prototypes)
         },
       }))
       webCtx.effect(() => web.register({
@@ -624,6 +792,13 @@ export function apply(ctx: Context, config: Config): void {
         path: '/api/workspace',
         handler: async (req, res) => {
           await handleAuthApi(req, res)
+        },
+      }))
+      webCtx.effect(() => web.register({
+        kind: 'prefix',
+        path: '/preview',
+        handler: async (req, res) => {
+          await handlePreview(req, res, previewContentRoot(config), auth())
         },
       }))
       // The gate target resolves per tap: landing plugin when present,
