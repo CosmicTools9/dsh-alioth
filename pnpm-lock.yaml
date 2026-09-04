@@ -10031,6 +10031,21 @@ importers:
         specifier: workspace:*
         version: link:../../packages/alioth/tool-alioth-workflow
 
+  packages/alioth/app-picker:
+    dependencies:
+      '@deepseek-ai/cordis':
+        specifier: ^4.0.2
+        version: link:../../../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/cordis-plugin-loader':
+        specifier: ^1.0.3
+        version: link:../../../../deepseek-harness/vendor/loader
+      '@deepseek-ai/dsh-host-directory-picker':
+        specifier: ^0.1.3-alpha.1
+        version: link:../../../../deepseek-harness/packages/host/directory-picker
+      '@deepseek-ai/schemastery':
+        specifier: ^3.18.2
+        version: link:../../../../deepseek-harness/vendor/schemastery
+
   packages/alioth/auth-alioth:
     dependencies:
       '@deepseek-ai/cordis':
@@ -17840,7 +17855,7 @@ snapshots:
       buffer-image-size: 0.6.4
       entities: 7.0.1
       whatwg-mimetype: 3.0.0
-      ws: 8.21.3
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate

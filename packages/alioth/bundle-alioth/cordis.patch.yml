@@ -32,6 +32,14 @@
       extension. The registry is a model snapshot — verify critical
       assumptions against returned rows, never a guess.
 
+# AppCreator workspace picker: the SPA 选择工作空间 browses the Alioth app
+# tree instead of the filesystem (namespace → apps → pick an app). Replaces
+# the harness directory-picker-auto row (web profile only; headless trees
+# have no such row and ignore this patch line).
+- id: directory-picker
+  name: '@dsh-alioth/app-picker'
+  config: {}
+
 - insert:
     - id: landing-alioth
       name: '@dsh-alioth/landing-alioth'
