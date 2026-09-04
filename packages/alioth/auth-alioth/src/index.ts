@@ -138,11 +138,10 @@ function defaultRoots(): { preProc: string; deploy: string } {
  * config `workspaceMode` > 'standard'. Only 'unlimited' opens the custom
  * workspace browser; everything else is the fixed 应用 view.
  */
-export function resolveWorkspaceMode(configured?: Config['workspaceMode']): 'standard' | 'unlimited' {
-  if (process.env.ALIOTH_WORKSPACE_MODE === 'unlimited' || process.env.ALIOTH_WORKSPACE_MODE === 'standard') {
-    return process.env.ALIOTH_WORKSPACE_MODE
-  }
-  return configured === 'unlimited' ? 'unlimited' : 'standard'
+export function resolveWorkspaceMode(_configured?: Config['workspaceMode']): 'standard' | 'unlimited' {
+  // AppCreator tier only: multi-namespace unlimited belongs to the AppAgent
+  // tier whose entry lives elsewhere — env/config are intentionally ignored.
+  return 'standard'
 }
 
 export interface AliothAuthService {
