@@ -549,7 +549,13 @@ export function apply(ctx: Context, config: Config): void {
     const connection = asConnection((ctx.get as (name: string) => unknown).call(ctx, 'connection'))
     if (connection === undefined) return undefined
     try {
-      return connection.authenticatedUrl(`http://${host}`)
+      // Reverse proxies may strip the port from Host ($host); the browser
+      // must land on the real origin, so re-attach the bound port unless the
+      // Host already carries one (or is a bracketed IPv6 literal).
+      const authority = host.includes(':')
+        ? host
+        : `${host}:${new URL(guiOrigin ?? 'http://127.0.0.1:3100').port}`
+      return connection.authenticatedUrl(`http://${authority}`)
     } catch {
       return undefined
     }
