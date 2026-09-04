@@ -168,7 +168,7 @@ let workflowContentRoot: string
   it('runs the workflow gate after writing artifacts', async () => {
     // app_write generates the artifacts; the workflow gate then verifies them.
     workflowPreProc = await mkdtemp(path.join(tmpdir(), 'ptc-wf-preproc-'))
-    workflowContentRoot = path.dirname(workflowPreProc)
+    workflowContentRoot = await mkdtemp(path.join(tmpdir(), 'ptc-wf-content-'))
 
     const modelDir = await mkdtemp(path.join(tmpdir(), 'ptc-wf-model-'))
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'ptc-wf-data-'))
