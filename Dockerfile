@@ -31,7 +31,11 @@ COPY deepseek-harness/vendor ./vendor
 COPY deepseek-harness/packages ./packages
 COPY deepseek-harness/apps ./apps
 COPY deepseek-harness/native ./native
+COPY dsh-alioth/scripts/harness-patches /harness-patches
 RUN pnpm install --frozen-lockfile
+# AppCreator client patches (session pick gate, namespace isolation, picker
+# controls): replayed from the consumer workspace before building.
+RUN git apply /harness-patches/ui-workspace-pick-gate.patch
 RUN pnpm run build:lib:host && pnpm run build:lib:client
 
 # ── the consumer workspace ──
