@@ -70,10 +70,10 @@ index b1801cc3d9..6868a3b668 100644
        label: workspace.title,
        icon: <IconFolderClose16 size={16} />,
 diff --git a/packages/client/ui-workspace/src/client/navigation.ts b/packages/client/ui-workspace/src/client/navigation.ts
-index a460afe23a..5cded508c1 100644
+index a460afe23a..73f18d1dea 100644
 --- a/packages/client/ui-workspace/src/client/navigation.ts
 +++ b/packages/client/ui-workspace/src/client/navigation.ts
-@@ -11,6 +11,39 @@ import type {
+@@ -11,6 +11,61 @@ import type {
  } from '@deepseek-ai/dsh-api-workspace-controller/client'
  import type { SessionId } from '@deepseek-ai/dsh-session/types'
  
@@ -110,10 +110,51 @@ index a460afe23a..5cded508c1 100644
 +  return new RegExp(`/(?:^|/)${namespace}(?:/|$)`).test(path)
 +}
 +
++/**
++ * AppCreator identity binding (deployment opt-in): agent sessions are bound
++ * to the Alioth user through the same-origin auth carrier (`/api/auth/bind`,
++ * cookie-authenticated). With RPCs flowing over the stream channel the old
++ * fetch sniffing never sees session creation, so the client binds
++ * explicitly after a session is created or a blank one is reused. On
++ * deployments without the dsh-alioth auth carrier the POST 404s and is
++ * ignored.
++ */
++function bindSessionIfAppPicking(sessionId: string): void {
++  try {
++    if (globalThis.localStorage?.getItem('dsh.uiWorkspace.appPicking') !== '1') return
++    void fetch('/api/auth/bind', {
++      method: 'POST',
++      headers: { 'content-type': 'application/json' },
++      body: JSON.stringify({ sessionId }),
++    }).catch(() => {})
++  } catch {
++    // Never let identity binding break session navigation.
++  }
++}
++
  /** Workspace archive and directory operations consumed by Client UI domains. */
  export interface UiWorkspace {
    /**
-@@ -118,6 +151,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+@@ -102,10 +157,17 @@ class UiWorkspaceService extends Service implements UiWorkspace {
+       const summary = sessions.byId[id]
+       if (summary !== undefined && summary.blank && summary.cwd === workspace.path
+         && workspace.sessionIds.includes(summary.id)
+-        && !archived.includes(summary.id)) return summary.id
++        && !archived.includes(summary.id)) {
++        bindSessionIfAppPicking(summary.id)
++        return summary.id
++      }
+     }
+ 
+     const attempt = this.sessions.create({ workspaceId })
++      .then((sessionId) => {
++        bindSessionIfAppPicking(sessionId)
++        return sessionId
++      })
+       .finally(() => { this.connecting.delete(workspaceId) })
+     this.connecting.set(workspaceId, attempt)
+     return attempt
+@@ -118,6 +180,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
      const currentWorkspaceId = current === undefined
        ? undefined
        : workspace.items.find(item => item.sessionIds.includes(current))?.workspaceId
