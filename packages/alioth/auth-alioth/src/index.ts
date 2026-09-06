@@ -74,6 +74,28 @@ export interface Config {
   readonly deployRoot?: string
 }
 
+/** Extract the U-<username> namespace from a Pre-Proc workspace path. */
+function namespaceFromWorkspacePath(path: string): string | null {
+  const ns = /(?:^|\/)Pre-Proc\/(U-[A-Za-z0-9][A-Za-z0-9-]*)(?:\/|$)/.exec(path)?.[1]
+  return ns === undefined ? null : ns
+}
+
+/** Read-only structural face of the harness workspace registry (absent in non-web trees). */
+interface WorkspaceRegistryLike {
+  list(): ReadonlyArray<{ path: string; sessionIds: ReadonlyArray<string> }>
+}
+
+function workspaceRegistryOf(ctx: Context): WorkspaceRegistryLike | undefined {
+  try {
+    const value = (ctx.get as (name: string) => unknown).call(ctx, 'workspaceRegistry')
+    return typeof value === 'object' && value !== null && typeof (value as WorkspaceRegistryLike).list === 'function'
+      ? value as WorkspaceRegistryLike
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export const Config: z<Config> = z.object({
   mode: z.union(['open', 'enforce'] as const).default('open'),
   sessionTtlSeconds: z.number().default(7 * 24 * 3600),
@@ -310,10 +332,19 @@ export function apply(ctx: Context, config: Config): void {
         `SELECT user_id FROM ${AUTH_SCHEMA}.sessions WHERE session_id = $1 AND expires_at > now() LIMIT 1`,
         [sessionId],
       )
-      if (result.rows[0] === undefined) {
-        return null
+      if (result.rows[0] !== undefined) {
+        const bound = await userById(ctx, result.rows[0].user_id)
+        if (bound !== null) return { namespace: bound.namespace, role: bound.role }
       }
-      const user = await userById(ctx, result.rows[0].user_id)
+      // Non-invasive fallback: a session created through the workspace flow
+      // belongs to the workspace's namespace (AppCreator pickers lock every
+      // account to its own U- namespace). Deriving the identity from the
+      // session's workspace path removes the need for client-side binding.
+      const owner = workspaceRegistryOf(ctx)?.list().find(workspace => workspace.sessionIds.includes(sessionId))
+      if (owner === undefined) return null
+      const namespace = namespaceFromWorkspacePath(owner.path)
+      if (namespace === null) return null
+      const user = await userByNamespace(ctx, namespace)
       return user === null ? null : { namespace: user.namespace, role: user.role }
     },
 
