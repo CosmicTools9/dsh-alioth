@@ -252,6 +252,32 @@ describe('workspace (namespace = user workspace)', () => {
     await expect(ctx.aliothAuth.ensureWorkspace('lower')).rejects.toThrow(/invalid namespace/)
   })
 
+  it('derives session identity from the workspace path when no binding row exists', async () => {
+    // Non-invasive fallback: a session attached to a workspace under
+    // Pre-Proc/U-<name> resolves to that namespace's user without any
+    // client-side bind call. alice owns U-alice (registered above).
+    const registry = {
+      list: () => [{
+        // Registry paths are real filesystem paths under Pre-Proc/<ns>/Apps.
+        path: path.join(preProcRoot, 'Pre-Proc', 'U-alice', 'Apps', 'demo'),
+        sessionIds: ['session-fallback-1'],
+      }],
+    }
+    // The test tree mounts no harness workspace service; provide a stub on
+    // the real Context (ctx.get reads it back through the service registry).
+    const provide = (ctx as unknown as { provide(name: string, value: unknown): void }).provide
+    provide.call(ctx, 'workspaceRegistry', registry)
+    try {
+      const resolved = await ctx.aliothAuth.userForSessionId('session-fallback-1')
+      expect(resolved).toMatchObject({ namespace: 'U-alice' })
+      // Sessions without any workspace stay unknown (no binding, no path).
+      expect(await ctx.aliothAuth.userForSessionId('session-orphan')).toBeNull()
+    } finally {
+      const dispose = (ctx as unknown as { disposeService?(name: string): void }).disposeService
+      if (typeof dispose === 'function') dispose.call(ctx, 'workspaceRegistry')
+    }
+  })
+
   it('always resolves standard (AppCreator tier; unlimited belongs to the AppAgent tier)', async () => {
     expect(ctx.aliothAuth.workspaceMode()).toBe('standard')
     // Env/config are intentionally ignored.
