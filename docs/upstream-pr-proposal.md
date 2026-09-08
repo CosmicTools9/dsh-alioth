@@ -1,11 +1,18 @@
 # Upstream PR proposal: workspace UX policies + session identity for the web GUI
 
 **Repo**: deepseek-ai/deepseek-harness
-**Motivation**: dsh-alioth (AppCreator: an Alioth-model app generator built on the
-harness web profile) currently carries a small client patch set
-(`dsh-alioth/scripts/harness-patches/ui-workspace-pick-gate.patch`) to express
-product-level workspace UX. All three concerns are generic multi-workspace /
-multi-tenant needs; making them configuration-driven removes the fork.
+**Status (2026-09-09)**: PR 1 + PR 2 are implemented and live in the harness
+leading baseline (commit `e051c479` "isolate workspace namespace and
+app-picking via opt-in gates" — identical localStorage keys); the dsh-alioth
+client patch set is retired. PR 3 (connection account -> session owner) is
+still open; dsh-alioth currently derives session identity from the workspace
+path (Pre-Proc/U-<name>) instead, which is consumer-side only.
+**Motivation (original)**: dsh-alioth (AppCreator: an Alioth-model app generator
+built on the harness web profile) carried a small client patch set
+(`scripts/harness-patches/ui-workspace-pick-gate.patch`, deleted in `1f90d4b`)
+to express product-level workspace UX. All three concerns are generic
+multi-workspace / multi-tenant needs; making them configuration-driven removes
+the fork.
 
 ---
 
