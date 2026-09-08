@@ -73,8 +73,8 @@
       name: '@dsh-alioth/billing-web-alioth'
       config: {}
 
-    - id: feedback-alioth
-      name: '@dsh-alioth/feedback-alioth'
+    - id: page-feedback
+      name: '@deepseek-ai/dsh-page-feedback'
       config: {}
     - id: feedback-web-alioth
       name: '@dsh-alioth/feedback-web-alioth'

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-alioth/tool-feedback-alioth",
-  "description": "Model-facing feedback consumer tools: alioth_feedback_pending / ack / resolve / dismiss over ctx.aliothFeedback",
+  "description": "Model-facing feedback consumer tools: alioth_feedback_pending / ack / resolve / dismiss over ctx.pageFeedback",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -11,7 +11,7 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@dsh-alioth/feedback-alioth": "workspace:*"
+    "@deepseek-ai/dsh-page-feedback": "workspace:^"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

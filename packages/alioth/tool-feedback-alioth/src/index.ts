@@ -1,8 +1,8 @@
 /**
  * Model-facing feedback consumer tools — the agent side of the page-
  * annotation loop: list open annotations, acknowledge, resolve (with the
- * fix summary), or dismiss. Deterministic over `ctx.aliothFeedback`
- * (feedback-alioth capability); the browser overlay and HTTP carrier live in
+ * fix summary), or dismiss. Deterministic over `ctx.pageFeedback`
+ * (from @deepseek-ai/dsh-page-feedback); the browser overlay and HTTP carrier live in
  * feedback-web-alioth.
  * @module @dsh-alioth/tool-feedback-alioth
  */
@@ -12,7 +12,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'tool-feedback-alioth'
-export const inject = ['tools', 'aliothFeedback']
+export const inject = ['tools', 'pageFeedback']
 
 export interface Config {}
 
@@ -25,7 +25,7 @@ const statusOutput = (status: string, id: string, reply: string | undefined): Ar
 ]
 
 export function apply(ctx: Context, _config: Config): void {
-  const svc = () => ctx.aliothFeedback
+  const svc = () => ctx.pageFeedback
 
   ctx.tools.register(defineTool({
     name: 'alioth_feedback_pending',

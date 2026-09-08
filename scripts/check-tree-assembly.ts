@@ -54,7 +54,7 @@ const COMPOSITIONS: readonly Composition[] = [
     name: 'bundle (headless deployment)',
     profile: 'headless',
     patch: 'packages/alioth/bundle-alioth/cordis.patch.yml',
-    expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'feedback-alioth', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
+    expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
   },
   {
@@ -77,7 +77,7 @@ const COMPOSITIONS: readonly Composition[] = [
     name: 'web + bundle patch (launch GUI)',
     profile: 'web',
     patch: 'packages/alioth/bundle-alioth/cordis.patch.yml',
-    expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'feedback-alioth', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
+    expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
   },
 ]

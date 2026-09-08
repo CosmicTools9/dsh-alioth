@@ -1,7 +1,7 @@
 /**
  * `@dsh-alioth/feedback-web-alioth` — the feedback CARRIER: a standalone
  * node:http server (default 127.0.0.1:14747, the AliothStudio convention)
- * exposing the annotation API over the `ctx.aliothFeedback` capability, the
+ * exposing the annotation API over the `ctx.pageFeedback` capability, the
  * long-poll watch seam, and the bookmarklet overlay.
  *
  * Trust boundary (ported from the AliothStudio original):
@@ -18,11 +18,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { ANNOTATION_STATUSES, type AnnotationStatus } from '@dsh-alioth/feedback-alioth'
+import { ANNOTATION_STATUSES, type AnnotationStatus } from '@deepseek-ai/dsh-page-feedback'
 import { OVERLAY_JS } from './overlay.ts'
 
 export const name = 'feedback-web-alioth'
-export const inject = ['aliothFeedback']
+export const inject = ['pageFeedback']
 
 export interface Config {
   /** Feedback server port (AliothStudio convention: 14747). */
@@ -133,7 +133,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       // ── browser-facing (origin-allowlisted) ──────────────────────────
       if (request.method === 'GET' && url.pathname === '/health') {
-        sendJson(response, 200, ctx.aliothFeedback.health())
+        sendJson(response, 200, ctx.pageFeedback.health())
         return
       }
       if (request.method === 'GET' && (url.pathname === '/feedback' || url.pathname === '/feedback/')) {
@@ -152,7 +152,7 @@ export function apply(ctx: Context, config: Config): void {
           return
         }
         const body = await readBody(request)
-        const annotation = ctx.aliothFeedback.addAnnotation({
+        const annotation = ctx.pageFeedback.addAnnotation({
           ...(typeof body.sessionId === 'string' && body.sessionId !== '' ? { sessionId: body.sessionId } : {}),
           origin: String(body.origin ?? request.headers.origin ?? ''),
           url: String(body.url ?? ''),
@@ -170,12 +170,12 @@ export function apply(ctx: Context, config: Config): void {
         return
       }
       if (request.method === 'GET' && url.pathname === '/api/feedback/pending') {
-        sendJson(response, 200, ctx.aliothFeedback.pending())
+        sendJson(response, 200, ctx.pageFeedback.pending())
         return
       }
       if (request.method === 'GET' && url.pathname === '/api/feedback/watch') {
         const timeout = Math.min(60_000, Math.max(0, Number(url.searchParams.get('timeout') ?? 25_000)))
-        sendJson(response, 200, await ctx.aliothFeedback.watch(timeout))
+        sendJson(response, 200, await ctx.pageFeedback.watch(timeout))
         return
       }
       // 变更端点鉴权：回环是最低护栏；auth 能力存在时升级为管理员 bearer
@@ -199,7 +199,7 @@ export function apply(ctx: Context, config: Config): void {
         const status = ANNOTATION_STATUSES.includes(body.status as AnnotationStatus)
           ? body.status as AnnotationStatus
           : undefined
-        const annotation = ctx.aliothFeedback.setStatus(patchMatch[1]!, status, typeof body.reply === 'string' ? body.reply : undefined)
+        const annotation = ctx.pageFeedback.setStatus(patchMatch[1]!, status, typeof body.reply === 'string' ? body.reply : undefined)
         sendJson(response, 200, annotation)
         return
       }
@@ -208,7 +208,7 @@ export function apply(ctx: Context, config: Config): void {
           sendJson(response, 401, { error: 'admin token required' })
           return
         }
-        sendJson(response, 200, { pruned: ctx.aliothFeedback.prune(24 * 3600 * 1000) })
+        sendJson(response, 200, { pruned: ctx.pageFeedback.prune(24 * 3600 * 1000) })
         return
       }
       sendJson(response, 404, { error: 'not found' })

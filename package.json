@@ -47,7 +47,6 @@
     "@dsh-alioth/landing-alioth": "workspace:*",
     "@dsh-alioth/billing-alioth": "workspace:*",
     "@dsh-alioth/billing-web-alioth": "workspace:*",
-    "@dsh-alioth/feedback-alioth": "workspace:*",
     "@dsh-alioth/feedback-web-alioth": "workspace:*",
     "@dsh-alioth/tool-feedback-alioth": "workspace:*",
     "@dsh-alioth/env-alioth": "workspace:*",
@@ -62,6 +61,7 @@
     "oxlint": "1.76.0",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "@deepseek-ai/dsh-page-feedback": "0.1.3-alpha.1"
   }
 }

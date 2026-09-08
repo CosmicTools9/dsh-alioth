@@ -6,7 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import * as feedbackAlioth from '@dsh-alioth/feedback-alioth'
+import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as toolFeedback from '../src/index.ts'
 
 let ctx: Context
@@ -29,7 +29,7 @@ beforeAll(async () => {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const store = await ctx.plugin(feedbackAlioth, { dbPath: path.join(dir, 'f.db') })
+  const store = await ctx.plugin(pageFeedback, { dbPath: path.join(dir, 'f.db') })
   disposers.push(() => store.dispose())
   const tool = await ctx.plugin(toolFeedback, {})
   disposers.push(() => tool.dispose())
@@ -51,7 +51,7 @@ describe('feedback consumer tools', () => {
   })
 
   it('pending → ack → resolve full loop through the tools', async () => {
-    const a = ctx.aliothFeedback.addAnnotation({ origin: 'o', url: 'u', comment: '间距不对' })
+    const a = ctx.pageFeedback.addAnnotation({ origin: 'o', url: 'u', comment: '间距不对' })
 
     const pending = await callTool('alioth_feedback_pending', {})
     if (pending.isError) throw new Error(`pending failed: ${pending.error.message}`)

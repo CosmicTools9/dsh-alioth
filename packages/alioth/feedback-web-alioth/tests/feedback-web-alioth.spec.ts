@@ -3,7 +3,7 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import * as feedbackAlioth from '@dsh-alioth/feedback-alioth'
+import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as feedbackWeb from '../src/index.ts'
 
 let ctx: Context
@@ -13,7 +13,7 @@ let port: number
 beforeAll(async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'feedbackweb-'))
   ctx = new Context()
-  const store = await ctx.plugin(feedbackAlioth, { dbPath: path.join(dir, 'f.db') })
+  const store = await ctx.plugin(pageFeedback, { dbPath: path.join(dir, 'f.db') })
   disposers.push(() => store.dispose())
   port = 14860 + Math.floor(Math.random() * 100)
   const carrier = await ctx.plugin(feedbackWeb, { port, allowedOrigins: ['http://127.0.0.1:9999'] })
@@ -103,12 +103,12 @@ describe('feedback carrier', () => {
         return null
       },
     })
-    await adminCtx.plugin(feedbackAlioth, { dbPath: path.join(dir, 'f.db') })
+    await adminCtx.plugin(pageFeedback, { dbPath: path.join(dir, 'f.db') })
     const adminPort = 14960 + Math.floor(Math.random() * 50)
     await adminCtx.plugin(feedbackWeb, { port: adminPort })
     const adminBase = `http://127.0.0.1:${adminPort}`
 
-    const annotation = adminCtx.aliothFeedback.addAnnotation({ origin: 'o', url: 'u', comment: 'c' })
+    const annotation = adminCtx.pageFeedback.addAnnotation({ origin: 'o', url: 'u', comment: 'c' })
     const patch = (token: string | null): Promise<Response> => fetch(`${adminBase}/api/feedback/annotations/${annotation.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json', ...(token === null ? {} : { authorization: `Bearer ${token}` }) },

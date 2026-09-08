@@ -25,7 +25,7 @@ import * as authWebAlioth from '@dsh-alioth/auth-web-alioth'
 import * as landingAlioth from '@dsh-alioth/landing-alioth'
 import * as billingAlioth from '@dsh-alioth/billing-alioth'
 import * as billingWebAlioth from '@dsh-alioth/billing-web-alioth'
-import * as feedbackAlioth from '@dsh-alioth/feedback-alioth'
+import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as feedbackWebAlioth from '@dsh-alioth/feedback-web-alioth'
 import * as toolFeedbackAlioth from '@dsh-alioth/tool-feedback-alioth'
 
@@ -74,7 +74,7 @@ try {
   disposers.push(() => billingPlugin.dispose())
   const billingWebPlugin = await ctx.plugin(billingWebAlioth, {})
   disposers.push(() => billingWebPlugin.dispose())
-  const fbStore = await ctx.plugin(feedbackAlioth, {})
+  const fbStore = await ctx.plugin(pageFeedback, {})
   disposers.push(() => fbStore.dispose())
   const fbWeb = await ctx.plugin(feedbackWebAlioth, { port: 14747 })
   disposers.push(() => fbWeb.dispose())

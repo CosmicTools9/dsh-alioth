@@ -23,7 +23,7 @@ import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as workflow from '@dsh-alioth/tool-alioth-workflow'
 import * as orchestrator from '@dsh-alioth/tool-alioth-orchestrator'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
-import * as feedbackAlioth from '@dsh-alioth/feedback-alioth'
+import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as toolFeedback from '@dsh-alioth/tool-feedback-alioth'
 
 const GOLDEN = new URL('./__snapshots__/model-surface.json', import.meta.url)
@@ -44,7 +44,7 @@ describe('model-visible surface snapshot', () => {
       await ctx.plugin(workflow, { preProcRoot }),
       await ctx.plugin(orchestrator, {}),
       await ctx.plugin(authAlioth, { mode: 'open' }),
-      await ctx.plugin(feedbackAlioth, {}),
+      await ctx.plugin(pageFeedback, {}),
       await ctx.plugin(toolFeedback, {}),
     ]
     // Reverse-order teardown (same pattern as smoke-composition.ts): stops
