@@ -43,6 +43,9 @@ importers:
       '@deepseek-ai/dsh-llm-deepseek':
         specifier: 0.1.3-alpha.1
         version: link:../deepseek-harness/packages/llm/llm-deepseek
+      '@deepseek-ai/dsh-page-feedback':
+        specifier: 0.1.3-alpha.1
+        version: link:../deepseek-harness/packages/feedback/page-feedback
       '@deepseek-ai/dsh-scope':
         specifier: 0.1.3-alpha.1
         version: link:../deepseek-harness/packages/core/scope
@@ -85,9 +88,6 @@ importers:
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:packages/alioth/env-alioth
-      '@dsh-alioth/feedback-alioth':
-        specifier: workspace:*
-        version: link:packages/alioth/feedback-alioth
       '@dsh-alioth/feedback-web-alioth':
         specifier: workspace:*
         version: link:packages/alioth/feedback-web-alioth
@@ -5214,6 +5214,16 @@ importers:
         specifier: workspace:^
         version: link:../../typert/protocol
 
+  ../deepseek-harness/packages/feedback/page-feedback:
+    dependencies:
+      '@deepseek-ai/schemastery':
+        specifier: workspace:^
+        version: link:../../../vendor/schemastery
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+
   ../deepseek-harness/packages/fs/fs:
     devDependencies:
       '@deepseek-ai/cordis':
@@ -10041,7 +10051,7 @@ importers:
         version: link:../../../../deepseek-harness/vendor/loader
       '@deepseek-ai/dsh-host-directory-picker':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/host/directory-picker
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
@@ -10053,7 +10063,7 @@ importers:
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/core/tools
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
@@ -10178,26 +10188,17 @@ importers:
         specifier: 2.0.4
         version: 2.0.4
 
-  packages/alioth/feedback-alioth:
-    dependencies:
-      '@deepseek-ai/cordis':
-        specifier: ^4.0.2
-        version: link:../../../../deepseek-harness/vendor/cordis
-      '@deepseek-ai/schemastery':
-        specifier: ^3.18.2
-        version: link:../../../../deepseek-harness/vendor/schemastery
-
   packages/alioth/feedback-web-alioth:
     dependencies:
       '@deepseek-ai/cordis':
         specifier: ^4.0.2
         version: link:../../../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-page-feedback':
+        specifier: workspace:^
+        version: link:../../../../deepseek-harness/packages/feedback/page-feedback
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
-      '@dsh-alioth/feedback-alioth':
-        specifier: workspace:*
-        version: link:../feedback-alioth
 
   packages/alioth/gen-alioth:
     dependencies:
@@ -10236,7 +10237,7 @@ importers:
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/core/tools
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
@@ -10254,7 +10255,7 @@ importers:
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/core/tools
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
@@ -10282,7 +10283,7 @@ importers:
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/core/tools
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
@@ -10310,7 +10311,7 @@ importers:
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/core/tools
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
@@ -10326,15 +10327,15 @@ importers:
       '@deepseek-ai/cordis':
         specifier: ^4.0.2
         version: link:../../../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-page-feedback':
+        specifier: workspace:^
+        version: link:../../../../deepseek-harness/packages/feedback/page-feedback
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.3-alpha.1
-        version: link:../../../../deepseek-harness/packages/core/tools
+        version: 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
-      '@dsh-alioth/feedback-alioth':
-        specifier: workspace:*
-        version: link:../feedback-alioth
 
 packages:
 
@@ -10699,6 +10700,40 @@ packages:
   '@conventional-changelog/template@1.4.0':
     resolution: {integrity: sha512-aalGyl7dbB5PArRebDIX43ZvBlXrYm9uWzGJ26t+4SzJVPsOuvfILGGbw5X4yX7i50YEmJ8zvbiWnqH/AAnZqg==}
     engines: {node: '>=22'}
+
+  '@deepseek-ai/cosmokit@1.8.3':
+    resolution: {integrity: sha512-qBo+ronVM6Eu2WNVJXi8JcMiqZ19T9BRIpV+5qJUFPXjGH/Z0QKcQMC/IZJ7L394YTOtJgcovbk9qP0w2GsBXQ==}
+
+  '@deepseek-ai/dsh-brand@0.1.3-alpha.2':
+    resolution: {integrity: sha512-3eLurldce0RAMyXZRQKqcEGYONfF+fUhvE++pfVku01TXea34UqGO64uCyNM0jliKuhoyz6n423/vEFz7j8CsQ==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.2
+
+  '@deepseek-ai/dsh-host-directory-picker@0.1.3-alpha.2':
+    resolution: {integrity: sha512-HWMLqDXJJuNRFNv8YRu48asEAhScPz61V8qVMsk9M1Fb90xq6nBqknqona3AN0pO8jrZ7/oQcdVwASOCYpRY0w==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.2
+
+  '@deepseek-ai/dsh-tools@0.1.3-alpha.2':
+    resolution: {integrity: sha512-7DGLcByrDcz2T86T9/GaHk1wzTj3ByeyRIiFDwok/ZsM4v1+f1Hj4iFCFtgqczSTMdAba0W+B9d3F/ew+tvcTg==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.2
+      '@deepseek-ai/dsh-agent': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-code-runtime': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-invariants': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-llm': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-scope': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-session': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-system-prompt': ^0.1.3-alpha.2
+      '@deepseek-ai/dsh-user-approval': ^0.1.3-alpha.2
+
+  '@deepseek-ai/dsh-util-values@0.1.3-alpha.2':
+    resolution: {integrity: sha512-YU5BIHx7jDEVhqCUFJ4AhF8gSJ3QgWOyYz79yy6hCd0Ng/IPGEQslHXUtUUPxFbLrTalmRmA7rlOYEo5yUfPkA==}
+    peerDependencies:
+      '@deepseek-ai/cordis': ^4.0.2
+
+  '@deepseek-ai/schemastery@3.18.2':
+    resolution: {integrity: sha512-njDtZsznjYxok7KLLlHOPyuv2efdWVbSflAHgztSfbMsg+CVraEoRe2DjOCgClYv3ZCSm7WXoaUkbB/+RY7tWQ==}
 
   '@earendil-works/pi-ai@0.84.4':
     resolution: {integrity: sha512-AClAZxf5+c4RRu44NJPS6wyQy+Nmq+Mzyyrdvm4ZVMNuixelO02RZX4G4Aq1F145Yzp43wnM5S+hLlSI7ypfVw==}
@@ -15560,6 +15595,40 @@ snapshots:
       conventional-commits-parser: 7.1.2
 
   '@conventional-changelog/template@1.4.0': {}
+
+  '@deepseek-ai/cosmokit@1.8.3': {}
+
+  '@deepseek-ai/dsh-brand@0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)':
+    dependencies:
+      '@deepseek-ai/cordis': link:../deepseek-harness/vendor/cordis
+
+  '@deepseek-ai/dsh-host-directory-picker@0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)':
+    dependencies:
+      '@deepseek-ai/cordis': link:../deepseek-harness/vendor/cordis
+
+  '@deepseek-ai/dsh-tools@0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)(@deepseek-ai/dsh-agent@deepseek-harness+packages+core+agent)(@deepseek-ai/dsh-code-runtime@deepseek-harness+packages+code-runtime+code-runtime)(@deepseek-ai/dsh-invariants@deepseek-harness+packages+runtime-diagnostics+invariants)(@deepseek-ai/dsh-llm@deepseek-harness+packages+llm+llm)(@deepseek-ai/dsh-scope@deepseek-harness+packages+core+scope)(@deepseek-ai/dsh-session@deepseek-harness+packages+core+session)(@deepseek-ai/dsh-system-prompt@deepseek-harness+packages+core+system-prompt)(@deepseek-ai/dsh-user-approval@deepseek-harness+packages+interaction+user-approval)':
+    dependencies:
+      '@deepseek-ai/cordis': link:../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-agent': link:../deepseek-harness/packages/core/agent
+      '@deepseek-ai/dsh-brand': 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)
+      '@deepseek-ai/dsh-code-runtime': link:../deepseek-harness/packages/code-runtime/code-runtime
+      '@deepseek-ai/dsh-invariants': link:../deepseek-harness/packages/runtime-diagnostics/invariants
+      '@deepseek-ai/dsh-llm': link:../deepseek-harness/packages/llm/llm
+      '@deepseek-ai/dsh-scope': link:../deepseek-harness/packages/core/scope
+      '@deepseek-ai/dsh-session': link:../deepseek-harness/packages/core/session
+      '@deepseek-ai/dsh-system-prompt': link:../deepseek-harness/packages/core/system-prompt
+      '@deepseek-ai/dsh-user-approval': link:../deepseek-harness/packages/interaction/user-approval
+      '@deepseek-ai/dsh-util-values': 0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)
+      '@deepseek-ai/schemastery': 3.18.2
+
+  '@deepseek-ai/dsh-util-values@0.1.3-alpha.2(@deepseek-ai/cordis@deepseek-harness+vendor+cordis)':
+    dependencies:
+      '@deepseek-ai/cordis': link:../deepseek-harness/vendor/cordis
+
+  '@deepseek-ai/schemastery@3.18.2':
+    dependencies:
+      '@deepseek-ai/cosmokit': 1.8.3
+      '@standard-schema/spec': 1.1.0
 
   '@earendil-works/pi-ai@0.84.4(@modelcontextprotocol/sdk@1.30.0(supports-color@9.4.0)(zod@4.4.3))(supports-color@9.4.0)(ws@8.21.3)(zod@4.4.3)':
     dependencies:
