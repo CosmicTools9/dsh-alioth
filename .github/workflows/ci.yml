@@ -51,7 +51,7 @@ jobs:
       # the skill-alioth probe asserts availability on the toolchain.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: 1.4.2
       - name: install (frozen)
         run: pnpm install --frozen-lockfile
       - name: typecheck (packages + scripts + tests)

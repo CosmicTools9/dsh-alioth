@@ -60,7 +60,7 @@ RUN pnpm --filter '@dsh-alioth/env-alioth' deploy --legacy --prod /app/runtime-e
 FROM node:24.20-slim AS runtime
 # bun — the declared prototype-gate runtime (distribution dependency).
 # bun pinned to the AliothStudio stack version (prototype gates must match).
-RUN npm install -g bun@1.3.14 --silent
+RUN npm install -g bun@1.4.2 --silent
 # embedded-postgres hard-codes LC_MESSAGES=en_US.UTF-8 for initdb; Debian
 # slim ships only C/POSIX — generate the locale or PG init fails.
 # PostgreSQL 18.6 via PGDG — aligned with the AliothStudio stack (Homebrew
