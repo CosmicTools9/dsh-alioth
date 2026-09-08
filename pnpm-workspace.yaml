@@ -33,10 +33,12 @@ allowBuilds:
   '@embedded-postgres/linux-arm64': true
   '@embedded-postgres/linux-x64': true
   '@google/genai': true
+  electron-winstaller: false
   esbuild: true
   fs-ext: true
   koffi: true
   lefthook: true
+  msgpackr-extract: false
   node-pty: true
   onnxruntime-node: true
   protobufjs: true
