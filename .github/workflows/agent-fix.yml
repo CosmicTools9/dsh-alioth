@@ -56,7 +56,7 @@ jobs:
           node-version: 24
 
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.7.0 --activate
 
       - name: harness install (frozen) + host build
         working-directory: deepseek-harness

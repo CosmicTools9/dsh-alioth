@@ -33,7 +33,7 @@ x-harness-boot: &harness-boot
     with:
       node-version: 24
   - name: enable pnpm
-    run: corepack enable && corepack prepare pnpm@11.24.0 --activate
+    run: corepack enable && corepack prepare pnpm@11.7.0 --activate
   - name: harness install (frozen) + host build
     working-directory: deepseek-harness
     run: pnpm install --frozen-lockfile && git apply ../dsh-alioth/scripts/harness-patches/ui-workspace-pick-gate.patch && pnpm run build:lib:host && pnpm run build:lib:client && pnpm run build:lib:client
@@ -110,7 +110,7 @@ jobs:
         with:
           node-version: 24
       - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.24.0 --activate
+        run: corepack enable && corepack prepare pnpm@11.7.0 --activate
       - name: harness install (frozen) + host build
         working-directory: deepseek-harness
         run: pnpm install --frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client && pnpm run build:lib:client
