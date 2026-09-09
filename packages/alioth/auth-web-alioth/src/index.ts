@@ -854,21 +854,36 @@ async function listVisiblePrototypes(
       // cookie resolves to the account's namespace, so host-side surfaces
       // (the workspace picker's browse backend) confine every browser to its
       // own U-<user> namespace — strict per-account isolation without client
-      // participation. Registered here because the harness connection
-      // service may not be visible at apply() time (its apply awaits
-      // credential setup); by the time this webServer inject callback runs,
-      // the connection's own webServer callback (registered earlier on the
-      // same dependency) has already flushed, so the service is reachable.
-      const connection = asConnection((webCtx.get as (name: string) => unknown).call(webCtx, 'connection'))
-      if (connection?.registerAccountResolver !== undefined) {
-        const dispose = connection.registerAccountResolver(async headers => {
-          const token = tokenFromCookieHeader(headers.cookie)
-          if (token === null) return null
-          const user = await auth().userForToken(token)
-          return user?.namespace ?? null
-        })
-        webCtx.effect(() => dispose, 'auth-web-alioth: connection account resolver')
+      // participation. The connection service provides asynchronously (its
+      // apply awaits credential setup), so registration retries until the
+      // service is reachable instead of depending on inject ordering. The
+      // retry never blocks the rest of this callback (web gate routes keep
+      // registering even in trees without the connection service).
+      const registerAccountResolver = (): void => {
+        let timer: NodeJS.Timeout | undefined
+        const tryRegister = (): boolean => {
+          const connection = asConnection((webCtx.get as (name: string) => unknown).call(webCtx, 'connection'))
+          if (connection?.registerAccountResolver === undefined) return false
+          const dispose = connection.registerAccountResolver(async headers => {
+            const token = tokenFromCookieHeader(headers.cookie)
+            if (token === null) return null
+            const user = await auth().userForToken(token)
+            return user?.namespace ?? null
+          })
+          webCtx.effect(() => {
+            clearTimeout(timer)
+            return dispose
+          }, 'auth-web-alioth: connection account resolver')
+          return true
+        }
+        const deadline = Date.now() + 30_000
+        const attempt = (): void => {
+          if (tryRegister() || Date.now() > deadline) return
+          timer = setTimeout(attempt, 200)
+        }
+        if (!tryRegister()) timer = setTimeout(attempt, 200)
       }
+      registerAccountResolver()
       webCtx.effect(() => web.register({
         kind: 'exact',
         path: '/login',
