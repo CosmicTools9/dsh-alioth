@@ -547,22 +547,6 @@ function gateScript(landingPath: string): string {
 export function apply(ctx: Context, config: Config): void {
   const ttlSeconds = config.sessionTtlSeconds ?? 7 * 24 * 3600
   const auth = () => ctx.aliothAuth
-  /** Host-login account for the connection boundary: the HttpOnly session
-   * cookie resolves to the account's namespace, so host-side surfaces
-   * (the workspace picker's browse backend) confine every browser to its
-   * own U-<user> namespace — strict per-account isolation without client
-   * participation. Registered once the harness connection service is
-   * reachable; anonymous trees skip it. */
-  const connection = asConnection((ctx.get as (name: string) => unknown).call(ctx, 'connection'))
-  if (connection?.registerAccountResolver !== undefined) {
-    const dispose = connection.registerAccountResolver(async headers => {
-      const token = tokenFromCookieHeader(headers.cookie)
-      if (token === null) return null
-      const user = await auth().userForToken(token)
-      return user?.namespace ?? null
-    })
-    ctx.effect(() => dispose, 'auth-web-alioth: connection account resolver')
-  }
   /** GUI origin once the webServer carrier mounts (set by the inject callback
    * below); the standalone success page links across origins with it —
    * cookies are per-origin, so a same-origin "/" link would silently keep
@@ -865,6 +849,25 @@ async function listVisiblePrototypes(
       if (web === undefined) {
         ctx.logger.warn('auth-web-alioth: webServer present but shape mismatch — web gate not mounted')
         return
+      }
+      // Host-login account for the connection boundary: the HttpOnly session
+      // cookie resolves to the account's namespace, so host-side surfaces
+      // (the workspace picker's browse backend) confine every browser to its
+      // own U-<user> namespace — strict per-account isolation without client
+      // participation. Registered here because the harness connection
+      // service may not be visible at apply() time (its apply awaits
+      // credential setup); by the time this webServer inject callback runs,
+      // the connection's own webServer callback (registered earlier on the
+      // same dependency) has already flushed, so the service is reachable.
+      const connection = asConnection((webCtx.get as (name: string) => unknown).call(webCtx, 'connection'))
+      if (connection?.registerAccountResolver !== undefined) {
+        const dispose = connection.registerAccountResolver(async headers => {
+          const token = tokenFromCookieHeader(headers.cookie)
+          if (token === null) return null
+          const user = await auth().userForToken(token)
+          return user?.namespace ?? null
+        })
+        webCtx.effect(() => dispose, 'auth-web-alioth: connection account resolver')
       }
       webCtx.effect(() => web.register({
         kind: 'exact',
