@@ -85,9 +85,13 @@ function asWebServer(value: unknown): WebServerLike | undefined {
 /** Structural face of the harness `connection` service — optional like
  * webServer: present in web profiles (client-connection mounted), absent in
  * headless ones. authenticatedUrl() appends the process launch token to a
- * clean origin, which is how the agent console (SPA) admits a browser. */
+ * clean origin, which is how the agent console (SPA) admits a browser.
+ * registerAccountResolver (newer harness lines) lets the host login map each
+ * request's cookie jar to the signed-in account, so host-side surfaces
+ * (workspace pickers) isolate per user without client participation. */
 interface ConnectionLike {
   authenticatedUrl(baseUrl: string): string
+  registerAccountResolver?(resolver: (headers: { cookie?: string; host?: string }) => string | null | Promise<string | null>): () => void
 }
 
 function asConnection(value: unknown): ConnectionLike | undefined {
@@ -492,9 +496,8 @@ const CLEAR_COOKIES: string[] = [
   `${MARKER_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`,
 ]
 
-/** Session token from the HttpOnly cookie (browser clients), else null. */
-function cookieToken(request: IncomingMessage): string | null {
-  const header = request.headers.cookie
+/** Session token from a Cookie header value, else null. */
+function tokenFromCookieHeader(header: string | undefined): string | null {
   if (header === undefined) {
     return null
   }
@@ -505,6 +508,11 @@ function cookieToken(request: IncomingMessage): string | null {
     }
   }
   return null
+}
+
+/** Session token from the HttpOnly cookie (browser clients), else null. */
+function cookieToken(request: IncomingMessage): string | null {
+  return tokenFromCookieHeader(request.headers.cookie)
 }
 
 // ── gate script (tapIndex) ──────────────────────────────────────────────
@@ -539,6 +547,22 @@ function gateScript(landingPath: string): string {
 export function apply(ctx: Context, config: Config): void {
   const ttlSeconds = config.sessionTtlSeconds ?? 7 * 24 * 3600
   const auth = () => ctx.aliothAuth
+  /** Host-login account for the connection boundary: the HttpOnly session
+   * cookie resolves to the account's namespace, so host-side surfaces
+   * (the workspace picker's browse backend) confine every browser to its
+   * own U-<user> namespace — strict per-account isolation without client
+   * participation. Registered once the harness connection service is
+   * reachable; anonymous trees skip it. */
+  const connection = asConnection((ctx.get as (name: string) => unknown).call(ctx, 'connection'))
+  if (connection?.registerAccountResolver !== undefined) {
+    const dispose = connection.registerAccountResolver(async headers => {
+      const token = tokenFromCookieHeader(headers.cookie)
+      if (token === null) return null
+      const user = await auth().userForToken(token)
+      return user?.namespace ?? null
+    })
+    ctx.effect(() => dispose, 'auth-web-alioth: connection account resolver')
+  }
   /** GUI origin once the webServer carrier mounts (set by the inject callback
    * below); the standalone success page links across origins with it —
    * cookies are per-origin, so a same-origin "/" link would silently keep

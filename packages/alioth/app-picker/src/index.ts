@@ -39,11 +39,28 @@ export function defaultPreProcRoot(): string {
   return env !== undefined && env !== '' ? resolve(env) : resolve(homedir(), '.dsh-alioth', 'Pre-Proc')
 }
 
+/**
+ * The signed-in account of the dispatch being processed, when the deployment
+ * mounted the harness connection account resolver (web profiles with a host
+ * login such as auth-web-alioth). The connection package is an optional peer:
+ * headless trees without it resolve null.
+ */
+async function currentConnectionAccount(): Promise<string | null> {
+  try {
+    const connection = await import('@deepseek-ai/dsh-client-connection')
+    return connection.currentConnectionAccount()
+  } catch {
+    return null
+  }
+}
+
 /** Backend configuration — deployment choices only. */
 export interface Config {
   /** Pre-Proc root whose namespaces/apps are offered (default: env ALIOTH_PRE_PROC_ROOT, else ~/.dsh-alioth/Pre-Proc). */
   preProcRoot?: string
-  /** Lock the picker to one namespace (AppCreator standard mode); unset lists every namespace (AppAgent-style). */
+  /** Lock the picker to one namespace (anonymous/headless fallback); a
+   * signed-in connection account overrides it and confines the picker to
+   * that account's namespace. Unset lists every namespace when anonymous. */
   namespace?: string
 }
 
@@ -105,8 +122,16 @@ export class AppDirectoryPicker extends DirectoryPicker {
   /**
    * One listing level of the Alioth tree. The seam contract takes fully
    * qualified paths only; anything outside the Pre-Proc root is refused.
-   * Levels: root → namespaces (or the configured one directly) → apps →
-   * (leaf, empty — an app's internals are not offered as pickable rows).
+   * Levels: root → namespaces (or the current account's one directly) →
+   * apps → (leaf, empty — an app's internals are not offered as pickable
+   * rows).
+   *
+   * Namespace isolation: when the dispatch carries a signed-in account
+   * (connection account resolver), the picker serves that account's
+   * namespace only — config `namespace` is a static fallback for anonymous
+   * trees, never an override of the caller's identity. Cross-namespace
+   * paths are refused outright, so one browser can never list another
+   * user's apps.
    */
   private async list(path?: string, signal?: AbortSignal): Promise<DirectoryListing> {
     const root = this.root
@@ -116,10 +141,12 @@ export class AppDirectoryPicker extends DirectoryPicker {
         throw new DirectoryPickerError('directory-unreadable', path, `cannot list "${path}": outside the Pre-Proc root`)
       }
     }
-    const ns = this.namespace
+    const account = await currentConnectionAccount()
+    const ns = account ?? this.namespace
     if (path === undefined) {
-      // Root: the configured namespace's apps directly (AppCreator lock), or
-      // every namespace as the first browse level.
+      // Root: the current namespace's apps directly (account or configured
+      // lock), or every namespace as the first browse level (anonymous,
+      // AppAgent-style).
       if (ns !== undefined) return this.namespaceListing(ns, signal)
       const entries = await namespaceDirsOf(root)
       if (signal?.aborted === true) throw new DirectoryPickerError('directory-unreadable', root, 'listing aborted')
@@ -135,6 +162,11 @@ export class AppDirectoryPicker extends DirectoryPicker {
     if (ns !== undefined) {
       const nsDir = join(root, ns)
       if (target === root || target === nsDir) return this.namespaceListing(ns, signal)
+      if (!target.startsWith(nsDir + '/')) {
+        // Locked/account mode browsing at another namespace: refuse instead
+        // of leaking its existence through an empty listing.
+        throw new DirectoryPickerError('directory-unreadable', target, `cannot list "${target}": outside namespace "${ns}"`)
+      }
       return this.appLeafListing(ns, target, signal)
     }
     // Unconfigured: target is a namespace directory (or inside one).

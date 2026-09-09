@@ -91,3 +91,66 @@ describe('AppDirectoryPicker listing (AppCreator tree)', () => {
     await cleanup(f.root)
   })
 })
+
+describe('AppDirectoryPicker per-account isolation (connection account)', () => {
+  /** Run a browse under a signed-in account scope. */
+  function asAccount<T>(account: string, fn: () => Promise<T>): Promise<T> {
+    return import('@deepseek-ai/dsh-client-connection').then(({ connectionAccountStorage }) =>
+      connectionAccountStorage.run({ account }, () => fn()))
+  }
+
+  it('serves only the account namespace at the root (no namespace listing)', async () => {
+    const f = await fixture('U-other')
+    await asAccount('U-test', async () => {
+      const listing = await browse(f.picker)()
+      expect(listing.entries.map(e => e.name)).toEqual(['a1', 'b2'])
+    })
+    await cleanup(f.root)
+  })
+
+  it('the account overrides a misconfigured static namespace lock', async () => {
+    const f = await fixture('U-other')
+    await asAccount('U-test', async () => {
+      const listing = await browse(f.picker)()
+      expect(listing.crumbs.map(c => c.name)).toEqual(['工作区', 'U-test'])
+      expect(listing.entries.map(e => e.name)).toEqual(['a1', 'b2'])
+    })
+    await cleanup(f.root)
+  })
+
+  it('refuses browsing another namespace while signed in', async () => {
+    const f = await fixture()
+    await asAccount('U-test', async () => {
+      await expect(browse(f.picker)(join(f.root, 'U-other'))).rejects.toThrow(DirectoryPickerError)
+      await expect(browse(f.picker)(join(f.root, 'U-other', 'Apps', 'x9'))).rejects.toThrow(DirectoryPickerError)
+    })
+    await cleanup(f.root)
+  })
+
+  it('refuses a deep path escaping the account namespace', async () => {
+    const f = await fixture()
+    await asAccount('U-test', async () => {
+      const listing = await browse(f.picker)(join(f.root, 'U-test', 'Apps', 'a1'))
+      expect(listing.path).toBe(f.appA1)
+      expect(listing.entries).toEqual([])
+    })
+    await cleanup(f.root)
+  })
+
+  it('serves an empty listing for an account namespace without apps', async () => {
+    const f = await fixture()
+    await asAccount('U-fresh', async () => {
+      const listing = await browse(f.picker)()
+      expect(listing.entries).toEqual([])
+      expect(listing.path).toBe(join(f.root, 'U-fresh'))
+    })
+    await cleanup(f.root)
+  })
+
+  it('browse without an account follows the static lock', async () => {
+    const f = await fixture('U-other')
+    const listing = await browse(f.picker)()
+    expect(listing.entries.map(e => e.name)).toEqual(['x9'])
+    await cleanup(f.root)
+  })
+})
