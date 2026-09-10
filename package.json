@@ -20,7 +20,8 @@
     "check:versions": "node --import tsx scripts/check-versions.ts",
     "check:dicts": "node --import tsx scripts/check-semantic-dicts.ts --require-fresh",
     "check:tree-assembly": "node --import tsx scripts/check-tree-assembly.ts",
-    "prepare": "lefthook install || echo 'lefthook skipped (no git / build env)'"
+    "prepare": "lefthook install || echo 'lefthook skipped (no git / build env)'",
+    "postinstall": "node scripts/realign-harness-links.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.2.2",
