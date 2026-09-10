@@ -2168,6 +2168,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/modules:
     devDependencies:
@@ -2276,6 +2279,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-approval:
     devDependencies:
@@ -2321,6 +2327,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-attachment:
     devDependencies:
@@ -2562,6 +2571,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-conversation:
     dependencies:
@@ -2780,6 +2792,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-directory-picker-browse:
     devDependencies:
@@ -2984,6 +2999,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-jobs:
     devDependencies:
@@ -3020,6 +3038,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-layout:
     devDependencies:
@@ -3053,6 +3074,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-message-feedback:
     devDependencies:
@@ -3230,6 +3254,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-permission-presets:
     devDependencies:
@@ -3281,6 +3308,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-plan:
     devDependencies:
@@ -3323,6 +3353,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-primitives:
     devDependencies:
@@ -3548,6 +3581,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-settings:
     devDependencies:
@@ -3581,6 +3617,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-settings-general:
     dependencies:
@@ -3636,6 +3675,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-settings-models:
     devDependencies:
@@ -3675,6 +3717,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-settings-plugin-inventory:
     devDependencies:
@@ -3759,6 +3804,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-sidebar:
     devDependencies:
@@ -3804,6 +3852,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-sidebar-documentpreview:
     devDependencies:
@@ -4180,6 +4231,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-tool:
     devDependencies:
@@ -4399,6 +4453,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-workflow-run:
     devDependencies:
@@ -4450,6 +4507,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/ui-workspace:
     devDependencies:
@@ -4519,6 +4579,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/client/web:
     devDependencies:
@@ -5776,6 +5839,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/extensions/cordis-host-runner:
     dependencies:
@@ -5894,6 +5960,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/feedback/command-feedback:
     dependencies:
@@ -7860,6 +7929,9 @@ importers:
       react:
         specifier: ^19.2.8
         version: 19.2.8
+      react-dom:
+        specifier: ^19.2.8
+        version: 19.2.8(react@19.2.8)
 
   ../deepseek-harness/packages/session-query/session-query:
     devDependencies:
