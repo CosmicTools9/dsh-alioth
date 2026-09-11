@@ -49,7 +49,10 @@ trap cleanup EXIT INT TERM
 
 ready=false
 for _ in $(seq 1 120); do
-  if curl -sf "$URL" >/dev/null 2>&1; then
+  # Any HTTP response means the server is serving: the harness web auth answers
+  # 401 on "/" without the boot token URL, so -f (fail on 4xx) would never pass
+  # and this loop would kill a healthy server after the timeout.
+  if curl -s -o /dev/null "$URL" 2>/dev/null; then
     ready=true
     break
   fi
