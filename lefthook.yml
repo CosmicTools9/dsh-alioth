@@ -5,6 +5,11 @@ pre-commit:
     lint-staged:
       run: pnpm exec oxlint --fix --fix-suggestions --deny-warnings --config .oxlintrc.json {staged_files}
       glob: '*.{ts,tsx,js,mjs,cjs}'
+      # Vendor files match the glob but oxlint ignores them (.oxlintrc.json
+      # ignorePatterns), so a vendor-only commit made oxlint exit 1 with
+      # "No files found to lint" and blocked the repo's own sync:framework
+      # workflow. Exclude them here so the command simply does not run.
+      exclude: 'packages/alioth/env-alioth/vendor/**'
       # 可修复问题（含 suggestions）自动落地并重暂存；不可修复的仍 fail commit。
       # 默认仅 correctness 规则集，suggestion 面很小（no-debugger / no-extra-boolean-cast 等）。
       stage_fixed: true
