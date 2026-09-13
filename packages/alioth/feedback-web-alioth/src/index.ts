@@ -121,11 +121,21 @@ export function apply(ctx: Context, config: Config): void {
     }
     return {}
   }
-  const origin = `http://${cfg.host === '0.0.0.0' ? '127.0.0.1' : cfg.host}:${cfg.port}`
+  /**
+   * Authority for the loopback origin. Unspecified hosts map to 127.0.0.1 (as
+   * `0.0.0.0` always did) and IPv6 literals need brackets — without them
+   * `http://::1:14748` is not a URL, and every request threw inside the
+   * handler's URL parse.
+   */
+  function loopbackAuthority(host: string, port: number): string {
+    const loopback = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host
+    return loopback.includes(':') ? `[${loopback}]:${port}` : `${loopback}:${port}`
+  }
+  const origin = `http://${loopbackAuthority(cfg.host, cfg.port)}`
 
   const server = createServer(async (request, response) => {
-    const url = new URL(request.url ?? '/', origin)
     try {
+      const url = new URL(request.url ?? '/', origin)
       if (request.method === 'OPTIONS') {
         response.writeHead(204, corsHeaders(request))
         response.end()

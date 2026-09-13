@@ -512,3 +512,40 @@ describe('feedback carrier loopback boundary and config defaults', () => {
     }
   }, 30_000)
 })
+
+describe('feedback carrier bound to an IPv6 loopback host', () => {
+  it('answers requests instead of failing the URL parse on every call', async () => {
+    // `http://::1:<port>` is not a URL: without bracket-quoting the IPv6
+    // literal, the handler's `new URL(request.url, origin)` threw outside its
+    // try block, so every request became an unhandled rejection and the
+    // caller never got a response.
+    const dir = await mkdtemp(path.join(tmpdir(), 'feedbackweb-v6-'))
+    const v6 = new Context()
+    const store = await v6.plugin(pageFeedback, { dbPath: path.join(dir, 'f.db') })
+    const v6Port = 14960 + Math.floor(Math.random() * 60)
+    const carrier = await v6.plugin(feedbackWeb, { port: v6Port, host: '::1' })
+    try {
+      const response = await fetch(`http://[::1]:${v6Port}/health`, { signal: AbortSignal.timeout(4000) })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({ ok: true })
+    } finally {
+      await carrier.dispose().catch(() => {})
+      await store.dispose().catch(() => {})
+    }
+  }, 30_000)
+
+  it('maps the unspecified IPv6 host to loopback like 0.0.0.0', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'feedbackweb-v6any-'))
+    const v6 = new Context()
+    const store = await v6.plugin(pageFeedback, { dbPath: path.join(dir, 'f.db') })
+    const v6Port = 15040 + Math.floor(Math.random() * 60)
+    const carrier = await v6.plugin(feedbackWeb, { port: v6Port, host: '::' })
+    try {
+      const response = await fetch(`http://127.0.0.1:${v6Port}/health`, { signal: AbortSignal.timeout(4000) })
+      expect(response.status).toBe(200)
+    } finally {
+      await carrier.dispose().catch(() => {})
+      await store.dispose().catch(() => {})
+    }
+  }, 30_000)
+})

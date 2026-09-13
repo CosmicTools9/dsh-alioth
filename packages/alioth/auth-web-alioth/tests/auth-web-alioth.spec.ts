@@ -909,6 +909,24 @@ describe('workspace page with apps and 成品预览 (standard view)', () => {
     expect(errorHtml).not.toContain('class="banner error"')
     expect(errorHtml).not.toContain('boom')
   })
+
+  it('lists a build that exists only under the Pre-Proc root', async () => {
+    // The discovery root must be the Pre-Proc root itself: builds live at
+    // <contentRoot>/Pre-Proc/<ns>/Prototypes/... and that is where the
+    // /preview/Pre-Proc/... hrefs resolve. Listing from dirname(contentRoot)
+    // silently found nothing (the old fixture masked it by writing the same
+    // files to both locations).
+    const { cookie: erinCookie } = await registerUser('erin')
+    const only = path.join(previewPreProcRoot, 'U-erin', 'Prototypes', 'Apps', 'only-real')
+    await mkdir(only, { recursive: true })
+    await writeFile(path.join(only, 'a-v1.html'), '<html>only real</html>')
+
+    const response = await fetch(`${base()}/workspace`, { headers: { cookie: erinCookie } })
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('成品预览')
+    expect(html).toContain('only-real · a-v1.html')
+  })
 })
 
 describe('preview surface edges', () => {

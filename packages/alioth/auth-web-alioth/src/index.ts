@@ -268,14 +268,17 @@ interface PreviewAuth {
 /** Content root for the preview surface: parent of the Pre-Proc root (the
  * upstream repo-root layout — built prototypes reference provisioned assets
  * via relative paths, so the whole content root must be served together). */
-function previewContentRoot(config: Config): string {
+function preProcRoot(config: Config): string {
   const configured = config.preProcRoot
-  const preProcRoot = path.resolve(
+  return path.resolve(
     configured === undefined || configured === ''
       ? path.join(homedir(), '.dsh-alioth', 'Pre-Proc')
       : configured,
   )
-  return path.dirname(preProcRoot)
+}
+
+function previewContentRoot(config: Config): string {
+  return path.dirname(preProcRoot(config))
 }
 
 const PREVIEW_CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -766,10 +769,12 @@ export function apply(ctx: Context, config: Config): void {
 async function listVisiblePrototypes(
   namespaces: readonly string[],
 ): Promise<{ namespace: string; app: string; href: string; file: string; size: number }[]> {
-  const contentRoot = previewContentRoot(config)
   const all: { namespace: string; app: string; href: string; file: string; size: number }[] = []
   for (const ns of namespaces) {
-    for (const build of await listPrototypeBuilds(path.dirname(path.join(contentRoot, 'Pre-Proc')), ns)) {
+    // The builds live under `<contentRoot>/Pre-Proc/<ns>/Prototypes/...`, which
+    // is exactly what the `/preview/Pre-Proc/...` hrefs resolve to — listing
+    // from dirname(contentRoot) found nothing.
+    for (const build of await listPrototypeBuilds(preProcRoot(config), ns)) {
       all.push(build)
     }
   }
