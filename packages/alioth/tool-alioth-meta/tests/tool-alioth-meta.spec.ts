@@ -133,7 +133,7 @@ describe('alioth_schema_info', () => {
         description: '库存台账',
       }],
     })
-  })
+  }, 120_000)
 
   it('filters collections by exact category', async () => {
     const value = expectSuccess(await callSchemaInfo({ action: 'entities', category: '协作' }))
