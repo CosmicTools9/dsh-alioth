@@ -18,7 +18,7 @@
 # ── build stage: install the workspace with production binaries ──
 FROM node:24.20-slim AS build
 # node-pty/koffi compile native bits when prebuilds are missing (linux-arm64).
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 
@@ -36,8 +36,10 @@ COPY deepseek-harness/native ./native
 COPY deepseek-harness/patches ./patches
 # Not frozen, same reason as CI: the harness workspace lists out-of-root
 # members (../dsh-chess, ../../.dsh-chess/profiles) whose importers are in its
-# lockfile but cannot be checked out here.
-RUN pnpm install --no-frozen-lockfile
+# lockfile but cannot be checked out here. Lifecycle scripts are skipped: they
+# install git hooks and runtime helpers (lefthook, spawn-helper) that this
+# build-only stage never uses, and the first of them exits without git.
+RUN pnpm install --no-frozen-lockfile --ignore-scripts
 # AppCreator client patches (session pick gate, namespace isolation, picker
 # controls): replayed from the consumer workspace before building.
 RUN pnpm run build:lib:host && pnpm run build:lib:client

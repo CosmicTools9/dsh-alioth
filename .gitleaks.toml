@@ -1,0 +1,18 @@
+# Secret scanning config (CI: `gitleaks git --redact --exit-code 1`).
+#
+# Allowlist is scoped to the vendored upstream sources and the provenance
+# manifest, which trip the generic rules without containing secrets:
+#   - packages/alioth/env-alioth/vendor/PROVENANCE.json — sha256 digests the
+#     generic-api-key rule reads as keys (67 findings),
+#   - the vendored framework's own auth/test fixtures (Rust test keys, e.g.
+#     gateway_auth_tdd_test.rs) — upstream test material, not our credentials.
+# Both are byte-for-byte upstream/vendored artifacts we must not edit; every
+# path outside them stays fully scanned.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored upstream artifacts: provenance digests and upstream test fixtures"
+paths = [
+  '''packages/alioth/env-alioth/vendor/.*''',
+]
