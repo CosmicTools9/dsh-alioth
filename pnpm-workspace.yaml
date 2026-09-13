@@ -29,8 +29,18 @@ overrides:
   react: '^19.2.8'
   react-dom: '^19.2.8'
   '@types/react': '^19.2.17'
-  adm-zip: '>=0.6.0'
-  sharp: '>=0.35.0'
+  # Security floors raised 2026-09-13 from `pnpm audit --audit-level=moderate`
+  # (12 high / 6 moderate). Each stays within the range's own major line so
+  # consumers keep their expected API.
+  fast-uri: '^3.1.6'
+  js-yaml: '^4.3.2'
+  hono: '^4.13.5'
+  qs: '^6.16.0'
+  adm-zip: '^0.6.1'
+  # The nested 11.7.0 copy carried four advisories fixed in 11.11; the
+  # workspace itself pins pnpm 12.3.4 via packageManager.
+  pnpm: '12.3.4'
+  sharp: '>=0.35.4'
   yaml: '>=2.8.3'
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
@@ -47,6 +57,8 @@ allowBuilds:
   msgpackr-extract: false
   node-pty: true
   onnxruntime-node: true
+  # Nested CLI copy forced by the pnpm override above.
+  pnpm: true
   protobufjs: true
   sharp: true
 
@@ -268,3 +280,12 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-webhook-github@0.1.5-alpha.1'
   - '@deepseek-ai/dsh-webhook@0.1.5-alpha.1'
   - '@deepseek-ai/dsh-win32-process@0.1.5-alpha.1'
+
+# pnpm audit policy. extract-zip (2.0.1, pulled in by the embedded-postgres
+# toolchain) has two advisories with no patched release at all — the latest
+# published version is still affected, so no override can clear them. Ignored
+# explicitly rather than lowering the gate's severity floor.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-jmr9-qjv8-65gv
+    - GHSA-7pqw-9j4j-h8q3
