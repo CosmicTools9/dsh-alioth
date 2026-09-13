@@ -31,7 +31,13 @@ COPY deepseek-harness/vendor ./vendor
 COPY deepseek-harness/packages ./packages
 COPY deepseek-harness/apps ./apps
 COPY deepseek-harness/native ./native
-RUN pnpm install --frozen-lockfile
+# pnpm-workspace patchedDependencies point at patches/*.patch; the install
+# fails without them (Failed to read patch file ...).
+COPY deepseek-harness/patches ./patches
+# Not frozen, same reason as CI: the harness workspace lists out-of-root
+# members (../dsh-chess, ../../.dsh-chess/profiles) whose importers are in its
+# lockfile but cannot be checked out here.
+RUN pnpm install --no-frozen-lockfile
 # AppCreator client patches (session pick gate, namespace isolation, picker
 # controls): replayed from the consumer workspace before building.
 RUN pnpm run build:lib:host && pnpm run build:lib:client

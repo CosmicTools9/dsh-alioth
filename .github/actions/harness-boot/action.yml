@@ -25,11 +25,22 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@v4
-      with:
-        repository: William-d-zk/deepseek-harness
-        ref: 16c764a3486192b17db8ead1a2b5be796d47fc69
-        path: deepseek-harness
+    - name: harness checkout (sibling of this repository)
+      shell: bash
+      # actions/checkout can only write inside the workspace, but the consumer's
+      # pnpm workspace resolves the harness through `../deepseek-harness/*`
+      # globs — it must be a SIBLING of the repository directory, not a
+      # subdirectory, or the lockfile's importers fail to resolve and the
+      # frozen install dies with ERR_PNPM_OUTDATED_LOCKFILE.
+      working-directory: ${{ github.workspace }}/..
+      run: |
+        set -euo pipefail
+        rm -rf deepseek-harness
+        git init -q deepseek-harness
+        git -C deepseek-harness remote add origin https://github.com/William-d-zk/deepseek-harness.git
+        git -C deepseek-harness fetch -q --depth 1 origin 16c764a3486192b17db8ead1a2b5be796d47fc69
+        git -C deepseek-harness checkout -q FETCH_HEAD
+        echo "harness at $(git -C deepseek-harness rev-parse HEAD)"
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
       with:
@@ -38,8 +49,12 @@ runs:
       if: inputs.build == 'true'
       shell: bash
       run: corepack enable && corepack prepare pnpm@12.3.4 --activate
-    - name: harness install (frozen) + host build
+    - name: harness install + host build
       if: inputs.build == 'true'
       shell: bash
-      working-directory: deepseek-harness
-      run: pnpm install --frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client
+      working-directory: ${{ github.workspace }}/../deepseek-harness
+      # Not frozen: the harness workspace lists out-of-root members that exist
+      # only on a development machine (../dsh-chess, ../../.dsh-chess/profiles);
+      # its lockfile carries importers for them, so a frozen check cannot pass
+      # without those checkouts. The consumer's own install stays frozen.
+      run: pnpm install --no-frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client
