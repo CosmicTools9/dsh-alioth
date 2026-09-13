@@ -118,6 +118,7 @@ Positioning (from `AppCreator/DESIGN_INTENT.md`): AppCreator is the open-source 
 - **Typecheck scope**: `tsconfig.json` covers `packages/**/src`, `packages/**/tests`, `scripts`, root `tests` — gate scripts are compiled code too.
 - **Coverage floor** (vitest v8): statements/functions/lines 80, branches 70 — ratchet up only.
 - **Dependency hygiene**: knip (config `knip.json`) + frozen-lockfile CI installs + `pnpm audit --audit-level=moderate` + security floors as `overrides` in `pnpm-workspace.yaml` (adm-zip ≥0.6.0, sharp ≥0.35.0, yaml ≥2.8.3).
+- **Playwright is banned**: no dependency, no import, no test or script here may use it — browser work goes through the `ego-browser` skill (the harness keeps its own Playwright suites upstream; nothing in this repo runs, typechecks or heals them). The only Playwright entries in `pnpm-lock.yaml` are transitive, pulled in because the harness packages are workspace members; if the harness's own lanes break on Playwright types, that is upstream's surface — do not "fix" it here, and do not add realign/heal rules for it.
 - **Docs**: README is the entry point; CHANGELOG.md records releases; PR/issue templates + CODEOWNERS under `.github/`. AGENTS.md numbers (test counts, dict sizes) must be refreshed in the same PR that changes them.
 
 ## Architecture principles

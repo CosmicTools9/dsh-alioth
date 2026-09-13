@@ -15,3 +15,6 @@ dist/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+
+# Coverage reports (pnpm run test:coverage)
+coverage/
