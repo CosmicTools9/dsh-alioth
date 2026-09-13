@@ -2,11 +2,12 @@
 # Every job is a gate — no continue-on-error. Docker build+check lives in
 # docker.yml (heavier image job).
 #
-# Harness sourcing (2026-09-04): @deepseek-ai devDependencies pin
-# 0.1.3-alpha.1, which exists only in the deepseek-harness source tree (tag
-# dsh-v0.1.3-alpha.1). Jobs that install this workspace first clone the
-# harness as a sibling and build its host libs; the workspace glob
-# ../deepseek-harness/* resolves devDeps to that checkout.
+# Harness sourcing: @deepseek-ai devDependencies pin the 0.1.5 line, which
+# exists only in the deepseek-harness source tree — the Alioth line carries
+# commits that are not upstream yet. Every job that installs this workspace
+# runs .github/actions/harness-boot first: it checks the pinned harness out as
+# a SIBLING of dsh-alioth (the workspace glob ../deepseek-harness/* resolves
+# devDeps to that checkout) and builds its host libs.
 name: ci
 
 on:
@@ -91,19 +92,7 @@ jobs:
         with:
           path: dsh-alioth
           fetch-depth: 0
-      - uses: actions/checkout@v4
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.1.3-alpha.1
-          path: deepseek-harness
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.7.0 --activate
-      - name: harness install (frozen) + host build
-        working-directory: deepseek-harness
-        run: pnpm install --frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client && pnpm run build:lib:client
+      - uses: ./dsh-alioth/.github/actions/harness-boot
       - name: install (frozen)
         run: pnpm install --frozen-lockfile
       - name: lint commit range
@@ -156,4 +145,4 @@ jobs:
           set -x
           curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o /tmp/gitleaks.tgz
           tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
-          /tmp/gitleaks git --no-banner --redact --exit-code
+          /tmp/gitleaks git --no-banner --redact --exit-code 1

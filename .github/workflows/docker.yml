@@ -2,8 +2,8 @@
 # (composition smoke + doctor inside the container). Slow job — isolated from
 # ci.yml so the gate matrix stays fast. The build context is the parent of
 # both checkouts: the Dockerfile consumes `dsh-alioth/` plus the harness
-# source tree (`deepseek-harness/`, tag dsh-v0.1.3-alpha.1) that the
-# workspace devDependencies resolve to.
+# source tree (`deepseek-harness/`, pinned by the harness-boot action) that
+# the workspace devDependencies resolve to.
 name: docker
 
 on:
@@ -30,9 +30,8 @@ jobs:
         with:
           build: 'false'
       - name: build image
-        # Context is the parent of both checkouts (the harness arrives as a
-        # sibling); the Dockerfile consumes dsh-alioth/ + deepseek-harness/.
-        working-directory: ${{ github.workspace }}/..
+        # Context is the workspace root: it holds dsh-alioth/ and the sibling
+        # deepseek-harness/, which is exactly what the Dockerfile consumes.
         run: docker build -f dsh-alioth/Dockerfile -t dsh-alioth:ci .
       - name: keyless self-check (composition smoke + doctor, no API key)
         run: docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth:ci
