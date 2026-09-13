@@ -45,22 +45,9 @@ jobs:
           ref: ${{ github.event.workflow_run.head_branch }}
           fetch-depth: 0
 
-      - uses: actions/checkout@v4
-        with:
-          repository: deepseek-ai/deepseek-harness
-          ref: dsh-v0.1.3-alpha.1
-          path: deepseek-harness
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: enable pnpm
-        run: corepack enable && corepack prepare pnpm@11.7.0 --activate
-
-      - name: harness install (frozen) + host build
-        working-directory: deepseek-harness
-        run: pnpm install --frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client && pnpm run build:lib:client
+      # Harness checkout + pin + host build come from the shared action, so the
+      # baseline cannot drift between workflows.
+      - uses: ./dsh-alioth/.github/actions/harness-boot
 
       - name: guard — secret present and attempt cap not reached
         id: guard

@@ -1,0 +1,45 @@
+# Composite action: check out the harness source tree the workspace
+# devDependencies resolve to, and (by default) build its host libs.
+#
+# Call it after the job has checked this repository out — a local action only
+# exists once its repository is in the workspace:
+#   - uses: actions/checkout@v4
+#     with: { path: dsh-alioth }
+#   - uses: ./dsh-alioth/.github/actions/harness-boot      # build: 'true'
+#
+# The harness checkout is the Alioth development line
+# (William-d-zk/deepseek-harness@Alioth), pinned to a commit so CI verifies a
+# reproducible revision. The public fork is required because the line carries
+# commits that are not in deepseek-ai/deepseek-harness yet (connection account
+# context, page-feedback). Advance the SHA together with the local checkout:
+#   git -C ../deepseek-harness rev-parse HEAD
+name: harness boot
+description: Check out the pinned harness line as a sibling checkout and build its host libs.
+
+inputs:
+  build:
+    description: Build the harness host libs (set 'false' when the consumer builds them itself, e.g. in the image).
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: William-d-zk/deepseek-harness
+        ref: 16c764a3486192b17db8ead1a2b5be796d47fc69
+        path: deepseek-harness
+    - uses: actions/setup-node@v4
+      if: inputs.build == 'true'
+      with:
+        node-version: 24
+    - name: enable pnpm
+      if: inputs.build == 'true'
+      shell: bash
+      run: corepack enable && corepack prepare pnpm@12.3.4 --activate
+    - name: harness install (frozen) + host build
+      if: inputs.build == 'true'
+      shell: bash
+      working-directory: deepseek-harness
+      run: pnpm install --frozen-lockfile && pnpm run build:lib:host && pnpm run build:lib:client

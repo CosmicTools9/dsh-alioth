@@ -6,7 +6,7 @@
 # entry point. Model-visible behavior: `dsh --profile web --patch <bundle>`.
 #
 # Harness sourcing (2026-09-04): @deepseek-ai devDependencies resolve to the
-# deepseek-harness source tree (tag dsh-v0.1.3-alpha.1). The build context MUST
+# deepseek-harness source tree (Alioth line, pinned in docker.yml). The build context MUST
 # contain a sibling `deepseek-harness/` checkout (docker.yml provides it; local
 # builds: clone it next to this repo and build from the parent directory, or
 # pass the harness as an additional context).
@@ -20,7 +20,7 @@ FROM node:24.20-slim AS build
 # node-pty/koffi compile native bits when prebuilds are missing (linux-arm64).
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 
 # Host harness source tree first: this workspace's @deepseek-ai devDeps
 # resolve through ../deepseek-harness, and the harness must be built before
@@ -37,12 +37,15 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm run build:lib:host && pnpm run build:lib:client
 
 # ── the consumer workspace ──
+# The build context is the PARENT of both checkouts (see the header), so the
+# consumer sources carry the same dsh-alioth/ prefix as the harness sources
+# above — without it the build fails on missing COPY sources.
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages ./packages
-COPY examples ./examples
-COPY scripts ./scripts
-COPY tsconfig*.json ./
+COPY dsh-alioth/package.json dsh-alioth/pnpm-workspace.yaml dsh-alioth/pnpm-lock.yaml ./
+COPY dsh-alioth/packages ./packages
+COPY dsh-alioth/examples ./examples
+COPY dsh-alioth/scripts ./scripts
+COPY dsh-alioth/tsconfig*.json ./
 # onnxruntime-node / embedded-postgres / sharp run their native postinstall
 # steps; allowBuilds in pnpm-workspace.yaml already whitelists them.
 RUN pnpm install --frozen-lockfile
