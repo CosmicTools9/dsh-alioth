@@ -29,6 +29,11 @@ jobs:
       - uses: ./dsh-alioth/.github/actions/harness-boot
         with:
           build: 'false'
+      - name: build context ignores
+        # The context is the workspace root, which holds both git checkouts.
+        # Keep their .git/node_modules out of the sent context.
+        run: |
+          printf '%s\n' '**/.git' '**/node_modules' '**/coverage' > .dockerignore
       - name: build image
         # Context is the workspace root: it holds dsh-alioth/ and the sibling
         # deepseek-harness/, which is exactly what the Dockerfile consumes.

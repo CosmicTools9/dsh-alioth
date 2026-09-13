@@ -26,14 +26,12 @@ RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
 # resolve through ../deepseek-harness, and the harness must be built before
 # /app's install links against its lib output.
 WORKDIR /deepseek-harness
-COPY deepseek-harness/package.json deepseek-harness/pnpm-workspace.yaml deepseek-harness/pnpm-lock.yaml deepseek-harness/tsconfig*.json ./
-COPY deepseek-harness/vendor ./vendor
-COPY deepseek-harness/packages ./packages
-COPY deepseek-harness/apps ./apps
-COPY deepseek-harness/native ./native
-# pnpm-workspace patchedDependencies point at patches/*.patch; the install
-# fails without them (Failed to read patch file ...).
-COPY deepseek-harness/patches ./patches
+# The whole source tree, not an enumerated subset: the harness host build
+# type-checks files across packages/, apps/, vendor/, native/, scripts/ and the
+# root configs, so any missing directory surfaces as a build failure one at a
+# time. .git/node_modules are excluded by the context .dockerignore the workflow
+# writes (and by the sibling layout docker.yml checks out).
+COPY deepseek-harness/ ./
 # Not frozen, same reason as CI: the harness workspace lists out-of-root
 # members (../dsh-chess, ../../.dsh-chess/profiles) whose importers are in its
 # lockfile but cannot be checked out here. Lifecycle scripts are skipped: they
