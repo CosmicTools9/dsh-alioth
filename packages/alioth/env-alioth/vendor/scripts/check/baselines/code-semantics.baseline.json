@@ -1,0 +1,5 @@
+{
+  "version": "3.1.0",
+  "rule_reference": "ALIOTH_ONTOLOGY_SPEC §4.4/§4.4.1 — code 列语义恒为业务编号/编码；节点类型权威承载为 zc_id_operation.ck_cate-proc_op（→ zc_id_cate-proc_op 字典），既不是 code 也不是 t_color_（t_color_ = 徽章颜色/自由标签）；zc_id_process_rr_operation.start 列已移除（2026-08-31）。v3.1：字典族豁免改为**别名感知**（原实现只看本行/上一行是否含表名，多行 JOIN 场景误报 cc_inbox.rs:50 的字典查询）→ 该条撤销，基线清零。",
+  "violations": []
+}

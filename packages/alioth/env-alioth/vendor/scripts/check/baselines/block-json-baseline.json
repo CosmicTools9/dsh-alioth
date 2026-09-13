@@ -1,0 +1,5 @@
+{
+  "updated_at": "2026-09-12T18:15:59.440Z",
+  "note": "block.json 形状/引用存量欠债基线（check-block-json.ts）；新增违规不得落入此文件",
+  "violations": []
+}

@@ -34,6 +34,7 @@
     "@deepseek-ai/dsh-invariants": "^0.1.5-alpha.1",
     "@deepseek-ai/dsh-llm": "^0.1.5-alpha.1",
     "@deepseek-ai/dsh-llm-deepseek": "^0.1.5-alpha.1",
+    "@deepseek-ai/dsh-page-feedback": "workspace:^",
     "@deepseek-ai/dsh-scope": "^0.1.5-alpha.1",
     "@deepseek-ai/dsh-session": "^0.1.5-alpha.1",
     "@deepseek-ai/dsh-session-persistence-jsonl": "^0.1.5-alpha.1",
@@ -45,16 +46,17 @@
     "@deepseek-ai/schemastery": "^3.18.2",
     "@dsh-alioth/auth-alioth": "workspace:*",
     "@dsh-alioth/auth-web-alioth": "workspace:*",
-    "@dsh-alioth/landing-alioth": "workspace:*",
     "@dsh-alioth/billing-alioth": "workspace:*",
     "@dsh-alioth/billing-web-alioth": "workspace:*",
-    "@dsh-alioth/feedback-web-alioth": "workspace:*",
-    "@dsh-alioth/tool-feedback-alioth": "workspace:*",
     "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/feedback-web-alioth": "workspace:*",
+    "@dsh-alioth/landing-alioth": "workspace:*",
+    "@dsh-alioth/skill-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth-meta": "workspace:*",
     "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",
     "@dsh-alioth/tool-alioth-workflow": "workspace:*",
+    "@dsh-alioth/tool-feedback-alioth": "workspace:*",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^5.0.0",
     "knip": "^6.32.2",
@@ -62,7 +64,6 @@
     "oxlint": "1.76.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.0",
-    "@deepseek-ai/dsh-page-feedback": "workspace:^"
+    "vitest": "^5.0.0"
   }
 }

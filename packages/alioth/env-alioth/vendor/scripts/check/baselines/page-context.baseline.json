@@ -1,0 +1,546 @@
+{
+  "version": "1.0.0",
+  "rule_reference": "docs/specs/FRONTEND_PAGE_CONTEXT_SPEC.md §2.1 — 页面级组件必须注册页面上下文（pageContextModule.register）。存量未注册页面登记，只减不增。",
+  "violations": [
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/AdSbApplicabilityPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/AegReviewPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/AirworthinessCertificatePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/AirworthinessDashboard.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/AirworthinessDirectivePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/AuditExportPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/CertificateWorkflowPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/CertificationBasisPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/CertificationDashboard.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/CertificationPlanPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ComplianceRecordPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ContinuedAirworthinessFilePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/DesignChangeImpactPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/DesignManualPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ExternalAccessPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/IcaVersionReleasePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/IncomingInspectionPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/LicenseChangePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/LifeLimitedPartsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/MaintenancePlanPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/MaintenanceRecordPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/PostCertificationAuditPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ProductionCertificationPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ProductionInspectionPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ProductionSchedulePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/RegulatoryAssessmentPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ReleaseTagPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/ReliabilityDashboard.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/SafetyEventPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/StructuralRepairPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/SupplierChangeNoticePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/TrainingRecordPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/airworthiness/frontend/src/pages/TypeCertificationPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/org-management/frontend/src/pages/DeptTreePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/org-management/frontend/src/pages/EmployeeListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/org-management/frontend/src/pages/PositionListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/org-management/frontend/src/pages/SubjectListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-approve/frontend/src/pages/FlowTemplatePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-approve/frontend/src/pages/WorkflowAnalyticsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-approve/frontend/src/pages/WorkflowDesignerPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-approve/frontend/src/pages/approvals/MyApprovalsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/CCBVotePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/DashboardPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/EngineerWorkloadPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/EngineeringResourcesPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/GateOverviewPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/GateStatusPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/GateTemplatesPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/MaterialQualityPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/QuadAnalysisPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/RdInvestmentPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/SLADashboardPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/VersionCenterPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateChangeRequestDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateGateTemplateDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateInspectionBatchDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateMaterialDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateNcrDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateProjectDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateProjectTemplateDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateRequirementDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateSubsystemDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateTestRunDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/CreateVersionDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/RowActions.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/BomWorkbenchTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/MaterialLibraryTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/NcrManagementTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/ProcessFlowTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/QualityCenterTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/SupplierInspectionTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/material-quality/VerificationCenterTab.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/project-mgmt/ChangeManagementPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/project-mgmt/ProjectListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/project-mgmt/ProjectManagementPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/project-mgmt/ProjectTemplateListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/project-mgmt/ProjectTimelinePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/project-mgmt/RequirementCenterPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/customer/frontend/src/pages/CustomerListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/demand/frontend/src/pages/DemandViewPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/inbound-order/frontend/src/pages/InboundOrderListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/inventory-balance/frontend/src/pages/InventoryBalanceListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/inventory/frontend/src/pages/InventoryListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/ledger-entry/frontend/src/pages/LedgerEntryListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/sales-order/frontend/src/pages/SalesOrderListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/stock-count/frontend/src/pages/StockCountListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/frontend/src/pages/WorkflowAnalyticsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/frontend/src/pages/WorkflowDesignerPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/frontend/src/pages/approvals/MyApprovalsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Alioth/Sources/Apps/Modules/warehouse/frontend/src/pages/WarehouseListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/assistant/frontend/src/pages/AssistantPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/demand/frontend/src/pages/DemandViewPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/inventory/frontend/src/pages/InventoryListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/issues/frontend/src/pages/IssueDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/issues/frontend/src/pages/IssueListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/pipelines/frontend/src/pages/PipelineCreatePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/pipelines/frontend/src/pages/PipelineDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/pipelines/frontend/src/pages/PipelineListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/repositories/frontend/src/pages/RepositoryDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/repositories/frontend/src/pages/RepositoryListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/reviews/frontend/src/pages/ReviewCreatePage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/reviews/frontend/src/pages/ReviewDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/reviews/frontend/src/pages/ReviewListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/reviews/frontend/src/pages/WorkbenchPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/system-approve/frontend/src/pages/WorkflowAnalyticsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/system-approve/frontend/src/pages/WorkflowDesignerPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/system-approve/frontend/src/pages/approvals/MyApprovalsPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/pages/components/EditGateTemplateDialog.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-consumption-item/frontend/src/pages/MaterialConsumptionItemDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-consumption-item/frontend/src/pages/MaterialConsumptionItemFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-consumption-item/frontend/src/pages/MaterialConsumptionItemListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-consumption/frontend/src/pages/MaterialConsumptionDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-consumption/frontend/src/pages/MaterialConsumptionFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-consumption/frontend/src/pages/MaterialConsumptionListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-plan/frontend/src/pages/MaterialPlanDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-plan/frontend/src/pages/MaterialPlanFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-plan/frontend/src/pages/MaterialPlanListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-production-item/frontend/src/pages/MaterialProductionItemDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-production-item/frontend/src/pages/MaterialProductionItemFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-production-item/frontend/src/pages/MaterialProductionItemListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-production/frontend/src/pages/MaterialProductionDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-production/frontend/src/pages/MaterialProductionFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-production/frontend/src/pages/MaterialProductionListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-requisition-item/frontend/src/pages/MaterialRequisitionItemDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-requisition-item/frontend/src/pages/MaterialRequisitionItemFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-requisition-item/frontend/src/pages/MaterialRequisitionItemListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-requisition/frontend/src/pages/MaterialRequisitionDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-requisition/frontend/src/pages/MaterialRequisitionFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-requisition/frontend/src/pages/MaterialRequisitionListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-scrap-item/frontend/src/pages/MaterialScrapItemDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-scrap-item/frontend/src/pages/MaterialScrapItemFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-scrap-item/frontend/src/pages/MaterialScrapItemListPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-scrap/frontend/src/pages/MaterialScrapDetailPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-scrap/frontend/src/pages/MaterialScrapFormPage.tsx",
+      "rule": "register-missing"
+    },
+    {
+      "file": "Pre-Proc/Cosmic-Tools/Sources/Apps/Modules/material-scrap/frontend/src/pages/MaterialScrapListPage.tsx",
+      "rule": "register-missing"
+    }
+  ]
+}

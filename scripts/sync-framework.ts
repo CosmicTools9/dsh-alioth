@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { unreachableGatePrograms } from '@dsh-alioth/skill-alioth'
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..')
@@ -33,7 +34,16 @@ const SYNC_SET: readonly { readonly source: string; readonly dest: string }[] = 
   { source: 'scripts/build-ns.sh', dest: 'scripts/build-ns.sh' },
   { source: 'scripts/cargo-check.sh', dest: 'scripts/cargo-check.sh' },
   { source: 'scripts/check/check-nav-hrefs.ts', dest: 'scripts/check/check-nav-hrefs.ts' },
+  // Gate programs the adapters invoke directly: alioth-block 1.1 (check-block-json)
+  // and alioth-service 1.5 (audit-service-spec). Absent here they spawn ENOENT →
+  // GateErrorKind path-missing (not LLM-fixable) and the track stalls for good.
+  { source: 'scripts/check/check-block-json.ts', dest: 'scripts/check/check-block-json.ts' },
+  { source: 'scripts/check/audit-service-spec.ts', dest: 'scripts/check/audit-service-spec.ts' },
   { source: 'scripts/check/audit-css-framework.mjs', dest: 'scripts/check/audit-css-framework.mjs' },
+  // Gate data the check scripts read (check-block-json.ts loads
+  // baselines/block-json-baseline.json). Synced as a directory so a gate that
+  // starts depending on another baseline cannot ship without its data.
+  { source: 'scripts/check/baselines', dest: 'scripts/check/baselines' },
   { source: 'scripts/check/check-config-json.mjs', dest: 'scripts/check/check-config-json.mjs' },
   { source: 'scripts/check/check-module-blocks.mjs', dest: 'scripts/check/check-module-blocks.mjs' },
   { source: 'scripts/check/check-module-contract.mjs', dest: 'scripts/check/check-module-contract.mjs' },
@@ -173,6 +183,19 @@ function main(): number {
         }
       }
     }
+  }
+
+  // A gate script the vendor tree cannot spawn stalls its track for good
+  // (ENOENT classifies as path-missing, which is not LLM-fixable), so the sync
+  // set must carry every script and data file the adapters invoke.
+  const unreachable = unreachableGatePrograms(path.join(VENDOR, 'skill-adapters'), VENDOR)
+  if (unreachable.length > 0) {
+    console.error(`framework-sync: ${unreachable.length} adapter gate program(s) missing from the vendor tree:`)
+    for (const item of unreachable) {
+      console.error(`  - ${item.script} (${item.adapter} ${item.step})`)
+    }
+    console.error('add the source (and any data it reads) to SYNC_SET')
+    return 1
   }
 
   if (CHECK_ONLY) {

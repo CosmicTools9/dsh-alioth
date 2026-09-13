@@ -198,6 +198,9 @@ importers:
       '@dsh-alioth/landing-alioth':
         specifier: workspace:*
         version: link:packages/alioth/landing-alioth
+      '@dsh-alioth/skill-alioth':
+        specifier: workspace:*
+        version: link:packages/alioth/skill-alioth
       '@dsh-alioth/tool-alioth':
         specifier: workspace:*
         version: link:packages/alioth/tool-alioth

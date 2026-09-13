@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "note": "stage_config.yaml 死配置基线（SPEC_ENFORCEMENT_SUBSTRATE §基线切分）——dead_fields 为已知欠债（当前无人消费的配置字段），--fail 仅阻断基线之外新增的死字段；修复后从 dead_fields 移除对应路径并提交。",
+  "updated_at": "2026-08-15",
+  "dead_fields": []
+}

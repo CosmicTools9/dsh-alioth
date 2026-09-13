@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0",
+  "note": "判据自测覆盖棘轮（SPEC_ENFORCEMENT_SUBSTRATE R1，只减不增）：带基线或含豁免/白名单判据、但尚未提供 --self-test 的门禁在此登记；补齐自测后 MUST 移除本行。元门禁 scripts/check/check-gate-hygiene.ts 校验。",
+  "acknowledged": [
+    "scripts/check/check-appagent-observability.ts",
+    "scripts/check/check-avic-mock-data.ts",
+    "scripts/check/check-code-table-refs.ts",
+    "scripts/check/check-db-diffusion-channel.ts",
+    "scripts/check/check-db-pipeline-guard.ts",
+    "scripts/check/check-db-silent-failure.ts",
+    "scripts/check/check-feedback-stripped.ts",
+    "scripts/check/check-fk-single-select.ts",
+    "scripts/check/check-id-json-precision.ts",
+    "scripts/check/check-isahl-ddl-boundary.ts",
+    "scripts/check/check-leaf-insert.ts",
+    "scripts/check/check-measure-input.ts",
+    "scripts/check/check-namespace-hygiene.ts",
+    "scripts/check/check-nav-hrefs.ts",
+    "scripts/check/check-no-native-dialog.ts",
+    "scripts/check/check-openspec.sh",
+    "scripts/check/check-rust-serde-attrs.ts",
+    "scripts/check/check-script-refs.ts",
+    "scripts/check/check-shared-kernel.ts",
+    "scripts/check/check-sqlx-test-forbidden.ts",
+    "scripts/check/check-stage-config-usage.ts",
+    "scripts/check/check-workspace-pin-consistency.ts"
+  ]
+}
