@@ -279,7 +279,10 @@ async fn audit(
 }
 
 /// 取单个 class（软删不可见）。
-pub async fn get_org_policy_class(pool: &PgPool, class_id: i64) -> Result<OrgPolicyClass, AliothError> {
+pub async fn get_org_policy_class(
+    pool: &PgPool,
+    class_id: i64,
+) -> Result<OrgPolicyClass, AliothError> {
     let row = sqlx::query_as::<_, OrgPolicyClass>(sqlx::AssertSqlSafe(format!(
         "SELECT {CLASS_COLUMNS} FROM isahl_auth.org_policy_class \
          WHERE id = $1 AND deleted_at IS NULL"
@@ -299,9 +302,7 @@ pub async fn list_org_policy_classes(
 ) -> Result<Vec<OrgPolicyClass>, AliothError> {
     // 白名单外视为无过滤：SQL 恒三参占位，未过滤时 $1 bind NULL（$1 IS NULL 放行全量），
     // 避免 08P01（语句要求 3 个参数但只 bind 2 个）。
-    let filtered = state
-        .map(|s| CLASS_STATES.contains(&s))
-        .unwrap_or(false);
+    let filtered = state.map(|s| CLASS_STATES.contains(&s)).unwrap_or(false);
     let bound_state = if filtered { state } else { None };
     let sql = format!(
         "SELECT {CLASS_COLUMNS} FROM isahl_auth.org_policy_class \
@@ -448,7 +449,16 @@ pub async fn submit_review_org_policy_class(
     actor_email: &str,
     class_id: i64,
 ) -> Result<OrgPolicyClass, AliothError> {
-    transition_class_state(pool, actor_id, actor_email, class_id, "draft", "in_review", "policy.class.submit_review").await
+    transition_class_state(
+        pool,
+        actor_id,
+        actor_email,
+        class_id,
+        "draft",
+        "in_review",
+        "policy.class.submit_review",
+    )
+    .await
 }
 
 /// in_review → active。
@@ -458,7 +468,16 @@ pub async fn activate_org_policy_class(
     actor_email: &str,
     class_id: i64,
 ) -> Result<OrgPolicyClass, AliothError> {
-    transition_class_state(pool, actor_id, actor_email, class_id, "in_review", "active", "policy.class.activate").await
+    transition_class_state(
+        pool,
+        actor_id,
+        actor_email,
+        class_id,
+        "in_review",
+        "active",
+        "policy.class.activate",
+    )
+    .await
 }
 
 /// active → retired。
@@ -468,7 +487,16 @@ pub async fn retire_org_policy_class(
     actor_email: &str,
     class_id: i64,
 ) -> Result<OrgPolicyClass, AliothError> {
-    transition_class_state(pool, actor_id, actor_email, class_id, "active", "retired", "policy.class.retire").await
+    transition_class_state(
+        pool,
+        actor_id,
+        actor_email,
+        class_id,
+        "active",
+        "retired",
+        "policy.class.retire",
+    )
+    .await
 }
 
 /// 新建 rule（挂接 class 须在 draft/in_review 且未软删）。
@@ -511,7 +539,11 @@ pub async fn create_org_policy_rule(
     .bind(input.subject_code)
     .bind(input.resource_type)
     .bind(serde_json::Value::Array(
-        input.actions.into_iter().map(serde_json::Value::String).collect(),
+        input
+            .actions
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect(),
     ))
     .bind(input.condition)
     .bind(input.obligation)
@@ -565,9 +597,8 @@ fn apply_rule_update(base: &OrgPolicyRule, u: &UpdateOrgPolicyRule) -> OrgPolicy
         out.resource_type = v.clone();
     }
     if let Some(v) = &u.actions {
-        out.actions = serde_json::Value::Array(
-            v.iter().cloned().map(serde_json::Value::String).collect(),
-        );
+        out.actions =
+            serde_json::Value::Array(v.iter().cloned().map(serde_json::Value::String).collect());
     }
     if u.condition.is_some() {
         out.condition = u.condition.clone();
@@ -830,7 +861,10 @@ fn err_resp(e: &AliothError) -> HttpResponse {
         AliothError::BadRequest(_) => ("bad_request", actix_web::http::StatusCode::BAD_REQUEST),
         AliothError::Unauthorized(_) => ("unauthorized", actix_web::http::StatusCode::UNAUTHORIZED),
         AliothError::Forbidden(_) => ("forbidden", actix_web::http::StatusCode::FORBIDDEN),
-        _ => ("internal_error", actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
+        _ => (
+            "internal_error",
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+        ),
     };
     HttpResponse::build(status).json(serde_json::json!({
         "code": code,
@@ -1157,7 +1191,8 @@ pub async fn delete_label(
         Ok(v) => v,
         Err(resp) => return resp,
     };
-    match delete_org_policy_label(pool.get_ref(), actor_id, &actor_email, &path.into_inner()).await {
+    match delete_org_policy_label(pool.get_ref(), actor_id, &actor_email, &path.into_inner()).await
+    {
         Ok(row) => HttpResponse::Ok().json(row),
         Err(e) => err_resp(&e),
     }

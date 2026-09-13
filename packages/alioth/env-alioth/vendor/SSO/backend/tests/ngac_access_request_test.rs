@@ -246,7 +246,12 @@ async fn access_request_full_loop_approve() {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes))
+            .service(
+                web::scope("/api/ngac")
+                    // 生产同构：RequireAuth 保护（claims 注入供决策面主体校验）
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            )
             .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
     )
     .await;
@@ -352,7 +357,8 @@ async fn access_request_full_loop_approve() {
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/api/ngac/decide")
+            .uri("/api/ngac/pdp/decide")
+            .insert_header(("Authorization", format!("Bearer {}", user_token)))
             .set_json(json!({"user_id": f.user_id, "resource": "reqres:0", "action": "read"}))
             .to_request(),
     )
@@ -406,7 +412,12 @@ async fn access_request_reject_path() {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes))
+            .service(
+                web::scope("/api/ngac")
+                    // 生产同构：RequireAuth 保护（claims 注入供决策面主体校验）
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            )
             .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
     )
     .await;

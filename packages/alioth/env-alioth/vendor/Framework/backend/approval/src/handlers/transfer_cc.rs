@@ -82,10 +82,15 @@ pub async fn transfer(
 
     // 记录转交动作（使用 ak_forwarding 列存储目标审批人）
     let date_anchor = super::approve_reject::today_date_anchor(&pool).await?;
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
+    let (dk_scene, dk_factor, dk_function) =
+        crate::dk::resolve_ontology_coords_pool(pool.get_ref(), crate::dk::DkEntity::DkJcFtaNc)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_deta-opinion"
-           (id, notice, opinion, fk_list, fk_biller, ak_forwarding, qk_date, created_at)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, NOW())"#,
+           (id, notice, opinion, fk_list, fk_biller, ak_forwarding, qk_date, created_at, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)"#,
     )
     .bind(TRANSFER_NOTICE)
     .bind(opinion)
@@ -93,6 +98,9 @@ pub async fn transfer(
     .bind(user_id)
     .bind(vec![target_id]) // ak_forwarding 为 bigint[]
     .bind(date_anchor)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&**pool)
     .await?;
 
@@ -110,7 +118,7 @@ pub async fn transfer(
 
     Ok(
         HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-            "id": instance_id,
+            "id": instance_id.to_string(),
             "status": "transferred",
             "to_user": target_id,
         }))),
@@ -150,10 +158,15 @@ pub async fn cc(
 
     // 加签：记录加签人（使用 ak_addition 列存储目标用户）
     let date_anchor = super::approve_reject::today_date_anchor(&pool).await?;
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
+    let (dk_scene, dk_factor, dk_function) =
+        crate::dk::resolve_ontology_coords_pool(pool.get_ref(), crate::dk::DkEntity::DkJcFtaNc)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_deta-opinion"
-           (id, notice, opinion, fk_list, fk_biller, ak_addition, qk_date, created_at)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, NOW())"#,
+           (id, notice, opinion, fk_list, fk_biller, ak_addition, qk_date, created_at, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)"#,
     )
     .bind(CC_NOTICE)
     .bind(opinion)
@@ -161,6 +174,9 @@ pub async fn cc(
     .bind(user_id)
     .bind(vec![target_id]) // ak_addition 为 bigint[]
     .bind(date_anchor)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&**pool)
     .await?;
 
@@ -178,7 +194,7 @@ pub async fn cc(
 
     Ok(
         HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-            "id": instance_id,
+            "id": instance_id.to_string(),
             "status": "cc",
             "cc_user": target_id,
         }))),

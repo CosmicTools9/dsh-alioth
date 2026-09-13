@@ -28,6 +28,7 @@ const USER_BIND: i64 = -9817; // bind_enterprise 流程用
 const ORG_LEGAL_ID: i64 = -97111;
 const ORG_SUBJORG_ID: i64 = -97112;
 const ORG_SUBJECTS_ID: i64 = -97113;
+const USER_UNBIND_ORG: i64 = -9825; // unbind 流程用（绑组织主体；占位复用 L590 既有 USER_PLACEHOLDER）
 const EMPL_PERSONAL_ID: i64 = -97114;
 
 fn req_with_user(user_id: i64) -> HttpRequest {
@@ -84,6 +85,7 @@ async fn cleanup(pool: &PgPool) {
         USER_UNBOUND,
         USER_PRIVILEGED,
         USER_BIND,
+        USER_UNBIND_ORG,
     ];
     // 用户↔UA 关联（特权豁免 + bind_enterprise 的 enterprise UA 指派）
     sqlx::query(
@@ -143,16 +145,23 @@ async fn setup_binding_fixtures(pool: &PgPool) {
         USER_UNBOUND,
         USER_PRIVILEGED,
         USER_BIND,
+        USER_UNBIND_ORG,
     ] {
         ensure_test_user(pool, uid).await;
     }
 
     // 组织类叶表：非银行法人
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve legal org coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, notice, code, created_by_id)
-           VALUES ($1, 'eb-test-legal', 'eb-org-legal', -1)"#,
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'eb-test-legal', 'eb-org-legal', -1, $2, $3, $4)"#,
     )
     .bind(ORG_LEGAL_ID)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .expect("insert legal org fixture");
@@ -167,10 +176,13 @@ async fn setup_binding_fixtures(pool: &PgPool) {
     .await
     .expect("bind legal org user");
 
-    // 组织类叶表：subj-org 子表
+    // 组织类叶表：法人组织叶（zc_id_subj-org 为父表，禁直写；读侧经继承视图仍可见）
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-org" (id, notice, code, created_by_id, updated_by_id)
-           VALUES ($1, 'eb-test-subjorg', 'eb-org-subjorg', -1, -1)"#,
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, notice, code, created_by_id, updated_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'eb-test-subjorg', 'eb-org-subjorg', -1, -1,
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'TX' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'FJA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_GG' AND deleted_at IS NULL))"#,
     )
     .bind(ORG_SUBJORG_ID)
     .execute(pool)
@@ -178,7 +190,7 @@ async fn setup_binding_fixtures(pool: &PgPool) {
     .expect("insert subj-org fixture");
     sqlx::query(
         r#"UPDATE isahl_auth.auth_users
-           SET entity_table = 'zc_id_subj-org', entity_id = $1
+           SET entity_table = 'zc_id_orga-non-banking-legal', entity_id = $1
            WHERE id = $2"#,
     )
     .bind(ORG_SUBJORG_ID)
@@ -188,11 +200,20 @@ async fn setup_binding_fixtures(pool: &PgPool) {
     .expect("bind subj-org user");
 
     // 组织类叶表：subjects 父表直落组织行（WZ 等库组织形态）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (subj_dk_scene, subj_dk_factor, subj_dk_function) =
+        ontology_binding::resolve(pool, ("JE", "FJA", "↑_DA"))
+            .await
+            .expect("resolve subjects coords");
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_subjects (id, code, notice, created_by_id)
-           VALUES ($1, 'EB-ORG-SUBJECTS', 'eb-test-subjects-org', -1)"#,
+        // 法人组织 → 落叶 zc_id_orga-non-banking-legal（父表禁直写；读侧经继承视图仍可见）
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'EB-ORG-SUBJECTS', 'eb-test-subjects-org', -1, $2, $3, $4)"#,
     )
     .bind(ORG_SUBJECTS_ID)
+    .bind(subj_dk_scene)
+    .bind(subj_dk_factor)
+    .bind(subj_dk_function)
     .execute(pool)
     .await
     .expect("insert subjects org fixture");
@@ -208,11 +229,17 @@ async fn setup_binding_fixtures(pool: &PgPool) {
     .expect("bind subjects org user");
 
     // 自然人叶表（非组织 → operator_org_id 必须为 null）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve empl-natural coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, created_by_id)
-           VALUES ($1, 'eb-test-person', 'eb-empl-person', -1)"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'eb-test-person', 'eb-empl-person', -1, $2, $3, $4)"#,
     )
     .bind(EMPL_PERSONAL_ID)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .expect("insert empl-natural fixture");
@@ -226,6 +253,119 @@ async fn setup_binding_fixtures(pool: &PgPool) {
     .execute(pool)
     .await
     .expect("bind personal user");
+
+    // unbind 用例：组织锚点用户（占位用户复用既有 ensure_placeholder_user，自清理）
+    sqlx::query(
+        r#"UPDATE isahl_auth.auth_users
+           SET entity_table = 'zc_id_orga-non-banking-legal', entity_id = $1
+           WHERE id = $2"#,
+    )
+    .bind(ORG_LEGAL_ID)
+    .bind(USER_UNBIND_ORG)
+    .execute(pool)
+    .await
+    .expect("bind unbind-org user");
+}
+
+// ── unbind 自助解绑（fix-register-binding-flow-gaps）─────────────────────────
+
+/// unbind handler 直调，返回 (状态码, 响应 JSON)。
+async fn call_unbind(pool: &PgPool, user_id: i64) -> (u16, serde_json::Value) {
+    let resp = entity_binding::unbind(req_with_user(user_id), web::Data::new(pool.clone())).await;
+    let code = resp.status().as_u16();
+    (code, json_body(resp).await)
+}
+
+#[tokio::test]
+async fn unbind_org_anchor_clears_and_keeps_subject_row() {
+    let pool = connect_test_db().await;
+    setup_binding_fixtures(&pool).await;
+
+    let (code, json) = call_unbind(&pool, USER_UNBIND_ORG).await;
+    assert_eq!(code, 200, "解绑应 200：{json}");
+    assert!(json["success"].as_bool().unwrap_or(false));
+    assert_eq!(
+        json["unbound_entity_id"].as_str(),
+        Some(ORG_LEGAL_ID.to_string().as_str())
+    );
+
+    // 锚点已清 → status bound=false
+    let status = call_status(&pool, USER_UNBIND_ORG).await;
+    assert!(
+        !status["bound"].as_bool().unwrap_or(true),
+        "解绑后应 bound=false"
+    );
+
+    // 非破坏：组织主体行原样保留（仅锚点切换语义的逆向，不删实体）
+    let org_exists: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS (SELECT 1 FROM isahl."zc_id_orga-non-banking-legal"
+           WHERE id = $1 AND deleted_at IS NULL)"#,
+    )
+    .bind(ORG_LEGAL_ID)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(false);
+    assert!(org_exists, "解绑不得删除主体行（非破坏）");
+
+    // 重复解绑 → NOT_BOUND
+    let (code, json) = call_unbind(&pool, USER_UNBIND_ORG).await;
+    assert_eq!(code, 400, "重复解绑应 400：{json}");
+    assert_eq!(json["error"].as_str(), Some("NOT_BOUND"));
+}
+
+#[tokio::test]
+async fn unbind_placeholder_clears_subject_binding_mark() {
+    let pool = connect_test_db().await;
+    setup_binding_fixtures(&pool).await;
+    ensure_placeholder_user(&pool, USER_PLACEHOLDER).await;
+
+    // 占位前态可观测
+    let before = call_status(&pool, USER_PLACEHOLDER).await;
+    assert!(
+        before["placeholder"].as_bool().unwrap_or(false),
+        "前态应占位"
+    );
+
+    let (code, json) = call_unbind(&pool, USER_PLACEHOLDER).await;
+    assert_eq!(code, 200, "占位解绑应 200：{json}");
+
+    // 占位标记随清：bound=false 且 settings.subject_binding 键移除
+    let after = call_status(&pool, USER_PLACEHOLDER).await;
+    assert!(
+        !after["bound"].as_bool().unwrap_or(true),
+        "占位解绑后 bound=false"
+    );
+    let mark: Option<String> = sqlx::query_scalar(
+        "SELECT settings->>'subject_binding' FROM isahl_auth.auth_users WHERE id = $1",
+    )
+    .bind(USER_PLACEHOLDER)
+    .fetch_one(&pool)
+    .await
+    .unwrap_or(None);
+    assert!(mark.is_none(), "settings.subject_binding 应随解绑清除");
+    sqlx::query(r#"DELETE FROM isahl_auth.auth_users WHERE id = $1"#)
+        .bind(USER_PLACEHOLDER)
+        .execute(&pool)
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn unbind_unbound_user_and_system_sentinel_rejected() {
+    let pool = connect_test_db().await;
+    setup_binding_fixtures(&pool).await;
+
+    // 未绑定 → NOT_BOUND
+    let (code, json) = call_unbind(&pool, USER_UNBOUND).await;
+    assert_eq!(code, 400, "未绑定解绑应 400：{json}");
+    assert_eq!(json["error"].as_str(), Some("NOT_BOUND"));
+
+    // system 哨兵（id=1）：仅行存在保障 + 守卫拒绝（守卫在事务前、不触 DB——
+    // 不写绑定、不读绑定态，与 admin 同步用例的 id=1 快照链路零竞态）
+    ensure_system_user_fixture(&pool).await;
+    let (code, json) = call_unbind(&pool, 1).await;
+    assert_eq!(code, 400, "system 解绑应 400：{json}");
+    assert_eq!(json["error"].as_str(), Some("SYSTEM_IMMUTABLE"));
 }
 
 // ── 1.1 status.operator_org_id ─────────────────────────────────────────────
@@ -476,12 +616,21 @@ const USER_PLACEHOLDER: i64 = -9819; // seed 占位绑定（基表行 + subject_
 async fn ensure_placeholder_user(pool: &PgPool, uid: i64) {
     ensure_test_user(pool, uid).await;
     // 占位主体（subjects 基表行）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (subj_dk_scene, subj_dk_factor, subj_dk_function) =
+        ontology_binding::resolve(pool, ("JE", "FJA", "↑_DA"))
+            .await
+            .expect("resolve subjects coords");
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_subjects (id, code, notice, created_by_id)
-           VALUES ($1, 'EB-PLACEHOLDER', 'eb-test-placeholder', -1)
+        // 占位主体=法人 → 落叶 zc_id_orga-non-banking-legal（父表禁直写；读侧经继承视图仍可见）
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'EB-PLACEHOLDER', 'eb-test-placeholder', -1, $2, $3, $4)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(uid + 1_000_000)
+    .bind(subj_dk_scene)
+    .bind(subj_dk_factor)
+    .bind(subj_dk_function)
     .execute(pool)
     .await
     .ok();
@@ -824,12 +973,19 @@ async fn bind_personal_replaces_placeholder() {
 
     // 雇佣主体/岗位 fixture
     let pos_id = POS_PLACEHOLDER_TEST;
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve subj-position coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, created_by_id)
-           VALUES ($1, 'eb-test-pos', 'eb-pos-fixture', -1)
+        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'eb-test-pos', 'eb-pos-fixture', -1, $2, $3, $4)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(pos_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .ok();
@@ -908,15 +1064,39 @@ async fn read_system_binding(pool: &PgPool) -> SystemBinding {
     .await
     .expect("system 用户应存在（seed 契约 id=1）")
 }
+/// 幂等确保 system 哨兵行（id=1）——test 库无 Gateway 启动自愈种子，环境前置自给。
+/// prod 同形（username='system'/status='active'，勿与 auth_seed 契约字段冲突）；
+/// 仅保障行存在（ON CONFLICT DO NOTHING、零绑定写入）——不与 admin 同步用例的
+/// id=1 快照→变更→还原链路产生写竞态。
+async fn ensure_system_user_fixture(pool: &PgPool) {
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_users
+           (id, name, username, status, is_active, created_at, updated_at)
+           VALUES (1, 'system', 'system', 'active', true, NOW(), NOW())
+           ON CONFLICT (id) DO NOTHING"#,
+    )
+    .execute(pool)
+    .await
+    .ok();
+}
 
 /// 强制 system 进入占位绑定态（subjects 基表行 + subject_binding 标记）。
 async fn force_system_placeholder(pool: &PgPool) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (subj_dk_scene, subj_dk_factor, subj_dk_function) =
+        ontology_binding::resolve(pool, ("JE", "FJA", "↑_DA"))
+            .await
+            .expect("resolve subjects coords");
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_subjects (id, code, notice, created_by_id)
-           VALUES ($1, 'SUBJ-SYNC-TEST', 'system 同步测试占位主体', 1)
+        // 占位主体 → 通用法人叶 zc_id_orga-non-banking-legal
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'SUBJ-SYNC-TEST', 'system 同步测试占位主体', 1, $2, $3, $4)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(SUBJ_SYNC_PLACEHOLDER)
+    .bind(subj_dk_scene)
+    .bind(subj_dk_factor)
+    .bind(subj_dk_function)
     .execute(pool)
     .await
     .expect("insert subjects placeholder fixture");
@@ -1024,6 +1204,7 @@ async fn cleanup_sync_fixtures(pool: &PgPool, restore: SystemBinding) {
 async fn admin_binding_syncs_system_subject() {
     let pool = connect_test_db().await;
     setup_binding_fixtures(&pool).await;
+    ensure_system_user_fixture(&pool).await;
     let restore = read_system_binding(&pool).await;
     // 上轮残留兜底（法人 code 幂等）
     sqlx::query(r#"DELETE FROM isahl."zc_id_orga-non-banking-legal" WHERE code LIKE 'eb-sync-%'"#)

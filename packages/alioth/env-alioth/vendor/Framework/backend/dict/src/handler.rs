@@ -35,22 +35,27 @@ use sqlx::{AssertSqlSafe, PgPool, Row};
 /// NGAC 资源名：dict（综合管理「描述信息」字典管理）
 const NGAC_RESOURCE: &str = "dict";
 
-/// 字典表白名单：cate/tags/unit 叶表 + 基表。防 URL 参数任意表读写。
+/// 字典表白名单：cate/tags/unit 叶表 + 基表 + 模型级标准值域字典。防 URL 参数任意表读写。
 /// 用 starts_with/== 前缀匹配（非正则，NO_REGEX_FOR_PARSING 合规）。
 /// 注：`zc_id_tags_poi`（下划线变体，DB 实测存在）一并收录。
 /// unit 族（计量单位字典 zc_id_unit-*，fix-vehicle-unit-binding-add-volume）：
 /// 载重/体积等单位下拉经 /dict/leaf/{table} 直读，与 cate/tags 同级受控。
+/// 模型级标准值域（2026-09-07，add-dict-data-locale-rendering）：国家/时区/政体
+/// 字典同入 dict 管理面——locale 回显（en 精确键）覆盖主出口。
 fn is_allowed_dict_table(table: &str) -> bool {
     table == "zc_id_category"
         || table == "zc_id_tags"
         || table == "zc_id_tags_poi"
         || table == "zc_id_cons-goods-tags"
         || table == "zc_id_unit"
-        || table.starts_with("zc_id_tags-")
+        || table == "zc_id_subj-country"
+        || table == "zc_id_cons-timezone-cate"
+        || table == "zc_id_cons-polity-cate"
         // 类目字典（cate-*）与标签字典同样可维护：/dict/tables 左栏已列出，
         // 若不在此白名单，点击条目列表即 400「非字典表」。
         || table.starts_with("zc_id_cate-")
         || table.starts_with("zc_id_unit-")
+        || table.starts_with("zc_id_tags-")
 }
 
 /// 基表（非 leaf，只读）：zc_id_category / zc_id_tags / zc_id_unit
@@ -216,6 +221,13 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
             "zc_id_unit-volume" => "单位-体积",
             "zc_id_unit-weight" => "单位-重量",
             "zc_id_unit-working" => "单位-工时",
+            "zc_id_cate-contact_role" => "合同方角色",
+            "zc_id_cate-cooperation" => "合作类型",
+            "zc_id_cate-inv-title-cm" => "发票类型",
+            "zc_id_cate-ope-title-cm" => "费用类型",
+            "zc_id_cate-tsp-title-cm" => "TSP 费用类型",
+            "zc_id_cate-seal" => "封签类型",
+            "zc_id_unit-illuminance" => "单位-照度",
             _ => table,
         }
     }
@@ -249,12 +261,18 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
 pub async fn list_dict_entries(
     path: web::Path<String>,
     query: web::Query<DictListQuery>,
+    req: HttpRequest,
     pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, ApiError> {
     let table = path.into_inner();
     if !is_allowed_dict_table(&table) {
         return Err(ApiError::BadRequest(format!("非字典表: {}", table)));
     }
+    let en = crate::locale::accept_is_en(
+        req.headers()
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok()),
+    );
     let repo = SchemaRepository::new(pool.get_ref().clone());
     let page = query.page.max(1);
     let page_size = query.page_size.clamp(1, 500);
@@ -267,6 +285,10 @@ pub async fn list_dict_entries(
                 if let Some(n) = v.as_i64() {
                     *v = serde_json::Value::String(n.to_string());
                 }
+            }
+            // 数据值 locale 回显（DATA_I18N_SPEC）：en 请求覆盖 notice 显示名
+            if en {
+                localize_item_notice(&table, &mut item);
             }
             item
         })
@@ -284,12 +306,18 @@ pub async fn list_dict_entries(
 /// GET /dict/leaf/{table}/{id} — 字典条目详情
 pub async fn get_dict_entry(
     path: web::Path<ItemPath>,
+    req: HttpRequest,
     pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, ApiError> {
     let ItemPath { table, id } = path.into_inner();
     if !is_allowed_dict_table(&table) {
         return Err(ApiError::BadRequest(format!("非字典表: {}", table)));
     }
+    let en = crate::locale::accept_is_en(
+        req.headers()
+            .get("accept-language")
+            .and_then(|v| v.to_str().ok()),
+    );
     let repo = SchemaRepository::new(pool.get_ref().clone());
     match repo.get(&table, id).await? {
         Some(mut v) => {
@@ -299,9 +327,27 @@ pub async fn get_dict_entry(
                     *id_v = serde_json::Value::String(n.to_string());
                 }
             }
+            // 数据值 locale 回显（DATA_I18N_SPEC）
+            if en {
+                localize_item_notice(&table, &mut v);
+            }
             Ok(HttpResponse::Ok().json(ApiResponse::success(v)))
         }
         None => Err(ApiError::NotFound("not_found".into())),
+    }
+}
+
+/// 按请求 locale 覆盖条目 `notice`（code 取条目 code 列，无 code 行跳过覆盖）。
+fn localize_item_notice(table: &str, item: &mut serde_json::Value) {
+    let code = item.get("code").and_then(|c| c.as_str());
+    let localized = crate::locale::localize_notice(
+        table,
+        code,
+        item.get("notice").and_then(|n| n.as_str()),
+        true,
+    );
+    if let (Some(localized), Some(notice_v)) = (localized, item.get_mut("notice")) {
+        *notice_v = serde_json::Value::String(localized);
     }
 }
 

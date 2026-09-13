@@ -1,7 +1,8 @@
 //! # 审批承诺因子 — 服务层
 //!
-//! 当前实现为直通层，委托给各 Repository。
-//! 后续在此处添加审批链解析、并行会签、超时自动驳回等业务逻辑。
+//! 直通层：CRUD 读改写委托各 Repository，无额外业务语义。
+//! 引擎语义（审批链推进、签署模式、超时自动驳回/升级转交）
+//! 见 `advance`、`node_meta`、`sla_timeout` 模块。
 
 use crate::models::{
     ApprovalAction, ApprovalFlow, ApprovalInstance, CreateApprovalActionRequest,

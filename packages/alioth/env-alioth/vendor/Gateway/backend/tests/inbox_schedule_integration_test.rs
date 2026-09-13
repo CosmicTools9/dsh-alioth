@@ -18,8 +18,13 @@ async fn ensure_test_sender(pool: &PgPool) -> i64 {
 
     // 确保 entity 存在
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_entity (id, notice, _t_, _f_, created_at, updated_at)
-           VALUES ($1, '测试发件人', '测试', '测试', NOW(), NOW())
+        // 测试发件人（通用主体）→ 叶 zc_id_orga-non-banking-legal（zc_id_entity 为父表）+ 三坐标（identity 域码 JE/FJA/↑_DA）
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal"
+             (id, notice, _t_, _f_, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES ($1, '测试发件人', '测试', '测试', NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JE'   AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FJA'  AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↑_DA' AND deleted_at IS NULL LIMIT 1))
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(entity_id)
@@ -28,12 +33,19 @@ async fn ensure_test_sender(pool: &PgPool) -> i64 {
     .ok();
 
     // 确保 contact 存在
+    // 叶表坐标（§6.12）：联系人叶表 dk 经静态绑定解析
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve contacts coords");
     let contact_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_contacts (id, notice, _t_, _f_, created_at, updated_at)
-           VALUES (-99992, '测试发件人', '测试', '测试', NOW(), NOW())
+        r#"INSERT INTO isahl.zc_id_contacts (id, notice, _t_, _f_, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-99992, '测试发件人', '测试', '测试', NOW(), NOW(), $1, $2, $3)
            ON CONFLICT (id) DO UPDATE SET notice = EXCLUDED.notice
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert contact");
@@ -50,26 +62,38 @@ async fn ensure_test_sender(pool: &PgPool) -> i64 {
     .await
     .ok();
 
+    // 叶表坐标（§6.12 声明即必须）：站内信 info-isahl 语义 RR/PFA/↓_MA
+    // （trigger-registry notice 解析源，三码经 DB 实证存在；禁硬编码 ZUID）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("RR", "PFA", "↓_MA"))
+        .await
+        .expect("resolve info-isahl coords");
     // 确保 isahl info 存在（isahl_id = entity_id）
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_info-isahl" (id, isahl_id, notice, created_at, updated_at)
-           VALUES (-99991, $1, '测试isahl', NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_info-isahl" (id, isahl_id, notice, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-99991, $1, '测试isahl', NOW(), NOW(), $2, $3, $4)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(entity_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .ok();
 
     let info_id: i64 = -99991;
 
-    // contact_infos 记录
+    // contact_infos 记录（叶表 info-isahl——contact_infos 为父表，写入只能落叶；
+    // 类契约形态 1：以 dk_function 为派生源，MUST NOT 手写类列过关）
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_contact_infos (id, _t_, _f_, created_at, updated_at)
-           VALUES ($1, 'isahl', '测试', NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_info-isahl" (id, _t_, _f_, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'isahl', '测试', NOW(), NOW(), $2, $3, $4)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(info_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .ok();
@@ -94,8 +118,13 @@ async fn ensure_test_recipient(pool: &PgPool) -> i64 {
     let entity_id: i64 = -9998;
 
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_entity (id, notice, _t_, _f_, created_at, updated_at)
-           VALUES ($1, '测试收件人', '测试', '测试', NOW(), NOW())
+        // 测试收件人（通用主体）→ 叶 zc_id_orga-non-banking-legal + 三坐标（identity 域码）
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal"
+             (id, notice, _t_, _f_, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES ($1, '测试收件人', '测试', '测试', NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JE'   AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FJA'  AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↑_DA' AND deleted_at IS NULL LIMIT 1))
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(entity_id)
@@ -103,12 +132,18 @@ async fn ensure_test_recipient(pool: &PgPool) -> i64 {
     .await
     .ok();
 
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve recipient contact coords");
     let contact_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_contacts (id, notice, _t_, _f_, created_at, updated_at)
-           VALUES (-99993, '测试收件人', '测试', '测试', NOW(), NOW())
+        r#"INSERT INTO isahl.zc_id_contacts (id, notice, _t_, _f_, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-99993, '测试收件人', '测试', '测试', NOW(), NOW(), $1, $2, $3)
            ON CONFLICT (id) DO UPDATE SET notice = EXCLUDED.notice
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert recipient contact");
@@ -125,8 +160,11 @@ async fn ensure_test_recipient(pool: &PgPool) -> i64 {
     .ok();
 
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_info-isahl" (id, isahl_id, notice, created_at, updated_at)
-           VALUES (-99982, $1, '测试isahl收件人', NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_info-isahl" (id, isahl_id, notice, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-99982, $1, '测试isahl收件人', NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'RR' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'PFA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_MA' AND deleted_at IS NULL))
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(entity_id)
@@ -137,8 +175,11 @@ async fn ensure_test_recipient(pool: &PgPool) -> i64 {
     let info_id: i64 = -99982;
 
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_contact_infos (id, _t_, _f_, created_at, updated_at)
-           VALUES ($1, 'isahl', '测试', NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_info-isahl" (id, _t_, _f_, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'isahl', '测试', NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'RR' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'PFA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_MA' AND deleted_at IS NULL))
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(info_id)
@@ -380,8 +421,11 @@ async fn ensure_test_plan(pool: &PgPool) -> i64 {
 
     sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_plan-personal"
-           (notice, code, "qk_date-segm", "qk_time-segm", created_at, updated_at)
-           VALUES ('T3.2测试日程', 'personal', $1, $1, NOW(), NOW())
+           (notice, code, "qk_date-segm", "qk_time-segm", created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES ('T3.2测试日程', 'personal', $1, $1, NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'JE' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'FMA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_CH' AND deleted_at IS NULL))
            RETURNING id"#,
     )
     .bind(segm_id)
@@ -676,11 +720,19 @@ async fn t3_2_toggle_event_done_handles_todos_ids() {
     let repo = framework_schedule::ScheduleRepository::new(pool.clone());
 
     // 创建独立 event
+    // 叶表坐标（§6.12）：事件叶表 dk 经静态绑定解析
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FBB", "↓_EE"))
+            .await
+            .expect("resolve even-alert coords");
     let event_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-alert" (notice, code, created_at, updated_at)
-           VALUES ('T3.2事件待办', 't3-2-event', NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_even-alert" (notice, code, created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES ('T3.2事件待办', 't3-2-event', NOW(), NOW(), $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert event");
@@ -949,8 +1001,11 @@ async fn t5_overview_code_filter_applies() {
     .expect("insert segm");
 
     let p_meeting: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, _t_, "qk_date-segm", created_at, updated_at)
-           VALUES (-930001, 'T5会议', 'meeting', 'meeting', $1, NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, _t_, "qk_date-segm", created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-930001, 'T5会议', 'meeting', 'meeting', $1, NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'JE' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'FMA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_CH' AND deleted_at IS NULL))
            ON CONFLICT (id) DO UPDATE
            SET notice = EXCLUDED.notice, "qk_date-segm" = EXCLUDED."qk_date-segm"
            RETURNING id"#,
@@ -960,8 +1015,11 @@ async fn t5_overview_code_filter_applies() {
     .await
     .expect("insert meeting plan");
     let p_personal: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, _t_, "qk_date-segm", created_at, updated_at)
-           VALUES (-930002, 'T5个人', 'personal', 'personal', $1, NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, _t_, "qk_date-segm", created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-930002, 'T5个人', 'personal', 'personal', $1, NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'JE' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'FMA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_CH' AND deleted_at IS NULL))
            ON CONFLICT (id) DO UPDATE
            SET notice = EXCLUDED.notice, "qk_date-segm" = EXCLUDED."qk_date-segm"
            RETURNING id"#,
@@ -1041,8 +1099,11 @@ async fn t6_overview_filters_by_visible_ids() {
     .await
     .expect("insert segm");
     let p_a: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, "qk_date-segm", created_at, updated_at)
-           VALUES (-930003, 'T6-A', 'personal', $1, NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, "qk_date-segm", created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-930003, 'T6-A', 'personal', $1, NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'JE' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'FMA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_CH' AND deleted_at IS NULL))
            ON CONFLICT (id) DO UPDATE SET notice = EXCLUDED.notice
            RETURNING id"#,
     )
@@ -1051,8 +1112,11 @@ async fn t6_overview_filters_by_visible_ids() {
     .await
     .expect("insert plan A");
     let p_b: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, "qk_date-segm", created_at, updated_at)
-           VALUES (-930004, 'T6-B', 'personal', $1, NOW(), NOW())
+        r#"INSERT INTO isahl."zc_id_plan-personal" (id, notice, code, "qk_date-segm", created_at, updated_at, dk_scene, dk_factor, dk_function)
+           VALUES (-930004, 'T6-B', 'personal', $1, NOW(), NOW(),
+                   (SELECT id FROM isahl.zc_id_scene WHERE code = 'JE' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'FMA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_CH' AND deleted_at IS NULL))
            ON CONFLICT (id) DO UPDATE SET notice = EXCLUDED.notice
            RETURNING id"#,
     )

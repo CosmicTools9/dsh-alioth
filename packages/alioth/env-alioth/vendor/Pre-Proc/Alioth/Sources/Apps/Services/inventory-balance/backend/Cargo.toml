@@ -24,3 +24,4 @@ inventory = { path = "../../../../../../../Framework/backend/inventory" }
 tokio = { workspace = true, features = ["full"] }
 sqlx = { workspace = true }
 rust_decimal = { workspace = true }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }

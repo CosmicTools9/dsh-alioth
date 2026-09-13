@@ -16,6 +16,7 @@ common = { path = "../common" }
 crud = { path = "../crud" }
 framework-contacts = { path = "../contacts" }
 ontology-binding = { path = "../ontology-binding" }
+trigger-registry = { path = "../trigger-registry" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

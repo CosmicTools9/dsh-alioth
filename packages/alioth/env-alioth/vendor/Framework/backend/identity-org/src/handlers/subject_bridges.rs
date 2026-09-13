@@ -1,12 +1,13 @@
 //! 主体关联桥 Handler（strengthen-identity-org）
 //!
-//! 覆盖 `zc_id_subjects_rr_place` / `_rr_storage` / `_rr_container` 三桥
+//! 覆盖 `zc_id_subjects_rr_place` / `_rr_container` 两 typed 子桥
 //! （ref_left=主体 id, ref_right=目标实体 id），统一语义：
-//! - `GET    /subjects/{id}/places|storages|containers`           — 桥列表
-//! - `POST   /subjects/{id}/places|storages|containers`           — 添加关联（幂等）
-//! - `DELETE /subjects/{id}/places|storages|containers/{relId}`   — 软删关联
+//! - `GET    /subjects/{id}/places|containers`           — 桥列表
+//! - `POST   /subjects/{id}/places|containers`           — 添加关联（幂等）
+//! - `DELETE /subjects/{id}/places|containers/{relId}`   — 软删关联
 //!
-//! 模式复制 subjects.rs accounts 桥（同 lifecycle_rr_non_self 桥族）。
+//! 账户桥（rr_account）经 subjects.rs accounts 端点族；总关系父表
+//! rr_storage 不提供直写桥（查子不见父，add-subject-storage-auto-links）。
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::context::require_auth;
@@ -39,10 +40,6 @@ fn bridge_spec(kind: &str) -> Option<BridgeSpec> {
         "places" => Some(BridgeSpec {
             table: "zc_id_subjects_rr_place",
             label: "场所",
-        }),
-        "storages" => Some(BridgeSpec {
-            table: "zc_id_subjects_rr_storage",
-            label: "仓储",
         }),
         "containers" => Some(BridgeSpec {
             table: "zc_id_subjects_rr_container",
@@ -233,7 +230,6 @@ macro_rules! bridge_handlers {
 }
 
 bridge_handlers!(list_places, add_place, delete_place, "places");
-bridge_handlers!(list_storages, add_storage, delete_storage, "storages");
 bridge_handlers!(
     list_containers,
     add_container,
@@ -249,14 +245,6 @@ pub fn register(cfg: &mut web::ServiceConfig) {
             .route(web::post().to(add_place)),
     )
     .service(web::resource("/subjects/{id}/places/{relId}").route(web::delete().to(delete_place)))
-    .service(
-        web::resource("/subjects/{id}/storages")
-            .route(web::get().to(list_storages))
-            .route(web::post().to(add_storage)),
-    )
-    .service(
-        web::resource("/subjects/{id}/storages/{relId}").route(web::delete().to(delete_storage)),
-    )
     .service(
         web::resource("/subjects/{id}/containers")
             .route(web::get().to(list_containers))

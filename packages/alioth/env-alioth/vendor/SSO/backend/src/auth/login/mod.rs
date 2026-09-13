@@ -18,6 +18,7 @@ mod tokens;
 pub use handlers::{configure, login, login_mfa, logout, me, refresh};
 pub use sessions::{list_sessions, revoke_other_sessions, revoke_session};
 pub(crate) use tokens::is_valid_refresh_token;
+pub(crate) use tokens::purge_expired_tokens;
 pub use tokens::{record_failed_login, reset_failed_login};
 
 /// Registration request body

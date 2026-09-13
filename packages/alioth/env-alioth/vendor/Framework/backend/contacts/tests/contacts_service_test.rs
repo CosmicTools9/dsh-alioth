@@ -39,6 +39,12 @@ async fn insert_fixture(pool: &PgPool) -> i64 {
         .await
         .ok();
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    // （与同 crate src/service.rs 联系方式叶表同款三元组 TX/FJA/↓_GG）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve contact info coords");
+
     // 创建联系人
     sqlx::query(
         "INSERT INTO isahl.zc_id_contacts (id, notice, dk_scene, dk_factor, dk_function) \
@@ -50,14 +56,22 @@ async fn insert_fixture(pool: &PgPool) -> i64 {
 
     // 创建 email info: 2 条，第一条 default
     sqlx::query(
-        "INSERT INTO isahl.\"zc_id_info-email\" (id, notice) VALUES (-10, 'primary@test.com')",
+        "INSERT INTO isahl.\"zc_id_info-email\" (id, notice, dk_scene, dk_factor, dk_function) \
+         VALUES (-10, 'primary@test.com', $1, $2, $3)",
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO isahl.\"zc_id_info-email\" (id, notice) VALUES (-11, 'secondary@test.com')",
+        "INSERT INTO isahl.\"zc_id_info-email\" (id, notice, dk_scene, dk_factor, dk_function) \
+         VALUES (-11, 'secondary@test.com', $1, $2, $3)",
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .unwrap();
@@ -78,14 +92,22 @@ async fn insert_fixture(pool: &PgPool) -> i64 {
 
     // 创建 telephone info: 2 条，第一条 default
     sqlx::query(
-        "INSERT INTO isahl.\"zc_id_info-telephone\" (id, notice) VALUES (-20, '138-0000-0001')",
+        "INSERT INTO isahl.\"zc_id_info-telephone\" (id, notice, dk_scene, dk_factor, dk_function) \
+         VALUES (-20, '138-0000-0001', $1, $2, $3)",
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .unwrap();
     sqlx::query(
-        "INSERT INTO isahl.\"zc_id_info-telephone\" (id, notice) VALUES (-21, '138-0000-0002')",
+        "INSERT INTO isahl.\"zc_id_info-telephone\" (id, notice, dk_scene, dk_factor, dk_function) \
+         VALUES (-21, '138-0000-0002', $1, $2, $3)",
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .unwrap();
@@ -105,10 +127,16 @@ async fn insert_fixture(pool: &PgPool) -> i64 {
     .unwrap();
 
     // 创建 im info: 1 条，非 default
-    sqlx::query("INSERT INTO isahl.\"zc_id_info-im\" (id, notice) VALUES (-30, 'wechat_test')")
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl.\"zc_id_info-im\" (id, notice, dk_scene, dk_factor, dk_function) \
+         VALUES (-30, 'wechat_test', $1, $2, $3)",
+    )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
+    .execute(pool)
+    .await
+    .unwrap();
     sqlx::query(
         "INSERT INTO isahl.\"zc_id_contacts_rr_infos\" (id, ref_left, ref_right, default_info) \
          VALUES (-104, -1, -30, false)",

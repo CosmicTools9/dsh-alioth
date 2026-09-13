@@ -1,7 +1,7 @@
 //! 上下文对象列表端点 — `GET /approval-flows/context-objects?q=&table=&kind=&limit=`
 //!
 //! 两类消费方（fix-flow-designer-chain-breaks §D3）：
-//! - `kind=definition`：在册 scope-definition 行——流程绑定 fk_context 的对象选择器；
+//! - `kind=definition`：在册 scope-definition 行——流程绑定 rr_context 的对象选择器；
 //! - `kind=business`：业务实体行（剔除范畴定义行）——图库「发起」modal 的实体选择器
 //!   （entity_id 数据源，配合 initiate 端点 entity_table=所选行落位叶表）。
 //!

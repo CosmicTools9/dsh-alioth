@@ -10,7 +10,7 @@
 //!    - `ngac_binding_request`（绑定申请，add-ngac-binding-request）
 //!    - `org_policy_class` / `org_policy_rule` / `org_policy_label`
 //!      （规范资产线，d1-org-policy-assets；state 链 CHECK + 审计列；
-//!       label 表 code 主键，label_code 仅存 code 字符串不 FK 冻结域）
+//!      label 表 code 主键，label_code 仅存 code 字符串不 FK 冻结域）
 //! 2. **030 版本信号自愈**：`ngac_policy_version` 兜底 + 030 bump 触发器
 //!    （幂等迁移整文件 include_str 执行，同源零复制——无触发器时策略图永不
 //!    reload，决策与库内策略脱节）。

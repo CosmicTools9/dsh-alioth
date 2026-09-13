@@ -37,10 +37,15 @@ fn all_seed_identities() -> Vec<SeedIdentity> {
 pub async fn seed_identities(pool: &PgPool) -> Result<usize, AliothError> {
     let mut inserted = 0usize;
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FJA", "↑_DA"))
+        .await
+        .map_err(AliothError::from)?;
+
     for seed in all_seed_identities() {
         let exists: bool = sqlx::query_scalar(
             r#"SELECT EXISTS(
-                   SELECT 1 FROM isahl.zc_id_subjects
+                   SELECT 1 FROM isahl."zc_id_orga-non-banking-legal"
                    WHERE code = $1 AND deleted_at IS NULL
                )"#,
         )
@@ -54,13 +59,16 @@ pub async fn seed_identities(pool: &PgPool) -> Result<usize, AliothError> {
         }
 
         sqlx::query(
-            r#"INSERT INTO isahl.zc_id_subjects (notice, code, comments, created_by_id)
-               VALUES ($1, $2, $3, $4)"#,
+            r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (notice, code, comments, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
         )
         .bind(seed.name)
         .bind(seed.code)
         .bind(seed.notice)
         .bind(SEED_USER_ID)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(pool)
         .await
         .map_err(AliothError::from)?;
@@ -80,7 +88,7 @@ mod tests {
     async fn test_seed_identities_idempotent() {
         let pool = connect_test_db().await;
         setup_test_schema_light(&pool).await.unwrap();
-        sqlx::query("DELETE FROM isahl.zc_id_subjects")
+        sqlx::query("DELETE FROM isahl.\"zc_id_orga-non-banking-legal\"")
             .execute(&pool)
             .await
             .unwrap();

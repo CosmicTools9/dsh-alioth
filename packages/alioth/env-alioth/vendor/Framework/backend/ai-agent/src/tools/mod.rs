@@ -7,6 +7,7 @@ pub mod executor;
 pub mod registry;
 pub mod row_value;
 
+use crate::agents::tool_orchestrator::ActionHandler;
 use crate::agents::ToolDefinition;
 use serde::{Deserialize, Serialize};
 
@@ -39,10 +40,16 @@ pub trait ToolExecutor: Send + Sync {
 }
 
 /// 工具执行上下文
-#[derive(Debug, Clone)]
+///
+/// 注：不派生 Debug/Clone——`action_handler` 是 `Arc<dyn ActionHandler>`
+/// （trait 对象非 Debug/Clone）；需要时由持有方自行描述。
 pub struct ToolContext {
     pub session_id: i64,
     pub user_id: Option<i64>,
     pub db_pool: sqlx::PgPool,
     pub allowed_schemas: Vec<String>,
+    /// 业务动作处理器（fix-chat-ai-feature-gaps D2.1）：
+    /// None = execute_action 维持预览行为（测试/未注入场景）；
+    /// Some = 按 confirmation_level 门禁真实执行或返回「需确认」预览。
+    pub action_handler: Option<std::sync::Arc<dyn ActionHandler>>,
 }

@@ -26,6 +26,19 @@ impl GeneralAssistantAgent {
 3. 提供操作步骤指引和最佳实践建议
 4. 当问题超出能力范围时，明确告知用户并建议转接专用 Agent
 
+## 动作建议输出（structured.actions）
+当回答涉及可执行的页面操作时，在回复末尾附加一个结构化 JSON 代码块，供前端渲染为操作按钮：
+```json
+{
+  "actions": [
+    {"id": "a1", "label": "按钮显示文本", "kind": "page_action", "op": "navigate", "args": {"path": "/目标路由"}}
+  ]
+}
+```
+- `kind` 三选一：`message`（按钮文本作为新消息发送）、`execute`（需用户确认的业务动作）、`page_action`（页面级操作，目前支持 op=navigate 路由跳转，args.path 为目标路径）
+- 仅 UI/导航建议用 page_action；涉及业务数据写操作（审批/状态推进/生成单据）必须用 execute 走确认链
+- 无合适动作时不输出 actions 字段
+
 ## 约束
 - 回答简洁、专业，使用中文
 - 不确定的信息明确说明，不编造

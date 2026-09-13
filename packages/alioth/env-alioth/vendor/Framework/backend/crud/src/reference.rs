@@ -212,10 +212,12 @@ impl ReferenceJoin {
                 let order_clause = order_by
                     .map(|ob| format!(" ORDER BY {}.{}", jt, quote_ident(ob)))
                     .unwrap_or_default();
+                // 标量位置必须单行：恒 LIMIT 1（曾按 order_by 有条件加 LIMIT，
+                // 无 ORDER BY 的 OneToOne 桥在桥行 >1 时抛 21000 cardinality_violation）
                 format!(
                     "(SELECT jsonb_build_object({}) FROM {} AS {} \
                      JOIN {} AS {} ON {}.{} = {}.{} \
-                     WHERE {}.{} = e.{}{}{})",
+                     WHERE {}.{} = e.{}{} LIMIT 1)",
                     fields,
                     self.target_table,
                     alias,
@@ -229,7 +231,6 @@ impl ReferenceJoin {
                     quote_ident(source_fk),
                     quote_ident("id"),
                     order_clause,
-                    if order_by.is_some() { " LIMIT 1" } else { "" },
                 )
             }
             (

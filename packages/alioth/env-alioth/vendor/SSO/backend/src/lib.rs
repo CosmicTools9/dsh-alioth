@@ -5,6 +5,7 @@ pub mod config;
 pub mod db;
 pub mod epp;
 pub mod error;
+pub mod housekeeping;
 pub mod http_client;
 pub mod log_email;
 pub mod ngac;
@@ -110,14 +111,22 @@ pub fn configure_public_routes_without_scope(cfg: &mut web::ServiceConfig) {
 /// These include NGAC PDP/PIP, audit log, admin API, and WebSocket audit stream.
 /// All routes under `/api/ngac`, `/api/audit`, `/api/admin`, `/ws/audit`.
 ///
-/// 安全边界（SECURITY_SPEC §3.4 豁免最小化）：
-/// - `/api/ngac/*` 仅保留 PDP 决策端点（decide/check/batch/list/columns）与审计接入，
-///   noauth 仅供 PEP 自调用；**PIP 不再挂载于此**（旧 `/api/ngac/pip/*` 已移除）。
+/// 安全边界（SECURITY_SPEC §3.4 豁免最小化，fix-sso-noauth-removal）：
+/// - `/api/ngac/*` 保留 PDP 决策端点（decide/check/batch/list/columns/explain 等）
+///   与审计接入；scope 内层 wrap 空 matcher RequireAuth —— **无 noauth 白名单**，
+///   全部端点须持有效 JWT（PEP 自调用带原请求 token；浏览器管理面带 cookie）。
 /// - PIP 管理面端点挂载于 `/api/admin/ngac/pip/*`：`RequireAuth`（JWT）+ `NgacPep`
 ///   （sso_admin OA 决策）双重保护，与既有 `/api/admin` 路由接线一致。
 pub fn configure_protected_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/ngac")
+            // fix-sso-noauth-removal：移除 noauth 白名单——/api/ngac 全部端点
+            // 必须持有效 JWT（PEP 自调用带原请求 token、浏览器管理面带 cookie）。
+            // 空 matcher RequireAuth = 全保护；独立进程外层另有全局 RequireAuth
+            // （双验 ES256 廉价）；内嵌模式（Gateway 直挂本函数）由此补齐裸挂面。
+            .wrap(crate::auth::middleware::RequireAuth::with_matcher(
+                common::PublicRouteMatcher::new(),
+            ))
             .configure(ngac::pdp::configure_routes)
             .route("/audit", web::post().to(audit::handlers::ingest_event)),
     )
@@ -205,10 +214,14 @@ pub async fn build_server(config: Config) -> std::io::Result<actix_web::dev::Ser
 
     let server_addr = config.server_addr.clone();
     let ws_app_state = web::Data::new(websocket::AppState::new());
+    // G6：SSO_WORKERS env 条件覆盖 worker 数（闭包 move config 前取出）
+    let workers = config.workers;
+    // G4：housekeeping 独立持有 pool（HttpServer 闭包 move 原 pool）
+    let cleanup_pool = pool.clone();
 
     log::info!("SSO Service listening on {}", server_addr);
 
-    let server = HttpServer::new(move || {
+    let http_server = HttpServer::new(move || {
         let cors = common::build_cors().expect("Failed to build CORS config");
         App::new()
             .wrap(cors)
@@ -244,10 +257,20 @@ pub async fn build_server(config: Config) -> std::io::Result<actix_web::dev::Ser
             .route("/.well-known/jwks.json", web::get().to(auth::jwt::jwks))
             .configure(configure_routes)
     })
-    .backlog(1024)
-    .bind(&server_addr)
-    .map_err(|e| common::server::bind_error(&server_addr, e))?
-    .run();
+    .backlog(1024);
+
+    let http_server = match workers {
+        Some(n) => http_server.workers(n),
+        None => http_server,
+    };
+
+    let server = http_server
+        .bind(&server_addr)
+        .map_err(|e| common::server::bind_error(&server_addr, e))?
+        .run();
+
+    // G4 周期后台清理（独立进程形态；Gateway 内嵌形态在 Gateway main.rs 接线）
+    housekeeping::spawn(cleanup_pool);
 
     Ok(server)
 }

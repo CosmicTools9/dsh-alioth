@@ -128,7 +128,7 @@ pub async fn create_provider(
         Ok(row) => {
             let id: i64 = row.get("id");
             HttpResponse::Created().json(serde_json::json!({
-                "id": id,
+                "id": id.to_string(),
                 "name": body.name,
                 "provider_type": body.provider_type,
                 "enabled": enabled,
@@ -198,9 +198,8 @@ pub async fn update_provider(
         .await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
-            HttpResponse::Ok().json(serde_json::json!({"status": "updated", "id": provider_id}))
-        }
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
+            .json(serde_json::json!({"status": "updated", "id": provider_id.to_string()})),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "Provider not found"})),
         Err(e) => {
             log::error!("update_provider DB error: {}", e);
@@ -302,9 +301,8 @@ pub async fn toggle_provider(
     .await;
 
     match result {
-        Ok(Some(enabled)) => {
-            HttpResponse::Ok().json(serde_json::json!({"id": provider_id, "enabled": enabled}))
-        }
+        Ok(Some(enabled)) => HttpResponse::Ok()
+            .json(serde_json::json!({"id": provider_id.to_string(), "enabled": enabled})),
         Ok(None) => {
             HttpResponse::NotFound().json(serde_json::json!({"error": "Provider not found"}))
         }
@@ -371,7 +369,7 @@ pub async fn test_provider(
 
     let valid = issues.is_empty();
     HttpResponse::Ok().json(serde_json::json!({
-        "id": provider_id,
+        "id": provider_id.to_string(),
         "provider_type": provider_type,
         "valid": valid,
         "issues": issues,

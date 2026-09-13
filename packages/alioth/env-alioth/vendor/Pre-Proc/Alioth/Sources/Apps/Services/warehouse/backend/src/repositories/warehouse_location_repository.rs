@@ -55,8 +55,12 @@ impl
     ) -> Result<WarehouseLocation, ApiError> {
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_stor-plc-warehouse"
-               (notice, code, comments, ak_source, fk_address, sk_unit, fk_trustee, qk_capacity, fk_parent, qk_fence, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+               (notice, code, comments, ak_source, fk_address, sk_unit, fk_trustee, qk_capacity, fk_parent, qk_fence, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                       (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JE'   AND deleted_at IS NULL),
+                       (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FRE'  AND deleted_at IS NULL),
+                       (SELECT id FROM isahl.zc_id_function WHERE code = '↓_GG' AND deleted_at IS NULL))
                RETURNING id"#,
         )
         .bind(&req.notice)

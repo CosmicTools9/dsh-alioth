@@ -15,8 +15,9 @@ use super::{
 use crate::auth::{
     crypto::decode_secret,
     jwt::{
-        self, clear_access_cookie, clear_refresh_cookie, decode_token_any, encode_access_token,
-        encode_refresh_token, set_access_cookie, set_refresh_cookie, Claims,
+        self, access_cookie_name, clear_access_cookie, clear_refresh_cookie, decode_token_any,
+        encode_access_token, encode_refresh_token, refresh_cookie_name, set_access_cookie,
+        set_refresh_cookie, Claims,
     },
     mfa::verify_totp_code,
     password::verify_password_async,
@@ -24,6 +25,22 @@ use crate::auth::{
     AuthState,
 };
 use crate::ngac::pdp::{evaluate_conditions, ConditionContext};
+
+/// 认证 cookie 应用作用域（isolate-auth-cookie-scope）：读取并校验
+/// `x-auth-cookie-scope` 请求头；缺失/非法 → None（缺省 cookie 名，向后兼容）。
+/// 合法字符 [A-Za-z0-9_-]，长度 ≤32——防 cookie 名注入。
+fn cookie_scope(req: &actix_web::HttpRequest) -> Option<String> {
+    req.headers()
+        .get("x-auth-cookie-scope")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| {
+            !s.is_empty()
+                && s.len() <= 32
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+}
 
 /// Login with email and password
 pub async fn login(
@@ -315,8 +332,18 @@ pub async fn login(
         session_id: Some(session.session_token.clone()),
     });
 
-    let response = set_access_cookie(response, &access_token, state.jwt_access_expiry_secs);
-    set_refresh_cookie(response, &refresh_token, state.jwt_refresh_expiry_secs)
+    let response = set_access_cookie(
+        response,
+        &access_token,
+        state.jwt_access_expiry_secs,
+        cookie_scope(&req).as_deref(),
+    );
+    set_refresh_cookie(
+        response,
+        &refresh_token,
+        state.jwt_refresh_expiry_secs,
+        cookie_scope(&req).as_deref(),
+    )
 }
 
 /// Complete login with MFA code
@@ -382,54 +409,9 @@ pub async fn login_mfa(
         });
     }
 
-    // MFA verified - issue tokens
-    let claims = Claims::with_expiry_seconds(&user_id, "", true, state.jwt_access_expiry_secs); // mfa_verified = true
-
-    let access_token = match encode_access_token(&claims, &state.jwt_private_key) {
-        Ok(t) => t,
-        Err(_) => {
-            return HttpResponse::InternalServerError().json(AuthError {
-                error: "Failed to generate token".to_string(),
-            })
-        }
-    };
-
-    let refresh_token = match encode_refresh_token(
-        &claims,
-        &state.jwt_private_key,
-        state.jwt_refresh_expiry_secs,
-    ) {
-        Ok(t) => t,
-        Err(_) => {
-            return HttpResponse::InternalServerError().json(AuthError {
-                error: "Failed to generate refresh token".to_string(),
-            })
-        }
-    };
-
-    // 持久化 refresh token（与非 MFA 登录路径一致），
-    // 否则 MFA 用户无法在 /auth/refresh 中校验、且登出时无法被 revoke-all 覆盖。
-    use chrono::TimeDelta;
-    let refresh_expires_at = Utc::now() + TimeDelta::seconds(state.jwt_refresh_expiry_secs);
-    if let Ok(user_id_i64) = user_id.parse::<i64>() {
-        if let Err(e) = store_refresh_token(
-            pool.get_ref(),
-            user_id_i64,
-            &refresh_token,
-            refresh_expires_at,
-        )
-        .await
-        {
-            log::error!("Failed to store MFA refresh token: {}", e);
-        }
-    } else {
-        log::error!("Failed to parse MFA user_id '{}' as i64", user_id);
-    }
-
-    // Update or create session
+    // MFA verified —— 先解析/创建会话（fix-sso-noauth-removal：token 必须绑 sid，
+    // 此前 claims 先于 session 签发导致 sid 恒空、登出对 token 无效）
     let session_manager = SessionManager::new(pool.get_ref().clone());
-
-    // If session_id provided, validate it; otherwise create new session
     let session_token = if let Some(ref session_id) = body.session_id {
         // Validate existing session
         match session_manager.validate_session(session_id).await {
@@ -482,14 +464,70 @@ pub async fn login_mfa(
             }
         }
     };
+
+    // Issue tokens bound to the session
+    let mut claims = Claims::with_expiry_seconds(&user_id, "", true, state.jwt_access_expiry_secs); // mfa_verified = true
+    claims.sid = session_token.clone();
+
+    let access_token = match encode_access_token(&claims, &state.jwt_private_key) {
+        Ok(t) => t,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: "Failed to generate token".to_string(),
+            })
+        }
+    };
+
+    let refresh_token = match encode_refresh_token(
+        &claims,
+        &state.jwt_private_key,
+        state.jwt_refresh_expiry_secs,
+    ) {
+        Ok(t) => t,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: "Failed to generate refresh token".to_string(),
+            })
+        }
+    };
+
+    // 持久化 refresh token（与非 MFA 登录路径一致），
+    // 否则 MFA 用户无法在 /auth/refresh 中校验、且登出时无法被 revoke-all 覆盖。
+    use chrono::TimeDelta;
+    let refresh_expires_at = Utc::now() + TimeDelta::seconds(state.jwt_refresh_expiry_secs);
+    if let Ok(user_id_i64) = user_id.parse::<i64>() {
+        if let Err(e) = store_refresh_token(
+            pool.get_ref(),
+            user_id_i64,
+            &refresh_token,
+            refresh_expires_at,
+        )
+        .await
+        {
+            log::error!("Failed to store MFA refresh token: {}", e);
+        }
+    } else {
+        log::error!("Failed to parse MFA user_id '{}' as i64", user_id);
+    }
+
     let response = HttpResponse::Ok().json(MfaLoginResponse {
         access_token: access_token.clone(),
         refresh_token: refresh_token.clone(),
         session_id: session_token,
     });
 
-    let response = set_access_cookie(response, &access_token, state.jwt_access_expiry_secs);
-    set_refresh_cookie(response, &refresh_token, state.jwt_refresh_expiry_secs)
+    let response = set_access_cookie(
+        response,
+        &access_token,
+        state.jwt_access_expiry_secs,
+        cookie_scope(&req).as_deref(),
+    );
+    set_refresh_cookie(
+        response,
+        &refresh_token,
+        state.jwt_refresh_expiry_secs,
+        cookie_scope(&req).as_deref(),
+    )
 }
 
 /// Logout - invalidate session and tokens
@@ -498,6 +536,7 @@ pub async fn logout(
     pool: web::Data<PgPool>,
     state: web::Data<AuthState>,
 ) -> HttpResponse {
+    let scope = cookie_scope(&req);
     // Try to get session token from header or cookie
     let session_token = req
         .headers()
@@ -515,7 +554,7 @@ pub async fn logout(
 
     // Fallback: extract session ID from access_token cookie
     if session_token.is_none() {
-        if let Some(cookie) = req.cookie("access_token") {
+        if let Some(cookie) = req.cookie(&access_cookie_name(scope.as_deref())) {
             let access_token = cookie.value().to_string();
             if let Ok(claims) = decode_token_any(&access_token, &state.verification_keys()) {
                 if !claims.sid.is_empty() {
@@ -531,8 +570,43 @@ pub async fn logout(
         }
     }
 
+    // fix-sso-noauth-removal：Bearer-only 客户端（无 cookie/X-Session-Token）登出
+    // 同样即时失效——解 Authorization access token 的 sid 撤销会话 + 全量吊销
+    // 该用户 refresh tokens（登出后 token 不得存活至 TTL）
+    if session_token.is_none() {
+        if let Some(bearer) = req
+            .headers()
+            .get("Authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            if let Ok(claims) = decode_token_any(&bearer, &state.verification_keys()) {
+                if !claims.sid.is_empty() {
+                    let session_manager = SessionManager::new(pool.get_ref().clone());
+                    if let Err(e) = session_manager
+                        .revoke_session(&claims.sid, None, "logout")
+                        .await
+                    {
+                        log::warn!("Failed to revoke session from Bearer access_token: {}", e);
+                    }
+                }
+                let user_id = claims.sub.parse::<i64>().unwrap_or(0);
+                if user_id > 0 {
+                    if let Err(e) = revoke_all_user_tokens(pool.get_ref(), user_id).await {
+                        log::warn!("Failed to revoke refresh tokens on Bearer logout: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     // Also revoke refresh token from database
-    if let Some(refresh_token) = req.cookie("refresh_token").map(|c| c.value().to_string()) {
+    if let Some(refresh_token) = req
+        .cookie(&refresh_cookie_name(scope.as_deref()))
+        .map(|c| c.value().to_string())
+    {
         // Try to get user_id from token to revoke all tokens
         if let Ok(claims) = decode_token_any(&refresh_token, &state.verification_keys()) {
             let user_id = claims.sub.parse::<i64>().unwrap_or(0);
@@ -542,8 +616,8 @@ pub async fn logout(
         }
     }
 
-    let response = clear_access_cookie(HttpResponse::Ok().finish());
-    clear_refresh_cookie(response)
+    let response = clear_access_cookie(HttpResponse::Ok().finish(), scope.as_deref());
+    clear_refresh_cookie(response, scope.as_deref())
 }
 
 /// Refresh access token using refresh token
@@ -553,7 +627,8 @@ pub async fn refresh(
     state: web::Data<AuthState>,
 ) -> HttpResponse {
     // Extract refresh token from cookie first, fall back to Authorization header
-    let refresh_token = match req.cookie("refresh_token") {
+    let scope = cookie_scope(&req);
+    let refresh_token = match req.cookie(&refresh_cookie_name(scope.as_deref())) {
         Some(c) => c.value().to_string(),
         None => {
             // Fallback: Bearer token in Authorization header (for SPAs / cross-origin clients)
@@ -625,6 +700,25 @@ pub async fn refresh(
         }
     }
 
+    // fix-sso-noauth-removal：refresh 会话活性门禁——refresh token 绑定的会话
+    // 被吊销（管理端/登出）后不得继续轮换；sid 空 = 无会话旧载体（修复前签发的
+    // OAuth/LDAP/MFA token），拒绝刷新强制重新登录（登出后无 TTL 残留）。
+    if claims.sid.is_empty() {
+        log::warn!("Refresh token without session binding (sid empty) rejected");
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "SESSION_NOT_BOUND".to_string(),
+        });
+    }
+    if !crate::auth::session::is_session_active(pool.get_ref(), &claims.sid).await {
+        log::warn!(
+            "Refresh rejected: SSO session '{}' is revoked/expired",
+            claims.sid
+        );
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "SESSION_REVOKED".to_string(),
+        });
+    }
+
     // Revoke old refresh token (rotation)
     if let Err(e) = revoke_refresh_token(pool.get_ref(), &refresh_token).await {
         log::error!("Failed to revoke old refresh token: {}", e);
@@ -675,8 +769,18 @@ pub async fn refresh(
         expires_in: state.jwt_access_expiry_secs.max(0) as u64,
     });
 
-    let response = set_access_cookie(response, &new_access_token, state.jwt_access_expiry_secs);
-    set_refresh_cookie(response, &new_refresh_token, state.jwt_refresh_expiry_secs)
+    let response = set_access_cookie(
+        response,
+        &new_access_token,
+        state.jwt_access_expiry_secs,
+        scope.as_deref(),
+    );
+    set_refresh_cookie(
+        response,
+        &new_refresh_token,
+        state.jwt_refresh_expiry_secs,
+        scope.as_deref(),
+    )
 }
 
 /// Current user info (GET /auth/me)
@@ -688,24 +792,14 @@ pub async fn me(
     pool: web::Data<PgPool>,
     state: web::Data<AuthState>,
 ) -> HttpResponse {
-    // Extract and validate access token
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
+    // 令牌提取走共享实现（scoped cookie → Bearer → 环境 cookie）——避免各处理器
+    // 自行「cookie 优先」导致跨应用身份串号（fix-auth-token-precedence）
+    let access_token = match jwt::extract_token(&req) {
+        Some(t) => t,
         None => {
-            // Try Authorization header fallback
-            match req
-                .headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|auth| auth.strip_prefix("Bearer "))
-            {
-                Some(token) => token.to_string(),
-                None => {
-                    return HttpResponse::Unauthorized().json(AuthError {
-                        error: "No authentication token".to_string(),
-                    })
-                }
-            }
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "No authentication token".to_string(),
+            })
         }
     };
 

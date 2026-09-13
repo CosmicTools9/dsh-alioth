@@ -311,10 +311,15 @@ impl
             None => (None, None),
         };
 
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve_conn(&mut *tx, ("JC", "GID", "↑_DA"))
+                .await
+                .map_err(AliothError::from)?;
         let license_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prod-license-purchase"
-               (notice, code, "fk_subj-provider", ck_category, qk_capacity, qk_duration, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (notice, code, "fk_subj-provider", ck_category, qk_capacity, qk_duration, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING id"#,
         )
         .bind(&req.name)
@@ -324,19 +329,30 @@ impl
         .bind(seats_id)
         .bind(duration_id)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(AliothError::from)?;
 
         if let Some(date_id) = date_id {
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+                    .await
+                    .map_err(AliothError::from)?;
             sqlx::query(
-                r#"INSERT INTO isahl."zc_id_deta-trade_order" (notice, fk_delivery, qk_date, created_by_id)
-                   VALUES ($1, $2, $3, $4)"#,
+                r#"INSERT INTO isahl."zc_id_deta-trade_order" (notice, fk_delivery, qk_date, created_by_id, dk_scene, dk_factor, dk_function)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
             )
             .bind(format!("delivery for license {}", license_id))
             .bind(license_id)
             .bind(date_id)
             .bind(user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .execute(&mut *tx)
             .await
             .map_err(AliothError::from)?;
@@ -412,14 +428,22 @@ impl
             .execute(&mut *tx)
             .await
             .map_err(AliothError::from)?;
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+                    .await
+                    .map_err(AliothError::from)?;
             sqlx::query(
-                r#"INSERT INTO isahl."zc_id_deta-trade_order" (notice, fk_delivery, qk_date, created_by_id)
-                   VALUES ($1, $2, $3, $4)"#,
+                r#"INSERT INTO isahl."zc_id_deta-trade_order" (notice, fk_delivery, qk_date, created_by_id, dk_scene, dk_factor, dk_function)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
             )
             .bind(format!("delivery for license {}", id))
             .bind(id)
             .bind(date_id)
             .bind(user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .execute(&mut *tx)
             .await
             .map_err(AliothError::from)?;

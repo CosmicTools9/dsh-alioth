@@ -38,12 +38,21 @@ async fn create_and_publish(pool: &PgPool, name: &str) -> i64 {
             {"id": "n-end", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'draft', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id,
+                                            dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'draft', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind(name)
     .bind(graph.to_string())
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();

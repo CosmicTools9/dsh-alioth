@@ -27,9 +27,9 @@
         "name": "StockCount",
         "table": "isahl.zc_id_even-counting",
         "coordinates": {
-          "scene": "zc",
-          "factor": "even",
-          "function": "counting"
+          "scene": "",
+          "factor": "",
+          "function": ""
         },
         "inherits": null,
         "notes": "事件-盘点：库存盘点主记录，含盘点单号、日期、仓库、科目等字段",
@@ -280,9 +280,9 @@
         "name": "StockCountDetail",
         "table": "isahl.zc_id_deta-counting",
         "coordinates": {
-          "scene": "zc",
-          "factor": "deta",
-          "function": "counting"
+          "scene": "",
+          "factor": "",
+          "function": ""
         },
         "inherits": null,
         "notes": "明细-盘点纪录：库存盘点明细记录，含商品、仓库、数量（账面/盘点/差异）等字段",
@@ -557,11 +557,6 @@
       {
         "name": "StockCountStatus",
         "table": "isahl.zc_id_stus-counting",
-        "coordinates": {
-          "scene": "zc",
-          "factor": "stus",
-          "function": "counting"
-        },
         "inherits": null,
         "notes": "状态-盘点：库存盘点状态字典，含状态编码、名称、启用标记等",
         "field_mappings": [

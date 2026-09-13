@@ -184,7 +184,7 @@ structure-v14 的缩放控制按钮（`−`、`+`、`↺`）均依赖 `title` �
 
 ### 决策
 
-每次原型迭代必须创建新版本文件 `{module}-v{N}.html`，并使用 `bun .agents/skills/alioth-module/scripts/bump-module-version.ts` 原子递增 `Pre-Proc/{namespace}/Sources/Modules/{module}/module.json` 的 `reversion` 段。
+每次原型迭代必须创建新版本文件 `{module}-v{N}.html`，并使用 `bun .agents/skills/alioth-module/scripts/bump-module-version.ts` 原子递增 `Pre-Proc/{namespace}/Sources/Apps/Modules/{module}/module.json` 的 `reversion` 段。
 
 ### 背景
 

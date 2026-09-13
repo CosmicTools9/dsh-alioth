@@ -19,6 +19,8 @@ ontology-binding = { path = "../ontology-binding" }
 framework-scheduler = { path = "../scheduler" }
 runtime-contract = { path = "../runtime-contract" }
 runtime-engine = { path = "../runtime-engine" }
+llm = { path = "../llm" }
+system-config = { path = "../system-config" }
 tokio = { workspace = true, features = ["time", "rt", "macros"] }
 
 [dev-dependencies]

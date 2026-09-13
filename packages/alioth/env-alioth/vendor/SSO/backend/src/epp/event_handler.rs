@@ -86,9 +86,10 @@ impl From<NgacEvent> for AccessEvent {
         Self {
             id: event.event_id,
             user_id: event.subject_id,
-            // NgacEvent 不携带 email；audit_events.user_email 为 NOT NULL，
-            // 沿用 handlers.rs 的占位值惯例（满足约束，避免 null-value 违规）。
-            user_email: Some("audit@local".to_string()),
+            // 主体标识口径（fix-ngac-audit-subject-identity）：username 优先、
+            // 回落 `user:{id}`。NgacEvent 不携带 username/email，故用唯一回落——
+            // **禁止**跨主体共享常量（原 "audit@local" 会把全部用户折叠成同一主体）。
+            user_email: Some(format!("user:{}", event.subject_id)),
             object_path: event.object_type,
             operation: event.operation,
             decision,

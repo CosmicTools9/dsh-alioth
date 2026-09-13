@@ -25,9 +25,65 @@ const INFO_KINDS: &[(&str, &str)] = &[
     ("zipcode", "zipcode"),
 ];
 
+/// 账号 1:1 绑定实体解析出的联系人及其首选联系方式。
+///
+/// 链：`auth_users.entity_id`（1:1 绑定）→ `zc_id_entity`
+/// → `zc_id_entity_rr_contacts`（`default_contact` 优先）→ `zc_id_contacts`
+/// → `zc_id_contacts_rr_infos`（`default_info` 优先）→ `zc_id_contact_infos`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserContactRef {
+    /// 联系人（`zc_id_contacts`）id——presence / 通讯录语义
+    pub contact_id: i64,
+    /// 首选联系方式（`zc_id_contact_infos`）id——消息发送方地址语义；无联系方式时为 None
+    pub info_id: Option<i64>,
+}
+
 pub struct ContactsService;
 
 impl ContactsService {
+    /// 账号 → 其 1:1 绑定实体（`auth_users.entity_id`）下的默认联系人 / 首选联系方式。
+    ///
+    /// 未绑定（`entity_id IS NULL`）、或实体无联系人、或联系人无联系方式 → None。
+    /// 联系链的唯一实现（此前 chat 发送方解析与 heartbeat 反查各自手写，锚点/关系表不一致）。
+    pub async fn resolve_user_contact(
+        pool: &PgPool,
+        user_id: i64,
+    ) -> Result<Option<UserContactRef>, String> {
+        let row: Option<(i64, Option<i64>)> = sqlx::query_as(
+            r#"
+            SELECT c.id,
+                   (SELECT ci.id
+                      FROM isahl."zc_id_contacts_rr_infos" cri
+                      JOIN isahl.zc_id_contact_infos ci ON ci.id = cri.ref_right
+                     WHERE cri.ref_left = c.id
+                       AND cri.deleted_at IS NULL
+                       AND ci.deleted_at IS NULL
+                     ORDER BY cri.default_info DESC NULLS LAST, ci.id
+                     LIMIT 1)
+              FROM isahl_auth.auth_users u
+              JOIN isahl.zc_id_entity e ON e.id = u.entity_id
+              JOIN isahl."zc_id_entity_rr_contacts" er ON er.ref_left = e.id
+              JOIN isahl.zc_id_contacts c ON c.id = er.ref_right
+             WHERE u.id = $1
+               AND u.entity_id IS NOT NULL
+               AND e.deleted_at IS NULL
+               AND er.deleted_at IS NULL
+               AND c.deleted_at IS NULL
+             ORDER BY er.default_contact DESC NULLS LAST, c.id
+             LIMIT 1
+            "#,
+        )
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("resolve user contact failed: {}", e))?;
+
+        Ok(row.map(|(contact_id, info_id)| UserContactRef {
+            contact_id,
+            info_id,
+        }))
+    }
+
     /// 获取联系人列表（含全部关联信息，支持分页）
     pub async fn list_contacts(
         pool: &PgPool,
@@ -131,12 +187,20 @@ impl ContactsService {
                 format!("CT-{:06}", z % 1_000_000)
             }
         };
+        // 叶表坐标（§6.12）：联系人行 dk 经静态绑定解析（禁硬编码 ZUID）
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+                .await
+                .map_err(|e| format!("resolve contact coords failed: {}", e))?;
         let contact_id: i64 = sqlx::query_scalar(
-            "INSERT INTO isahl.zc_id_contacts (notice, code, comments) VALUES ($1, $2, $3) RETURNING id",
+            "INSERT INTO isahl.zc_id_contacts (notice, code, comments, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
         )
         .bind(&req.name)
         .bind(&code)
         .bind(&req.comments)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| format!("create contact failed: {}", e))?;
@@ -319,46 +383,77 @@ impl ContactsService {
             "wechat" | "qq" => "im",
             other => other,
         };
+        // 叶表坐标（§6.12）：联系方式叶表（zc_id_contact_infos 族）dk 经静态绑定解析
+        // （禁硬编码 ZUID；与同文件 zc_id_contacts / zc_id_info-postal 同款三元组）
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve_conn(&mut **executor, ("TX", "FJA", "↓_GG"))
+                .await
+                .map_err(|e| format!("resolve contact info coords failed: {}", e))?;
+        // zc_id_info-isahl（站内信）语义独立于其余联系方式叶表：declared 源为
+        // trigger-registry/src/entity.rs 的 notice 解析（场所标识/消息账号/通讯联系）
+        // → RR/PFA/↓_MA（三码已 DB 实证存在）。禁硬编码 ZUID。
+        let (isahl_scene, isahl_factor, isahl_function) =
+            ontology_binding::resolve_conn(&mut **executor, ("RR", "PFA", "↓_MA"))
+                .await
+                .map_err(|e| format!("resolve info-isahl coords failed: {}", e))?;
         let info_id = match kind {
             "email" => sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_info-email" (notice) VALUES ($1) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_info-email" (notice, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4) RETURNING id"#,
             )
             .bind(&info.value)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut **executor)
             .await
             .map_err(|e| format!("create email info failed: {}", e))?,
             "phone" | "telephone" => sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_info-telephone" (notice) VALUES ($1) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_info-telephone" (notice, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4) RETURNING id"#,
             )
             .bind(&info.value)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut **executor)
             .await
             .map_err(|e| format!("create phone info failed: {}", e))?,
             "im" => sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_info-im" (notice) VALUES ($1) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_info-im" (notice, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4) RETURNING id"#,
             )
             .bind(&info.value)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut **executor)
             .await
             .map_err(|e| format!("create im info failed: {}", e))?,
             "isahl" => sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_info-isahl" (notice) VALUES ($1) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_info-isahl" (notice, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4) RETURNING id"#,
             )
             .bind(&info.value)
+            .bind(isahl_scene)
+            .bind(isahl_factor)
+            .bind(isahl_function)
             .fetch_one(&mut **executor)
             .await
             .map_err(|e| format!("create isahl info failed: {}", e))?,
             "postal" => sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_info-postal" (notice) VALUES ($1) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_info-postal" (notice, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4) RETURNING id"#,
             )
             .bind(&info.value)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut **executor)
             .await
             .map_err(|e| format!("create postal info failed: {}", e))?,
             "zipcode" => sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_info-zipcode" (notice) VALUES ($1) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_info-zipcode" (notice, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4) RETURNING id"#,
             )
             .bind(&info.value)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut **executor)
             .await
             .map_err(|e| format!("create zipcode info failed: {}", e))?,

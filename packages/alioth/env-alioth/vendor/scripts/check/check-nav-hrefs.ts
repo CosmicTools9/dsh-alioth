@@ -85,18 +85,23 @@ function hasChangedSince(dirRel: string, sha: string): boolean {
   return (r.stdout ?? "").trim().length > 0;
 }
 
-/** 收集所有模块前端目录：Pre-Proc/{ns}/Sources/Modules/{mod}/frontend；--ns 时限定单个 namespace */
+/** 收集所有模块前端目录（镜像布局优先 Apps/Modules，回退扁平 Sources/Modules）；--ns 时限定单个 namespace */
 function discoverModuleFrontends(): string[] {
   const out: string[] = [];
   const preProc = join(REPO_ROOT, "Pre-Proc");
   if (!existsSync(preProc)) return out;
   for (const ns of readdirSync(preProc)) {
     if (NS_FILTER && ns !== NS_FILTER) continue;
-    const modulesDir = join(preProc, ns, "Sources", "Modules");
-    if (!existsSync(modulesDir)) continue;
-    for (const mod of readdirSync(modulesDir)) {
-      const fe = join(modulesDir, mod, "frontend");
-      if (existsSync(join(fe, "src"))) out.push(fe);
+    const candidates = [
+      join(preProc, ns, "Sources", "Apps", "Modules"),
+      join(preProc, ns, "Sources", "Modules"),
+    ];
+    for (const modulesDir of candidates) {
+      if (!existsSync(modulesDir)) continue;
+      for (const mod of readdirSync(modulesDir)) {
+        const fe = join(modulesDir, mod, "frontend");
+        if (existsSync(join(fe, "src"))) out.push(fe);
+      }
     }
   }
   return out.sort();

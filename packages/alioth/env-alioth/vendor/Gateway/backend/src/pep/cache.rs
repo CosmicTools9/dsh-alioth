@@ -9,20 +9,25 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
+use sqlx::PgPool;
+
 /// 策略版本探针周期（2s）——版本化变更（策略边/权限定义/指派/委托）跨 worker
 ///  staleness 上界；非版本化来源（认知派生：岗位/任职，isahl 冻结不可加触发器）
 /// 仍由条目 TTL 兜底。
 pub const DEFAULT_PROBE_TTL: Duration = Duration::from_secs(2);
 
-/// 策略版本探针（fix-ngac-decision-consistency D4）——per-worker 决策/列缓存的失效信号源。
+/// 策略版本探针（fix-ngac-decision-consistency D4 + tighten-pdp-decision-surface B）——
+/// per-worker 列缓存的失效信号源。
 ///
-/// 每周期单航班查询 SSO `GET /api/ngac/policy-version`；版本变化即清空本 worker
-/// 决策缓存与列缓存。探针失败返回 `Unavailable`——调用方 MUST 绕过缓存直调 PDP
-///（不服务陈旧条目、不毒化缓存；PDP 失败仍 fail-closed 403）。
-/// standalone / NGAC_FAIL_OPEN（无 PDP 客户端）不探针。
+/// 每周期单航班直查 `isahl_auth.ngac_policy_version`（pool 直查——HTTP 探针
+/// 端点 `GET /api/ngac/policy-version` 已随决策面收紧删除，零消费者不复存在）；
+/// 版本变化即清空本 worker 列缓存。探针失败返回 `Unavailable`——调用方 MUST
+/// 绕过缓存直调 PDP。standalone / NGAC_FAIL_OPEN（无 PDP 客户端）不探针。
 pub struct VersionProbe {
     state: RwLock<ProbeState>,
     probe_ttl: Duration,
+    /// 直查连接池（None = 无库形态，探针恒 Unavailable）
+    pool: Option<PgPool>,
     /// 单航班锁：并发请求只允许一个实际发起探针，其余按「新鲜」处理
     /// （staleness 上界仍为一个周期）。
     flight: tokio::sync::Mutex<()>,
@@ -57,7 +62,17 @@ impl VersionProbe {
                     .unwrap_or_else(Instant::now),
             }),
             probe_ttl,
+            pool: None,
             flight: tokio::sync::Mutex::new(()),
+        }
+    }
+
+    /// 绑定直查连接池（PEP 主形态；sso-remote 依赖共享 isahl 库——与 PEP
+    /// 审计直插 audit_events 同一前提）。
+    pub fn with_pool(pool: PgPool) -> Self {
+        Self {
+            pool: Some(pool),
+            ..Self::with_ttl(DEFAULT_PROBE_TTL)
         }
     }
 
@@ -90,12 +105,8 @@ impl VersionProbe {
         changed
     }
 
-    /// 确保版本新鲜：周期内直接 Fresh；过期则单航班探针。
-    pub async fn ensure_fresh(
-        &self,
-        client: &ngac_contract::HttpNgacClient,
-        column_cache: &ColumnCache,
-    ) -> ProbeOutcome {
+    /// 确保版本新鲜：周期内直接 Fresh；过期则单航班直查 DB。
+    pub async fn ensure_fresh(&self, column_cache: &ColumnCache) -> ProbeOutcome {
         if self.is_fresh() {
             return ProbeOutcome::Fresh;
         }
@@ -107,9 +118,17 @@ impl VersionProbe {
         if self.is_fresh() {
             return ProbeOutcome::Fresh;
         }
-        match client.policy_version().await {
-            Ok(resp) => {
-                self.apply_version(resp.version, column_cache);
+        let Some(pool) = &self.pool else {
+            return ProbeOutcome::Unavailable;
+        };
+        match sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(MAX(version), 0) FROM isahl_auth.ngac_policy_version",
+        )
+        .fetch_one(pool)
+        .await
+        {
+            Ok(version) => {
+                self.apply_version(version, column_cache);
                 ProbeOutcome::Fresh
             }
             Err(e) => {

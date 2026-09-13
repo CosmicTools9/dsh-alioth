@@ -40,9 +40,13 @@ impl AliothRepository<Account, CreateAccountRequest, UpdateAccountRequest, ApiEr
 
     async fn create(&self, req: CreateAccountRequest, user_id: i64) -> Result<Account, ApiError> {
         let id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_stor-account"
-               (notice, code, comments, ak_source, sk_unit, fk_trustee, qk_capacity, name, account, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            // 类契约（§4.3.3 形态 1）：补 dk_function 派生源（= 跨库实证 TX/FJA/↓_GG 的 function 码）
+            r#"INSERT INTO isahl."zc_id_stor-acc-business"
+               (notice, code, comments, ak_source, sk_unit, fk_trustee, qk_capacity, name, account, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                       (SELECT id FROM isahl."zc_id_scene" WHERE code = 'GH' AND deleted_at IS NULL LIMIT 1),
+                       (SELECT id FROM isahl."zc_id_factor" WHERE code = 'FJA' AND deleted_at IS NULL LIMIT 1),
+                       (SELECT id FROM isahl."zc_id_function" WHERE code = '↓_GD' AND deleted_at IS NULL LIMIT 1))
                RETURNING id"#,
         )
         .bind(&req.notice)

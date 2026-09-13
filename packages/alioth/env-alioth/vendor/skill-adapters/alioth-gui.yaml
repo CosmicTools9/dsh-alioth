@@ -15,13 +15,13 @@ tracks:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/module.json"
       - id: "1.2"
         instruction: Track 1 — 类型定义 + API hooks + mapper 函数
-        tools: [read_file, write_file, search_file, code_intel]
+        tools: [read_file, write_file, search_files, code_intel]
         schema: {type: object, required: [types_api_hooks]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/src/types/*.ts"
       - id: "1.3"
         instruction: Track 2 — 页面组件：列表页 → 表单页 → 详情页 → 通用组件
-        tools: [read_file, write_file, search_file, code_intel]
+        tools: [read_file, write_file, search_files, code_intel]
         schema: {type: object, required: [page_components]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/src/pages/*.tsx"
@@ -39,5 +39,14 @@ tracks:
         schema: {type: object, required: [alignment_report]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Prototypes/visual-verify/{module}/v*/report.json"
+      - id: "1.6"
+        instruction: "Track 5 构建验证 — 本步骤由门禁自动执行前端库构建（tsc 类型检查 + vite build → dist/single-spa.es.js），与原型链「组装构建」步骤同形：两链的验证都落在产出可验证产物。你【不需要】自己运行构建；构建失败时按门禁回灌的错误修复源码后重试。确认产物存在即输出 completed: true。"
+        tools: [read_file, write_file]
+        schema: {type: object, required: [build_verified]}
+        gates:
+          - program: "npx"
+            args: ["vite", "build"]
+            output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/dist/single-spa.es.js"
+            timeout_sec: 300
 source:
-  content_sha256: a5074360d8864af0ae5a091c76a58cf7cb55d5091ffeef406ff6be5680a33446
+  content_sha256: 695bf9e2ed0dd13a1b70b3480a92291767bbeb84e05e0434780cb3acd259fc0c

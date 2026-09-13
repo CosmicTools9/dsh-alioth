@@ -38,6 +38,7 @@ pub mod middleware;
 pub mod ngac_org;
 pub mod ngac_policy;
 pub mod ontology;
+pub mod operator_org;
 pub mod permissions;
 pub mod plan_execution;
 pub mod progress;

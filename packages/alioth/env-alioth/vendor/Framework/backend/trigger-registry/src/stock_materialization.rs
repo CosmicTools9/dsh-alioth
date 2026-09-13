@@ -19,6 +19,19 @@
 //!    （`apply_stock_delta_dim_tx` 等）同事务物化；`mv_inventory` 物化四列（qty/w_qty/v_qty/amount），
 //!    标量解析统一 JOIN 父表 `zc_id_scale`（子表查询对父表直插行不可见——实测坑）
 //!
+//! ## 物权语义（2026-09-07 用户定稿）
+//!
+//! 系统不设独立的「物权所属」实体登记——**物权以库存的方式表达**（维度字典：
+//! 库存 = 实体对象「对各种可数货的持有物权的统计」）：
+//! 1. **初始物权 = 编制入库凭证**：货的权属起点是一张单边 IN 入库凭证
+//!    （`qk_income` + `fk_obj-storage`=库位 + `fk_production`=货 + 基类
+//!    `fk_subject`=物权人、`ck_sto-title`=物权类别），落库即经本模块原语物化
+//!    → 库存自动计算——物权确立与库存记账为同一动作，不另设登记通道
+//! 2. **物权快速查看 = 库存相关视图**：`isahl.mv_title_ownership` 物化视图按
+//!    (物权人 `fk_subject`, 物 `fk_production`) 粒度聚合凭证净变
+//!    （Σincome − Σoutgo，标量真值），快速检索主体与物的属权关系——
+//!    Rust 自愈落地（`ensure_mv_title_ownership`）+ 周期刷新，只读不另建账
+//!
 //! 统计口径（当前快照）：
 //! ```text
 //! 库存(产品 P, 储元 S) = Σ_{v ∈ voucher(P,S)} (income − outgo)   -- 伴随事实
@@ -93,6 +106,43 @@ pub const MV_INVENTORY_DDL: &[&str] = &[
        ON isahl.mv_inventory (id)"#,
     r#"CREATE INDEX IF NOT EXISTS idx_mv_inventory_prod_storage
        ON isahl.mv_inventory (production_id, storage_id)"#,
+];
+
+/// `isahl.mv_title_ownership` 物化视图 DDL（幂等——单源防漂移，2026-09-07 用户定稿）。
+///
+/// 主体×物属权关系快速检索载体（物权语义第 2 条读径落点）：
+/// - 粒度 `(fk_subject, fk_production)`——「谁拥有什么」；「货在哪」由 mv_inventory
+///   回答，两视图正交
+/// - 源 = `zc_id_stat-sto-voucher` 父表查询（PG 继承覆盖全部叶表 + 父表直插行）
+/// - 净属权 = Σ(income 标量真值) − Σ(outgo 标量真值)；标量解析统一 JOIN 父表
+///   `zc_id_scale`（子表查询对父表直插行不可见——同 MV_INVENTORY_DDL 实测坑）
+/// - 过滤：deleted_at 为空 + fk_subject/fk_production 均非空（无主体凭证 = 库存
+///   位移，非属权关系）；净额为零行保留（历史属权可追溯，同 mv_inventory 口径）
+/// - 冻结边界同 mv_inventory：仅视图/索引 DDL，经 Rust 自愈执行（非手工 DDL 通道）
+pub const MV_TITLE_OWNERSHIP_DDL: &[&str] = &[
+    r#"CREATE MATERIALIZED VIEW IF NOT EXISTS isahl.mv_title_ownership AS
+        SELECT
+            v.fk_subject AS subject_id,
+            v.fk_production AS production_id,
+            COALESCE(SUM(COALESCE(im.mark, 0)), 0) AS income_total,
+            COALESCE(SUM(COALESCE(om.mark, 0)), 0) AS outgo_total,
+            COALESCE(SUM(COALESCE(im.mark, 0)), 0)
+              - COALESCE(SUM(COALESCE(om.mark, 0)), 0) AS net_qty,
+            COUNT(*) AS voucher_count,
+            MIN(v.created_at) AS first_voucher_at,
+            MAX(v.created_at) AS last_voucher_at
+        FROM isahl."zc_id_stat-sto-voucher" v
+        -- 标量解析统一 JOIN 父表 zc_id_scale（覆盖 scal-common 及父表直插行）
+        LEFT JOIN isahl."zc_id_scale" im ON im.id = v.qk_income
+        LEFT JOIN isahl."zc_id_scale" om ON om.id = v.qk_outgo
+        WHERE v.deleted_at IS NULL
+          AND v.fk_subject IS NOT NULL
+          AND v.fk_production IS NOT NULL
+        GROUP BY v.fk_subject, v.fk_production"#,
+    r#"CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_title_ownership_subj_prod
+       ON isahl.mv_title_ownership (subject_id, production_id)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_mv_title_ownership_prod
+       ON isahl.mv_title_ownership (production_id)"#,
 ];
 
 // ============================================
@@ -182,7 +232,7 @@ pub async fn ensure_stock_row(pool: &PgPool, prod: i64, storage: i64) -> Result<
         Some(r) => r,
         None => {
             let id: i64 = sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_production_rr_storage" (ref_left, ref_right)
+                r#"INSERT INTO isahl."zc_id_file_rr_url" (ref_left, ref_right)
                    VALUES ($1, $2) RETURNING id"#,
             )
             .bind(prod)
@@ -507,7 +557,7 @@ pub async fn ensure_stock_row_dim_tx(
         Some(r) => r,
         None => {
             let id: i64 = sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_production_rr_storage" (ref_left, ref_right)
+                r#"INSERT INTO isahl."zc_id_file_rr_url" (ref_left, ref_right)
                    VALUES ($1, $2) RETURNING id"#,
             )
             .bind(prod)
@@ -987,6 +1037,175 @@ pub async fn ensure_mv_inventory(pool: &PgPool) -> Result<(), String> {
     .map_err(|e| format!("mv_inventory 初始 REFRESH 失败: {e}"))?;
     log::info!("isahl.mv_inventory 物化视图已自愈创建（DDL + 索引 + 初始 REFRESH）");
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════
+// isahl.mv_title_ownership 自检自愈（模式同 ensure_mv_inventory）
+// ═══════════════════════════════════════════════════════
+
+/// 自检自愈：确保 `isahl.mv_title_ownership` 物化视图存在（启动时调用，幂等）。
+///
+/// 模式同 [`ensure_mv_inventory`]：视图存在且 `net_qty` 列就绪 → 幂等返回（补一次
+/// 刷新覆盖快照滞后）；定义漂移 → DROP 后按内嵌 DDL 重建；基表
+/// `zc_id_stat-sto-voucher` 缺失（pre/prod 旧模型）→ 降级 `log::warn` 返回 Ok
+/// 不阻断启动；其余失败返回 Err（调用方 fail-fast）。
+pub async fn ensure_mv_title_ownership(pool: &PgPool) -> Result<(), String> {
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'isahl' AND matviewname = 'mv_title_ownership')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("mv_title_ownership 自检失败: {e}"))?;
+    if exists {
+        // 列校验哨兵 = net_qty（定义漂移探测，同 mv_inventory 的 amount 哨兵模式）
+        let has_net: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
+             WHERE c.relname = 'mv_title_ownership' AND a.attname = 'net_qty' \
+               AND a.attnum > 0 AND NOT a.attisdropped)",
+        )
+        .fetch_one(pool)
+        .await
+        .map_err(|e| format!("mv_title_ownership 列校验失败: {e}"))?;
+        if has_net {
+            // 启动补刷：未填充（schema 重放仅建不填）先非并发初始 REFRESH，
+            // 已填充才 CONCURRENTLY（批注 555ca3ab 复现链，同 ensure_mv_inventory）
+            let populated: bool = sqlx::query_scalar(
+                "SELECT ispopulated FROM pg_matviews WHERE schemaname = 'isahl' AND matviewname = 'mv_title_ownership'",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+            if populated {
+                if let Err(e) =
+                    sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY isahl.mv_title_ownership")
+                        .execute(pool)
+                        .await
+                {
+                    log::warn!(
+                        "isahl.mv_title_ownership 启动 CONCURRENTLY 刷新失败（周期任务兜底）: {e}"
+                    );
+                }
+            } else if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW isahl.mv_title_ownership")
+                .execute(pool)
+                .await
+            {
+                log::warn!("isahl.mv_title_ownership 启动初始 REFRESH 失败（周期任务兜底）: {e}");
+            }
+            return Ok(()); // 定义就绪——幂等返回
+        }
+        // 定义漂移：旧版视图缺 net_qty 列 → DROP 重建（后续走自愈 DDL）
+        log::warn!("isahl.mv_title_ownership 定义漂移（缺 net_qty 列）——重建视图");
+        sqlx::query(sqlx::AssertSqlSafe(
+            "DROP MATERIALIZED VIEW IF EXISTS isahl.mv_title_ownership CASCADE",
+        ))
+        .execute(pool)
+        .await
+        .map_err(|e| format!("mv_title_ownership 漂移重建 DROP 失败: {e}"))?;
+    }
+
+    // 基表探测：pre/prod 无 zc_id_stat-sto-voucher → 降级跳过（不阻断启动）
+    let base: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'isahl' AND table_name = 'zc_id_stat-sto-voucher')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("mv_title_ownership 基表探测失败: {e}"))?;
+    if !base {
+        log::warn!(
+            "isahl.zc_id_stat-sto-voucher 不存在——mv_title_ownership 自愈跳过（环境模型未含凭证基表）"
+        );
+        return Ok(());
+    }
+
+    // 自愈：执行内嵌 DDL（编译期常量数组）+ 初始 REFRESH
+    for &ddl in MV_TITLE_OWNERSHIP_DDL {
+        sqlx::query(sqlx::AssertSqlSafe(ddl))
+            .execute(pool)
+            .await
+            .map_err(|e| format!("mv_title_ownership 自愈 DDL 失败: {e}"))?;
+    }
+    sqlx::query(sqlx::AssertSqlSafe(
+        "REFRESH MATERIALIZED VIEW isahl.mv_title_ownership",
+    ))
+    .execute(pool)
+    .await
+    .map_err(|e| format!("mv_title_ownership 初始 REFRESH 失败: {e}"))?;
+    log::info!("isahl.mv_title_ownership 物化视图已自愈创建（DDL + 索引 + 初始 REFRESH）");
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════
+// 初始物权凭证原语（add-subject-certificate-title）
+// ═══════════════════════════════════════════════════════
+
+/// 编制初始物权凭证（主体取得物）——事务内库函数。
+///
+/// 物权语义写径原语：主体（`fk_subject`）取得物（`fk_production`，如证书实体）时
+/// 编制单边 IN 凭证（落仓储凭证叶 `zc_id_stat-whs-voucher`，标量 `qk_income`=份数），
+/// `mv_title_ownership` 刷新后自动生成 (主体, 物) 关联项。授权/资产取得同构复用。
+///
+/// - 幂等：同 `code` 未删除凭证已存在 → 跳过返回 `Ok(None)`
+/// - 类列形态 1（§4.3.3）：`dk_*` 由调用方经 `ontology_binding::resolve` 解析传入，
+///   `_f_/_t_` 由触发器从 `dk_function.code` 前缀派生，本函数不手写类列
+/// - 不物化库存：物权凭证只确立属权关联（走 mv_title_ownership 口径），
+///   需要 (物, 储元) 库存记账时由调用方另行调用 apply_* 原语
+pub async fn create_title_voucher_tx(
+    tx: &mut sqlx::PgConnection,
+    subject_id: i64,
+    production_id: i64,
+    code: &str,
+    qty: f64,
+    dk: (Option<i64>, Option<i64>, Option<i64>),
+    user_id: i64,
+) -> Result<Option<i64>, String> {
+    // 幂等判重：同 code 未删除凭证已存在 → 跳过
+    let dup: Option<i64> = sqlx::query_scalar(
+        r#"SELECT id FROM isahl."zc_id_stat-whs-voucher"
+           WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
+    )
+    .bind(code)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| format!("title voucher 幂等判重失败: {e}"))?;
+    if dup.is_some() {
+        return Ok(None);
+    }
+
+    // 份数标量行（qk_income 标量引用）
+    let scalar_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
+           VALUES (isahl.gen_next_zuid(), $1, '物权份数', $2::numeric, $3) RETURNING id"#,
+    )
+    .bind(code)
+    .bind(rust_decimal::Decimal::from_f64(qty).unwrap_or_default())
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("title voucher 标量行失败: {e}"))?;
+
+    // 单边 IN 凭证（dk 派生形态——类列由触发器推导）
+    let voucher_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
+           (id, code, notice, fk_subject, fk_production, qk_income,
+            dk_scene, dk_factor, dk_function, created_by_id)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id"#,
+    )
+    .bind(code)
+    .bind(format!(
+        "主体物权取得 subject={subject_id} production={production_id}"
+    ))
+    .bind(subject_id)
+    .bind(production_id)
+    .bind(scalar_id)
+    .bind(dk.0)
+    .bind(dk.1)
+    .bind(dk.2)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| format!("title voucher 凭证落库失败: {e}"))?;
+    Ok(Some(voucher_id))
 }
 
 // ═══════════════════════════════════════════════════════

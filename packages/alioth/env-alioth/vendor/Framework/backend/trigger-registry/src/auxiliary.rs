@@ -95,17 +95,12 @@ impl TriggerTemplate for ProductionDeleteTemplate {
 
         let mut result = TriggerResult::new();
         // 库存 = 统计关系（用户 2026-08-07 定稿）：删除 production 时清理
-        // zc_id_production_rr_storage（ref_left=production 的统计关系行）与
-        // zc_id_relation-inventory_r_status（指向这些行的状态关系）。
-        // zc_id_counting/zc_id_inventory 旧对象模型表已从 dev DB 删除（不引用）。
+        // zc_id_production_rr_storage（ref_left=production 的统计关系行）。
+        // zc_id_counting/zc_id_inventory 旧对象模型表已从 dev DB 删除（不引用）；
+        // zc_id_relation-inventory_r_status 已被模型中心移除（2026-09-07 实证 dev 库
+        // 不存在，code-table-refs 门禁阻断）——级联 DELETE 同步移除。
         result = result.with_side_effect(crate::SideEffect::RawSql(format!(
             r#"DELETE FROM isahl."zc_id_production_rr_storage" WHERE ref_left = {}"#,
-            id
-        )));
-        // 状态关系经 rr_storage 行 id 级联（ref_left 指向 production_rr_storage 行）
-        result = result.with_side_effect(crate::SideEffect::RawSql(format!(
-            r#"DELETE FROM isahl."zc_id_relation-inventory_r_status"
-               WHERE ref_left IN (SELECT id FROM isahl."zc_id_production_rr_storage" WHERE ref_left = {})"#,
             id
         )));
         result = result.with_side_effect(crate::SideEffect::RawSql(format!(

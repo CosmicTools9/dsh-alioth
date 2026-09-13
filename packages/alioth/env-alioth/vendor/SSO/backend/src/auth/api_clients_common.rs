@@ -10,7 +10,7 @@
 
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use sqlx::Postgres;
+use sqlx::{PgPool, Postgres};
 use uuid::Uuid;
 
 use super::client_secret::{hash_client_secret_async, ClientSecretError};
@@ -40,6 +40,34 @@ pub fn generate_secret_for(client_type: &str) -> String {
         "apikey" => generate_api_key(),
         _ => generate_client_secret(),
     }
+}
+
+// ── 签发面订阅门禁（fix-sso-auth-gaps G6）───────────────────────────────────────
+
+/// 校验 client 是否存在激活订阅（status='active'、expires_at 未过期或 NULL、
+/// plan 未软删）——与 Gateway OpenAPI metering `resolve_subscription` 完全同语义
+/// （不筛 plan.enabled：停售 plan 的存量订阅继续有效到订阅期结束）。
+/// `Ok(true)` 可签发；`Ok(false)` 无有效订阅（调用方 401）；`Err` 查询失败
+/// （调用方 fail-closed 拒绝签发）。
+pub(crate) async fn client_subscription_active(
+    pool: &PgPool,
+    client_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"SELECT EXISTS(
+             SELECT 1
+             FROM isahl_auth.api_clients c
+             JOIN isahl_auth.api_subscriptions s
+               ON s.fk_client = c.id AND s.deleted_at IS NULL
+               AND s.status = 'active'
+               AND (s.expires_at IS NULL OR s.expires_at > NOW())
+             JOIN isahl_auth.api_plans p ON p.id = s.fk_plan AND p.deleted_at IS NULL
+             WHERE c.client_id = $1 AND c.deleted_at IS NULL
+           )"#,
+    )
+    .bind(client_id)
+    .fetch_one(pool)
+    .await
 }
 
 // ── 默认订阅（free 档位幂等补种）─────────────────────────────────────────────────

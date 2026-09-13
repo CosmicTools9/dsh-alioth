@@ -25,11 +25,6 @@
       {
         "name": "Warehouse",
         "table": "isahl.zc_id_cate-warehouse",
-        "coordinates": {
-          "scene": "zc",
-          "factor": "cate",
-          "function": "warehouse"
-        },
         "inherits": null,
         "notes": "类目-仓储类型：仓库类别主数据，记录仓库分类信息，含编码、启用状态、排序",
         "field_mappings": [
@@ -183,9 +178,9 @@
         "name": "WarehouseLocation",
         "table": "isahl.zc_id_stor-plc-warehouse",
         "coordinates": {
-          "scene": "zc",
-          "factor": "stor-plc",
-          "function": "warehouse"
+          "scene": "",
+          "factor": "",
+          "function": ""
         },
         "inherits": null,
         "notes": "场所-仓库：库位（仓位）主数据，记录具体存放位置，含所属仓库、地址、托管方等",

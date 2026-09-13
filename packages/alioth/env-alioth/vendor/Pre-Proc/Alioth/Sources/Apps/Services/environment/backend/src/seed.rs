@@ -102,7 +102,7 @@ async fn ensure_status(
     }
 
     sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_status (notice, flag, comments, created_by_id)
+        r#"INSERT INTO isahl."zc_id_stus-project" (notice, flag, comments, created_by_id)
            VALUES ($1, $2::isahl.status_flag, $3, $4)
            RETURNING id"#,
     )
@@ -131,6 +131,12 @@ pub async fn seed_environments(pool: &PgPool) -> Result<usize, AliothError> {
         let id = ensure_status(pool, notice, flag, comments).await?;
         status_ids.insert(*notice, id);
     }
+
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID。
+    // 循环外一次求得（所有环境行同一三元组），避免逐行解析。
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "GEC", "↑_DA"))
+        .await
+        .map_err(AliothError::from)?;
 
     let mut inserted = 0usize;
     for env in all_seed_environments() {
@@ -166,8 +172,8 @@ pub async fn seed_environments(pool: &PgPool) -> Result<usize, AliothError> {
 
         let env_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prot-env_config"
-               (notice, code, comments, settings, created_by_id)
-               VALUES ($1, $2, $3, $4, $5)
+               (notice, code, comments, settings, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id"#,
         )
         .bind(env.name)
@@ -175,6 +181,9 @@ pub async fn seed_environments(pool: &PgPool) -> Result<usize, AliothError> {
         .bind(env.comments)
         .bind(&settings)
         .bind(SEED_USER_ID)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(AliothError::from)?;

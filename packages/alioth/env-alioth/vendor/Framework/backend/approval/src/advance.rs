@@ -36,6 +36,34 @@ fn parse_next_op_entries(value: &serde_json::Value) -> Vec<(i64, Option<String>)
                 _ => None,
             })
             .collect(),
+
+        _ => vec![],
+    }
+}
+
+/// next-ops 项解析（含 label——DMN 决策表输出绑定的出边标签）
+fn parse_next_op_entries_labeled(
+    value: &serde_json::Value,
+) -> Vec<(i64, Option<String>, Option<String>)> {
+    match value {
+        serde_json::Value::Array(arr) => arr
+            .iter()
+            .filter_map(|item| match item {
+                serde_json::Value::Number(n) => n.as_i64().map(|id| (id, None, None)),
+                serde_json::Value::Object(obj) => {
+                    obj.get("id").and_then(|v| v.as_i64()).map(|id| {
+                        (
+                            id,
+                            obj.get("cond").and_then(|c| c.as_str()).map(str::to_string),
+                            obj.get("label")
+                                .and_then(|l| l.as_str())
+                                .map(str::to_string),
+                        )
+                    })
+                }
+                _ => None,
+            })
+            .collect(),
         _ => vec![],
     }
 }
@@ -45,8 +73,10 @@ fn parse_next_op_entries(value: &serde_json::Value) -> Vec<(i64, Option<String>)
 /// task 域 → zc_id_operation_rr_task；event/approve 域 → zc_id_operation_rr_event。
 /// 返回（叶表名, 实体行 id）；无绑定（旧路径实例）→ None。
 ///
-/// rr_event 双用途区分：节点接线行 ref_right 为 even-approve 基表行（publish 物化
-/// 节点模板），实体绑定行 ref_right 为叶表行业务实体——以 tableoid 非基表判定。
+/// rr_event 双用途区分（route-flow-context-to-domain-leaves）：节点接线行 ref_right
+/// 为节点模板载体（publish 物化），实体绑定行 ref_right 为业务实体行——判别按 `_t_`
+/// （业务实体行 `_t_='实例'`；模板/接线/范畴行 = flow-context / 范例 / scope-definition /
+/// NULL），MUST NOT 以 tableoid 落点判别：范例行已落域内叶表，模板行与业务行同叶共存。
 async fn resolve_entity_ref(
     pool: &PgPool,
     instance_id: i64,
@@ -71,14 +101,14 @@ async fn resolve_entity_ref(
         .flatten();
         return Ok(leaf.map(|t| (t.trim_matches('"').to_string(), entity_id)));
     }
-    // event/approve 域（排除节点接线行：ref_right 在 even-approve 基表 = 节点模板）
+    // event/approve 域（排除节点接线/模板行：非业务实例行——按 _t_ 判别）
     let event_entity: Option<(String, i64)> = sqlx::query_as(
         r#"SELECT e.tableoid::regclass::text AS leaf, e.id
            FROM isahl.zc_id_event e
            JOIN isahl.zc_id_operation_rr_event rr
              ON rr.ref_right = e.id AND rr.deleted_at IS NULL
            WHERE rr.ref_left = $1 AND e.deleted_at IS NULL
-             AND e.tableoid <> 'zc_id_even-approve'::regclass
+             AND e._t_ = '实例'
            ORDER BY rr.id LIMIT 1"#,
     )
     .bind(instance_id)
@@ -167,6 +197,31 @@ async fn build_expr_ctx(
                     refs.insert((*col).to_string(), r);
                 }
             }
+            // 桥接引用（junction-only）：按实体行 id 经桥表解析目标行属性，
+            // 注入 `_refs.<引用名>`（{id,label,color,labels}）——参数以
+            // `<引用名>.label` / `<引用名>.<属性>` 引用（取目标属性表达）
+            for (l, ref_name, ref_sql) in crate::context_meta::CONTEXT_BRIDGE_REFS.iter() {
+                if *l != leaf {
+                    continue;
+                }
+                let resolved: Option<serde_json::Value> = sqlx::query_scalar(*ref_sql)
+                    .bind(row_id)
+                    .fetch_optional(pool)
+                    .await
+                    .unwrap_or_else(|e| {
+                        common::telemetry::warn!(
+                            "build_expr_ctx: bridge _refs resolve failed ({}#{} {})：{}",
+                            leaf,
+                            row_id,
+                            ref_name,
+                            e
+                        );
+                        None
+                    });
+                if let Some(r) = resolved {
+                    refs.insert((*ref_name).to_string(), r);
+                }
+            }
             map.insert("_refs".to_string(), serde_json::Value::Object(refs));
         }
         None => {
@@ -177,13 +232,35 @@ async fn build_expr_ctx(
             );
         }
     }
+    // 运行时时间上下文（系统时间 / 抵达时间 / 绑定区间起止）：按操作行 id 解析；
+    // 空值不注入（引用缺失 → 条件求值 UndefinedIdent fail-closed，既有语义）
+    let time_ctx: Option<serde_json::Value> =
+        sqlx::query_scalar(crate::context_meta::OPERATION_TIME_CTX_SQL)
+            .bind(entity_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or_else(|e| {
+                common::telemetry::warn!(
+                    "build_expr_ctx: operation time ctx load failed (#{})：{}",
+                    entity_id,
+                    e
+                );
+                None
+            });
+    if let Some(serde_json::Value::Object(obj)) = time_ctx {
+        for (k, v) in obj {
+            if !v.is_null() {
+                map.insert(k, v);
+            }
+        }
+    }
     map
 }
 
 /// 流程条件求值（统一引擎：runtime-engine ExpressionEvaluator；
 /// fail-closed——未定义标识符（strict 模式）/类型不匹配 → Err，调用方阻断；
 /// 顶层非 bool 视同 false（对齐原 expr.rs 语义））
-fn eval_flow_condition(
+pub(crate) fn eval_flow_condition(
     expr: &str,
     ctx: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<bool, String> {
@@ -1022,6 +1099,12 @@ async fn create_approval_instances(
         label
     };
 
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：实例行落 dk 三元组
+    let (dk_scene, dk_factor, dk_function) =
+        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJeFtaEz)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
+
     let mut created = Vec::with_capacity(targets.len());
     for operator in targets {
         // 节点事件模板（实例 fk_approve → even-approve 事件模板，经模板桥反查；
@@ -1040,8 +1123,8 @@ async fn create_approval_instances(
         .unwrap_or(event_id);
         let instance_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_oper-approve"
-               (id, notice, code, fk_subject, fk_operator, fk_previous, comments, created_by_id, tpl_id, _f_, _t_)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, '实现', '实例')
+               (id, notice, code, fk_subject, fk_operator, fk_previous, comments, created_by_id, tpl_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, '实现', '实例', $9, $10, $11)
                RETURNING id"#,
         )
         .bind(label)
@@ -1052,6 +1135,9 @@ async fn create_approval_instances(
         .bind(actx.comments)
         .bind(actx.trigger)
         .bind(event_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;
@@ -1106,6 +1192,13 @@ async fn create_approval_instances(
         created.push(instance_id);
     }
 
+    // 流程→任务（add-avic-generic-task-execution 5.1）：节点载体（even-approve
+    // timeline）配 taskTemplate 时物化任务行；无配置零变化（单次查询即返回）。
+    // 单钩子覆盖全部人工物化路径（initiate 首跳/advance/扇出/sequential 增量
+    // 均经本函数）。
+    crate::task_link::maybe_create_node_task(pool, event_id, label, actx.entity.as_ref(), &created)
+        .await?;
+
     Ok(created)
 }
 
@@ -1117,10 +1210,15 @@ async fn create_gate_operation(
     label: &str,
     user_id: i64,
 ) -> Result<i64, ApiError> {
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
+    let (dk_scene, dk_factor, dk_function) =
+        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJeFbbEz)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
     let gate_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-gate"
-           (id, notice, code, fk_subject, created_by_id, tpl_id, _f_, _t_)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, '实现', '实例')
+           (id, notice, code, fk_subject, created_by_id, tpl_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, '实现', '实例', $6, $7, $8)
            RETURNING id"#,
     )
     .bind(label)
@@ -1128,6 +1226,9 @@ async fn create_gate_operation(
     .bind(user_id)
     .bind(user_id)
     .bind(event_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;
@@ -1150,6 +1251,31 @@ async fn create_gate_operation(
     Ok(gate_id)
 }
 
+/// 记录目标操作的扇出抵达时刻（`qk_arrived → zc_id_scal-date.date` 精确时间戳）。
+/// 显式静态 SQL：leaf 表 `zc_id_scal-date` INSERT + 基表 `zc_id_operation` UPDATE
+/// （表继承覆盖全部子类行）；loop 回边再次抵达时按最新抵达时间覆盖。
+async fn stamp_arrival(pool: &PgPool, operation_id: i64) -> Result<(), ApiError> {
+    let now = chrono::Utc::now();
+    let arrived_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_scal-date" (notice, date, created_by_id)
+           VALUES ($1, $2, 1)
+           RETURNING id"#,
+    )
+    .bind(now.to_rfc3339())
+    .bind(now)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| ApiError::Database(e.to_string()))?;
+
+    sqlx::query(r#"UPDATE isahl.zc_id_operation SET qk_arrived = $2 WHERE id = $1"#)
+        .bind(operation_id)
+        .bind(arrived_id)
+        .execute(pool)
+        .await
+        .map_err(|e| ApiError::Database(e.to_string()))?;
+    Ok(())
+}
+
 /// 扇出推进（2026-09-02：parallel 全边扇出与 loop 回边单步共用）：
 /// 对每条目标边解析节点类型——human（approve/review/action/vote）创建审批
 /// 实例，自动节点经 BoxFuture 递归 advance_auto_node（打破静态递归环
@@ -1162,6 +1288,8 @@ async fn advance_fan_out(
     mut created: Option<&mut Vec<i64>>,
 ) -> Result<(), ApiError> {
     for (target_id, _cond) in entries {
+        // 扇出抵达时间：每条条件输入抵达目标节点即盖 qk_arrived（见 stamp_arrival）
+        stamp_arrival(pool, *target_id).await?;
         let node_info = sqlx::query_as::<_, (String, String)>(
             r#"SELECT CASE
                         WHEN c.code IS NOT NULL
@@ -1339,8 +1467,7 @@ async fn advance_auto_node(
                         // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
                         match pool.acquire().await {
                             Ok(mut conn) => {
-                                common::ngac_org::resolve_member_user_ids(&mut conn, id, 200)
-                                    .await
+                                common::ngac_org::resolve_member_user_ids(&mut conn, id, 200).await
                             }
                             Err(_) => Vec::new(),
                         }
@@ -1495,7 +1622,7 @@ async fn advance_auto_node(
                  AND rro2."next-ops" @> $2::jsonb"#,
         )
         .bind(flow_id)
-        .bind(serde_json::json!([{ "id": template_node_id }]).to_string())
+        .bind(serde_json::json!([{ "id": template_node_id.to_string() }]).to_string())
         .fetch_one(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;
@@ -1523,7 +1650,7 @@ async fn advance_auto_node(
                 )"#,
             )
             .bind(flow_id)
-            .bind(serde_json::json!([{ "id": template_node_id }]).to_string())
+            .bind(serde_json::json!([{ "id": template_node_id.to_string() }]).to_string())
             .fetch_one(pool)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?
@@ -1908,6 +2035,100 @@ async fn advance_auto_node(
         }
         return Ok(());
     }
+    // B3 DMN 决策表（fix-flow-designer-editing-gaps）：timeline.dmn 求值
+    //（hit-policy UNIQUE/FIRST/ANY）→ 输出匹配出边 label 路由（无 label 边兜底）；
+    // 违例/求值失败 fail-closed Validation 阻断（不静默走默认边）。
+    if node_type == "decision" {
+        let dmn_json: Option<serde_json::Value> = sqlx::query_scalar(
+            r#"SELECT ea.timeline->'dmn' FROM isahl."zc_id_even-approve" ea
+               JOIN isahl.zc_id_operation_rr_event oe ON oe.ref_right = ea.id AND oe.deleted_at IS NULL
+               WHERE oe.ref_left = $1 AND ea.deleted_at IS NULL
+               ORDER BY oe.created_at LIMIT 1"#,
+        )
+        .bind(template_node_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| ApiError::Database(e.to_string()))?
+        .flatten();
+        if let Some(table) = dmn_json.as_ref().and_then(crate::dmn::parse_dmn) {
+            let ctx = build_expr_ctx(pool, actx.entity.as_ref(), template_node_id).await;
+            // 单输出 → 单路由值；COLLECT-list → 输出去重列表（并行扇出多 target）
+            let route_values: Vec<String> = match crate::dmn::evaluate_dmn(
+                &table,
+                &ctx,
+                eval_flow_condition,
+            ) {
+                crate::dmn::DmnDecision::Output(out, _) => vec![out],
+                crate::dmn::DmnDecision::Outputs(outs, _) => outs,
+                crate::dmn::DmnDecision::Violation(msg) => {
+                    return Err(ApiError::Validation {
+                            field: "flow".into(),
+                            message: format!(
+                                "decision 节点 {template_node_id}（flow {flow_id}）决策表求值失败——fail-closed 阻断。{msg}"
+                            ),
+                        });
+                }
+            };
+            let next_ops: Option<serde_json::Value> = sqlx::query_scalar(
+                r#"SELECT "next-ops" FROM isahl.zc_id_process_rr_operation
+                   WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
+            )
+            .bind(flow_id)
+            .bind(template_node_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?
+            .flatten();
+            let entries =
+                parse_next_op_entries_labeled(&next_ops.unwrap_or(serde_json::Value::Null));
+            // 逐路由值匹配 label 出边；无 label 兜底边承接未匹配值（每值最多落一 target）
+            let mut targets: Vec<(i64, Option<String>)> = Vec::new();
+            let fallback: Option<i64> = entries
+                .iter()
+                .find(|(_, _, label)| label.is_none())
+                .map(|(id, _, _)| *id);
+            for out in &route_values {
+                match entries
+                    .iter()
+                    .find(|(_, _, label)| label.as_deref() == Some(out.as_str()))
+                {
+                    Some((id, _, _)) => {
+                        let t = (*id, None);
+                        if !targets.contains(&t) {
+                            targets.push(t);
+                        }
+                    }
+                    None => {
+                        if let Some(fb) = fallback {
+                            let t = (fb, None);
+                            if !targets.contains(&t) {
+                                targets.push(t);
+                            }
+                        }
+                    }
+                }
+            }
+            if targets.is_empty() {
+                common::telemetry::warn!(
+                    "decision node {} (flow {}) outputs '{}' have no matching/unlabeled edge — flow stalls",
+                    template_node_id,
+                    flow_id,
+                    route_values.join(" / ")
+                );
+                return Ok(());
+            }
+            common::telemetry::info!(
+                "decision node {} (flow {}) outputs '{}' → targets {:?}",
+                template_node_id,
+                flow_id,
+                route_values.join(" / "),
+                targets.iter().map(|(id, _)| *id).collect::<Vec<_>>()
+            );
+            advance_fan_out(pool, flow_id, &targets, actx, created).await?;
+            return Ok(());
+        }
+        // 无 dmn 配置（legacy 容错）：落入通用推进
+    }
     process_node_advancement(pool, flow_id, template_node_id, actx, created).await?;
     Ok(())
 }
@@ -2053,6 +2274,13 @@ async fn materialize_end_statement(
         );
         return Ok(());
     };
+    // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
+    let (dk_scene, dk_factor, dk_function) = match crate::context_meta::leaf_coords(&leaf) {
+        Some((s, f, fx)) => ontology_binding::resolve(pool, (s, f, fx))
+            .await
+            .map_err(|e| ApiError::Database(format!("resolve coords for {}: {}", leaf, e)))?,
+        None => (None, None, None),
+    };
     let stmt_id: i64 = sqlx::query_scalar(insert_sql)
         .bind(node_label)
         .bind(Option::<String>::None)
@@ -2061,6 +2289,9 @@ async fn materialize_end_statement(
         // 类写入契约 §4.3.3：执行期结论实例 = 实现·实例（范例行 tpl_id 关联）
         .bind("实现")
         .bind("实例")
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;

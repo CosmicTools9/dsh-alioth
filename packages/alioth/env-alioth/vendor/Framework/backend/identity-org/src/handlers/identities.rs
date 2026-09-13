@@ -200,11 +200,17 @@ pub async fn create_subject_identity(
 
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(ApiError::from_sqlx)?;
+
     // 1. 证照实例
     let identity_id: i64 = sqlx::query_scalar(
         "INSERT INTO \"isahl\".\"zc_id_identity\" \
-         (notice, identity, dname, ck_category, comments, created_by_id, updated_by_id) \
-         VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id",
+         (notice, identity, dname, ck_category, comments, created_by_id, updated_by_id, dk_scene, dk_factor, dk_function) \
+         VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9) RETURNING id",
     )
     .bind(body.name.trim())
     .bind(body.cert_no.trim())
@@ -212,6 +218,9 @@ pub async fn create_subject_identity(
     .bind(category_id)
     .bind(body.comments.clone())
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;

@@ -195,10 +195,15 @@ impl
             req.uptime.as_deref(),
         );
 
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve_conn(&mut *tx, ("JE", "GEC", "↑_DA"))
+                .await
+                .map_err(AliothError::from)?;
         let env_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prot-env_config"
-               (notice, code, comments, settings, created_by_id)
-               VALUES ($1, $2, $3, $4, $5)
+               (notice, code, comments, settings, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id"#,
         )
         .bind(&req.name)
@@ -206,6 +211,9 @@ impl
         .bind(&req.comments)
         .bind(&settings)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(AliothError::from)?;

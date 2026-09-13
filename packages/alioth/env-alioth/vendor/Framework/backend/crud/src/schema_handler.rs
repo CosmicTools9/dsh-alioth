@@ -115,7 +115,7 @@ async fn schema_create(
     let new_id = repo.create(&table, body.into_inner(), user_id).await?;
     Ok(
         HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
-            "id": new_id,
+            "id": new_id.to_string(),
             "table": table,
         }))),
     )
@@ -149,7 +149,7 @@ async fn schema_delete(
     repo.delete(&table, id, user_id).await?;
     Ok(
         HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-            "id": id,
+            "id": id.to_string(),
             "table": table,
             "deleted": true,
         }))),
@@ -169,7 +169,7 @@ async fn schema_ingest(
     let new_id = ingest_document(pool.get_ref(), &table, body.into_inner(), user_id).await?;
     Ok(
         HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
-            "id": new_id,
+            "id": new_id.to_string(),
             "table": table,
         }))),
     )

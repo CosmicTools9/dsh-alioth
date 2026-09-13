@@ -4,6 +4,7 @@
 //! applies per-request timeouts and parameter overrides.
 use super::backends::{
     build_backend, BackendError, CompletionRequest, CompletionResponse, LlmBackend,
+    StreamToolCallOutcome,
 };
 use super::types::{
     GenerationParams, LlmProvider, LlmResponse, LlmServiceConfig, ModelRole, ToolCall,
@@ -286,7 +287,158 @@ impl LlmService {
         .boxed()
     }
 
-    /// 带 system prompt + 模型切换的生成，同时返回 token 用量。
+    /// `generate_stream_detailed_with_history` 的 finish_reason 槽位变体：
+    /// 返回 (文本流, 停止原因槽位)——流消费完毕后读槽位判定截断
+    /// （"length" = 输出达 max_tokens 上限）；槽位由后端 SSE 解析写入。
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    pub fn generate_stream_detailed_with_history_meta<'a>(
+        &'a self,
+        system: Option<&str>,
+        history: &[(String, String)],
+        prompt: &str,
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        reasoning_effort: Option<&str>,
+        response_format: Option<&str>,
+        model_override: Option<&str>,
+    ) -> (
+        futures_util::stream::BoxStream<'a, Result<String, LlmError>>,
+        std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    ) {
+        let mut req = match self.build_request(
+            system,
+            prompt,
+            &[],
+            temperature,
+            max_tokens,
+            reasoning_effort,
+            response_format,
+            model_override,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    futures_util::stream::once(async move { Err(e) }).boxed(),
+                    std::sync::Arc::new(std::sync::Mutex::new(None)),
+                );
+            }
+        };
+        req.history = history.to_vec();
+        let timeout = self.config.timeout_seconds;
+        let backend = &self.backend;
+
+        let (inner, finish_slot) = backend.complete_stream_meta(req);
+        let stream =
+            futures_util::stream::unfold((inner, timeout), |(mut inner, timeout)| async move {
+                match tokio::time::timeout(std::time::Duration::from_secs(timeout), inner.next())
+                    .await
+                {
+                    Ok(Some(item)) => Some((item, (inner, timeout))),
+                    Ok(None) => None,
+                    Err(_) => Some((
+                        Err(LlmError::Timeout(timeout)),
+                        (futures_util::stream::empty().boxed(), timeout),
+                    )),
+                }
+            })
+            .boxed();
+        (stream, finish_slot)
+    }
+
+    /// `generate_stream_detailed` 的 finish_reason 槽位变体（history 为空场景）。
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    pub fn generate_stream_detailed_meta<'a>(
+        &'a self,
+        system: Option<&str>,
+        prompt: &str,
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        reasoning_effort: Option<&str>,
+        response_format: Option<&str>,
+        model_override: Option<&str>,
+    ) -> (
+        futures_util::stream::BoxStream<'a, Result<String, LlmError>>,
+        std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    ) {
+        self.generate_stream_detailed_with_history_meta(
+            system,
+            &[],
+            prompt,
+            temperature,
+            max_tokens,
+            reasoning_effort,
+            response_format,
+            model_override,
+        )
+    }
+    /// 流式 + 工具调用生成（fix-chat-ai-feature-gaps D2.3）。
+    ///
+    /// 文本 delta 逐 chunk 下发（`Ok(String)` 项，超时/传输错误以 `Err` 项终止，
+    /// 与 `generate_stream_detailed` 同形态、不重试）；`delta.tool_calls`
+    /// 分片由后端共享 SSE 解析层就地累积（index 路由 / arguments 跨 chunk
+    /// 拼接），流消费完毕（None）后读 `outcome_slot` 得最终
+    /// [`StreamToolCallOutcome`]（完整 tool_calls + usage + finish_reason）。
+    /// 槽位恒 None = 后端未实现工具流式（不支持）——调用方须报错而非静默退化。
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::type_complexity)]
+    pub fn generate_stream_with_tools<'a>(
+        &'a self,
+        system: Option<&str>,
+        prompt: &str,
+        tools: &[ToolDefinition],
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        reasoning_effort: Option<&str>,
+        response_format: Option<&str>,
+        model_override: Option<&str>,
+    ) -> (
+        futures_util::stream::BoxStream<'a, Result<String, LlmError>>,
+        std::sync::Arc<std::sync::Mutex<Option<StreamToolCallOutcome>>>,
+    ) {
+        // 空 system 语义与 generate_detailed_with_tools 一致（backend 跳过空 system）
+        let system = system.filter(|s| !s.is_empty());
+        let req = match self.build_request(
+            system,
+            prompt,
+            tools,
+            temperature,
+            max_tokens,
+            reasoning_effort,
+            response_format,
+            model_override,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+                return (
+                    futures_util::stream::once(async move { Err(e) }).boxed(),
+                    slot,
+                );
+            }
+        };
+        let timeout = self.config.timeout_seconds;
+        let backend = &self.backend;
+
+        let (inner, outcome_slot) = backend.complete_stream_tools_meta(req);
+        let stream =
+            futures_util::stream::unfold((inner, timeout), |(mut inner, timeout)| async move {
+                match tokio::time::timeout(std::time::Duration::from_secs(timeout), inner.next())
+                    .await
+                {
+                    Ok(Some(item)) => Some((item, (inner, timeout))),
+                    Ok(None) => None,
+                    Err(_) => Some((
+                        Err(LlmError::Timeout(timeout)),
+                        (futures_util::stream::empty().boxed(), timeout),
+                    )),
+                }
+            })
+            .boxed();
+        (stream, outcome_slot)
+    }
+
     /// 与 `generate_with_system_preamble` 参数一致，供需要用量统计的调用方（如预算治理）使用。
     #[allow(clippy::too_many_arguments)]
     pub async fn generate_detailed(
@@ -299,6 +451,33 @@ impl LlmService {
         response_format: Option<&str>,
         model_override: Option<&str>,
     ) -> Result<(String, Option<crate::types::TokenUsage>), LlmError> {
+        let (text, usage, _finish) = self
+            .generate_detailed_meta(
+                system,
+                prompt,
+                temperature,
+                max_tokens,
+                reasoning_effort,
+                response_format,
+                model_override,
+            )
+            .await?;
+        Ok((text, usage))
+    }
+
+    /// `generate_detailed` 的元数据变体：额外返回 provider finish_reason
+    /// （"length" = 输出达上限截断，调用方据此续写/标记）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_detailed_meta(
+        &self,
+        system: &str,
+        prompt: &str,
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        reasoning_effort: Option<&str>,
+        response_format: Option<&str>,
+        model_override: Option<&str>,
+    ) -> Result<(String, Option<crate::types::TokenUsage>, Option<String>), LlmError> {
         let req = self.build_request(
             Some(system),
             prompt,
@@ -310,7 +489,11 @@ impl LlmService {
             model_override,
         )?;
         let resp = self.complete_with_timeout(req).await?;
-        Ok((resp.text.unwrap_or_default(), resp.usage))
+        Ok((
+            resp.text.unwrap_or_default(),
+            resp.usage,
+            resp.finish_reason,
+        ))
     }
     /// 带历史消息对的多轮生成（fix-appagent-prefix-cache）：messages 拼装为
     /// [system, ...history, user]——历史追加式传递，provider 前缀缓存可命中
@@ -340,6 +523,39 @@ impl LlmService {
         req.history = history.to_vec();
         let resp = self.complete_with_timeout(req).await?;
         Ok((resp.text.unwrap_or_default(), resp.usage))
+    }
+
+    /// `generate_detailed_with_history` 的元数据变体：额外返回 provider
+    /// finish_reason（"length" = 输出达上限截断）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_detailed_with_history_meta(
+        &self,
+        system: &str,
+        history: &[(String, String)],
+        prompt: &str,
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        reasoning_effort: Option<&str>,
+        response_format: Option<&str>,
+        model_override: Option<&str>,
+    ) -> Result<(String, Option<crate::types::TokenUsage>, Option<String>), LlmError> {
+        let mut req = self.build_request(
+            Some(system),
+            prompt,
+            &[],
+            temperature,
+            max_tokens,
+            reasoning_effort,
+            response_format,
+            model_override,
+        )?;
+        req.history = history.to_vec();
+        let resp = self.complete_with_timeout(req).await?;
+        Ok((
+            resp.text.unwrap_or_default(),
+            resp.usage,
+            resp.finish_reason,
+        ))
     }
     /// 带工具调用的生成
     pub async fn generate_with_tools(
@@ -380,6 +596,43 @@ impl LlmService {
         let resp = self.complete_with_timeout(req).await?;
         let usage = resp.usage;
         Ok((to_llm_response(resp), usage))
+    }
+
+    /// `generate_detailed_with_tools` 的元数据变体：额外返回 provider
+    /// finish_reason（"length" = 输出达上限截断）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn generate_detailed_with_tools_meta(
+        &self,
+        system: &str,
+        prompt: &str,
+        tools: &[ToolDefinition],
+        temperature: Option<f64>,
+        max_tokens: Option<u64>,
+        reasoning_effort: Option<&str>,
+        response_format: Option<&str>,
+        model_override: Option<&str>,
+    ) -> Result<
+        (
+            LlmResponse,
+            Option<crate::types::TokenUsage>,
+            Option<String>,
+        ),
+        LlmError,
+    > {
+        let req = self.build_request(
+            Some(system),
+            prompt,
+            tools,
+            temperature,
+            max_tokens,
+            reasoning_effort,
+            response_format,
+            model_override,
+        )?;
+        let resp = self.complete_with_timeout(req).await?;
+        let usage = resp.usage;
+        let finish_reason = resp.finish_reason.clone();
+        Ok((to_llm_response(resp), usage, finish_reason))
     }
 
     pub fn provider_name(&self) -> &str {
@@ -651,6 +904,47 @@ mod tests {
         fn default_model(&self) -> &str {
             "mock-model"
         }
+        #[allow(clippy::type_complexity)]
+        fn complete_stream_tools_meta(
+            &self,
+            req: CompletionRequest,
+        ) -> (
+            futures_util::stream::BoxStream<'_, Result<String, BackendError>>,
+            std::sync::Arc<std::sync::Mutex<Option<StreamToolCallOutcome>>>,
+        ) {
+            self.captured.lock().unwrap().push(req.clone());
+            let mut responses = self.responses.lock().unwrap();
+            let resp = if responses.is_empty() {
+                None
+            } else {
+                Some(responses.remove(0))
+            };
+            let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+            let Some(resp) = resp else {
+                return (
+                    futures_util::stream::once(async move {
+                        Err(BackendError::Config("no mock response queued".into()))
+                    })
+                    .boxed(),
+                    slot,
+                );
+            };
+            let outcome = StreamToolCallOutcome {
+                tool_calls: resp.tool_calls.clone(),
+                usage: resp.usage,
+                finish_reason: resp.finish_reason.clone(),
+            };
+            if let Ok(mut slot) = slot.lock() {
+                *slot = Some(outcome);
+            }
+            let text = resp.text.unwrap_or_default();
+            let stream = if text.is_empty() {
+                futures_util::stream::empty().boxed()
+            } else {
+                futures_util::stream::once(async move { Ok(text) }).boxed()
+            };
+            (stream, slot)
+        }
     }
 
     fn service_with(backend: MockBackend) -> LlmService {
@@ -694,6 +988,7 @@ mod tests {
                     input_tokens: 10,
                     output_tokens: 20,
                 }),
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: captured.clone(),
@@ -742,6 +1037,7 @@ mod tests {
                     input_tokens: 5,
                     output_tokens: 7,
                 }),
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: captured.clone(),
@@ -764,6 +1060,7 @@ mod tests {
                 text: Some("ok".into()),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: captured.clone(),
@@ -787,6 +1084,7 @@ mod tests {
                 text: Some("hello world".to_string()),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: Arc::new(Mutex::new(Vec::new())),
@@ -808,6 +1106,7 @@ mod tests {
                 text: None,
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: Arc::new(Mutex::new(Vec::new())),
@@ -851,6 +1150,7 @@ mod tests {
                 text: Some("chunked".into()),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: captured.clone(),
@@ -892,6 +1192,7 @@ mod tests {
                 text: Some("ok".into()),
                 tool_calls: vec![],
                 usage: None,
+                finish_reason: None,
                 raw: serde_json::json!({}),
             }]),
             captured: captured.clone(),
@@ -959,12 +1260,14 @@ mod tests {
                             text: Some("ok".to_string()),
                             tool_calls: vec![],
                             usage: None,
+                            finish_reason: None,
                             raw: serde_json::json!({}),
                         },
                         CompletionResponse {
                             text: Some("ok".to_string()),
                             tool_calls: vec![],
                             usage: None,
+                            finish_reason: None,
                             raw: serde_json::json!({}),
                         },
                     ]),
@@ -1110,5 +1413,83 @@ mod tests {
         let captured = captured.lock().unwrap();
         assert_eq!(captured[0].model, "mock-model");
         assert_eq!(captured[1].model, "mock-model");
+    }
+
+    #[tokio::test]
+    async fn generate_stream_with_tools_accumulates_tool_calls_and_usage() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let backend = MockBackend {
+            responses: Mutex::new(vec![CompletionResponse {
+                text: None,
+                tool_calls: vec![crate::backends::ToolCallResult {
+                    id: "call_s1".into(),
+                    name: "write_file".into(),
+                    arguments: serde_json::json!({"path": "a/b.ts"}),
+                }],
+                usage: Some(TokenUsage {
+                    input_tokens: 7,
+                    output_tokens: 3,
+                }),
+                finish_reason: Some("tool_calls".into()),
+                raw: serde_json::json!({}),
+            }]),
+            captured: captured.clone(),
+        };
+        let svc = service_with(backend);
+        let (mut stream, outcome_slot) = svc.generate_stream_with_tools(
+            Some("sys"),
+            "do it",
+            &[tool_def()],
+            Some(0.2),
+            Some(8192),
+            Some("low"),
+            None,
+            Some("mock-model"),
+        );
+        // 工具调用流无文本 delta
+        assert!(
+            stream.next().await.is_none(),
+            "纯工具调用流不应有文本 chunk"
+        );
+        let slot = outcome_slot.lock().unwrap();
+        let outcome = slot.as_ref().expect("流结束槽位必须被填充");
+        assert_eq!(outcome.tool_calls.len(), 1);
+        assert_eq!(outcome.tool_calls[0].id, "call_s1");
+        assert_eq!(outcome.tool_calls[0].arguments["path"], "a/b.ts");
+        assert_eq!(outcome.finish_reason.as_deref(), Some("tool_calls"));
+        let usage = outcome.usage.unwrap();
+        assert_eq!(usage.input_tokens, 7);
+        assert_eq!(usage.output_tokens, 3);
+        let captured = captured.lock().unwrap();
+        assert_eq!(captured[0].tools.len(), 1);
+        assert_eq!(captured[0].tools[0].name, "write_file");
+        assert_eq!(captured[0].max_tokens, 8192);
+        assert_eq!(captured[0].model, "mock-model");
+    }
+
+    #[tokio::test]
+    async fn generate_stream_with_tools_pure_text_yields_chunks_and_zero_calls() {
+        let backend = MockBackend {
+            responses: Mutex::new(vec![CompletionResponse {
+                text: Some("hello world".to_string()),
+                tool_calls: vec![],
+                usage: None,
+                finish_reason: Some("stop".into()),
+                raw: serde_json::json!({}),
+            }]),
+            captured: Arc::new(Mutex::new(Vec::new())),
+        };
+        let svc = service_with(backend);
+        let (mut stream, outcome_slot) =
+            svc.generate_stream_with_tools(None, "hi", &[tool_def()], None, None, None, None, None);
+        let mut collected = String::new();
+        while let Some(chunk) = stream.next().await {
+            collected.push_str(&chunk.expect("stream chunk"));
+        }
+        assert_eq!(collected, "hello world", "文本 delta 必须逐 chunk 下发");
+        let slot = outcome_slot.lock().unwrap();
+        let outcome = slot.as_ref().expect("流结束槽位必须被填充");
+        assert!(outcome.tool_calls.is_empty(), "纯文本流必须零 tool_calls");
+        assert_eq!(outcome.finish_reason.as_deref(), Some("stop"));
     }
 }

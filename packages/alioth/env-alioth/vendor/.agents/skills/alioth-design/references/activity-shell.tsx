@@ -85,6 +85,8 @@ export interface User {
   name: string;
   email: string;
   role?: string;
+  /** 门户登录账号（登录名；与个人资料页「账号」行同源） */
+  account?: string;
 }
 
 export interface LocaleOption {
@@ -454,6 +456,10 @@ export function UserMenu({
         <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
           <span className="text-xs font-bold text-primary">{initial}</span>
         </div>
+        {/* 登录身份内联展示（门户登录账号优先；窄屏收起，仅下拉内可见） */}
+        <span className="hidden md:inline max-w-[10rem] truncate text-xs font-medium text-foreground">
+          {user.name || user.account || ''}
+        </span>
         <span
           className={cn('w-3 h-3 text-muted-foreground transition-transform', open && 'rotate-180')}
         >
@@ -464,6 +470,9 @@ export function UserMenu({
         <div className="absolute right-0 top-full mt-1 w-56 rounded-lg border bg-card shadow-lg py-1 z-50 max-w-[calc(100vw-1rem)]">
           <div className="px-3 py-2 border-b border-border">
             <p className="text-sm font-medium truncate">{user.name}</p>
+            {user.account && (
+              <p className="text-xs text-muted-foreground truncate">账号：{user.account}</p>
+            )}
             <p className="text-xs text-muted-foreground truncate">{user.email}</p>
           </div>
           <a

@@ -67,6 +67,9 @@ ngac-contract = { path = "../../Framework/backend/ngac-contract" }
 # Shared infrastructure
 common = { path = "../../Framework/backend/common" }
 
+# Ontology coordinates（§7.3.3 静态绑定：code → ZUID 解析）
+ontology-binding = { path = "../../Framework/backend/ontology-binding" }
+
 # SAML 2.0 已移除（remove-saml-sso）：xmlsec/quick-xml/flate2/libxml 依赖链随之下线
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
 

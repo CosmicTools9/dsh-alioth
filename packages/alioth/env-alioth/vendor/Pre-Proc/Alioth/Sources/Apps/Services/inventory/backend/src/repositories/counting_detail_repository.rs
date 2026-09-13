@@ -101,11 +101,18 @@ impl
             None => None,
         };
 
+        // 坐标三元组（§6.12 声明即必须）：deta-counting 族坐标（JC/FTA/↓_NC），
+        // 值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("JC", "FTA", "↓_NC"))
+                .await
+                .map_err(ApiError::from)?;
         let row = sqlx::query_as::<_, CountingDetail>(
             r#"INSERT INTO isahl."zc_id_deta-counting"
                (fk_list, fk_production, fk_storage, fk_voucher,
-                qk_qty, qk_w_qty, qk_v_qty, qk_date, fk_biller, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                qk_qty, qk_w_qty, qk_v_qty, qk_date, fk_biller, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                RETURNING id, fk_list AS counting_id, fk_production AS production_id,
                          fk_storage AS storage_id, fk_voucher AS voucher_id,
                          qk_qty AS qty, qk_w_qty AS w_qty, qk_v_qty AS v_qty,
@@ -122,6 +129,9 @@ impl
         .bind(date_id)
         .bind(req.biller_id)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(self.generic.pool())
         .await
         .map_err(ApiError::from)?;
@@ -147,11 +157,17 @@ impl
                     (None, Some(amount_id), Some(storage), None)
                 };
 
+                // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+                let (dk_scene, dk_factor, dk_function) =
+                    ontology_binding::resolve(self.generic.pool(), ("GH", "FRA", "↓_GG"))
+                        .await
+                        .map_err(ApiError::from)?;
                 let voucher_id: i64 = sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_stat-sto-voucher"
+                    r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
                        (fk_production, "fk_subj-storage", "fk_obj-storage",
-                        qk_income, qk_outgo, notice, created_by_id)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7)
+                        qk_income, qk_outgo, notice, created_by_id,
+                        dk_scene, dk_factor, dk_function)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                        RETURNING id"#,
                 )
                 .bind(prod)
@@ -161,6 +177,9 @@ impl
                 .bind(outgo_id)
                 .bind("盘点校准")
                 .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(self.generic.pool())
                 .await
                 .map_err(ApiError::from)?;
@@ -187,7 +206,7 @@ impl
 
                 // 溯源：校准凭证 ↔ 盘点明细（statement_rr_reason，ref_left=凭证 / ref_right=明细）
                 sqlx::query(
-                    r#"INSERT INTO isahl."zc_id_statement_rr_reason"
+                    r#"INSERT INTO isahl."zc_id_order_rr_contract"
                        (ref_left, ref_right, created_by_id)
                        VALUES ($1, $2, $3)"#,
                 )

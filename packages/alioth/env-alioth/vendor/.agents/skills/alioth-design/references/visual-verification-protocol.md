@@ -293,12 +293,12 @@ bun scripts/visual-verify.ts capture <url> --out <dir> --close
 ```bash
 # 生成模块级截图计划
 bun scripts/visual-verify.ts \
-  Pre-Proc/{namespace}/Sources/Modules/{name}/module.json \
+  Pre-Proc/{namespace}/Sources/Apps/Modules/{name}/module.json \
   --output scenarios.json
 
 # 生成单 Scene 截图计划
 bun scripts/visual-verify.ts \
-  --scene Pre-Proc/{namespace}/Sources/Blocks/{id}/block.json
+  --scene Pre-Proc/{namespace}/Sources/Apps/Blocks/{id}/block.json
 ```
 
 每帧标注 `P0/P1/P2` 优先级和对应的评估维度。P0 帧为必截图，P1/P2 根据场景可用性选取。

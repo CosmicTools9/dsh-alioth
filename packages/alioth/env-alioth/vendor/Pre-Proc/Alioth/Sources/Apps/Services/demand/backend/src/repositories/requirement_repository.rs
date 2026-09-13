@@ -2,7 +2,7 @@
 //!
 //! 读侧（list/get）委托 `GenericRepository::list_refs/get_refs`（含 `_refs` 名称解析）；
 //! 写侧（create/update）自定义 INSERT/UPDATE，事务内维护：
-//! 1. 主表行（`isahl."zc_id_event"`，dk_* 写 NULL）；
+//! 1. 主表行（`isahl."zc_id_even-log"`，dk_* 写 NULL）；
 //! 2. 类目关联（`zc_id_lifecycle_r_category` 单值替换：先软删旧行再插入）。
 //!
 //! `timeline` 列保持事件流语义（本服务不读写）。
@@ -115,7 +115,7 @@ impl AliothRepository<Requirement, CreateRequirementRequest, UpdateRequirementRe
         let mut tx = self.pool.begin().await.map_err(ApiError::from)?;
 
         let id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_event"
+            r#"INSERT INTO isahl."zc_id_even-log"
                (notice, code, comments, fk_place, created_by_id,
                 dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL)
@@ -152,7 +152,7 @@ impl AliothRepository<Requirement, CreateRequirementRequest, UpdateRequirementRe
 
         // 主表字段合并更新（Option.or 保持现值）
         let rows = sqlx::query(
-            r#"UPDATE isahl."zc_id_event"
+            r#"UPDATE isahl."zc_id_even-log"
                SET notice = COALESCE($1, notice),
                    code = COALESCE($2, code),
                    comments = COALESCE($3, comments),

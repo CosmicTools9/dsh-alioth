@@ -100,10 +100,7 @@ pub async fn project_policy_class(
 ///    （NOT EXISTS + ON CONFLICT 幂等；重复调用零新增）。
 ///
 /// 返回本次新增计数（UA/OA/association 各行独立计数）。
-pub async fn derive_from_class(
-    pool: &PgPool,
-    class_id: i64,
-) -> Result<DeriveStats, sqlx::Error> {
+pub async fn derive_from_class(pool: &PgPool, class_id: i64) -> Result<DeriveStats, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let (class, rules) = load_active_class_rules(&mut tx, class_id).await?;
     let projection = project(&class, &rules);
@@ -147,10 +144,7 @@ pub async fn derive_from_class(
         let actions = class_from_value(&rule.actions);
         if seen_rt.insert(rule.resource_type.clone()) {
             groups.push((rule.resource_type.clone(), actions));
-        } else if let Some(g) = groups
-            .iter_mut()
-            .find(|g| g.0 == rule.resource_type)
-        {
+        } else if let Some(g) = groups.iter_mut().find(|g| g.0 == rule.resource_type) {
             g.1.extend(actions);
         }
     }

@@ -418,8 +418,16 @@ pub async fn ensure_auth_users(pool: &PgPool) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-/// 按 email 精确清理用户
+/// 按 email 精确清理用户（依赖行先行——auth_user_emails 入边 FK 无
+/// ON DELETE CASCADE，先删子行再删主行，否则 DELETE 静默失败残留 → 固定邮箱重跑 409）。
 pub async fn cleanup_user_by_email(pool: &PgPool, email: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM isahl_auth.auth_user_emails \
+         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+    )
+    .bind(email)
+    .execute(pool)
+    .await?;
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
         .bind(email)
         .execute(pool)

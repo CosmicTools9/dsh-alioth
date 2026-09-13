@@ -128,6 +128,22 @@ pub struct CreateSessionRequest {
     pub refresh_token_hash: Option<String>,
 }
 
+/// 客户端 IP（各登录链 create_session 共用；ldap/webauthn 曾有私有复制，
+/// fix-sso-noauth-removal 起新代码统一走本函数）。
+pub(crate) fn client_ip(req: &actix_web::HttpRequest) -> Option<String> {
+    req.connection_info()
+        .realip_remote_addr()
+        .map(|s| s.to_string())
+}
+
+/// 客户端 User-Agent（同上）。
+pub(crate) fn client_user_agent(req: &actix_web::HttpRequest) -> Option<String> {
+    req.headers()
+        .get("user-agent")
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string())
+}
+
 /// Session errors
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
@@ -414,6 +430,24 @@ impl SessionManager {
             WHERE status = 'active' AND expires_at < NOW()
             "#,
         )
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// 物理删除超保留期的 expired/revoked 会话（fix-sso-auth-gaps G4）。
+    /// 关联子表 `session_revocations`/`slo_notifications` 经 FK ON DELETE CASCADE 级联。
+    /// 幂等；多实例并发执行安全。
+    pub async fn purge_expired_sessions(&self, retention_days: i64) -> Result<u64, SessionError> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM isahl_auth.sso_sessions
+            WHERE status IN ('expired', 'revoked')
+              AND expires_at < NOW() - ($1 * INTERVAL '1 day')
+            "#,
+        )
+        .bind(retention_days)
         .execute(&self.pool)
         .await?;
 

@@ -21,7 +21,7 @@ impl Identifiable for StatusEntity {
 }
 impl AliothDbEntity for StatusEntity {
     fn table_name() -> &'static str {
-        r#""isahl"."zc_id_status""#
+        r#""isahl"."zc_id_stus-project""#
     }
     const SELECT_FIELDS: &'static str = "id";
     const ENTITY_NAME: &'static str = "test-rls-status";
@@ -32,7 +32,7 @@ impl AliothDbEntity for StatusEntity {
 /// 插入一行测试数据并返回 id；测试结束由 cleanup_status 硬删除。
 async fn insert_status(pool: &PgPool, tag: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_status" (notice) VALUES ($1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_stus-project" (notice) VALUES ($1) RETURNING id"#,
     )
     .bind(tag)
     .fetch_one(pool)
@@ -41,7 +41,7 @@ async fn insert_status(pool: &PgPool, tag: &str) -> i64 {
 }
 
 async fn cleanup_status(pool: &PgPool, id: i64) {
-    sqlx::query(r#"DELETE FROM isahl."zc_id_status" WHERE id = $1"#)
+    sqlx::query(r#"DELETE FROM isahl."zc_id_stus-project" WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await

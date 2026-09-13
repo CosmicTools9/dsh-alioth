@@ -29,11 +29,19 @@ async fn task_deadline_notifies_with_operation_trace() {
     .await
     .expect("segm");
 
+    // 叶表坐标（§6.12）：测试任务行 dk 经静态绑定解析
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FMA", "↓_CH"))
+            .await
+            .expect("resolve task-testing coords");
     let task_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-testing" (notice, code, qk_period, created_by_id)
-           VALUES ('due-task', 't-due-1', $1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_task-testing" (notice, code, qk_period, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('due-task', 't-due-1', $1, 1, $2, $3, $4) RETURNING id"#,
     )
     .bind(segm_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("task");
@@ -94,18 +102,28 @@ async fn task_deadline_notifies_with_operation_trace() {
 async fn slice_flip_records_event_and_links() {
     let pool = test_pool().await;
 
+    // 叶表坐标（§6.12）：计划行与任务行同族，dk 经静态绑定解析（禁硬编码 ZUID）
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FMA", "↓_CH"))
+            .await
+            .expect("resolve plan/task coords");
     let plan_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_plan-personal" (notice, code, created_by_id)
-           VALUES ('flip-test', 't-flip', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_plan-personal" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('flip-test', 't-flip', 1, $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("plan");
-
     let task_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-testing" (notice, code, created_by_id)
-           VALUES ('flip-task', 't-flip-task', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_task-testing" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('flip-task', 't-flip-task', 1, $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("task");

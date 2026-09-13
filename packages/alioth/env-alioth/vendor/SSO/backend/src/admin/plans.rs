@@ -17,6 +17,7 @@ use crate::auth::AuthState;
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct PlanEntity {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub code: String,
     pub tier: i16,

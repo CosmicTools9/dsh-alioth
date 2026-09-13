@@ -31,7 +31,7 @@ Gateway WorkspaceDock 的「日程」面板。提供用户级日程事件与待�
 | `code`         | `text`                           | `ScheduleItemResponse.item_type` | 业务类型（meeting/sync/client/...） |
 | `_f_`          | `text`                           | —                                | 触发器自动赋值（创意/设计/实现）    |
 | `_t_`          | `text`                           | —                                | 触发器自动赋值（范例/实例）         |
-| `comments`     | `text`                           | `ScheduleItemResponse.reminder`  | 扩展元数据（reminder JSON：`{"reminder_offset_min": N}`） |
+| `comments`     | `text`                           | —                                | 备注（纯文本；提醒设置不在此承载）  |
 | `exclude`      | `json`                           | —                                | 排除日期                            |
 | `sort`         | `bigint`                         | —                                | 排序权重                            |
 | `qk_date-segm` | `bigint FK → zc_id_segm-date.id` | `DateTimeSpanResponse.date_*`    | 日期段引用                          |
@@ -44,6 +44,11 @@ Gateway WorkspaceDock 的「日程」面板。提供用户级日程事件与待�
 
 - `zc_id_plan-personal` — CREATE 目标（个人计划，兜底）
 - `zc_id_thre-meeting` — CREATE 目标（会议计划）
+
+> **提醒设置载体（2026-09-11 迁移）**：`reminder_offset_min` 不落 comments——由**预警事件**承载：
+> `zc_id_even-alert`（`code='schedule-reminder'`，`qk_date` → `zc_id_scal-date` = 计划起始 − N 分钟）
+> 经 `zc_id_plan_rr_event`（ref_left=计划 id）桥关联；DTO `ScheduleItemResponse.reminder` 由
+> 「计划起始 − 事件时刻」换算读出（0..=1440 分钟）。写侧清除语义：`reminder_offset_min=0` 软删事件与桥。
 
 ### 2.2 zc_id_event — 日程事件（父表，RUD 目标）
 

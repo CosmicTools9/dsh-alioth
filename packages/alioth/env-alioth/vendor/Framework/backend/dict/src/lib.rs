@@ -5,5 +5,6 @@
 //! 挂载：壳 scope 内 `dict::register(cfg)`（路由相对路径 /dict/*）。
 
 pub mod handler;
+pub mod locale;
 
 pub use handler::register;

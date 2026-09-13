@@ -287,7 +287,8 @@ async fn test_keyword_strategy_page_context_bonus() {
 
     let decision = strategy.route(&ctx, &registry, None).await.unwrap();
     assert_eq!(decision.agent_code, "data_analysis");
-    assert!(decision.reason.contains("页面上下文"));
+    // suggested_agent 命中 → 短路采纳（页面显式指定优先级最高，不经权重加成）
+    assert!(decision.reason.contains("页面显式指定"));
 }
 
 #[tokio::test]
@@ -421,9 +422,11 @@ fn test_tool_definition_serde() {
 // ============================================
 
 use ai_agent::agents::tool_orchestrator::{
-    FakeLlmAdapter, FakeToolAdapter, ToolOrchestrator, ToolRunContext,
+    FakeLlmAdapter, FakeStreamTurn, FakeToolAdapter, ToolOrchestrator, ToolRunContext,
+    ToolStreamEvent,
 };
 use ai_agent::tools::ToolResult;
+use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 async fn test_tool_orchestrator_returns_text_on_first_turn() {
@@ -494,4 +497,232 @@ async fn test_tool_orchestrator_truncates_at_max_steps() {
     assert!(result.truncated);
     assert_eq!(result.steps_taken, 2);
     assert_eq!(result.tool_calls.len(), 2);
+}
+
+#[tokio::test]
+async fn test_tool_orchestrator_accumulates_usage_across_steps() {
+    // 两步：step1 工具调用（usage1）、step2 终答（usage2）——求和入 result.usage
+    let llm = Box::new(
+        FakeLlmAdapter::new(vec![
+            llm::LlmResponse::ToolCalls(vec![llm::ToolCall {
+                id: "1".to_string(),
+                name: "query".to_string(),
+                arguments: serde_json::json!({}),
+            }]),
+            llm::LlmResponse::Text("final answer".to_string()),
+        ])
+        .with_usages(vec![
+            Some(TokenUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+            Some(TokenUsage {
+                prompt_tokens: 20,
+                completion_tokens: 7,
+                total_tokens: 27,
+            }),
+        ]),
+    );
+    let mut results = HashMap::new();
+    results.insert(
+        "query".to_string(),
+        ToolResult {
+            tool_call_id: "1".to_string(),
+            name: "query".to_string(),
+            success: true,
+            output: serde_json::json!("ok"),
+            error: None,
+        },
+    );
+    let tools = Box::new(FakeToolAdapter::new(
+        vec![ToolDefinition {
+            name: "query".to_string(),
+            description: "query".to_string(),
+            parameters: serde_json::json!({}),
+            execution_target: ExecutionTarget::Backend,
+        }],
+        results,
+    ));
+    let orchestrator = ToolOrchestrator::new(llm, tools);
+    let ctx = ToolRunContext {
+        initial_prompt: "hello".to_string(),
+        session_id: 1,
+        user_id: None,
+        allowed_schemas: vec![],
+    };
+    let result = orchestrator.run(&ctx).await.unwrap();
+    assert_eq!(result.final_text, "final answer");
+    assert_eq!(result.tool_calls.len(), 1);
+    assert_eq!(
+        result.usage,
+        TokenUsage {
+            prompt_tokens: 30,
+            completion_tokens: 12,
+            total_tokens: 42,
+        }
+    );
+}
+
+#[tokio::test]
+async fn test_tool_orchestrator_usage_zero_when_unreported() {
+    // provider 全程未报 usage（usages 缺口 None）→ result.usage 全 0
+    let llm = Box::new(FakeLlmAdapter::new(vec![llm::LlmResponse::Text(
+        "final answer".to_string(),
+    )]));
+    let tools = Box::new(FakeToolAdapter::new(vec![], HashMap::new()));
+    let orchestrator = ToolOrchestrator::new(llm, tools);
+    let ctx = ToolRunContext {
+        initial_prompt: "hello".to_string(),
+        session_id: 1,
+        user_id: None,
+        allowed_schemas: vec![],
+    };
+    let result = orchestrator.run(&ctx).await.unwrap();
+    assert_eq!(result.usage, TokenUsage::default());
+}
+
+fn query_tool_adapter() -> Box<FakeToolAdapter> {
+    let mut results = HashMap::new();
+    results.insert(
+        "query".to_string(),
+        ToolResult {
+            tool_call_id: "c1".to_string(),
+            name: "query".to_string(),
+            success: true,
+            output: serde_json::json!("ok"),
+            error: None,
+        },
+    );
+    Box::new(FakeToolAdapter::new(
+        vec![ToolDefinition {
+            name: "query".to_string(),
+            description: "query".to_string(),
+            parameters: serde_json::json!({}),
+            execution_target: ExecutionTarget::Backend,
+        }],
+        results,
+    ))
+}
+
+#[tokio::test]
+async fn test_tool_orchestrator_streaming_emits_events_and_final() {
+    let events: Arc<Mutex<Vec<ToolStreamEvent>>> = Arc::new(Mutex::new(vec![]));
+    let events_sink = events.clone();
+    let llm = Box::new(FakeLlmAdapter::new(vec![]).with_stream_turns(vec![
+        FakeStreamTurn {
+            chunks: vec![Ok("正在查询".to_string()), Ok("…".to_string())],
+            outcome: Some(llm::StreamToolCallOutcome {
+                tool_calls: vec![llm::ToolCallResult {
+                    id: "c1".to_string(),
+                    name: "query".to_string(),
+                    arguments: serde_json::json!({}),
+                }],
+                usage: Some(llm::TokenUsage {
+                    input_tokens: 8,
+                    output_tokens: 2,
+                }),
+                finish_reason: None,
+            }),
+        },
+        FakeStreamTurn {
+            chunks: vec![Ok("结果是 42".to_string())],
+            outcome: Some(llm::StreamToolCallOutcome {
+                tool_calls: vec![],
+                usage: Some(llm::TokenUsage {
+                    input_tokens: 5,
+                    output_tokens: 3,
+                }),
+                finish_reason: None,
+            }),
+        },
+    ]));
+    let tools = query_tool_adapter();
+    let orchestrator = ToolOrchestrator::new(llm, tools)
+        .with_event_sink(Box::new(move |ev| events_sink.lock().unwrap().push(ev)));
+    let ctx = ToolRunContext {
+        initial_prompt: "查一下".to_string(),
+        session_id: 1,
+        user_id: None,
+        allowed_schemas: vec![],
+    };
+
+    let result = orchestrator.run(&ctx).await.unwrap();
+    assert_eq!(result.final_text, "结果是 42");
+    assert!(!result.truncated);
+    assert_eq!(result.steps_taken, 2);
+    assert_eq!(result.tool_calls.len(), 1);
+    assert_eq!(result.tool_calls[0].success, true);
+    assert_eq!(
+        result.usage,
+        TokenUsage {
+            prompt_tokens: 13,
+            completion_tokens: 5,
+            total_tokens: 18,
+        }
+    );
+
+    let got = events.lock().unwrap().clone();
+    assert_eq!(
+        got,
+        vec![
+            ToolStreamEvent::Chunk("正在查询".to_string()),
+            ToolStreamEvent::Chunk("…".to_string()),
+            ToolStreamEvent::ToolStart {
+                name: "query".to_string(),
+                arguments: serde_json::json!({}),
+            },
+            ToolStreamEvent::ToolEnd {
+                name: "query".to_string(),
+                success: true,
+                output: "\"ok\"".to_string(),
+            },
+            ToolStreamEvent::Chunk("结果是 42".to_string()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_tool_orchestrator_streaming_requires_port_support() {
+    // sink 已注册但 llm 端口未提供流式场景 → 报错而非静默退化到非流式
+    let llm = Box::new(FakeLlmAdapter::new(vec![llm::LlmResponse::Text(
+        "ignored".to_string(),
+    )]));
+    let tools = Box::new(FakeToolAdapter::new(vec![], HashMap::new()));
+    let orchestrator = ToolOrchestrator::new(llm, tools).with_event_sink(Box::new(|_| {}));
+    let ctx = ToolRunContext {
+        initial_prompt: "hello".to_string(),
+        session_id: 1,
+        user_id: None,
+        allowed_schemas: vec![],
+    };
+    let err = match orchestrator.run(&ctx).await {
+        Ok(_) => panic!("expected streaming unsupported error"),
+        Err(e) => e,
+    };
+    assert!(
+        err.contains("streaming not supported"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_suggested_agent_short_circuits_to_pinned_choice() {
+    // 真实内置 registry（含 form_filling）：suggestedAgent 命中 → 短路直接采纳，
+    // 即使消息无关键词命中（「帮我填一张」不含「填单」连续词）。
+    let registry = ai_agent::registry::AgentRegistry::new();
+    let router = ai_agent::router::AgentRouter::new(registry);
+    let ctx = ai_agent::router::RoutingContext {
+        user_message: "帮我填一张运输委托单：钢材 10 吨".to_string(),
+        page_context: Some(serde_json::json!({"pageContext": {"suggestedAgent": "form_filling"}})),
+        conversation_history: vec![],
+        suggested_agent: Some("form_filling".to_string()),
+        locale: "zh-CN".to_string(),
+    };
+    let d = router.route(&ctx, None).await;
+    assert_eq!(
+        d.agent_code, "form_filling",
+        "suggestedAgent 短路应采纳，got: {} ({})",
+        d.agent_code, d.reason
+    );
 }

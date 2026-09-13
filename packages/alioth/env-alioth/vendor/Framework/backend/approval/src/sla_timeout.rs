@@ -138,10 +138,15 @@ async fn try_escalate_transfer(
         let date_anchor = crate::handlers::approve_reject::today_date_anchor(pool)
             .await
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+        // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
+        let (dk_scene, dk_factor, dk_function) =
+            crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJcFtaNc)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         sqlx::query(
             r#"INSERT INTO isahl."zc_id_deta-opinion"
-               (id, notice, opinion, fk_list, fk_biller, qk_date, created_at)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW())"#,
+               (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW(), $6, $7, $8)"#,
         )
         .bind(ESCALATE_NOTICE)
         .bind(format!(
@@ -151,6 +156,9 @@ async fn try_escalate_transfer(
         .bind(instance_id)
         .bind(SYSTEM_USER_ID)
         .bind(date_anchor)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(pool)
         .await
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
@@ -291,16 +299,32 @@ pub async fn check_and_reject_with(
             }
         };
 
+        // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组；
+        // 解析失败降级 NULL（不阻断自动驳回，与既有告警面一致）
+        let (dk_scene, dk_factor, dk_function) =
+            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJcFtaNc)
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    common::telemetry::warn!("SLA 坐标解析失败（instance {}）: {}", id, e);
+                    (None, None, None)
+                }
+            };
+
         match sqlx::query(
             r#"INSERT INTO isahl."zc_id_deta-opinion"
-               (id, notice, opinion, fk_list, fk_biller, qk_date, created_at)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW())"#,
+               (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW(), $6, $7, $8)"#,
         )
         .bind(REJECT_NOTICE)
         .bind(AUTO_REJECT_REASON)
         .bind(*id)
         .bind(SYSTEM_USER_ID)
         .bind(date_anchor)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(pool)
         .await
         {

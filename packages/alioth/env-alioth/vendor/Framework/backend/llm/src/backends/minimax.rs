@@ -492,15 +492,19 @@ impl LlmBackend for MiniMaxBackend {
             text: if text.is_empty() { None } else { Some(text) },
             tool_calls,
             usage,
+            finish_reason: choice.finish_reason.clone(),
             raw,
         })
     }
 
     /// 真流式（SSE，OpenAI 兼容）：`stream: true` + 共享 SSE 解析。
-    fn complete_stream(
+    fn complete_stream_meta(
         &self,
         req: CompletionRequest,
-    ) -> futures_util::stream::BoxStream<'_, Result<String, BackendError>> {
+    ) -> (
+        futures_util::stream::BoxStream<'_, Result<String, BackendError>>,
+        std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    ) {
         let client = self.client.clone();
         let url = self.endpoint();
         let headers = self.build_headers();
@@ -509,8 +513,10 @@ impl LlmBackend for MiniMaxBackend {
         let system = req.system.clone();
         let prompt = req.prompt.clone();
         let history = req.history.clone();
+        let finish_slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot_task = finish_slot.clone();
 
-        futures_util::stream::once(async move {
+        let stream = futures_util::stream::once(async move {
             // owned body（stream:true）——build_body 返回 borrow req 结构无法跨 spawn
             let mut messages: Vec<serde_json::Value> = Vec::new();
             if let Some(sys) = &system {
@@ -550,11 +556,56 @@ impl LlmBackend for MiniMaxBackend {
                 return futures_util::stream::once(async move { Err(err) }).boxed();
             }
 
-            let rx = super::sse::spawn_sse_parser(response);
+            let rx = super::sse::spawn_sse_parser_with_finish_slot(response, slot_task);
             super::sse::channel_to_stream(rx)
         })
         .flatten()
-        .boxed()
+        .boxed();
+        (stream, finish_slot)
+    }
+
+    /// 流式 + 工具调用：复用 build_body（与 complete() 同语义）+ stream:true；
+    /// delta.tool_calls 分片由共享 spawn_sse_tools_parser 累积进 outcome 槽位。
+    #[allow(clippy::type_complexity)]
+    fn complete_stream_tools_meta(
+        &self,
+        req: CompletionRequest,
+    ) -> (
+        futures_util::stream::BoxStream<'_, Result<String, BackendError>>,
+        std::sync::Arc<std::sync::Mutex<Option<super::StreamToolCallOutcome>>>,
+    ) {
+        let client = self.client.clone();
+        let url = self.endpoint();
+        let headers = self.build_headers();
+        let timeout = self.timeout_seconds;
+        let outcome_slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot_task = outcome_slot.clone();
+
+        let stream = futures_util::stream::once(async move {
+            let body = self.build_body(&req, true);
+            let response = match client.post(&url).headers(headers).json(&body).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    let err = if e.is_timeout() {
+                        BackendError::Timeout(timeout)
+                    } else {
+                        BackendError::Transport(e.to_string())
+                    };
+                    return futures_util::stream::once(async move { Err(err) }).boxed();
+                }
+            };
+            let status = response.status().as_u16();
+            if !response.status().is_success() {
+                let err_body = response.text().await.unwrap_or_default();
+                let err = Self::parse_error(status, &err_body);
+                return futures_util::stream::once(async move { Err(err) }).boxed();
+            }
+            let rx = super::sse::spawn_sse_tools_parser(response, slot_task);
+            super::sse::channel_to_stream(rx)
+        })
+        .flatten()
+        .boxed();
+        (stream, outcome_slot)
     }
 }
 

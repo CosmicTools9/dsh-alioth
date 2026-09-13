@@ -9,6 +9,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
 use sqlx::PgPool;
 
+use super::api_clients_common::client_subscription_active;
 use super::jwt::{encode_access_token, Claims};
 use super::password::verify_password_async;
 use super::AuthState;
@@ -119,6 +120,30 @@ pub async fn authenticate_handler(
         }
     }
 
+    // 3.5 订阅门禁（G6）：无激活订阅 → 401，不签发（与 /auth/token 同语义；fail-closed）
+    match client_subscription_active(pool.get_ref(), &client_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::Unauthorized().json(TokenErrorResponse {
+                error: "invalid_api_key".to_string(),
+                error_description: Some(
+                    "SUBSCRIPTION_INACTIVE: no active subscription for this client".to_string(),
+                ),
+            });
+        }
+        Err(e) => {
+            log::error!(
+                "api_key authenticate: subscription check failed for client '{}': {}",
+                client_id,
+                e
+            );
+            return HttpResponse::InternalServerError().json(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: Some("failed to verify subscription".to_string()),
+            });
+        }
+    }
+
     // 4. 更新 last_used_at（best-effort，失败不影响签发）
     let _ = sqlx::query("UPDATE isahl_auth.api_clients SET last_used_at = NOW() WHERE id = $1")
         .bind(id)
@@ -219,7 +244,10 @@ roJB3RHF1LfIsaCxcnVep0snC4+8StUixIjfLAZ8Mc8+uqa43ndeNEFm
         let id: (i64,) = sqlx::query_as(
             "INSERT INTO isahl_auth.api_clients \
              (client_id, client_type, client_name, secret_hash, scopes, fk_service_user, enabled) \
-             VALUES ($1, 'apikey', $2, $3, $4::TEXT[], $5, TRUE) RETURNING id",
+             VALUES ($1, 'apikey', $2, $3, $4::TEXT[], $5, TRUE) \
+             ON CONFLICT (client_id) DO UPDATE SET \
+               secret_hash = $3, scopes = $4::TEXT[], fk_service_user = $5, deleted_at = NULL, enabled = TRUE \
+             RETURNING id",
         )
         .bind(plaintext)
         .bind(client_name)
@@ -229,11 +257,39 @@ roJB3RHF1LfIsaCxcnVep0snC4+8StUixIjfLAZ8Mc8+uqa43ndeNEFm
         .fetch_one(pool)
         .await
         .expect("insert api client");
+        // 订阅门禁 fixture（fix-sso-auth-gaps G6）：激活订阅方可签发
+        let plan_code = format!("plan-key-{}", id.0);
+        let plan_id: i64 = sqlx::query_scalar(
+            "INSERT INTO isahl_auth.api_plans \
+             (code, tier, rate_limit_rps, burst, quota_daily, quota_monthly, enabled) \
+             VALUES ($1, 0, 10.0, 50, 100000, 3000000, TRUE) RETURNING id",
+        )
+        .bind(&plan_code)
+        .fetch_one(pool)
+        .await
+        .expect("insert plan");
+        sqlx::query(
+            "INSERT INTO isahl_auth.api_subscriptions (fk_client, fk_plan, status, starts_at) \
+             VALUES ($1, $2, 'active', NOW())",
+        )
+        .bind(id.0)
+        .bind(plan_id)
+        .execute(pool)
+        .await
+        .expect("insert subscription");
         id.0
     }
 
     async fn cleanup_key(pool: &PgPool, id: i64) {
-        // 清理 api_clients 与关联服务用户（定向，避免全表 DELETE 破坏 seed）
+        // 清理 api_clients、订阅/plan 与关联服务用户（定向，避免全表 DELETE 破坏 seed）
+        let _ = sqlx::query("DELETE FROM isahl_auth.api_subscriptions WHERE fk_client = $1")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM isahl_auth.api_plans WHERE code = $1")
+            .bind(format!("plan-key-{id}"))
+            .execute(pool)
+            .await;
         let svc_user: Option<i64> =
             sqlx::query_scalar("SELECT fk_service_user FROM isahl_auth.api_clients WHERE id = $1")
                 .bind(id)

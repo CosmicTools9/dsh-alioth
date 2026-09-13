@@ -324,31 +324,7 @@ impl LdapAuthenticator {
 
     /// 使用所有配置尝试认证
     pub fn authenticate(&self, username: &str, password: &str) -> Result<LdapUser, LdapError> {
-        let mut last_error = None;
-
-        for config in &self.configs {
-            if !config.enabled {
-                continue;
-            }
-
-            match LdapClient::new(config.clone()) {
-                Ok(mut client) => match client.authenticate(username, password) {
-                    Ok(user) => return Ok(user),
-                    Err(e) => {
-                        // 如果是用户未找到，继续尝试下一个配置
-                        if !matches!(e, LdapError::UserNotFound) {
-                            last_error = Some(e);
-                        }
-                    }
-                },
-                Err(e) => {
-                    log::warn!("LDAP 连接失败: {}", e);
-                    last_error = Some(e);
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or(LdapError::UserNotFound))
+        authenticate_with_configs(&self.configs, username, password)
     }
 
     /// 测试所有配置
@@ -364,6 +340,41 @@ impl LdapAuthenticator {
             })
             .collect()
     }
+}
+
+/// 逐 LDAP 配置尝试认证（fix-sso-residual-gaps G1 提取的纯函数）。
+/// 同步网络 I/O（每连接最长 `timeout_secs`）——调用方须在
+/// `spawn_blocking` 内执行，禁止直接跑在 async handler 线程。
+fn authenticate_with_configs(
+    configs: &[LdapConfig],
+    username: &str,
+    password: &str,
+) -> Result<LdapUser, LdapError> {
+    let mut last_error = None;
+
+    for config in configs {
+        if !config.enabled {
+            continue;
+        }
+
+        match LdapClient::new(config.clone()) {
+            Ok(mut client) => match client.authenticate(username, password) {
+                Ok(user) => return Ok(user),
+                Err(e) => {
+                    // 如果是用户未找到，继续尝试下一个配置
+                    if !matches!(e, LdapError::UserNotFound) {
+                        last_error = Some(e);
+                    }
+                }
+            },
+            Err(e) => {
+                log::warn!("LDAP 连接失败: {}", e);
+                last_error = Some(e);
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or(LdapError::UserNotFound))
 }
 
 // HTTP API 请求/响应类型
@@ -457,30 +468,40 @@ pub async fn ldap_login(
         });
     }
 
-    // 提取 NGAC 映射配置（configs 即将被 move）
+    // 提取 NGAC 映射配置（configs 即将被 move 进阻塞池）
     let ngac_config = configs
         .iter()
         .find(|c| !c.group_mapping.is_empty())
         .cloned();
 
-    // 创建认证器
-    let authenticator = LdapAuthenticator::new(configs);
-
-    // 尝试认证
-    let ldap_user = match authenticator.authenticate(&body.username, &body.password) {
-        Ok(user) => user,
-        Err(LdapError::UserNotFound) => {
+    // 尝试认证（G1：同步 ldap3 I/O 迁 spawn_blocking，避免阻塞 actix worker——
+    // 每连接最长 timeout_secs=30s，直接跑 async 线程会在慢/故障 LDAP 时耗尽 worker）
+    let username = body.username.clone();
+    let password = body.password.clone();
+    let ldap_user = match tokio::task::spawn_blocking(move || {
+        authenticate_with_configs(&configs, &username, &password)
+    })
+    .await
+    {
+        Ok(Ok(user)) => user,
+        Ok(Err(LdapError::UserNotFound)) => {
             return HttpResponse::Unauthorized().json(LdapErrorResponse {
                 error: "用户不存在".to_string(),
             });
         }
-        Err(LdapError::InvalidCredentials) => {
+        Ok(Err(LdapError::InvalidCredentials)) => {
             return HttpResponse::Unauthorized().json(LdapErrorResponse {
                 error: "用户名或密码错误".to_string(),
             });
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::error!("LDAP authentication error: {}", e);
+            return HttpResponse::InternalServerError().json(LdapErrorResponse {
+                error: "认证服务暂时不可用".to_string(),
+            });
+        }
+        Err(e) => {
+            log::error!("LDAP auth task join error: {}", e);
             return HttpResponse::InternalServerError().json(LdapErrorResponse {
                 error: "认证服务暂时不可用".to_string(),
             });
@@ -509,7 +530,7 @@ pub async fn ldap_login(
 
     // 创建会话
     let session_manager = SessionManager::new(pool.get_ref().clone());
-    let _session = match session_manager
+    let session = match session_manager
         .create_session(CreateSessionRequest {
             user_id,
             ip_address: get_client_ip(&req),
@@ -527,13 +548,15 @@ pub async fn ldap_login(
         }
     };
 
-    // 生成 JWT token
-    let claims = Claims::with_expiry_seconds(
+    // 生成 JWT token（fix-sso-noauth-removal：绑定会话 sid——登出即时失效，
+    // 对齐密码登录路径；此前建了会话行却丢弃返回值，token 无 sid）
+    let mut claims = Claims::with_expiry_seconds(
         &user_id.to_string(),
         "",
         false,
         state.jwt_access_expiry_secs,
     );
+    claims.sid = session.session_token.clone();
 
     let access_token = match encode_access_token(&claims, &state.jwt_private_key) {
         Ok(t) => t,
@@ -569,7 +592,12 @@ pub async fn ldap_login(
         },
     });
 
-    set_refresh_cookie(response, &refresh_token, state.jwt_refresh_expiry_secs)
+    set_refresh_cookie(
+        response,
+        &refresh_token,
+        state.jwt_refresh_expiry_secs,
+        None,
+    )
 }
 
 /// 获取 LDAP 配置列表 (Admin only)
@@ -587,24 +615,34 @@ pub async fn list_ldap_configs(pool: web::Data<PgPool>) -> HttpResponse {
 
 /// 测试 LDAP 连接 (Admin only)
 pub async fn test_ldap_connection(body: web::Json<LdapTestRequest>) -> HttpResponse {
-    let mut client = match LdapClient::new(body.config.clone()) {
-        Ok(client) => client,
-        Err(e) => {
-            return HttpResponse::Ok().json(LdapTestResponse {
-                success: false,
-                message: format!("连接失败: {}", e),
-            });
-        }
+    // G1：同步 ldap3 I/O 迁 spawn_blocking（管理面低频，同一缺陷面一并修复）
+    let config = body.config.clone();
+    let result = match tokio::task::spawn_blocking(move || {
+        let mut client = match LdapClient::new(config) {
+            Ok(client) => client,
+            Err(e) => {
+                return Err(format!("连接失败: {}", e));
+            }
+        };
+        client
+            .test_connection()
+            .map_err(|e| format!("连接测试失败: {}", e))
+    })
+    .await
+    {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(msg)) => Err(msg),
+        Err(e) => Err(format!("连接测试任务失败: {}", e)),
     };
 
-    match client.test_connection() {
+    match result {
         Ok(_) => HttpResponse::Ok().json(LdapTestResponse {
             success: true,
             message: "连接成功".to_string(),
         }),
-        Err(e) => HttpResponse::Ok().json(LdapTestResponse {
+        Err(message) => HttpResponse::Ok().json(LdapTestResponse {
             success: false,
-            message: format!("连接测试失败: {}", e),
+            message,
         }),
     }
 }

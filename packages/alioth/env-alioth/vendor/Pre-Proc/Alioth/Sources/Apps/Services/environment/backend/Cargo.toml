@@ -15,6 +15,7 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 common = { path = "../../../../../../../Framework/backend/common" }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }
 crud = { path = "../../../../../../../Framework/backend/crud" }
 
 [lib]

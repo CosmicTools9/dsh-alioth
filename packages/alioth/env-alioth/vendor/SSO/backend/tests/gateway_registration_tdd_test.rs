@@ -963,6 +963,8 @@ async fn tdd_reg_ext_011_external_channel_registers() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-ext-011@alioth.test";
+    // P1 邮箱所有权门禁（fix-sso-auth-gaps）：外部通道提供 email 同样强制验证
+    common::pre_verify_email(&pool, test_email).await.ok();
     let auth_state = common::test_auth_state();
     let app = test::init_service(
         App::new()
@@ -1041,6 +1043,8 @@ async fn tdd_reg_ext_012_me_returns_user_type() {
     .execute(&pool)
     .await;
     let test_email = "tdd-reg-ext-012@alioth.test";
+    // P1 邮箱所有权门禁（fix-sso-auth-gaps）：外部通道提供 email 同样强制验证
+    common::pre_verify_email(&pool, test_email).await.ok();
     let auth_state = common::test_auth_state();
     let app = test::init_service(
         App::new()

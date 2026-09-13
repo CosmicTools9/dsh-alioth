@@ -18,6 +18,7 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 log = { workspace = true }
 common = { path = "../common" }
+ontology-binding = { path = "../ontology-binding" }
 crud = { path = "../crud" }
 
 [lib]

@@ -262,6 +262,18 @@ pub async fn transfer_approval(
             }));
         }
     };
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↓_NC")).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::warn!("approvals/transfer: 坐标解析失败: {e}");
+                let _ = tx.rollback().await;
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "success": false, "message": "转办失败"
+                }));
+            }
+        };
     let updated = sqlx::query(
         r#"UPDATE isahl."zc_id_oper-approve"
            SET fk_operator = $1, updated_at = NOW()
@@ -281,12 +293,15 @@ pub async fn transfer_approval(
     }
     let _ = sqlx::query(
         r#"INSERT INTO isahl."zc_id_deta-opinion"
-           (notice, opinion, fk_list, fk_biller, created_at)
-           VALUES ('审批转交', $1, $2, $3, NOW())"#,
+           (notice, opinion, fk_list, fk_biller, created_at, dk_scene, dk_factor, dk_function)
+           VALUES ('审批转交', $1, $2, $3, NOW(), $4, $5, $6)"#,
     )
     .bind(body.opinion.as_deref().unwrap_or(""))
     .bind(approval_id)
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&mut *tx)
     .await;
     if let Err(e) = tx.commit().await {
@@ -621,6 +636,20 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
         }
     };
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
+    // 本事务内 oper-approve 两处 INSERT（register-context / 主实例）复用同一结果。
+    let (dk_scene, dk_factor, dk_function) =
+        match ontology_binding::resolve_conn(&mut *tx, ("JE", "FTA", "↓_EZ")).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::warn!("approvals/apply: 坐标解析失败: {e}");
+                let _ = tx.rollback().await;
+                return HttpResponse::InternalServerError().json(serde_json::json!({
+                    "success": false, "message": "申请失败"
+                }));
+            }
+        };
+
     // 抢占式状态翻转（原子门禁）：零行 = 已被并发请求抢占
     let preempted: Option<i64> = sqlx::query_scalar(
         "UPDATE isahl_auth.auth_users SET status = 'pending_approval', updated_at = NOW() \
@@ -714,12 +743,25 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
     };
     let event_id: i64 = if leaf_table_exists {
         // 叶表存在（WZ 等）：写 zc_id_appr-authorization（继承 even-approve）
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (leaf_dk_scene, leaf_dk_factor, leaf_dk_function) =
+            match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+                Ok(v) => v,
+                Err(e) => {
+                    common::telemetry::warn!("approvals/apply: 审批事件坐标解析失败: {e}");
+                    let _ = tx.rollback().await;
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "success": false, "message": "申请失败"
+                    }));
+                }
+            };
         match sqlx::query_scalar(
             r#"
             INSERT INTO isahl."zc_id_appr-authorization" (
                 created_by_id, updated_by_id, notice, code, comments,
-                tpl_id, qk_sla, created_at, updated_at
-            ) VALUES ($1, $1, $2, 'user-register-approval', $3, $4, $5, NOW(), NOW())
+                tpl_id, qk_sla, created_at, updated_at,
+                dk_scene, dk_factor, dk_function
+            ) VALUES ($1, $1, $2, 'user-register-approval', $3, $4, $5, NOW(), NOW(), $6, $7, $8)
             RETURNING id
             "#,
         )
@@ -728,6 +770,9 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
         .bind(&approval_comments)
         .bind(flow_binding.as_ref().and_then(|(_, tpl)| *tpl))
         .bind(sla_duration_id)
+        .bind(leaf_dk_scene)
+        .bind(leaf_dk_factor)
+        .bind(leaf_dk_function)
         .fetch_one(&mut *tx)
         .await
         {
@@ -742,12 +787,25 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
         }
     } else {
         // 叶表缺失（Alioth/AVIC-CAASEC/Cosmic-Tools）：写 even-approve 主表
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+                Ok(v) => v,
+                Err(e) => {
+                    common::telemetry::warn!("approvals/apply: 坐标解析失败: {e}");
+                    let _ = tx.rollback().await;
+                    return HttpResponse::InternalServerError().json(serde_json::json!({
+                        "success": false, "message": "申请失败"
+                    }));
+                }
+            };
         match sqlx::query_scalar(
             r#"
-            INSERT INTO isahl."zc_id_even-approve" (
+            INSERT INTO isahl."zc_id_appr-authorization" (
                 created_by_id, updated_by_id, notice, code, comments,
-                tpl_id, qk_sla, created_at, updated_at
-            ) VALUES ($1, $1, $2, 'user-register-approval', $3, $4, $5, NOW(), NOW())
+                tpl_id, qk_sla, created_at, updated_at,
+                dk_scene, dk_factor, dk_function
+            ) VALUES ($1, $1, $2, 'user-register-approval', $3, $4, $5, NOW(), NOW(), $6, $7, $8)
             RETURNING id
             "#,
         )
@@ -756,6 +814,9 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
         .bind(&approval_comments)
         .bind(flow_binding.as_ref().and_then(|(_, tpl)| *tpl))
         .bind(sla_duration_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         {
@@ -788,10 +849,14 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
             Some(v) => v,
             None => {
                 let new_id: i64 = match sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_oper-approve" (notice, created_by_id)
-                       VALUES ('register-context', $1) RETURNING id"#,
+                    r#"INSERT INTO isahl."zc_id_oper-approve"
+                           (notice, created_by_id, dk_scene, dk_factor, dk_function)
+                       VALUES ('register-context', $1, $2, $3, $4) RETURNING id"#,
                 )
                 .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 {
@@ -860,14 +925,18 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
     let instance_id: i64 = match sqlx::query_scalar(
         r#"
         INSERT INTO isahl."zc_id_oper-approve" (
-            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at
-        ) VALUES ($1, 'user-register-approval', $2, $3, $2, NOW(), NOW())
+            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function
+        ) VALUES ($1, 'user-register-approval', $2, $3, $2, NOW(), NOW(), $4, $5, $6)
         RETURNING id
         "#,
     )
     .bind(&approval_notice)
     .bind(user_id)
     .bind(admin_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&mut *tx)
     .await
     {

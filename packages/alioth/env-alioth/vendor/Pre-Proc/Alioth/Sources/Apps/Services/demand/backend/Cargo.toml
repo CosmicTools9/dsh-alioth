@@ -20,6 +20,7 @@ tokio = { workspace = true }
 log = { workspace = true }
 rust_decimal = { workspace = true }
 common = { path = "../../../../../../../Framework/backend/common" }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }
 crud = { path = "../../../../../../../Framework/backend/crud" }
 
 [dev-dependencies]

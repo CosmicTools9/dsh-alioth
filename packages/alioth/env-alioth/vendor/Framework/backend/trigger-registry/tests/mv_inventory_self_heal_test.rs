@@ -21,16 +21,16 @@ async fn ensure_mv_inventory_self_heals() {
         }
     };
 
-    // 基表存在性前置：视图依赖 zc_id_production_rr_storage（dev/test 基准模型）
+    // 基表存在性前置：视图依赖 zc_id_file_rr_url（dev/test 基准模型）
     let base: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-         WHERE table_schema = 'isahl' AND table_name = 'zc_id_production_rr_storage')",
+         WHERE table_schema = 'isahl' AND table_name = 'zc_id_file_rr_url')",
     )
     .fetch_one(&pool)
     .await
     .expect("基表探测");
     if !base {
-        eprintln!("skipped: test 库无 zc_id_production_rr_storage（基表缺失降级场景）");
+        eprintln!("skipped: test 库无 zc_id_file_rr_url（基表缺失降级场景）");
         return;
     }
 
@@ -137,7 +137,7 @@ async fn mv_inventory_multi_metric_materializes() {
     .await
     .expect("amount");
     let row_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_production_rr_storage"
+        r#"INSERT INTO isahl."zc_id_file_rr_url"
            (id, code, notice, ref_left, ref_right, qk_qty, qk_w_qty, qk_v_qty, qk_amount, created_by_id)
            VALUES (isahl.gen_next_zuid(), 'MM-ROW', 'MM多计量', 900001, 900002, $1, $2, $3, $4, 1)
            RETURNING id"#,
@@ -179,12 +179,11 @@ async fn mv_inventory_multi_metric_materializes() {
     tx.rollback().await.expect("rollback");
 
     // 回滚后无残留（无物化行）
-    let leftover: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM isahl.\"zc_id_production_rr_storage\" WHERE code = 'MM-ROW'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("leftover");
+    let leftover: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM isahl.\"zc_id_file_rr_url\" WHERE code = 'MM-ROW'")
+            .fetch_one(&pool)
+            .await
+            .expect("leftover");
     assert_eq!(leftover.0, 0, "事务回滚后不得残留物化行");
 
     // 重新提交路径：独立事务内四维度累加后 REFRESH 读视图
@@ -224,7 +223,7 @@ async fn mv_inventory_multi_metric_materializes() {
     .await
     .expect("amt2");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_production_rr_storage"
+        r#"INSERT INTO isahl."zc_id_file_rr_url"
            (id, code, notice, ref_left, ref_right, qk_qty, qk_w_qty, qk_v_qty, qk_amount, created_by_id)
            VALUES (isahl.gen_next_zuid(), 'MM-ROW2', 'MM多计量2', 900003, 900004, $1, $2, $3, $4, 1)"#,
     )
@@ -269,7 +268,7 @@ async fn mv_inventory_multi_metric_materializes() {
 
     // 清理
     for sql in [
-        r#"DELETE FROM isahl."zc_id_production_rr_storage" WHERE code LIKE 'MM-ROW%'"#,
+        r#"DELETE FROM isahl."zc_id_file_rr_url" WHERE code LIKE 'MM-ROW%'"#,
         r#"DELETE FROM isahl."zc_id_scal-common" WHERE code LIKE 'MM-%'"#,
         r#"DELETE FROM isahl."zc_id_scal-amount" WHERE code LIKE 'MM-%'"#,
     ] {

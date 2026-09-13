@@ -54,6 +54,10 @@ fn all_seed_versions() -> Vec<SeedVersion> {
 /// 按 version_number 升序插入并自动维护 `fk_previous` 链。
 pub async fn seed_versions(pool: &PgPool) -> Result<usize, AliothError> {
     let mut inserted = 0usize;
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID（循环外解析一次）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "GEB", "↑_DA"))
+        .await
+        .map_err(AliothError::from)?;
 
     for v in all_seed_versions() {
         let exists: bool = sqlx::query_scalar(
@@ -75,9 +79,9 @@ pub async fn seed_versions(pool: &PgPool) -> Result<usize, AliothError> {
 
         // 新记录 fk_previous 为 NULL，成为新的链头。
         let new_id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO isahl.zc_id_version
-               (tpl_id, tk_version, reversion, created_by_id, created_at)
-               VALUES ($1, $2, $3, $4, $5)
+            r#"INSERT INTO isahl."zc_id_bom-file"
+               (tpl_id, tk_version, reversion, created_by_id, created_at, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id"#,
         )
         .bind(v.tpl_id)
@@ -85,6 +89,9 @@ pub async fn seed_versions(pool: &PgPool) -> Result<usize, AliothError> {
         .bind(v.revision)
         .bind(SEED_USER_ID)
         .bind(Utc::now())
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(pool)
         .await
         .map_err(AliothError::from)?;

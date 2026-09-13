@@ -70,6 +70,6 @@
 ## 验证
 
 ```bash
-bun .agents/skills/alioth-module/scripts/validate-block-assembly.ts Pre-Proc/{ns}/Sources/Modules/{name}/module.json
-bun .agents/skills/alioth-module/scripts/audit-assembly-prototype.ts Pre-Proc/Alioth/Prototypes/Modules/{name}/{name}-assembly-v{N}.html --module Pre-Proc/{ns}/Sources/Modules/{name}
+bun .agents/skills/alioth-module/scripts/validate-block-assembly.ts Pre-Proc/{ns}/Sources/Apps/Modules/{name}/module.json
+bun .agents/skills/alioth-module/scripts/audit-assembly-prototype.ts Pre-Proc/Alioth/Prototypes/Modules/{name}/{name}-assembly-v{N}.html --module Pre-Proc/{ns}/Sources/Apps/Modules/{name}
 ```

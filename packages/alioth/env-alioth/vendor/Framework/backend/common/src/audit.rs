@@ -3,11 +3,32 @@
 //! 供 Framework crate（approval 等）与 Gateway 共用。系统操作（SLA 自动驳回、
 //! 流程推进等）经此记录操作级审计，受审计框架监管。
 //!
-//! 写入表：`isahl_audit.audit_events`。插入非阻塞，错误仅记录不传播。
+//! 写入表：`isahl_audit.audit_events`。插入 await（毫秒级）完成；DB 错误仅
+//! telemetry 记录、不传播不阻断主链（fix-chat-ai-capability-gaps D2.4 明确口径）。
+//!
+//! **主体标识口径**（fix-ngac-audit-subject-identity）：`subject` 参数承载审计主体
+//! **唯一性标识** —— username 优先，缺失时回落 `user:{user_id}`。email 既非唯一也
+//! 可不存（种子/服务账号），**不得**作为唯一性标识。表列名 `user_email` 为历史遗留，
+//! 承载的即本标识字符串。
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+
+/// 审计主体**唯一性标识**（跨审计面唯一实现：NGAC 决策审计 + 血缘审计
+/// `data_change_logs`/`audit_outbox`）：username 非空取之；否则回落
+/// `user:{user_id}`（保留唯一性，禁止跨主体共享常量占位）。
+///
+/// email 既非唯一也可为空，**不得**作为唯一性标识（联系方式可经
+/// `user_id → isahl_auth.auth_users` 关联取得）。
+pub fn resolve_subject(username: &str, user_id: i64) -> String {
+    let username = username.trim();
+    if username.is_empty() {
+        format!("user:{user_id}")
+    } else {
+        username.to_string()
+    }
+}
 
 /// 简化的决策类型
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,18 +36,6 @@ pub enum Decision {
     Permit,
     Deny,
     NotApplicable,
-}
-
-/// 审计事件
-#[derive(Debug, Serialize)]
-pub struct AuditEvent {
-    #[serde(with = "crate::serde_zuid")]
-    pub user_id: i64,
-    pub user_email: String,
-    pub object_path: String,
-    pub operation: String,
-    pub decision: String,
-    pub created_at: chrono::DateTime<Utc>,
 }
 
 /// Audit error types
@@ -38,16 +47,22 @@ pub enum AuditError {
     ValidationError(String),
 }
 
-/// 记录审计事件 - 完整数据库插入
+/// 记录审计事件 - 完整数据库插入（带 metadata）
 ///
-/// 注意：审计插入是非阻塞的，错误只记录不传播
-pub async fn record_audit_event(
+/// 语义（fix-chat-ai-capability-gaps D2.4 明确）：插入 await 毫秒级完成、
+/// DB 错误仅 telemetry 记录不传播（返回 Ok），不阻断主链；Err 仅限输入校验。
+/// 既有 `record_audit_event` 委托本函数（metadata = {}），调用点零迁移。
+///
+/// `subject`：审计主体唯一性标识（username 优先，回落 `user:{user_id}`）——
+/// 见模块头「主体标识口径」。email 属联系方式，存在时应置于 `metadata`。
+pub async fn record_audit_event_with_metadata(
     pool: &PgPool,
     user_id: i64,
-    user_email: &str,
+    subject: &str,
     object_path: &str,
     operation: &str,
     decision: &Decision,
+    metadata: serde_json::Value,
 ) -> Result<(), AuditError> {
     // 验证输入
     if user_id <= 0 {
@@ -55,9 +70,9 @@ pub async fn record_audit_event(
             "user_id must be positive".to_string(),
         ));
     }
-    if user_email.is_empty() {
+    if subject.is_empty() {
         return Err(AuditError::ValidationError(
-            "user_email cannot be empty".to_string(),
+            "audit subject cannot be empty".to_string(),
         ));
     }
     if object_path.is_empty() {
@@ -92,22 +107,22 @@ pub async fn record_audit_event(
     )
     .bind(audit_id)
     .bind(user_id)
-    .bind(user_email)
+    .bind(subject)
     .bind(object_path)
     .bind(operation)
     .bind(decision_str)
     .bind(Vec::<String>::new()) // obligations_triggered (varchar[])
     .bind(Option::<String>::None) // ip_address (可选)
     .bind(Option::<String>::None) // user_agent (可选)
-    .bind(serde_json::json!({})) // metadata
+    .bind(metadata) // 业务 metadata（jsonb 既有列）
     .bind(Utc::now())
     .execute(pool)
     .await
     {
         Ok(_) => {
             crate::telemetry::info!(
-                "Audit event recorded: user={} decision={} resource={}",
-                user_email,
+                "Audit event recorded: subject={} decision={} resource={}",
+                subject,
                 decision_str,
                 object_path
             );
@@ -118,4 +133,50 @@ pub async fn record_audit_event(
     }
 
     Ok(())
+}
+
+/// 记录审计事件 - 完整数据库插入（metadata = {}，委托 with_metadata 变体）
+///
+/// 注意：审计插入 await 完成，错误只记录不传播。
+/// `subject`：审计主体唯一性标识（username 优先，回落 `user:{user_id}`）。
+pub async fn record_audit_event(
+    pool: &PgPool,
+    user_id: i64,
+    subject: &str,
+    object_path: &str,
+    operation: &str,
+    decision: &Decision,
+) -> Result<(), AuditError> {
+    record_audit_event_with_metadata(
+        pool,
+        user_id,
+        subject,
+        object_path,
+        operation,
+        decision,
+        serde_json::json!({}),
+    )
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subject_prefers_username() {
+        assert_eq!(resolve_subject("alice", 42), "alice");
+        assert_eq!(resolve_subject("  alice  ", 42), "alice", "两端空白应裁剪");
+    }
+
+    #[test]
+    fn subject_falls_back_to_unique_user_id() {
+        assert_eq!(resolve_subject("", 42), "user:42");
+        assert_eq!(resolve_subject("   ", 42), "user:42");
+        assert_ne!(
+            resolve_subject("", 42),
+            resolve_subject("", 43),
+            "回落值必须对每个主体唯一（禁止共享常量）"
+        );
+    }
 }

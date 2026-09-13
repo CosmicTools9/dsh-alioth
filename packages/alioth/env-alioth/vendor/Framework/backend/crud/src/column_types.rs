@@ -5,13 +5,13 @@
 //! 表结构变更后重启进程即可刷新缓存。
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use sqlx::{PgPool, Row};
 
 /// (schema, table) → (column → data_type) 进程级缓存
-type ColumnTypeMap = HashMap<String, String>;
-type ColumnTypeCache = HashMap<(String, String), ColumnTypeMap>;
+pub type ColumnTypeMap = HashMap<String, String>;
+type ColumnTypeCache = HashMap<(String, String), Arc<ColumnTypeMap>>;
 
 static COLUMN_TYPE_CACHE: LazyLock<Mutex<ColumnTypeCache>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -30,11 +30,12 @@ pub fn split_table_name(raw: &str) -> (String, String) {
     }
 }
 
-/// 解析表的列 → data_type 映射（带进程级缓存）。
+/// 解析表的列 → data_type 映射（带进程级缓存，返回 `Arc` 共享——调用方不再
+/// 逐次深拷贝整表映射，列表请求的 items/count 两段 SQL 复用同一份）。
 ///
 /// `table` 可为 `"isahl"."zc_id_contract"`、`isahl.zc_id_process` 或裸表名。
 /// 查询失败时返回空表（调用方按「未知类型」退化为历史行为，不报错）。
-pub async fn resolve(pool: &PgPool, table: &str) -> HashMap<String, String> {
+pub async fn resolve(pool: &PgPool, table: &str) -> Arc<ColumnTypeMap> {
     let (schema, table) = split_table_name(table);
     let key = (schema.clone(), table.clone());
     // 缓存命中时直接返回；guard 在块内释放，避免跨 await 持有非 Send 锁
@@ -43,7 +44,7 @@ pub async fn resolve(pool: &PgPool, table: &str) -> HashMap<String, String> {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if let Some(map) = cache.get(&key) {
-            return map.clone();
+            return Arc::clone(map);
         }
     }
     let rows = sqlx::query(
@@ -55,17 +56,18 @@ pub async fn resolve(pool: &PgPool, table: &str) -> HashMap<String, String> {
     .fetch_all(pool)
     .await
     .unwrap_or_default();
-    let map: HashMap<String, String> = rows
-        .iter()
-        .map(|r| {
-            let name: String = r.get("column_name");
-            let ty: String = r.get("data_type");
-            (name, ty)
-        })
-        .collect();
+    let map: Arc<ColumnTypeMap> = Arc::new(
+        rows.iter()
+            .map(|r| {
+                let name: String = r.get("column_name");
+                let ty: String = r.get("data_type");
+                (name, ty)
+            })
+            .collect(),
+    );
     column_type_cache()
         .lock()
         .unwrap_or_else(|p| p.into_inner())
-        .insert(key, map.clone());
+        .insert(key, Arc::clone(&map));
     map
 }

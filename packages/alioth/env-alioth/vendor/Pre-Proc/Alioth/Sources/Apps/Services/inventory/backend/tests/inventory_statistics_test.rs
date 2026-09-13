@@ -23,7 +23,16 @@ const TEST_PRODUCT: i64 = 9001;
 
 /// 建一个测试储元，返回 id
 async fn make_storage(pool: &sqlx::PgPool, tag: &str) -> i64 {
-    sqlx::query_scalar("INSERT INTO isahl.zc_id_storage (notice) VALUES ($1) RETURNING id")
+    // 储元夹具：家族 storage → 子 stor-container（=储元）→ 其叶中默认箱型 stor-ctn-box；
+    // 坐标 §6.12：TX/FJA/↓_GG（容器族既有写入）
+    sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_stor-ctn-box" (notice, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, '实现', '实例',
+                   (SELECT id FROM isahl.zc_id_scene    WHERE code = 'TX'   AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FJA'  AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_GG' AND deleted_at IS NULL LIMIT 1))
+           RETURNING id"#,
+    )
         .bind(format!("it-{}", tag))
         .fetch_one(pool)
         .await
@@ -312,12 +321,21 @@ async fn counting_head_crud_without_fk_production() {
     let uid: i64 = 1;
 
     // 真实引用目标：place（fk_place → zc_id_place）
-    let place_id: i64 =
-        sqlx::query_scalar("INSERT INTO isahl.zc_id_place (notice) VALUES ($1) RETURNING id")
-            .bind("it-counting-place")
-            .fetch_one(&pool)
+    // 坐标三元组（§6.12 声明即必须）：TX/FJA/↓_GG，值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
             .await
-            .expect("insert place");
+            .expect("resolve zc_id_place coords");
+    let place_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl.\"zc_id_stor-plc-stop\" (notice, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, '实现', '实例', $2, $3, $4) RETURNING id",
+    )
+    .bind("it-counting-place")
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
+    .fetch_one(&pool)
+    .await
+    .expect("insert place");
 
     // 事件头 INSERT 仅 fk_place/qk_date/created_by_id —— 无 fk_production 列
     let c = c_svc
@@ -631,9 +649,18 @@ async fn counting_matter_m2n_persisted() {
     let c_svc = CountingService::new(pool.clone());
     let uid: i64 = 1;
 
+    // 坐标三元组（§6.12 声明即必须）：JE/FRA/↓_EE，值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FRA", "↓_EE"))
+            .await
+            .expect("resolve zc_id_production coords");
     let prod_b: i64 =
-        sqlx::query_scalar("INSERT INTO isahl.zc_id_production (notice) VALUES ($1) RETURNING id")
+        // 物料制成品夹具 → 叶 zc_id_prod-material-made（production→prod-made→material 叶链）
+        sqlx::query_scalar("INSERT INTO isahl.\"zc_id_prod-material-made\" (notice, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, '实现', '实例', $2, $3, $4) RETURNING id")
             .bind("it-counting-matter-b")
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&pool)
             .await
             .expect("insert product B");

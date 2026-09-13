@@ -8,11 +8,12 @@ pub struct Database {
 impl Database {
     pub async fn new(config: &crate::Config) -> anyhow::Result<Self> {
         log::info!(
-            "Creating database pool: max_connections=30, database_url={}",
+            "Creating database pool: max_connections={}, database_url={}",
+            config.db_pool_max,
             mask_database_url(&config.database_url)
         );
         let pool = PgPoolOptions::new()
-            .max_connections(30)
+            .max_connections(config.db_pool_max)
             .acquire_timeout(std::time::Duration::from_secs(30))
             .connect(&config.database_url)
             .await?;

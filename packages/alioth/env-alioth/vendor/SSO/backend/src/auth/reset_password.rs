@@ -167,9 +167,9 @@ pub async fn confirm_reset(
     let response = HttpResponse::Ok().json(serde_json::json!({
         "message": "Password reset successful. Please log in again."
     }));
-    let response = crate::auth::jwt::clear_access_cookie(response);
+    let response = crate::auth::jwt::clear_access_cookie(response, None);
 
-    crate::auth::jwt::clear_refresh_cookie(response)
+    crate::auth::jwt::clear_refresh_cookie(response, None)
 }
 
 #[derive(serde::Deserialize)]

@@ -28,11 +28,19 @@ async fn insert_urgency(pool: &PgPool, notice: &str) -> i64 {
 
 /// 创建流程 (zc_id_process)
 async fn insert_flow(pool: &PgPool, name: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl.zc_id_process (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, $2, $3, $4) RETURNING id"#,
     )
     .bind(name)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -41,20 +49,35 @@ async fn insert_flow(pool: &PgPool, name: &str) -> i64 {
 /// 创建审批节点（桥链模型）：even 语义行 + oper 主体 + rro 在册锚 +
 /// 模板桥（rr_event）。返回 even id。
 async fn insert_event(pool: &PgPool, label: &str, flow_id: i64, lk_urgent: Option<i64>) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：库内既有行实证 JC/FTA/↑_NA；值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let even_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, lk_urgent, created_by_id)
-           VALUES ($1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, lk_urgent, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+                   VALUES ($1, $2, 1, 'flow-context', $3, $4, $5) RETURNING id"#,
     )
     .bind(label)
     .bind(lk_urgent)
+    .bind(even_dk_scene)
+    .bind(even_dk_factor)
+    .bind(even_dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let op_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, '实现', '范例', $2, $3, $4) RETURNING id"#,
     )
     .bind(label)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -83,11 +106,19 @@ async fn insert_event(pool: &PgPool, label: &str, flow_id: i64, lk_urgent: Optio
 
 /// 创建工程师
 async fn insert_employee(pool: &PgPool, name: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("ZJ", "LNC", "↓_EH"))
+        .await
+        .unwrap();
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_subj-employee" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural"
+           (notice, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, '实现', '范例', $2, $3, $4) RETURNING id"#,
     )
     .bind(name)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -133,12 +164,19 @@ async fn insert_instance(
     event_id: Option<i64>,
     fk_subject: Option<i64>,
 ) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let instance_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, created_by_id)
-           VALUES ($1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, 1, '实现', '实例', $3, $4, $5) RETURNING id"#,
     )
     .bind(notice)
     .bind(fk_subject)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -158,12 +196,19 @@ async fn insert_instance(
 
 /// 创建审批意见 (zc_id_deta-opinion) — fk_list → 事件 ID
 async fn insert_action(pool: &PgPool, notice: &str, fk_event: i64) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JC", "FTA", "↓_NC"))
+        .await
+        .unwrap();
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_deta-opinion" (notice, fk_list, created_by_id)
-           VALUES ($1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_deta-opinion" (notice, fk_list, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, 1, $3, $4, $5) RETURNING id"#,
     )
     .bind(notice)
     .bind(fk_event)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -378,10 +423,19 @@ async fn test_enriched_todo_scope_filters_by_assignee() {
         insert_instance(&pool, &format!("inst-p-{code}"), Some(ev_plain), Some(emp)).await;
 
     // 岗位链：operation ← 模板桥(ref_left=op, ref_right=模板) + rr_approve(op→position, position.fk_user=emp)
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let op_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_operation (notice, created_by_id) VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, $2, $3, $4) RETURNING id"#,
     )
     .bind(format!("op-{code}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -406,12 +460,20 @@ async fn test_enriched_todo_scope_filters_by_assignee() {
     .execute(&pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .unwrap();
     let pos_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_subj-position" (notice, fk_user, created_by_id)
-           VALUES ($1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_subj-position" (notice, fk_user, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, 1, $3, $4, $5) RETURNING id"#,
     )
     .bind(format!("pos-{code}"))
     .bind(emp)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

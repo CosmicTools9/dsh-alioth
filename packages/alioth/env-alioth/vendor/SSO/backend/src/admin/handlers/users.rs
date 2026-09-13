@@ -184,7 +184,7 @@ pub async fn create_user(
 
     match result {
         Ok((id,)) => HttpResponse::Created().json(serde_json::json!({
-            "id": id,
+            "id": id.to_string(),
             "name": body.name,
             "email": body.email,
             "display_name": body.display_name,
@@ -290,7 +290,7 @@ pub async fn update_user(
 
     match result {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
-            .json(serde_json::json!({"status": "updated", "user_id": user_id_param})),
+            .json(serde_json::json!({"status": "updated", "user_id": user_id_param.to_string()})),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
         Err(e) => {
             log::error!("update_user DB error: {}", e);
@@ -336,8 +336,9 @@ pub async fn disable_user(
             .bind(user_id_param)
             .execute(pool.get_ref())
             .await;
-            HttpResponse::Ok()
-                .json(serde_json::json!({"status": "disabled", "user_id": user_id_param}))
+            HttpResponse::Ok().json(
+                serde_json::json!({"status": "disabled", "user_id": user_id_param.to_string()}),
+            )
         }
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
         Err(e) => {
@@ -377,7 +378,7 @@ pub async fn enable_user(
 
     match result {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
-            .json(serde_json::json!({"status": "enabled", "user_id": user_id_param})),
+            .json(serde_json::json!({"status": "enabled", "user_id": user_id_param.to_string()})),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
         Err(e) => {
             log::error!("enable_user DB error: {}", e);
@@ -436,7 +437,7 @@ pub async fn admin_reset_password(
             .execute(pool.get_ref())
             .await;
             HttpResponse::Ok()
-                .json(serde_json::json!({"status": "password_reset", "user_id": user_id_param}))
+                .json(serde_json::json!({"status": "password_reset", "user_id": user_id_param.to_string()}))
         }
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
         Err(e) => {
@@ -476,7 +477,7 @@ pub async fn admin_unlock_account(
     match result {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(serde_json::json!({
             "status": "unlocked",
-            "user_id": target_id,
+            "user_id": target_id.to_string(),
         })),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
         Err(e) => {

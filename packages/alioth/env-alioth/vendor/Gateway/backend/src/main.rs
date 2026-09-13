@@ -131,7 +131,7 @@ async fn init_state() -> std::io::Result<(Config, sqlx::PgPool, Vec<u8>)> {
     Ok((config, pool, sso_jwt_public_key_bytes))
 }
 
-/// 初始化 Trigger Registry、log_event 分区与 isahl.mv_inventory 自愈
+/// 初始化 Trigger Registry、log_event 分区与 isahl.mv_inventory / mv_title_ownership 自愈
 async fn init_framework(state: &(Config, sqlx::PgPool, Vec<u8>)) -> std::io::Result<()> {
     // 初始化 Trigger Registry（Gateway 模式：禁止访问 isahl_meta，使用硬编码层次结构）
     if let Err(e) = trigger_registry::init::init_smart_registry_global(
@@ -154,6 +154,17 @@ async fn init_framework(state: &(Config, sqlx::PgPool, Vec<u8>)) -> std::io::Res
     if let Err(e) = trigger_registry::stock_materialization::ensure_mv_inventory(&state.1).await {
         return Err(std::io::Error::other(format!(
             "isahl.mv_inventory self-heal failed: {e}"
+        )));
+    }
+
+    // isahl.mv_title_ownership 物权属权物化视图自检自愈（add-title-ownership-mv）。
+    // 模式同上：幂等；基表 zc_id_stat-sto-voucher 缺失内部降级 warn + Ok；
+    // 其余失败 fail-fast 阻止启动（视图落地失败 = 配置错误）。
+    if let Err(e) =
+        trigger_registry::stock_materialization::ensure_mv_title_ownership(&state.1).await
+    {
+        return Err(std::io::Error::other(format!(
+            "isahl.mv_title_ownership self-heal failed: {e}"
         )));
     }
 
@@ -370,26 +381,28 @@ async fn main() -> std::io::Result<()> {
     // 失败 WARN 不阻断启动（与 Deploy start.sh 4b/4c 语义对齐）。
     alioth_gateway::seed::ensure_startup_seed_self_check(&state.1).await;
 
-    // WZ namespace 专属：yecai 业务 schema 自检自愈（invoice-sync 开票申请单 4 表 + receipt-sync 收款单 2 表）
-    // 幂等检查 yecai.* 业务表是否存在，缺失则自动执行内嵌 DDL 建表；
+    // WZ namespace 专属：wz_fssc 业务 schema（开票/收款/认领共享对接表） 自检自愈（invoice-sync 开票申请单 4 表 + receipt-sync 收款单 2 表）
+    // 幂等检查 wz_fssc.* 业务表是否存在，缺失则自动执行内嵌 DDL 建表；
     // 失败则 fail-fast 阻止启动（与 sync_namespace_schema 的框架 schema 同步点并列）。
     #[cfg(feature = "wz")]
     {
-        wz_service_invoice_sync::db_init::ensure_yecai_schema(&state.1)
-            .await
-            .map_err(|e| std::io::Error::other(format!("WZ yecai schema self-heal failed: {e}")))?;
-        wz_service_receipt_sync::db_init::ensure_yecai_receipt_schema(&state.1)
+        wz_service_invoice_sync::db_init::ensure_invoice_schema(&state.1)
             .await
             .map_err(|e| {
-                std::io::Error::other(format!("WZ yecai receipt schema self-heal failed: {e}"))
+                std::io::Error::other(format!("WZ wz_fssc invoice schema self-heal failed: {e}"))
             })?;
-        wz_service_accounts_receivable::db_init::ensure_yecai_claim_schema(&state.1)
+        wz_service_receipt_sync::db_init::ensure_receipt_schema(&state.1)
             .await
             .map_err(|e| {
-                std::io::Error::other(format!("WZ yecai claim schema self-heal failed: {e}"))
+                std::io::Error::other(format!("WZ wz_fssc receipt schema self-heal failed: {e}"))
+            })?;
+        wz_service_accounts_receivable::db_init::ensure_claim_schema(&state.1)
+            .await
+            .map_err(|e| {
+                std::io::Error::other(format!("WZ wz_fssc claim schema self-heal failed: {e}"))
             })?;
         common::telemetry::info!(
-            "WZ yecai schema self-heal passed (invoice-sync + receipt-sync tables ready)"
+            "WZ wz_fssc schema self-heal passed (invoice-sync + receipt-sync + claim tables ready)"
         );
     }
 
@@ -454,6 +467,9 @@ async fn main() -> std::io::Result<()> {
     // 审批自动触发（fix-flow-designer-runtime-chain 遗留项①）：业务实体
     // （三域叶表行）创建 → EntityCreated 事件 → 绑定范畴流程自动发起
     approval::handlers::auto_initiate::subscribe_auto_initiate(event_bus.clone(), state.1.clone());
+    // 任务完成推进流程（add-avic-generic-task-execution 5.2）：orchestration 任务
+    // transition done → TaskCompleted 事件 → 绑定节点待办等效审批通过并推进
+    approval::task_link::subscribe_task_completed(event_bus.clone(), state.1.clone());
     // SLA 超时自动驳回（D6：驳回复用 reject 链路并发布 ApprovalCompleted）
     // D7 升级通知（fix-approval-engine-semantics）：注入消息服务——超时驳回后
     // 向 admin UA 成员投递升级通知；失败仅 warn 不阻断驳回主流程。
@@ -518,6 +534,12 @@ async fn main() -> std::io::Result<()> {
                 wz_service_transport_operations::handlers::demurrage::DemurrageHandler::new(
                     state.1.clone(),
                 ),
+            ))
+            .await;
+        // 到期协定落地（contract；add-agreement-effective-period-executor）
+        scheduler
+            .register(std::sync::Arc::new(
+                wz_service_contract::handlers::amendment::AgreementDueHandler::new(state.1.clone()),
             ))
             .await;
     }
@@ -759,6 +781,10 @@ async fn main() -> std::io::Result<()> {
     // data_change_logs，崩溃/失败由 outbox 持久行重放兜底）
     let _audit_worker_shutdown = crud::audit_outbox::spawn_worker(state.1.clone());
 
+    // G4 周期后台清理（内嵌 SSO 形态；独立 SSO 进程在 gateway_sso::build_server 内自启）
+    #[cfg(feature = "sso")]
+    gateway_sso::housekeeping::spawn(state.1.clone());
+
     // OpenAPI 计量/配额/限流中间件：在 HttpServer::new 前构造一次（跨 worker 共享
     // rate_buckets 与订阅缓存；计量 worker 仅 spawn 一次），闭包内 clone。
     let openapi_metering =
@@ -768,6 +794,49 @@ async fn main() -> std::io::Result<()> {
     // 再命中幂等快照直接返回（重放仍计入用量与配额，对齐 idempotency.rs 文档）。
     let openapi_idempotency =
         alioth_gateway::openapi::idempotency::IdempotencyMiddleware::new(state.1.clone());
+
+    // 限流中间件：在 HttpServer::new 前构造一次、闭包内按 worker clone——桶表由
+    // 内部 Arc 跨 worker 共享，`.mise.toml` / SECURITY_SPEC §4 声明的额度即实际生效
+    // 额度（此前每 worker 各持一份 → 实际额度按 worker 数放大）。
+    let rl_register = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/register", "/api/auth/register"],
+        5.0,
+        5.0 / 60.0,
+    );
+    let rl_login = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/login", "/api/auth/login"],
+        10.0,
+        10.0 / 60.0,
+    );
+    let rl_identity_submit = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/identity/submit", "/api/auth/identity/submit"],
+        3.0,
+        3.0 / 3600.0,
+    );
+    let rl_identity_verify = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/identity/verify", "/api/auth/identity/verify"],
+        10.0,
+        10.0 / 3600.0,
+    );
+    let rl_email_code = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/email/send-code", "/api/auth/email/send-code"],
+        3.0,
+        3.0 / 3600.0,
+    );
+    let rl_phone_code = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/phone/send-code", "/api/auth/phone/send-code"],
+        3.0,
+        3.0 / 3600.0,
+    );
+    let rl_oauth_login = common::RateLimitMiddleware::per_ip_any(
+        &["/auth/oauth/login", "/api/auth/oauth/login"],
+        20.0,
+        20.0 / 3600.0,
+    );
+    // 文件上传防滥用（SECURITY_SPEC §4：20 req/min/user；JWT sub 为 key，
+    // 无 token 回退 IP——per_user 变体见 common::middleware）
+    let rl_files_upload =
+        common::RateLimitMiddleware::per_user_any(&["/api/files"], 20.0, 20.0 / 60.0);
 
     // 构建 HTTP 服务器
     let server = HttpServer::new(move || {
@@ -786,7 +855,7 @@ async fn main() -> std::io::Result<()> {
                     .add(("Permissions-Policy", "geolocation=(), microphone=(), camera=()"))
             )
             .wrap(cors)
-            .wrap(Logger::default())
+            .wrap(Logger::default().exclude("/health").exclude("/metrics"))
             .wrap(LocaleMiddleware::new())
             .app_data(web::Data::new(state.1.clone()))
             .app_data(web::Data::new(state.0.clone()))
@@ -819,33 +888,18 @@ async fn main() -> std::io::Result<()> {
         #[cfg(feature = "preproc-proxy")]
         let http_client = web::Data::new(awc::Client::new());
         // ── 公共中间件 — 限流、健康检查 ──
+        // 限流实例来自闭包外（跨 worker 共享桶表）；Compress 为最外层 app 级 wrap，
+        // 使全站响应（含 PEP 401/403 与限流 429）统一走 Accept-Encoding 内容协商压缩。
         let app = app
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/register", "/api/auth/register"
-            ], 5.0, 5.0 / 60.0))
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/login", "/api/auth/login"
-            ], 10.0, 10.0 / 60.0))
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/identity/submit", "/api/auth/identity/submit"
-            ], 3.0, 3.0 / 3600.0))
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/identity/verify", "/api/auth/identity/verify"
-            ], 10.0, 10.0 / 3600.0))
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/email/send-code", "/api/auth/email/send-code"
-            ], 3.0, 3.0 / 3600.0))
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/phone/send-code", "/api/auth/phone/send-code"
-            ], 3.0, 3.0 / 3600.0))
-            .wrap(common::RateLimitMiddleware::per_ip_any(&[
-                "/auth/oauth/login", "/api/auth/oauth/login"
-            ], 20.0, 20.0 / 3600.0))
-            // 文件上传防滥用（SECURITY_SPEC §4：20 req/min/user；JWT sub 为 key，
-            // 无 token 回退 IP——per_user 变体见 common::middleware）
-            .wrap(common::RateLimitMiddleware::per_user_any(&[
-                "/api/files"
-            ], 20.0, 20.0 / 60.0))
+            .wrap(rl_register.clone())
+            .wrap(rl_login.clone())
+            .wrap(rl_identity_submit.clone())
+            .wrap(rl_identity_verify.clone())
+            .wrap(rl_email_code.clone())
+            .wrap(rl_phone_code.clone())
+            .wrap(rl_oauth_login.clone())
+            .wrap(rl_files_upload.clone())
+            .wrap(actix_web::middleware::Compress::default())
             // 健康检查 (公开)
             .route("/health", web::get().to(health_check))
             // Prometheus metrics endpoint (公开)
@@ -865,16 +919,8 @@ async fn main() -> std::io::Result<()> {
             // Standalone 认证服务 — ES256 JWT + isahl_auth.standalone_users
             .configure(configure_standalone_auth);
 
-        // ── 公共路由 — 应用发现 ──
-        let app = app
-            // /api/apps 必须在所有 web::scope("/api") 之前注册，
-            // 否则 scope 的 prefix 匹配会先捕获并返回 404
-            .route("/api/apps", web::get().to(alioth_gateway::apps::list_apps))
-            // /api/apps/routes 必须在所有 web::scope("/api") 之前注册，
-            // 否则 scope 的 prefix 匹配会先捕获并返回 404
-            .route("/api/apps/routes", web::get().to(alioth_gateway::apps::get_active_routes))
-            // /api/apps/overrides 公开访问，返回 app 能力覆盖配置
-            .route("/api/apps/overrides", web::get().to(alioth_gateway::apps::get_app_overrides));
+        // ── 应用发现路由已收编受保护 /api scope（add-app-visibility-ngac-isolation D3：
+        // 认证化 + PDP fail-closed 按人过滤；见 scope 内 apps::configure_routes） ──
 
         // Pre-Proc 发现数据（standalone /auth/me 依赖；必须放在 web::scope("/api")
         // 之前，否则被 SSO /api scope prefix 捕获）。消费方编译时才注册。
@@ -951,6 +997,13 @@ async fn main() -> std::io::Result<()> {
             } else {
                 reg
             };
+            // SE：研发预算管理资源（projects/budgets/settlements/postings/milestones 等，
+            // 3 段服务路径 parts[2] 实体解析；OA 由 ngac_seed 预置）
+            let reg = if ns.eq_ignore_ascii_case("SE") {
+                reg.with_se_defaults()
+            } else {
+                reg
+            };
             // Cosmic-Tools：ct-git 版本控制资源（verctrl/ver_branch 恒定资源，
             // string_id 集合判定，OA 由 ngac_seed 预置）
             if ns.eq_ignore_ascii_case("Cosmic-Tools") {
@@ -974,11 +1027,18 @@ async fn main() -> std::io::Result<()> {
                         .with_token_binding(jwt_issuer.clone(), jwt_issuer.clone())
                         .with_public_noauth_paths([
                             "/api/auth".to_string(),
-                            "/api/ngac".to_string(),
+                            // fix-sso-noauth-removal：/api/ngac 不再豁免（与 SSO 侧
+                            // RequireAuth 同语义，防注册序变化引入裸奔）
                             // FSSC 外部回调无 JWT，服务侧以 X-FSSC-Callback-Key 共享密钥补偿校验（design D11）
                             // 仅放行两个回调子路径：GET /fssc-callbacks（回调历史查询）需 JWT+NGAC
                             "/api/service/accounts-payable/fssc-callbacks/audit".to_string(),
                             "/api/service/accounts-payable/fssc-callbacks/ocr".to_string(),
+                            // 承运门户回传（契约 §服务身份）：门户以 X-Service-Key 共享密钥
+                            // 转调（无 JWT），服务侧 verify_service_key fail-closed 补偿校验
+                            "/api/service/transport-operations/carrier-portal".to_string(),
+                            // 门户转调报价（矩阵 #4 单一实现收口）：门户以 X-Service-Key 转调
+                            // transport-dispatch 报价逻辑（服务侧 verify_service_key fail-closed）
+                            "/api/service/transport-dispatch/carrier-portal".to_string(),
                         ].into())
                     )
                     .wrap(MetricsMiddleware)
@@ -993,6 +1053,9 @@ async fn main() -> std::io::Result<()> {
                     .wrap(openapi_idempotency.clone())
                     // Framework AI 聊天服务
                     .configure(chat_sessions::configure_routes)
+                    // 应用发现（add-app-visibility-ngac-isolation D3）：认证化 +
+                    // PDP resource_type='app' fail-closed 按人过滤
+                    .configure(alioth_gateway::apps::configure_routes)
                     // 通用法律本体检索（EmpAgent 上下文增强，所有 namespace）
                     .configure(legal_search::configure_routes)
                     .configure(standard_search::configure_routes)

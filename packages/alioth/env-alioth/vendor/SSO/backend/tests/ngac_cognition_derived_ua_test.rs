@@ -11,9 +11,9 @@
 
 mod common;
 
+use ::common::ngac_org::ensure_cognition_uas;
 use actix_web::{test, web, App};
 use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Claims};
-use ::common::ngac_org::ensure_cognition_uas;
 use gateway_sso::auth::AuthState;
 use gateway_sso::ngac::pip::PostgresPip;
 use gateway_sso::ngac::Pip;
@@ -85,22 +85,36 @@ async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     .execute(pool)
     .await;
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve dk coords");
     let employee_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_empl-natural\" (id, notice, code, fk_user, created_by_id)
-         VALUES (isahl.gen_next_zuid(), '认知测试雇员', $1, $2, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_empl-natural\" (id, notice, code, fk_user, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '认知测试雇员', $1, $2, 1, $3, $4, $5) RETURNING id",
     )
     .bind(format!("COG-EMP-{}", suffix))
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert employee");
 
     let position_code = format!("COG-POS-{}", suffix);
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve dk coords");
     let position_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id)
-         VALUES (isahl.gen_next_zuid(), '认知测试岗位', $1, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '认知测试岗位', $1, 1, $2, $3, $4) RETURNING id",
     )
     .bind(&position_code)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert position");

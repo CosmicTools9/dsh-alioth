@@ -54,30 +54,61 @@ pub async fn submit_identity(
     // Create entity instance based on verification type
     let instance_id = match body.verification_type.as_str() {
         "personal" => {
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
+            // 本分支仅一处 INSERT，就地解析。
+            let (dk_scene, dk_factor, dk_function) =
+                match ontology_binding::resolve(pool.get_ref(), ("TX", "FJA", "↓_GG")).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("Failed to resolve dk coords: {}", e);
+                        return HttpResponse::InternalServerError().json(AuthError {
+                            error: "Failed to resolve dk coords".to_string(),
+                        });
+                    }
+                };
             sqlx::query_scalar::<_, i64>(
                 r#"
                 INSERT INTO isahl."zc_id_empl-natural" (
-                    notice, code, fk_user, created_at, updated_at
-                ) VALUES ($1, $2, $3, NOW(), NOW())
+                    notice, code, fk_user, created_at, updated_at,
+                    dk_scene, dk_factor, dk_function
+                ) VALUES ($1, $2, $3, NOW(), NOW(), $4, $5, $6)
                 RETURNING id
                 "#,
             )
             .bind(&body.real_name)
             .bind(&body.id_card_number)
             .bind(user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(pool.get_ref())
             .await
         }
         "enterprise" => {
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                match ontology_binding::resolve(pool.get_ref(), ("TX", "FJA", "↓_GG")).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        log::error!("Failed to resolve dk coords: {}", e);
+                        return HttpResponse::InternalServerError().json(AuthError {
+                            error: "Failed to resolve dk coords".to_string(),
+                        });
+                    }
+                };
             sqlx::query_scalar::<_, i64>(
                 r#"
                 INSERT INTO isahl."zc_id_orga-non-banking-legal" (
-                    notice, created_at, updated_at
-                ) VALUES ($1, NOW(), NOW())
+                    notice, created_at, updated_at,
+                    dk_scene, dk_factor, dk_function
+                ) VALUES ($1, NOW(), NOW(), $2, $3, $4)
                 RETURNING id
                 "#,
             )
             .bind(&body.enterprise_name)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(pool.get_ref())
             .await
         }
@@ -154,7 +185,7 @@ pub async fn submit_identity(
 
             HttpResponse::Ok().json(serde_json::json!({
                 "status": "submitted",
-                "instance_id": instance_id,
+                "instance_id": instance_id.to_string(),
             }))
         }
         Err(e) => {
@@ -331,7 +362,7 @@ pub async fn verify_identity(
                 INSERT INTO isahl."zc_id_appr-user_verify" (
                     created_by_id, updated_by_id, notice, code, comments,
                     fk_process, tpl_id, qk_sla, _f_, _t_, created_at, updated_at
-                ) VALUES ($1, $1, $2, 'user-verify', $3, $4, $5, $6, '实现', '实例', NOW(), NOW())
+                , dk_scene, dk_factor, dk_function) VALUES ($1, $1, $2, 'user-verify', $3, $4, $5, $6, '实现', '实例', NOW(), NOW(), (SELECT id FROM isahl.zc_id_scene WHERE code = 'JC' AND deleted_at IS NULL), (SELECT id FROM isahl.zc_id_factor WHERE code = 'FTA' AND deleted_at IS NULL), (SELECT id FROM isahl.zc_id_function WHERE code = '↑_NA' AND deleted_at IS NULL))
                 RETURNING id
                 "#,
             )
@@ -369,7 +400,7 @@ pub async fn verify_identity(
 
         HttpResponse::Ok().json(serde_json::json!({
             "status": "verified",
-            "approval_event_id": approval_event_id,
+            "approval_event_id": approval_event_id.to_string(),
         }))
     } else {
         // 身份验证失败：回退到 pending 状态，允许用户重试
@@ -480,7 +511,7 @@ async fn verify_identity_external(url: &str, pool: &PgPool, verification_id: i64
 
     let payload = match row {
         Ok(Some(r)) => serde_json::json!({
-            "verification_id": verification_id,
+            "verification_id": verification_id.to_string(),
             "verification_type": r.0,
             "real_name": r.1,
             "id_card_number": r.2,
@@ -529,18 +560,8 @@ async fn verify_identity_external(url: &str, pool: &PgPool, verification_id: i64
 }
 
 async fn extract_user_id(req: &HttpRequest, auth_state: &AuthState) -> Result<i64, &'static str> {
-    let token = req
-        .cookie("access_token")
-        .map(|c| c.value().to_string())
-        .or_else(|| {
-            req.headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|auth| auth.strip_prefix("Bearer "))
-                .map(|s| s.to_string())
-        });
-
-    let token = token.ok_or("missing token")?;
+    // 令牌提取走共享实现（scoped cookie → Bearer → 环境 cookie；见 jwt::extract_token）
+    let token = jwt::extract_token(req).ok_or("missing token")?;
 
     // 验签解码（ES256 + exp/iss/aud 校验）后从 sub 提取用户 id（add-register-auto-approval）：
     // 历史实现把原始 JWT 字符串绑定到 `u.id::text = $1` 恒不匹配，导致 /auth/identity/* 全部 401。

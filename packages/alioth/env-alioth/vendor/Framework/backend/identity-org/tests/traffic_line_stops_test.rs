@@ -57,23 +57,38 @@ struct Fixture {
 /// 建测试线路 + 3 个场所 + 查类目（ST-STOP / ST-LOAD，后者种子增补后存在）
 async fn setup(pool: &PgPool) -> Fixture {
     let base = tid(8_900_000_000_000);
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↑_GG"))
+        .await
+        .expect("resolve traffic-line coords");
     let line: i64 = sqlx::query_scalar(
-        r#"INSERT INTO "isahl"."zc_id_stor-traffic_line" (code, notice, created_by_id)
-           VALUES ($1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO "isahl"."zc_id_stor-traffic_line" (code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, 1, $3, $4, $5) RETURNING id"#,
     )
     .bind(format!("TL-T{basex}", basex = base % 1_000_000))
     .bind("桥接测试线路")
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert line");
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (place_dk_scene, place_dk_factor, place_dk_function) =
+        ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve place coords");
     let mut places = [0i64; 3];
     for (i, p) in places.iter_mut().enumerate() {
         *p = sqlx::query_scalar(
-            r#"INSERT INTO "isahl"."zc_id_place" (code, notice, created_by_id)
-               VALUES ($1, $2, 1) RETURNING id"#,
+            r#"INSERT INTO "isahl"."zc_id_stor-plc-division" (code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, 1, $3, $4, $5) RETURNING id"#,
         )
         .bind(format!("PLC-T{}-{}", base % 1_000_000, i))
         .bind(format!("桥接测试场所{i}"))
+        .bind(place_dk_scene)
+        .bind(place_dk_factor)
+        .bind(place_dk_function)
         .fetch_one(pool)
         .await
         .expect("insert place");

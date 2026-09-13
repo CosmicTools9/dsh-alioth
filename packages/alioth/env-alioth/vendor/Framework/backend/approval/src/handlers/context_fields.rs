@@ -1,7 +1,7 @@
 //! 上下文字段端点 — `GET /approval-flows/context-fields?table=<leaf>`
 //!
 //! 流程设计器节点行为编制（判断条件、执行分支）的字段来源：
-//! 流程创建时已绑定输入范畴（fk_context → task/event/approve 三域叶表），
+//! 流程创建时已绑定输入范畴（rr_context 桥 → task/event/approve 三域叶表），
 //! 节点是 operation，不存在手工增删字段——本端点按绑定叶表返回自动识别的
 //! 有意义业务字段。
 //!

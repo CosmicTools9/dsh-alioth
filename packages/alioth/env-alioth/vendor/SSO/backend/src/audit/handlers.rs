@@ -111,7 +111,8 @@ pub async fn handle_audit_event(
     }
 
     // 通过 EPP EventHandler 记录访问事件（audit_events.id 由序列默认分配）。
-    // user_email 在 AuditEventRecord 中不可用，使用占位值满足 NOT NULL 约束。
+    // 主体标识口径（fix-ngac-audit-subject-identity）：AuditEventRecord 不含
+    // username/email，用唯一回落 `user:{id}`（原共享常量会把全部用户折叠成同一主体）。
     let epp_decision = match record.event_type {
         AuditEventType::AccessAllowed => crate::ngac::pdp::Decision::Permit,
         AuditEventType::AccessDenied => crate::ngac::pdp::Decision::Deny,
@@ -119,7 +120,7 @@ pub async fn handle_audit_event(
     };
     let access_event = crate::epp::AccessEvent::new(
         record.subject_id,
-        Some("audit@local".to_string()),
+        Some(format!("user:{}", record.subject_id)),
         record.object_type.clone(),
         record.operation.clone(),
         epp_decision,
@@ -163,8 +164,17 @@ pub async fn ingest_event(
     state: web::Data<AuthState>,
     body: web::Json<IngestAuditRequest>,
 ) -> HttpResponse {
-    if let Err(resp) = extract_claims(&req, &state).await {
-        return resp;
+    let claims = match extract_claims(&req, &state).await {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    // tighten-pdp-decision-surface C：审计摄入仅接受服务令牌（受信通道）——
+    // 自然人令牌拒绝（防任意登录用户伪造审计事件；审计读面 /api/audit 有
+    // NgacPep 授权，摄入面门槛与之对齐）。
+    if !(claims.sub.starts_with("client:") || claims.svc_user_id > 0) {
+        return HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "AUDIT_INGEST_FORBIDDEN"
+        }));
     }
     let b = body.into_inner();
     let event_type = AuditEventType::from_ngac_event(
@@ -184,7 +194,9 @@ pub async fn ingest_event(
         metadata: b.metadata,
     };
     match handle_audit_event(record, pool.get_ref()).await {
-        Ok(event_id) => HttpResponse::Created().json(serde_json::json!({ "id": event_id })),
+        Ok(event_id) => {
+            HttpResponse::Created().json(serde_json::json!({ "id": event_id.to_string() }))
+        }
         Err(e) => {
             HttpResponse::InternalServerError().json(serde_json::json!({ "error": e.to_string() }))
         }

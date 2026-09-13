@@ -38,52 +38,62 @@ use sqlx::{AssertSqlSafe, PgPool};
 #[serde(rename_all = "camelCase")]
 pub struct DepartmentDto {
     #[serde(with = "common::serde_zuid")]
-    id: i64,
+    pub(crate) id: i64,
     /// notice → name
-    name: String,
-    code: String,
-    comments: String,
+    pub(crate) name: String,
+    pub(crate) code: String,
+    pub(crate) comments: String,
     /// 父部门 id（org_rr_subordinate 桥派生；根部门为 null）
     #[serde(with = "common::serde_zuid::opt")]
-    parent_id: Option<i64>,
+    pub(crate) parent_id: Option<i64>,
 }
 
 /// POST /departments 请求体
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDepartmentRequest {
-    name: String,
+    pub(crate) name: String,
     #[serde(default)]
-    code: String,
+    pub(crate) code: String,
     #[serde(default)]
-    comments: String,
+    pub(crate) comments: String,
     /// 父部门 id（org_rr_subordinate 桥 ref_left；可空=根部门）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
-    parent_id: Option<i64>,
+    pub(crate) parent_id: Option<i64>,
     /// 组织叶表选择：department（默认）/ non_banking_legal；legal/bank-commercial → 400
     #[serde(default)]
-    leaf: Option<String>,
+    pub(crate) leaf: Option<String>,
 }
 
 /// PUT /departments/{id} 请求体
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateDepartmentRequest {
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default)]
-    code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(default)]
-    comments: Option<String>,
+    pub(crate) comments: Option<String>,
     /// 父部门调整（None=不变；显式 null 语义未启用）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
-    parent_id: Option<i64>,
+    pub(crate) parent_id: Option<i64>,
 }
 
 // ═══════════════════════════════════════════════════════════
 // DTO — 岗位
 // ═══════════════════════════════════════════════════════════
+
+/// 岗位任职员工项（任职桥 `zc_id_subj-post_rr_employee` 活行）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PositionEmployeeDto {
+    #[serde(with = "common::serde_zuid")]
+    id: i64,
+    /// 任职主体名称（`zc_id_subjects` 根 → `zc_id_contacts` 兜底；两树皆无 → null）
+    name: Option<String>,
+}
 
 /// 岗位列表/详情 DTO（camelCase，L2 语义）
 #[derive(Debug, Serialize)]
@@ -109,60 +119,66 @@ pub struct PositionDto {
     /// 下辖组织 ID 列表（post_rr_subordinate：ref_left=岗位 / ref_right=下辖组织）
     #[serde(with = "common::serde_zuid::seq")]
     sub_org_ids: Vec<i64>,
+    /// 任职员工（post_rr_employee：ref_left=岗位 / ref_right=任职主体）
+    ///
+    /// 与 `user_id`（主表 `fk_user` 标量任职人，岗位表单从不写）**不同源**：
+    /// 「添加任职员工」写端即本桥，岗位管理页展示 MUST 取本字段
+    /// （曾因读 `fk_user` 导致绑定成功却恒不展示）。
+    employees: Vec<PositionEmployeeDto>,
 }
 
 /// POST /positions 请求体
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePositionRequest {
-    name: String,
+    pub(crate) name: String,
     #[serde(default)]
-    code: String,
+    pub(crate) code: String,
     #[serde(default)]
-    comments: String,
-    #[serde(default)]
-    #[serde(with = "common::serde_zuid::opt")]
-    user_id: Option<i64>,
+    pub(crate) comments: String,
     #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
-    parent_id: Option<i64>,
+    pub(crate) user_id: Option<i64>,
     #[serde(default)]
-    category: String,
+    #[serde(with = "common::serde_zuid::opt")]
+    pub(crate) parent_id: Option<i64>,
+    #[serde(default)]
+    pub(crate) category: String,
     /// 所属组织 ID 列表（全量替换，org_rr_position）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::seq")]
-    org_ids: Vec<i64>,
+    pub(crate) org_ids: Vec<i64>,
     /// 下辖组织 ID 列表（全量替换，post_rr_subordinate）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::seq")]
-    sub_org_ids: Vec<i64>,
+    pub(crate) sub_org_ids: Vec<i64>,
 }
 
 /// PUT /positions/{id} 请求体
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePositionRequest {
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default)]
-    code: Option<String>,
+    pub(crate) code: Option<String>,
     #[serde(default)]
-    comments: Option<String>,
-    #[serde(default)]
-    #[serde(with = "common::serde_zuid::opt")]
-    user_id: Option<i64>,
+    pub(crate) comments: Option<String>,
     #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
-    parent_id: Option<i64>,
+    pub(crate) user_id: Option<i64>,
     #[serde(default)]
-    category: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
+    pub(crate) parent_id: Option<i64>,
+    #[serde(default)]
+    pub(crate) category: Option<String>,
     /// 所属组织 ID 列表（全量替换；缺省=不变更）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::seq")]
-    org_ids: Vec<i64>,
+    pub(crate) org_ids: Vec<i64>,
     /// 下辖组织 ID 列表（全量替换；缺省=不变更）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::seq")]
-    sub_org_ids: Vec<i64>,
+    pub(crate) sub_org_ids: Vec<i64>,
 }
 
 /// 岗位编制范例（模板）DTO
@@ -176,14 +192,15 @@ pub struct PositionTemplateDto {
     code: String,
     /// 岗位类别（ck_category 基表行 code）
     category: String,
-    /// 编制元数据 JSON 文档（comments 列原样：`{"max_heads":…,"note":…}`）
+    /// 编制说明（comments 列自由文本原样；编制上限另载 projection，见 [`headcount_carriers`]）
     comments: String,
 }
 
 /// POST /positions/templates 请求体 — 建岗位编制范例（D-2a 设计态）
 ///
-/// 编制元数据（人数上限/任职说明）以 JSON 文档承载于 comments 列——
-/// 文档化契约 `{"max_heads": <i64|null>, "note": "<str|null>"}`（缺省字段省略）。
+/// 编制元数据落既有结构（零 DDL；comments 回归自由文本）：
+/// 说明 `note` → comments 列自由文本；上限 `max_heads` → `projection` 文本载荷列
+/// （见 [`headcount_carriers`]）。缺省键不落列（NULL = 无说明/不设限）。
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePositionTemplateRequest {
@@ -196,10 +213,10 @@ pub struct CreatePositionTemplateRequest {
     /// 必填：岗位类别 code——须为 `zc_id_category` 基表行（B-1 派生同源约束；
     /// 子族字典如 zc_id_cate-position 不派生 UA，不用于范例）
     category: String,
-    /// 编制人数上限（可空；并入 comments JSON 文档）
+    /// 编制人数上限（可空；落 projection 文本载荷，实例化时回解析执行）
     #[serde(default)]
     max_heads: Option<i64>,
-    /// 编制说明/任职规则（可空；并入 comments JSON 文档）
+    /// 编制说明/任职规则（可空；落 comments 自由文本）
     #[serde(default)]
     note: Option<String>,
 }
@@ -213,12 +230,12 @@ pub struct CreatePositionTemplateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct DeptPositionRelationDto {
     #[serde(with = "common::serde_zuid")]
-    id: i64,
+    pub(crate) id: i64,
     #[serde(with = "common::serde_zuid")]
-    department_id: i64,
+    pub(crate) department_id: i64,
     #[serde(with = "common::serde_zuid")]
-    position_id: i64,
-    position_name: String,
+    pub(crate) position_id: i64,
+    pub(crate) position_name: String,
 }
 
 /// 部门岗位列表项（GET /departments/{id}/positions）：完整岗位字段 + 关系行 id
@@ -271,7 +288,7 @@ pub struct PaginationQuery {
 // ═══════════════════════════════════════════════════════════
 
 /// name 非空校验（trim 后为空 → 400）
-fn validate_name(name: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_name(name: &str) -> Result<(), ApiError> {
     if name.trim().is_empty() {
         return Err(ApiError::BadRequest("name 不能为空".into()));
     }
@@ -279,7 +296,7 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
 }
 
 /// 部门存在性校验（未删除 → 404）
-async fn ensure_department_exists(pool: &PgPool, dept_id: i64) -> Result<(), ApiError> {
+pub(crate) async fn ensure_department_exists(pool: &PgPool, dept_id: i64) -> Result<(), ApiError> {
     let exists: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM isahl.\"zc_id_orga-department\" WHERE id = $1 AND deleted_at IS NULL",
     )
@@ -296,163 +313,11 @@ async fn ensure_department_exists(pool: &PgPool, dept_id: i64) -> Result<(), Api
     Ok(())
 }
 
-/// 真实岗位存在性校验（未删除 → 404）。
-/// D-2a 双态判别：`_f_ IS NULL` = 真实岗位（legacy 直建行 + 实例行）；
-/// 编制范例行（`_f_='设计' AND _t_='范例'`）不视为可引用岗位——
-/// 不得作上级岗位/部门分配/任职挂接目标（防设计态行污染实现态关系）。
-async fn ensure_position_exists(pool: &PgPool, position_id: i64) -> Result<(), ApiError> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM isahl.\"zc_id_subj-position\"
-         WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
-    )
-    .bind(position_id)
-    .fetch_one(pool)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    if !exists {
-        return Err(ApiError::NotFound(format!(
-            "Position not found: {}",
-            position_id
-        )));
-    }
-    Ok(())
-}
-
-/// 岗位任职人（系统用户）存在性校验——fk_user 的 id 空间 = isahl_auth.auth_users，
-/// 与存储列、展示 JOIN 同源（change: align-org-position-employment-chains）。
-async fn ensure_user_exists(pool: &PgPool, user_id: i64) -> Result<(), ApiError> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT COUNT(*) > 0 FROM isahl_auth.auth_users WHERE id = $1")
-            .bind(user_id)
-            .fetch_one(pool)
-            .await
-            .map_err(ApiError::from_sqlx)?;
-    if !exists {
-        return Err(ApiError::NotFound(format!("任职人用户不存在: {}", user_id)));
-    }
-    Ok(())
-}
-
-/// 空串/空白 → None（不写 ck_category）；未知 code → 400。
-/// 岗位分类字典 = zc_id_cate-position（类目-岗位；change: align-org-position-employment-chains）。
-async fn resolve_category_id(pool: &PgPool, category: &str) -> Result<Option<i64>, ApiError> {
-    let category = category.trim();
-    if category.is_empty() {
-        return Ok(None);
-    }
-    let id: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM isahl.\"zc_id_cate-position\" WHERE code = $1 AND deleted_at IS NULL",
-    )
-    .bind(category)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    match id {
-        Some(id) => Ok(Some(id)),
-        None => Err(ApiError::BadRequest(format!(
-            "未知岗位分类 code: '{}'（字典 zc_id_cate-position）",
-            category
-        ))),
-    }
-}
-/// 岗位基础行（INSERT/UPDATE RETURNING 形态，不含桥数组子查询）
-type PositionBaseRow = (
-    i64,
-    String,
-    String,
-    String,
-    Option<i64>,
-    Option<i64>,
-    String,
-    Option<String>,
-);
-
-/// parent_id 环检测：新上级 `new_parent_id` 的祖先链（parent_id 递归 CTE）含当前岗位 → 400。
-/// 参考 structure position.rs _SQL_CYCLE_CHECK 模式（UNION 去重防脏数据环死循环）。
-async fn check_parent_cycle(
-    pool: &PgPool,
-    position_id: i64,
-    new_parent_id: i64,
-) -> Result<(), ApiError> {
-    let cycle: Option<i32> = sqlx::query_scalar(
-        r#"WITH RECURSIVE anc AS (
-            SELECT id, fk_parent FROM isahl."zc_id_subj-position" WHERE id = $1
-            UNION
-            SELECT p.id, p.fk_parent FROM isahl."zc_id_subj-position" p JOIN anc a ON a.fk_parent = p.id
-        ) SELECT 1 FROM anc WHERE id = $2"#,
-    )
-    .bind(new_parent_id)
-    .bind(position_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    if cycle.is_some() {
-        return Err(ApiError::BadRequest(format!(
-            "岗位层级成环：岗位 {} 的祖先链含自身（新上级 {}）",
-            position_id, new_parent_id
-        )));
-    }
-    Ok(())
-}
-
-/// 岗位双桥全量替换（事务内）：软删旧关联 + 逐条插新关联。
-/// - org_rr_position：ref_left=组织 / ref_right=岗位（组织设岗）
-/// - post_rr_subordinate：ref_left=岗位 / ref_right=下辖组织（岗位管理范围）
-async fn write_position_bridges(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    position_id: i64,
-    org_ids: &[i64],
-    sub_org_ids: &[i64],
-    user_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-org_rr_position"
-           SET deleted_at = now(), deleted_by_id = $2
-           WHERE ref_right = $1 AND deleted_at IS NULL"#,
-    )
-    .bind(position_id)
-    .bind(user_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    for &org_id in org_ids {
-        revive_then_insert_bridge(
-            &mut *tx,
-            "zc_id_subj-org_rr_position",
-            org_id,
-            position_id,
-            user_id,
-        )
-        .await?;
-    }
-    sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-post_rr_subordinate"
-           SET deleted_at = now(), deleted_by_id = $2
-           WHERE ref_left = $1 AND deleted_at IS NULL"#,
-    )
-    .bind(position_id)
-    .bind(user_id)
-    .execute(&mut **tx)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    for &org_id in sub_org_ids {
-        revive_then_insert_bridge(
-            &mut *tx,
-            "zc_id_subj-post_rr_subordinate",
-            position_id,
-            org_id,
-            user_id,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 /// 桥行写入（幂等 + 复活）：软删全量替换语义下，同键旧行被软删后仍占唯一约束
 /// （uq_*_ref_left_ref_right_qk_period 为含 COALESCE 的表达式约束，ON CONFLICT
 /// 无法按列推断）→ 两步：先复活同键软删行（deleted_at 置空），再 INSERT
 /// ON CONFLICT DO NOTHING（复活成功即跳过；行不存在则插入）。
-async fn revive_then_insert_bridge(
+pub(crate) async fn revive_then_insert_bridge(
     conn: &mut sqlx::PgConnection,
     table: &str,
     left: i64,
@@ -489,9 +354,9 @@ async fn revive_then_insert_bridge(
 // 部门 Handler
 // ═══════════════════════════════════════════════════════════
 
-type DepartmentRow = (i64, String, String, String, Option<i64>);
+pub(crate) type DepartmentRow = (i64, String, String, String, Option<i64>);
 
-fn dept_row_to_dto(row: DepartmentRow) -> DepartmentDto {
+pub(crate) fn dept_row_to_dto(row: DepartmentRow) -> DepartmentDto {
     DepartmentDto {
         id: row.0,
         name: row.1,
@@ -502,7 +367,7 @@ fn dept_row_to_dto(row: DepartmentRow) -> DepartmentDto {
 }
 
 /// 部门行 SELECT（父 id 经 org_rr_subordinate 桥派生，多父取最小桥 id 为主链）
-const DEPARTMENT_SELECT: &str = r#"SELECT d.id, d.notice::text, COALESCE(d.code, ''), COALESCE(d.comments, ''),
+pub(crate) const DEPARTMENT_SELECT: &str = r#"SELECT d.id, d.notice::text, COALESCE(d.code, ''), COALESCE(d.comments, ''),
        (SELECT r.ref_left FROM isahl."zc_id_subj-org_rr_subordinate" r
         WHERE r.ref_right = d.id AND r.deleted_at IS NULL ORDER BY r.id LIMIT 1) AS parent_id
 FROM isahl."zc_id_orga-department" d"#;
@@ -552,7 +417,7 @@ pub async fn list_departments(
     )
 }
 
-/// POST /departments
+/// POST /departments — 认证/权限门后薄委托 service::org_write::create_department（ADR A-1b 写收束）
 pub async fn create_department(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -560,86 +425,7 @@ pub async fn create_department(
 ) -> Result<HttpResponse, ApiError> {
     let user_id = require_auth(&req)?;
     require_resource_access(pool.get_ref(), user_id, "departments", 0, "create").await?;
-    validate_name(&body.name)?;
-    // code 非业务唯一标识（用户裁决 2026-08-31：主体族实体输入/显示不体现编码）——
-    // 空缺落 NULL，不再自动生成
-    let code = if body.code.trim().is_empty() {
-        None
-    } else {
-        Some(body.code.clone())
-    };
-
-    // 组织叶表选择（白名单字面量，无注入）：department（默认）/ non_banking_legal；
-    // legal → 400（法人中间层禁写，须指定具体叶表）；bank-commercial → 400（走银行专属通道）；未知值 → 400
-    let target = match body.leaf.as_deref().unwrap_or("department") {
-        "department" => "isahl.\"zc_id_orga-department\"",
-        "non_banking_legal" => "isahl.\"zc_id_orga-non-banking-legal\"",
-        // 叶表写入规则（2026-08-29 裁决）：法人中间层 zc_id_orga-legal 禁写——
-        // "legal" 曾映射中间层，违规源头已掐灭；法人须明确叶表。
-        "legal" => {
-            return Err(ApiError::BadRequest(
-                "法人必须指定具体叶表：non_banking_legal（非银行法人）或走银行专属通道（bank-commercial）"
-                    .into(),
-            ));
-        }
-        "bank-commercial" => {
-            return Err(ApiError::BadRequest(
-                "银行商业机构（bank-commercial）不支持经组织管理通道创建，请走银行专属通道".into(),
-            ));
-        }
-        other => {
-            return Err(ApiError::BadRequest(format!(
-                "未知组织叶表 leaf: '{}'",
-                other
-            )));
-        }
-    };
-    // 最小列集 INSERT（+ created_by_id 落 owner 槽）：orga-non-banking-legal 有 fk_representative 可空列（缺省不写）
-    let sql = format!(
-        r#"INSERT INTO {} (notice, code, comments, created_by_id)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, notice::text, COALESCE(code, ''), comments"#,
-        target
-    );
-    let row: (i64, String, String, String) = sqlx::query_as(AssertSqlSafe(sql.as_str()))
-        .bind(&body.name)
-        .bind(&code)
-        .bind(&body.comments)
-        .bind(user_id)
-        .fetch_one(pool.get_ref())
-        .await
-        .map_err(ApiError::from_sqlx)?;
-
-    // 父部门挂接（org_rr_subordinate 桥；可复活软删行）
-    if let Some(pid) = body.parent_id {
-        ensure_org_exists(pool.get_ref(), pid).await?;
-        let mut conn = pool
-            .get_ref()
-            .acquire()
-            .await
-            .map_err(ApiError::from_sqlx)?;
-        revive_then_insert_bridge(
-            &mut conn,
-            "zc_id_subj-org_rr_subordinate",
-            pid,
-            row.0,
-            user_id,
-        )
-        .await?;
-    }
-
-    // NGAC B-2：部门行 OA + 子集 OA 树链 ensure（事务外幂等 heal，失败仅 warn）
-    crate::ngac_org_ensure::heal_department_scope(pool.get_ref(), row.0).await;
-
-    Ok(
-        HttpResponse::Created().json(ApiResponse::success(DepartmentDto {
-            id: row.0,
-            name: row.1,
-            code: row.2,
-            comments: row.3,
-            parent_id: body.parent_id,
-        })),
-    )
+    crate::service::org_write::create_department(pool.get_ref(), body.into_inner(), user_id).await
 }
 
 /// GET /departments/{id}
@@ -670,7 +456,7 @@ pub async fn get_department(
     }
 }
 
-/// PUT /departments/{id} — 局部更新（None 字段保持不变）
+/// PUT /departments/{id} — 局部更新（None 字段保持不变）；薄委托 service::org_write::update_department（ADR A-1b 写收束）
 pub async fn update_department(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -680,72 +466,10 @@ pub async fn update_department(
     let user_id = require_auth(&req)?;
     let id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "departments", id, "update").await?;
-    if let Some(name) = &body.name {
-        validate_name(name)?;
-    }
-
-    let updated: Option<i64> = sqlx::query_scalar(
-        r#"UPDATE isahl."zc_id_orga-department"
-           SET notice = COALESCE($2, notice),
-               code = COALESCE($3, code),
-               comments = COALESCE($4, comments)
-           WHERE id = $1 AND deleted_at IS NULL
-           RETURNING id"#,
-    )
-    .bind(id)
-    .bind(&body.name)
-    .bind(&body.code)
-    .bind(&body.comments)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    let Some(_) = updated else {
-        return Err(ApiError::NotFound("Department not found".into()));
-    };
-
-    // 父部门调整（org_rr_subordinate 桥差量替换；环检测复用挂接同一守卫）
-    if let Some(pid) = body.parent_id {
-        check_org_tree_cycle(pool.get_ref(), id, pid).await?;
-        ensure_org_exists(pool.get_ref(), pid).await?;
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-org_rr_subordinate"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_right = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(pool.get_ref())
+    crate::service::org_write::update_department(pool.get_ref(), id, body.into_inner(), user_id)
         .await
-        .map_err(ApiError::from_sqlx)?;
-        let mut conn = pool
-            .get_ref()
-            .acquire()
-            .await
-            .map_err(ApiError::from_sqlx)?;
-        revive_then_insert_bridge(&mut conn, "zc_id_subj-org_rr_subordinate", pid, id, user_id)
-            .await?;
-    }
-
-    // 重查（父 id 经桥派生，保证响应与桥一致）
-    let row: Option<DepartmentRow> = sqlx::query_as(AssertSqlSafe(
-        format!(
-            "{} WHERE d.id = $1 AND d.deleted_at IS NULL",
-            DEPARTMENT_SELECT
-        )
-        .as_str(),
-    ))
-    .bind(id)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    match row {
-        Some(r) => Ok(HttpResponse::Ok().json(ApiResponse::success(dept_row_to_dto(r)))),
-        None => Err(ApiError::NotFound("Department not found".into())),
-    }
 }
-/// DELETE /departments/{id} — 软删除（同事务级联软删部门桥行）
+/// DELETE /departments/{id} — 软删除（同事务级联软删部门桥行）；薄委托 service::org_write::delete_department（ADR A-1b 写收束）
 pub async fn delete_department(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -754,87 +478,15 @@ pub async fn delete_department(
     let user_id = require_auth(&req)?;
     let id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "departments", id, "delete").await?;
-
-    // 子部门守卫：仍是父节点（桥 ref_left）时拒绝删除，先移除/迁移子部门
-    let children: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM "isahl"."zc_id_subj-org_rr_subordinate"
-           WHERE ref_left = $1 AND deleted_at IS NULL"#,
-    )
-    .bind(id)
-    .fetch_one(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    if children > 0 {
-        return Err(ApiError::BadRequest(
-            "存在子部门，请先移除或迁移子部门".into(),
-        ));
-    }
-
-    // 单事务：主表软删 → 父桥 + 下挂桥行（org_rr_position / org_rr_employee）级联软删
-    let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
-
-    let deleted = sqlx::query(
-        r#"UPDATE isahl."zc_id_orga-department"
-           SET deleted_at = NOW()
-           WHERE id = $1 AND deleted_at IS NULL"#,
-    )
-    .bind(id)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::from_sqlx)?
-    .rows_affected();
-
-    // 软删自身的父桥行（ref_right = id）
-    if deleted > 0 {
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-org_rr_subordinate"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_right = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-        // 下挂桥行级联：部门↔岗位分配（ref_left = 部门）
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-org_rr_position"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_left = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-        // 下挂桥行级联：组织任职（ref_left = 部门）
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-org_rr_employee"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_left = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-    }
-
-    if deleted == 0 {
-        return Err(ApiError::NotFound("Department not found".into()));
-    }
-
-    tx.commit().await.map_err(ApiError::from_sqlx)?;
-
-    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
+    crate::service::org_write::delete_department(pool.get_ref(), id, user_id).await
 }
 
 // ═══════════════════════════════════════════════════════════
 // 岗位 Handler
 // ═══════════════════════════════════════════════════════════
 
-/// 岗位完整行：基础字段 + 双桥聚合数组（org_rr_position / post_rr_subordinate）
-type PositionRow = (
+/// 岗位完整行：基础字段 + 三桥聚合数组（org_rr_position / post_rr_subordinate / post_rr_employee）
+pub type PositionRow = (
     i64,
     String,
     String,
@@ -845,9 +497,10 @@ type PositionRow = (
     Option<String>,
     serde_json::Value,
     serde_json::Value,
+    serde_json::Value,
 );
 
-fn position_row_to_dto(row: PositionRow) -> PositionDto {
+pub fn position_row_to_dto(row: PositionRow) -> PositionDto {
     PositionDto {
         id: row.0,
         name: row.1,
@@ -859,6 +512,7 @@ fn position_row_to_dto(row: PositionRow) -> PositionDto {
         category: row.6,
         org_ids: json_id_list(&row.8),
         sub_org_ids: json_id_list(&row.9),
+        employees: json_employee_list(&row.10),
     }
 }
 
@@ -869,12 +523,41 @@ fn json_id_list(v: &serde_json::Value) -> Vec<i64> {
         .unwrap_or_default()
 }
 
-const POSITION_SELECT: &str = r#"SELECT p.id, p.notice::text, COALESCE(p.code, ''), COALESCE(p.comments, ''),
+/// json_agg 聚合结果 → 任职员工列表（SQL 侧 COALESCE '[]' 兜底）
+fn json_employee_list(v: &serde_json::Value) -> Vec<PositionEmployeeDto> {
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| {
+                    let id = x.get("id").and_then(|i| i.as_i64())?;
+                    Some(PositionEmployeeDto {
+                        id,
+                        name: x
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .map(str::to_string)
+                            .filter(|s| !s.is_empty()),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub const POSITION_SELECT: &str = r#"SELECT p.id, p.notice::text, COALESCE(p.code, ''), COALESCE(p.comments, ''),
        p.fk_user, p.fk_parent AS parent_id,
-       COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = p.ck_category AND c.deleted_at IS NULL), p.ck_category::text, '') AS ck_category,
+       COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = p.ck_category AND c.deleted_at IS NULL), (SELECT c2.notice FROM isahl.zc_id_category c2 WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL), '') AS ck_category,
        COALESCE(u.name::text, NULL) AS user_name,
        COALESCE((SELECT json_agg(rp.ref_left ORDER BY rp.ref_left) FROM isahl."zc_id_subj-org_rr_position" rp WHERE rp.ref_right = p.id AND rp.deleted_at IS NULL), '[]'::json) AS org_ids,
-       COALESCE((SELECT json_agg(ps.ref_right ORDER BY ps.ref_right) FROM isahl."zc_id_subj-post_rr_subordinate" ps WHERE ps.ref_left = p.id AND ps.deleted_at IS NULL), '[]'::json) AS sub_org_ids
+       COALESCE((SELECT json_agg(ps.ref_right ORDER BY ps.ref_right) FROM isahl."zc_id_subj-post_rr_subordinate" ps WHERE ps.ref_left = p.id AND ps.deleted_at IS NULL), '[]'::json) AS sub_org_ids,
+       COALESCE((SELECT json_agg(json_build_object(
+                            'id', b.ref_right,
+                            'name', COALESCE(s.notice::text, c.notice::text))
+                        ORDER BY b.ref_right)
+                 FROM isahl."zc_id_subj-post_rr_employee" b
+                 LEFT JOIN isahl.zc_id_subjects s ON s.id = b.ref_right AND s.deleted_at IS NULL
+                 LEFT JOIN isahl.zc_id_contacts c ON c.id = b.ref_right AND c.deleted_at IS NULL
+                 WHERE b.ref_left = p.id AND b.deleted_at IS NULL), '[]'::json) AS employees
 FROM isahl."zc_id_subj-position" p
 LEFT JOIN isahl_auth.auth_users u ON u.id = p.fk_user"#;
 
@@ -924,6 +607,7 @@ pub async fn list_positions(
 }
 
 /// POST /positions
+/// POST /positions — 认证/权限门后薄委托 service::org_write::create_position（ADR A-1 写收束）
 pub async fn create_position(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -931,62 +615,7 @@ pub async fn create_position(
 ) -> Result<HttpResponse, ApiError> {
     let user_id = require_auth(&req)?;
     require_resource_access(pool.get_ref(), user_id, "positions", 0, "create").await?;
-    validate_name(&body.name)?;
-    if let Some(pid) = body.parent_id {
-        ensure_position_exists(pool.get_ref(), pid).await?;
-    }
-    if let Some(uid) = body.user_id {
-        ensure_user_exists(pool.get_ref(), uid).await?;
-    }
-    let category_id = resolve_category_id(pool.get_ref(), &body.category).await?;
-    // code 非业务唯一标识（用户裁决 2026-08-31）——空缺落 NULL，不再自动生成
-    let code = if body.code.trim().is_empty() {
-        None
-    } else {
-        Some(body.code.clone())
-    };
-
-    // 单事务：主表写 + 双桥全量替换（软删旧关联 → 插新关联），保证原子性
-    let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
-
-    let base: PositionBaseRow = sqlx::query_as(
-        r#"INSERT INTO isahl."zc_id_subj-position" (notice, code, comments, fk_user, fk_parent, ck_category, created_by_id)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING id, notice::text, COALESCE(code, ''), COALESCE(comments, ''), fk_user, fk_parent AS parent_id,
-                      COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = isahl."zc_id_subj-position".ck_category AND c.deleted_at IS NULL), ck_category::text, ''),
-                      NULL::text AS user_name"#,
-    )
-    .bind(&body.name)
-    .bind(&code)
-    .bind(&body.comments)
-    .bind(body.user_id)
-    .bind(body.parent_id)
-    .bind(category_id)
-    .bind(user_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    write_position_bridges(&mut tx, base.0, &body.org_ids, &body.sub_org_ids, user_id).await?;
-
-    let full: PositionRow = sqlx::query_as::<_, PositionRow>(AssertSqlSafe(
-        format!(
-            "{} WHERE p.id = $1 AND p.deleted_at IS NULL",
-            POSITION_SELECT
-        )
-        .as_str(),
-    ))
-    .bind(base.0)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    tx.commit().await.map_err(ApiError::from_sqlx)?;
-
-    // NGAC B-2：岗位行 OA ensure（事务外幂等 heal，失败仅 warn 不阻断主写）
-    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), base.0).await;
-
-    Ok(HttpResponse::Created().json(ApiResponse::success(position_row_to_dto(full))))
+    crate::service::org_write::create_position(pool.get_ref(), body.into_inner(), user_id).await
 }
 
 /// GET /positions/{id}
@@ -1017,6 +646,7 @@ pub async fn get_position(
 }
 
 /// PUT /positions/{id} — 局部更新（None 字段保持不变）
+/// PUT /positions/{id} — 局部更新（None 字段保持不变）；薄委托 service::org_write::update_position
 pub async fn update_position(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -1026,75 +656,11 @@ pub async fn update_position(
     let user_id = require_auth(&req)?;
     let id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "positions", id, "update").await?;
-    if let Some(name) = &body.name {
-        validate_name(name)?;
-    }
-    if let Some(pid) = body.parent_id {
-        ensure_position_exists(pool.get_ref(), pid).await?;
-    }
-    if let Some(uid) = body.user_id {
-        ensure_user_exists(pool.get_ref(), uid).await?;
-    }
-    let category_id = match &body.category {
-        Some(cat) => resolve_category_id(pool.get_ref(), cat).await?,
-        None => None,
-    };
-
-    // 单事务：环检测（如变更 parent_id）→ 主表写 → 双桥全量替换
-    let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
-
-    if let Some(new_parent) = body.parent_id {
-        check_parent_cycle(pool.get_ref(), id, new_parent).await?;
-    }
-
-    let base: Option<PositionBaseRow> = sqlx::query_as(AssertSqlSafe(
-        r#"UPDATE isahl."zc_id_subj-position"
-           SET notice = COALESCE($2, notice),
-               code = COALESCE($3, code),
-               comments = COALESCE($4, comments),
-               fk_user = COALESCE($5, fk_user),
-               fk_parent = COALESCE($6, fk_parent),
-               ck_category = COALESCE($7, ck_category)
-           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL
-           RETURNING id, notice::text, code, comments, fk_user, fk_parent AS parent_id,
-                     COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = isahl."zc_id_subj-position".ck_category AND c.deleted_at IS NULL), ck_category::text, ''),
-                     NULL::text AS user_name"#,
-    ))
-    .bind(id)
-    .bind(&body.name)
-    .bind(&body.code)
-    .bind(&body.comments)
-    .bind(body.user_id)
-    .bind(body.parent_id)
-    .bind(category_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    let Some(base) = base else {
-        return Err(ApiError::NotFound("Position not found".into()));
-    };
-
-    write_position_bridges(&mut tx, base.0, &body.org_ids, &body.sub_org_ids, user_id).await?;
-
-    let full: PositionRow = sqlx::query_as::<_, PositionRow>(AssertSqlSafe(
-        format!(
-            "{} WHERE p.id = $1 AND p.deleted_at IS NULL",
-            POSITION_SELECT
-        )
-        .as_str(),
-    ))
-    .bind(id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    tx.commit().await.map_err(ApiError::from_sqlx)?;
-
-    Ok(HttpResponse::Ok().json(ApiResponse::success(position_row_to_dto(full))))
+    crate::service::org_write::update_position(pool.get_ref(), id, body.into_inner(), user_id).await
 }
 
 /// DELETE /positions/{id} — 软删除（同事务级联软删岗位桥行）
+/// DELETE /positions/{id} — 软删除（同事务级联软删岗位桥行）；薄委托 service::org_write::delete_position
 pub async fn delete_position(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -1103,99 +669,40 @@ pub async fn delete_position(
     let user_id = require_auth(&req)?;
     let id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "positions", id, "delete").await?;
-
-    // 单事务：主表软删 → 四类岗位桥行级联软删（org_rr_position / post_rr_subordinate /
-    // post_rr_view / post_rr_employee，alive 行；ref 方向见各 UPDATE WHERE）
-    let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
-
-    // _f_ IS NULL：真实岗位视图；编制范例行删除（含实例守卫）暂无删除端点
-    let deleted = sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-position"
-           SET deleted_at = NOW()
-           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL"#,
-    )
-    .bind(id)
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::from_sqlx)?
-    .rows_affected();
-
-    // 部门↔岗位分配桥（ref_right = 岗位）
-    if deleted > 0 {
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-org_rr_position"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_right = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-        // 岗位管理范围桥（ref_left = 岗位）
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-post_rr_subordinate"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_left = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-        // 主体视角桥（ref_left = 岗位）
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-post_rr_view"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_left = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-        // 岗位任职桥（ref_left = 岗位）
-        sqlx::query(
-            r#"UPDATE "isahl"."zc_id_subj-post_rr_employee"
-               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
-               WHERE ref_left = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(ApiError::from_sqlx)?;
-    }
-
-    if deleted == 0 {
-        return Err(ApiError::NotFound("Position not found".into()));
-    }
-
-    tx.commit().await.map_err(ApiError::from_sqlx)?;
-
-    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
+    crate::service::org_write::delete_position(pool.get_ref(), id, user_id).await
 }
 
 // ═══════════════════════════════════════════════════════════
 // 岗位编制范例（D-2a 岗位 tpl 双态：建范例 = 设计态，实例化 = 落岗）
 // ═══════════════════════════════════════════════════════════
 
-/// 编制元数据 JSON 文档构建（comments 列承载；缺省字段省略，全缺 → "{}"）。
-/// 文档化契约（D-2a）：`{"max_heads": <i64|null>, "note": "<str|null>"}`——
-/// 读侧（方案发布/派生器）按此解析；本文件不读回，comments 对岗位读径保持不透明文本。
-fn headcount_comments_doc(max_heads: Option<i64>, note: Option<&str>) -> String {
-    let mut doc = serde_json::Map::new();
-    if let Some(n) = max_heads {
-        doc.insert("max_heads".to_string(), serde_json::json!(n));
-    }
-    if let Some(note) = note.map(str::trim).filter(|s| !s.is_empty()) {
-        doc.insert("note".to_string(), serde_json::json!(note));
-    }
-    if doc.is_empty() {
-        return "{}".to_string();
-    }
-    serde_json::to_string(&serde_json::Value::Object(doc))
-        .unwrap_or_else(|_| "{}".to_string())
+/// 编制元数据 → 既有载体映射（P4 载体迁移；`comments` 回归自由文本，零 DDL）：
+/// - 编制说明 `note` → `comments` 列自由文本（本体备注语义，本表既有 DTO 语义）；
+/// - 编制上限 `max_heads` → `projection` 文本载荷列——本表无 `qk_*` 标量引用槽位、
+///   无数值列、无编制域桥；既有先例：封签运单编号 / 定价协定新单价均落 `projection`。
+///   数值以十进制文本落载，读侧回解析（见 [`parse_headcount_cap`]）。
+/// 缺省语义：缺省键 → 对应列 NULL（两键全缺 → comments/projection 均 NULL）。
+pub(crate) fn headcount_carriers(
+    max_heads: Option<i64>,
+    note: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let projection = max_heads.map(|n| n.to_string());
+    let comments = note
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    (projection, comments)
+}
+
+/// 编制上限读回（`projection` 文本载荷，见 [`headcount_carriers`]）：
+/// 缺失/空/非十进制文本（历史派生编号值等）→ None（无上限语义，fail-open 保持存量行为）。
+/// 实例化端点与方案派生器（R-D3）以本函数读回上限做编制校验。
+fn parse_headcount_cap(projection: Option<&str>) -> Option<i64> {
+    projection
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?
+        .parse::<i64>()
+        .ok()
 }
 
 /// 岗位范例类别校验（D-2a，B-1 align-cognition-ua-category 同源约束）：
@@ -1233,8 +740,8 @@ async fn resolve_template_category_id(pool: &PgPool, category: &str) -> Result<i
 /// 落 `zc_id_subj-position` 范例行：tpl_id=NULL、`_f_='设计' AND _t_='范例'`
 /// （tpl_id 同表关联铁律；类写入契约 §4.3.3 形态 2 显式字面量对——本表无
 /// LifecycleBizTemplate 触发器，列值即落库值）。类别必填（基表行校验见
-/// [`resolve_template_category_id`]）；编制元数据存 comments JSON 文档
-/// （见 [`headcount_comments_doc`]）。实例化经
+/// [`resolve_template_category_id`]）；编制元数据落既有结构（见 [`headcount_carriers`]：
+/// 说明→comments 自由文本、上限→projection 文本载荷）。实例化经
 /// `POST /positions/templates/{id}/instantiate`，不在此落关系。
 pub async fn create_position_template(
     req: HttpRequest,
@@ -1258,34 +765,47 @@ pub async fn create_position_template(
     } else {
         Some(body.code.trim().to_string())
     };
-    let comments = headcount_comments_doc(body.max_heads, body.note.as_deref());
+    let (projection, comments) = headcount_carriers(body.max_heads, body.note.as_deref());
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(pool.get_ref(), ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(ApiError::from_sqlx)?;
     let id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_subj-position"
-             (notice, code, comments, ck_category, tpl_id, _f_, _t_)
-           VALUES ($1, $2, $3, $4, NULL, '设计', '范例')
+             (notice, code, comments, projection, ck_category, tpl_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, NULL, '设计', '范例', $6, $7, $8)
            RETURNING id"#,
     )
     .bind(&name)
     .bind(code)
     .bind(&comments)
+    .bind(&projection)
     .bind(category_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool.get_ref())
     .await
     .map_err(ApiError::from_sqlx)?;
 
-    Ok(HttpResponse::Created().json(ApiResponse::success(PositionTemplateDto {
-        id,
-        name,
-        code: body.code.trim().to_string(),
-        category,
-        comments,
-    })))
+    Ok(
+        HttpResponse::Created().json(ApiResponse::success(PositionTemplateDto {
+            id,
+            name,
+            code: body.code.trim().to_string(),
+            category,
+            comments: comments.unwrap_or_default(),
+        })),
+    )
 }
 
 /// POST /positions/templates/{id}/instantiate — 岗位范例实例化落岗（D-2a 实现态）
 ///
-/// 校验：范例行在册（未删除、`_f_='设计' AND _t_='范例'`、tpl_id NULL）→ 404。
+/// 校验：范例行在册（未删除、`_f_='设计' AND _t_='范例'`、tpl_id NULL）→ 404；
+/// R-D3 编制上限：范例行 `projection` 文本载荷 `max_heads>0`（见 [`headcount_carriers`]）
+/// 且该范例链在册实例数已达上限（含本次将超编）→ 400（fail-closed 防超员，B-2 接入）。
 /// 落实例行：`tpl_id`=范例 id（tpl_id 同表关联铁律）、`ck_category` 继承范例类别、
 /// `notice`=范例名（同范例已有在册实例时追加 `-{序号}` 消歧）。实例行类列 NULL，
 /// 即真实岗位（legacy 直建同判）——后续经部门分配/任职挂接端点接线
@@ -1303,8 +823,9 @@ pub async fn instantiate_position_template(
     // （FOR UPDATE）串行化同范例的并发实例化（ReviewerD2aS2 P3 notice 序号竞态）。
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
 
-    let tpl: Option<(String, Option<i64>)> = sqlx::query_as(
-        r#"SELECT notice::text, ck_category FROM isahl."zc_id_subj-position"
+    // 编制上限读 `projection` 文本载荷（comments 保持自由文本，不再解析 JSON）
+    let tpl: Option<(String, Option<String>, Option<i64>)> = sqlx::query_as(
+        r#"SELECT notice::text, projection, ck_category FROM isahl."zc_id_subj-position"
            WHERE id = $1 AND deleted_at IS NULL AND _f_ = '设计' AND _t_ = '范例'
              AND tpl_id IS NULL
            FOR UPDATE"#,
@@ -1313,7 +834,7 @@ pub async fn instantiate_position_template(
     .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
-    let Some((tpl_name, category_id)) = tpl else {
+    let Some((tpl_name, tpl_projection, category_id)) = tpl else {
         return Err(ApiError::NotFound(format!(
             "Position template not found: {}",
             tpl_id
@@ -1335,20 +856,39 @@ pub async fn instantiate_position_template(
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
+    // R-D3 编制上限（B-2）：projection 载荷 max_heads>0 → 实例化前 COUNT 该范例链
+    // 在册实例，已达上限（含本次新增将超编）→ 400（fail-closed；与 org_scheme
+    // 激活派生模板路径同规）。范例行行锁已持——计数与插入间无并发窗口。
+    if let Some(cap) = parse_headcount_cap(tpl_projection.as_deref()) {
+        if cap > 0 && live >= cap {
+            return Err(ApiError::BadRequest(format!(
+                "岗位范例 {} 在册实例 {} 已达 maxHeads={} 编制上限，不可再实例化",
+                tpl_id, live, cap
+            )));
+        }
+    }
     let notice = if live == 0 {
         tpl_name
     } else {
         format!("{}-{}", tpl_name, live + 1)
     };
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(ApiError::from_sqlx)?;
     let instance_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_subj-position" (notice, comments, ck_category, tpl_id)
-           VALUES ($1, '', $2, $3)
+        r#"INSERT INTO isahl."zc_id_subj-position" (notice, comments, ck_category, tpl_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, '', $2, $3, $4, $5, $6)
            RETURNING id"#,
     )
     .bind(&notice)
     .bind(category_id)
     .bind(tpl_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::from_sqlx)?;
@@ -1469,7 +1009,7 @@ pub async fn list_department_positions(
     let items: Vec<DeptPositionItem> = sqlx::query_as(
         r#"SELECT r.id AS rel_id, p.id, p.notice::text, p.code, p.comments,
                   p.fk_user, p.fk_parent AS parent_id,
-                  COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = p.ck_category AND c.deleted_at IS NULL), p.ck_category::text, '') AS ck_category,
+                  COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = p.ck_category AND c.deleted_at IS NULL), (SELECT c2.notice FROM isahl.zc_id_category c2 WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL), '') AS ck_category,
                   COALESCE(u.name::text, NULL) AS user_name
            FROM isahl."zc_id_subj-org_rr_position" r
            JOIN isahl."zc_id_subj-position" p ON p.id = r.ref_right
@@ -1506,6 +1046,7 @@ pub async fn list_department_positions(
 }
 
 /// POST /departments/{id}/positions — 分配岗位到部门（幂等：已存在则返回已有记录）
+/// POST /departments/{id}/positions — 分配岗位到部门（幂等）；薄委托 service::org_write::assign_position_to_department
 pub async fn assign_position_to_department(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -1516,92 +1057,12 @@ pub async fn assign_position_to_department(
     let dept_id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "departments", dept_id, "update").await?;
     let position_id = body.position_id;
-
-    // 前置存在性预检：部门与岗位必须存在（未删除），否则 404
-    ensure_department_exists(pool.get_ref(), dept_id).await?;
-    ensure_position_exists(pool.get_ref(), position_id).await?;
-
-    // 幂等检查：是否已存在未删除的关联
-    let existing: Option<(i64,)> = sqlx::query_as(
-        r#"SELECT id FROM isahl."zc_id_subj-org_rr_position"
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-    )
-    .bind(dept_id)
-    .bind(position_id)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    if let Some((rel_id,)) = existing {
-        let position_name: String = sqlx::query_scalar(
-            "SELECT notice::text FROM isahl.\"zc_id_subj-position\" WHERE id = $1",
-        )
-        .bind(position_id)
-        .fetch_one(pool.get_ref())
+    crate::service::org_write::assign_position_to_department(pool.get_ref(), dept_id, position_id)
         .await
-        .map_err(ApiError::from_sqlx)?;
-
-        return Ok(
-            HttpResponse::Ok().json(ApiResponse::success(DeptPositionRelationDto {
-                id: rel_id,
-                department_id: dept_id,
-                position_id,
-                position_name,
-            })),
-        );
-    }
-
-    // 创建新关联：先复活同键软删行（唯一约束含 qk_period 表达式无法 ON CONFLICT 推断）
-    sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-org_rr_position" SET deleted_at = NULL, deleted_by_id = NULL
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NOT NULL"#,
-    )
-    .bind(dept_id)
-    .bind(position_id)
-    .execute(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    let row: Option<(i64, String)> = sqlx::query_as(
-        r#"INSERT INTO isahl."zc_id_subj-org_rr_position" (ref_left, ref_right)
-            VALUES ($1, $2)
-            ON CONFLICT DO NOTHING
-            RETURNING id, (SELECT notice::text FROM isahl."zc_id_subj-position" WHERE id = $2)"#,
-    )
-    .bind(dept_id)
-    .bind(position_id)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    let row = match row {
-        Some(r) => r,
-        None => {
-            // 冲突（复活行）：取既有 id
-            sqlx::query_as(
-                r#"SELECT id, (SELECT notice::text FROM isahl."zc_id_subj-position" WHERE id = $2)
-                   FROM isahl."zc_id_subj-org_rr_position" WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-            )
-            .bind(dept_id)
-            .bind(position_id)
-            .fetch_one(pool.get_ref())
-            .await
-            .map_err(ApiError::from_sqlx)?
-        }
-    };
-
-    // NGAC B-2：岗位新增在任分配部门 → 刷新岗位 OA ancestor 域闭包（幂等 heal）
-    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), position_id).await;
-
-    Ok(
-        HttpResponse::Created().json(ApiResponse::success(DeptPositionRelationDto {
-            id: row.0,
-            department_id: dept_id,
-            position_id,
-            position_name: row.1,
-        })),
-    )
 }
 
 /// DELETE /departments/{id}/positions/{relId} — 移除部门岗位关联（软删除）
+/// DELETE /departments/{id}/positions/{relId} — 移除部门岗位关联（软删）；薄委托 service::org_write::remove_position_from_department
 pub async fn remove_position_from_department(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -1610,28 +1071,8 @@ pub async fn remove_position_from_department(
     let user_id = require_auth(&req)?;
     let (dept_id, rel_id) = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "departments", dept_id, "update").await?;
-
-    // 软删并取回被移除岗位（ref_right）——供事务外 NGAC heal 收敛 OA ancestor 域闭包
-    let deleted: Option<(i64,)> = sqlx::query_as(
-        r#"UPDATE isahl."zc_id_subj-org_rr_position"
-           SET deleted_at = NOW()
-           WHERE id = $1 AND ref_left = $2 AND deleted_at IS NULL
-           RETURNING ref_right"#,
-    )
-    .bind(rel_id)
-    .bind(dept_id)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-
-    let Some((position_id,)) = deleted else {
-        return Err(ApiError::NotFound("Relation not found".into()));
-    };
-
-    // NGAC B-2：岗位移除在任分配部门 → 刷新岗位 OA ancestor 域闭包（事务外幂等 heal，失败仅 warn）
-    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), position_id).await;
-
-    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
+    crate::service::org_write::remove_position_from_department(pool.get_ref(), dept_id, rel_id)
+        .await
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1672,12 +1113,16 @@ pub struct OrgSubtreeItem {
 // ═══════════════════════════════════════════════════════════
 
 /// 组织存在性校验（orga-department ∪ orga-non-banking-legal，未删除 → 404）
-async fn ensure_org_exists(pool: &PgPool, org_id: i64) -> Result<(), ApiError> {
+pub(crate) async fn ensure_org_exists(pool: &PgPool, org_id: i64) -> Result<(), ApiError> {
+    // 组织族判定（2026-09-11 放宽）：`zc_id_subj-org` 子树 = 组织类（zc_id_orga-department /
+    // zc_id_orga-legal / zc_id_orga-non-banking-legal / zc_id_bank-commercial 及其自身），
+    // PG 继承语义下按父表查询即覆盖全部叶表与**中间表**。原实现只认两张叶表
+    // （department / non-banking-legal），使落在中间表 zc_id_orga-legal 的既有法人
+    // （如平台运营主体 WZ-BIZ-YYKJ-01）无法挂雇员（返回 404 Organization not found），
+    // 而"运营录司机并挂组织"正是该端点的主用途（运营代录模式，2026-09-11 裁决）。
     let exists: bool = sqlx::query_scalar(
         r#"SELECT EXISTS (
-            SELECT 1 FROM isahl."zc_id_orga-department" WHERE id = $1 AND deleted_at IS NULL
-            UNION ALL
-            SELECT 1 FROM isahl."zc_id_orga-non-banking-legal" WHERE id = $1 AND deleted_at IS NULL
+            SELECT 1 FROM isahl."zc_id_subj-org" WHERE id = $1 AND deleted_at IS NULL
         )"#,
     )
     .bind(org_id)
@@ -1727,8 +1172,13 @@ async fn ensure_subject_exists(pool: &PgPool, subject_id: i64) -> Result<(), Api
 }
 
 /// 任职主体类型路由：subjectId 必须命中 zc_id_empl-natural / zc_id_empl-agent 叶表
-/// （两者继承 zc_id_subjects）；皆无 → 400（仅支持自然人/智能体；IoT 设备走 empl-agent 通道）
-async fn route_employee_subject(pool: &PgPool, subject_id: i64) -> Result<&'static str, ApiError> {
+/// （两者继承 zc_id_subjects），或本模块「员工=通讯录档案」语义下的 zc_id_contacts
+/// 联系人行（employee-list 页任职绑定主体；fix-avic-employee-assignment-contacts）；
+/// 皆无 → 400（IoT 设备请走 empl-agent 通道）
+pub(crate) async fn route_employee_subject(
+    pool: &PgPool,
+    subject_id: i64,
+) -> Result<&'static str, ApiError> {
     let in_natural: bool = sqlx::query_scalar(
         "SELECT COUNT(*) > 0 FROM isahl.\"zc_id_empl-natural\" WHERE id = $1 AND deleted_at IS NULL",
     )
@@ -1749,8 +1199,18 @@ async fn route_employee_subject(pool: &PgPool, subject_id: i64) -> Result<&'stat
     if in_agent {
         return Ok("agent");
     }
+    let in_contact: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM isahl.zc_id_contacts WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(subject_id)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    if in_contact {
+        return Ok("contact");
+    }
     Err(ApiError::BadRequest(format!(
-        "任职主体仅支持自然人/智能体（subjectId={} 不在 zc_id_empl-natural / zc_id_empl-agent 叶表）；IoT 设备请走 empl-agent 通道",
+        "任职主体不存在或类型不支持（subjectId={} 不在 zc_id_empl-natural / zc_id_empl-agent / zc_id_contacts 任意表中）",
         subject_id
     )))
 }
@@ -1780,46 +1240,11 @@ pub async fn list_users(
     Ok(HttpResponse::Ok().json(ApiResponse::success(items)))
 }
 
-/// 组织树环检测：child 的祖先链/子树（org_rr_subordinate 双向递归，UNION 去重防脏数据环）
-/// 不得含 parent，否则挂接将成环/成菱形 → 400
-async fn check_org_tree_cycle(
-    pool: &PgPool,
-    child_id: i64,
-    parent_id: i64,
-) -> Result<(), ApiError> {
-    if child_id == parent_id {
-        return Err(ApiError::BadRequest("组织不能挂接为自身的子节点".into()));
-    }
-    let cycle: Option<i32> = sqlx::query_scalar(
-        // 单向上溯（PG 递归 CTE 限制：递归引用须在 UNION 链尾，单向更稳）：
-        // parent ∈ anc(child) ⇔ child 已是 parent 的祖先 → 挂接成环。
-        r#"WITH RECURSIVE anc AS (
-            SELECT ref_left AS node FROM isahl."zc_id_subj-org_rr_subordinate" WHERE ref_right = $1 AND deleted_at IS NULL
-            UNION ALL
-            SELECT r.ref_left FROM isahl."zc_id_subj-org_rr_subordinate" r
-            JOIN anc a ON a.node = r.ref_right WHERE r.deleted_at IS NULL
-        )
-        SELECT 1 FROM anc WHERE node = $2 LIMIT 1"#,
-    )
-    .bind(child_id)
-    .bind(parent_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    if cycle.is_some() {
-        return Err(ApiError::BadRequest(format!(
-            "组织树成环：组织 {} 的祖先链/子树含组织 {}，挂接被拒绝",
-            child_id, parent_id
-        )));
-    }
-    Ok(())
-}
-
 // ═══════════════════════════════════════════════════════════
 // 组织树 Handler（zc_id_subj-org_rr_subordinate：ref_left=上级 / ref_right=下属）
 // ═══════════════════════════════════════════════════════════
 
-/// POST /org-tree/{id}/children — 挂接下属组织（幂等：已存在未删关联 → 返回现有）
+/// POST /org-tree/{id}/children — 挂接下属组织（幂等）；薄委托 service::org_write::add_org_tree_child（ADR A-1b 写收束）
 pub async fn add_org_tree_child(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -1829,83 +1254,16 @@ pub async fn add_org_tree_child(
     let user_id = require_auth(&req)?;
     let parent_id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "org-tree", parent_id, "update").await?;
-    let child_id = body.child_id;
-
-    ensure_org_exists(pool.get_ref(), parent_id).await?;
-    ensure_org_exists(pool.get_ref(), child_id).await?;
-
-    // 幂等：已存在未删除关联 → 返回现有记录
-    let existing: Option<(i64,)> = sqlx::query_as(
-        r#"SELECT id FROM isahl."zc_id_subj-org_rr_subordinate"
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
+    crate::service::org_write::add_org_tree_child(
+        pool.get_ref(),
+        parent_id,
+        body.into_inner().child_id,
+        user_id,
     )
-    .bind(parent_id)
-    .bind(child_id)
-    .fetch_optional(pool.get_ref())
     .await
-    .map_err(ApiError::from_sqlx)?;
-    if let Some((rel_id,)) = existing {
-        return Ok(
-            HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-                "id": rel_id.to_string(),
-                "parentId": parent_id.to_string(),
-                "childId": child_id.to_string(),
-                "created": false,
-            }))),
-        );
-    }
-
-    check_org_tree_cycle(pool.get_ref(), child_id, parent_id).await?;
-
-    // 复活同键软删行（唯一约束含 qk_period 表达式无法 ON CONFLICT 推断）
-    sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-org_rr_subordinate" SET deleted_at = NULL, deleted_by_id = NULL
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NOT NULL"#,
-    )
-    .bind(parent_id)
-    .bind(child_id)
-    .execute(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"INSERT INTO isahl."zc_id_subj-org_rr_subordinate" (ref_left, ref_right, created_by_id)
-           VALUES ($1, $2, $3)
-           ON CONFLICT DO NOTHING
-           RETURNING id"#,
-    )
-    .bind(parent_id)
-    .bind(child_id)
-    .bind(user_id)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    let row = match row {
-        Some(r) => r,
-        None => sqlx::query_as(
-            r#"SELECT id FROM isahl."zc_id_subj-org_rr_subordinate"
-                   WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-        )
-        .bind(parent_id)
-        .bind(child_id)
-        .fetch_one(pool.get_ref())
-        .await
-        .map_err(ApiError::from_sqlx)?,
-    };
-
-    // NGAC B-2：新 org 节点 → 部门子集 OA 树链 ensure（事务外幂等 heal，失败仅 warn）
-    crate::ngac_org_ensure::heal_department_scope(pool.get_ref(), child_id).await;
-
-    Ok(
-        HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
-            "id": row.0.to_string(),
-            "parentId": parent_id.to_string(),
-            "childId": child_id.to_string(),
-            "created": true,
-        }))),
-    )
 }
 
-/// DELETE /org-tree/{id}/children/{childId} — 解除挂接（软删除）
+/// DELETE /org-tree/{id}/children/{childId} — 解除挂接（软删）；薄委托 service::org_write::remove_org_tree_child（ADR A-1b 写收束）
 pub async fn remove_org_tree_child(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -1914,25 +1272,8 @@ pub async fn remove_org_tree_child(
     let user_id = require_auth(&req)?;
     let (parent_id, child_id) = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "org-tree", parent_id, "update").await?;
-
-    let deleted = sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-org_rr_subordinate"
-           SET deleted_at = NOW()
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-    )
-    .bind(parent_id)
-    .bind(child_id)
-    .execute(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?
-    .rows_affected();
-
-    if deleted == 0 {
-        return Err(ApiError::NotFound(
-            "Organization tree relation not found".into(),
-        ));
-    }
-    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
+    crate::service::org_write::remove_org_tree_child(pool.get_ref(), parent_id, child_id, user_id)
+        .await
 }
 
 /// GET /org-tree/{id}/subtree — 递归子树（WITH RECURSIVE 沿 org_rr_subordinate 下钻，
@@ -1991,6 +1332,7 @@ pub async fn get_org_subtree(
 // ═══════════════════════════════════════════════════════════
 
 /// POST /positions/{id}/employees — 岗位任职挂接（幂等）
+/// POST /positions/{id}/employees — 岗位任职挂接（幂等）；薄委托 service::org_write::add_position_employee
 pub async fn add_position_employee(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -2000,81 +1342,18 @@ pub async fn add_position_employee(
     let user_id = require_auth(&req)?;
     let position_id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "positions", position_id, "update").await?;
-    ensure_position_exists(pool.get_ref(), position_id).await?;
     let subject_id = body.subject_id;
-    let kind = route_employee_subject(pool.get_ref(), subject_id).await?;
-
-    let existing: Option<(i64,)> = sqlx::query_as(
-        r#"SELECT id FROM isahl."zc_id_subj-post_rr_employee"
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
+    crate::service::org_write::add_position_employee(
+        pool.get_ref(),
+        position_id,
+        subject_id,
+        user_id,
     )
-    .bind(position_id)
-    .bind(subject_id)
-    .fetch_optional(pool.get_ref())
     .await
-    .map_err(ApiError::from_sqlx)?;
-    if let Some((rel_id,)) = existing {
-        return Ok(
-            HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-                "id": rel_id.to_string(),
-                "positionId": position_id.to_string(),
-                "subjectId": subject_id.to_string(),
-                "subjectKind": kind,
-                "created": false,
-            }))),
-        );
-    }
-
-    // 复活同键软删行（唯一约束含 qk_period 表达式无法 ON CONFLICT 推断）
-    sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-post_rr_employee" SET deleted_at = NULL, deleted_by_id = NULL
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NOT NULL"#,
-    )
-    .bind(position_id)
-    .bind(subject_id)
-    .execute(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"INSERT INTO isahl."zc_id_subj-post_rr_employee" (ref_left, ref_right, created_by_id)
-           VALUES ($1, $2, $3)
-           ON CONFLICT DO NOTHING
-           RETURNING id"#,
-    )
-    .bind(position_id)
-    .bind(subject_id)
-    .bind(user_id)
-    .fetch_optional(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?;
-    let row = match row {
-        Some(r) => r,
-        None => sqlx::query_as(
-            r#"SELECT id FROM isahl."zc_id_subj-post_rr_employee"
-                   WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-        )
-        .bind(position_id)
-        .bind(subject_id)
-        .fetch_one(pool.get_ref())
-        .await
-        .map_err(ApiError::from_sqlx)?,
-    };
-
-    // NGAC B-2：任职写端后岗位行 OA/层级收敛（事务外幂等 heal，失败仅 warn）
-    crate::ngac_org_ensure::heal_position_scope(pool.get_ref(), position_id).await;
-
-    Ok(
-        HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
-            "id": row.0.to_string(),
-            "positionId": position_id.to_string(),
-            "subjectId": subject_id.to_string(),
-            "subjectKind": kind,
-            "created": true,
-        }))),
-    )
 }
 
 /// DELETE /positions/{id}/employees/{subjectId} — 解除任职（软删除）
+/// DELETE /positions/{id}/employees/{subjectId} — 解除任职（软删）；薄委托 service::org_write::remove_position_employee
 pub async fn remove_position_employee(
     req: HttpRequest,
     pool: web::Data<PgPool>,
@@ -2083,23 +1362,8 @@ pub async fn remove_position_employee(
     let user_id = require_auth(&req)?;
     let (position_id, subject_id) = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "positions", position_id, "update").await?;
-
-    let deleted = sqlx::query(
-        r#"UPDATE isahl."zc_id_subj-post_rr_employee"
-           SET deleted_at = NOW()
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-    )
-    .bind(position_id)
-    .bind(subject_id)
-    .execute(pool.get_ref())
-    .await
-    .map_err(ApiError::from_sqlx)?
-    .rows_affected();
-
-    if deleted == 0 {
-        return Err(ApiError::NotFound("Employment relation not found".into()));
-    }
-    Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
+    crate::service::org_write::remove_position_employee(pool.get_ref(), position_id, subject_id)
+        .await
 }
 
 /// POST /organizations/{id}/employees — 组织任职挂接（幂等）
@@ -2322,8 +1586,75 @@ pub async fn remove_group_member(
     Ok(HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({ "deleted": true }))))
 }
 
+/// GET /employees/{subjectId}/positions — 某任职主体（员工/通讯录联系人）的岗位任职列表
+///
+/// 权威来源 = `zc_id_subj-post_rr_employee` 桥（ref_left=岗位, ref_right=主体）。
+/// employee-list 抽屉「任职绑定」以此为准（此前前端误用 position.sub_org_ids 派生
+/// 恒空，fix-avic-employee-assignment-display）。返回数组（与 /departments、/positions 一致）。
+pub async fn list_subject_position_assignments(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    path: web::Path<i64>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = require_auth(&req)?;
+    require_resource_access(pool.get_ref(), user_id, "positions", 0, "list").await?;
+    let subject_id = path.into_inner();
+
+    let items: Vec<SubjectAssignmentItem> = sqlx::query_as(
+        r#"SELECT r.id, p.id, p.notice::text,
+                  (SELECT rp.ref_left FROM isahl."zc_id_subj-org_rr_position" rp
+                   WHERE rp.ref_right = p.id AND rp.deleted_at IS NULL
+                   ORDER BY rp.id LIMIT 1),
+                  COALESCE((SELECT d.notice FROM isahl."zc_id_orga-department" d
+                     WHERE d.id = (SELECT rp2.ref_left FROM isahl."zc_id_subj-org_rr_position" rp2
+                                   WHERE rp2.ref_right = p.id AND rp2.deleted_at IS NULL
+                                   ORDER BY rp2.id LIMIT 1)
+                       AND d.deleted_at IS NULL), '')
+           FROM isahl."zc_id_subj-post_rr_employee" r
+           JOIN isahl."zc_id_subj-position" p ON p.id = r.ref_left AND p.deleted_at IS NULL
+           WHERE r.ref_right = $1 AND r.deleted_at IS NULL
+           ORDER BY r.id"#,
+    )
+    .bind(subject_id)
+    .fetch_all(pool.get_ref())
+    .await
+    .map_err(ApiError::from_sqlx)?
+    .into_iter()
+    .map(
+        |row: (i64, i64, String, Option<i64>, String)| SubjectAssignmentItem {
+            rel_id: row.0,
+            position_id: row.1,
+            position_name: row.2,
+            org_id: row.3,
+            org_name: row.4,
+        },
+    )
+    .collect();
+
+    Ok(HttpResponse::Ok().json(ApiResponse::success(items)))
+}
+
+/// GET /employees/{subjectId}/positions 列表项（id 一律字符串化，ID_JSON_PRECISION）
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubjectAssignmentItem {
+    #[serde(with = "common::serde_zuid")]
+    rel_id: i64,
+    #[serde(with = "common::serde_zuid")]
+    position_id: i64,
+    position_name: String,
+    #[serde(with = "common::serde_zuid::opt")]
+    org_id: Option<i64>,
+    #[serde(default)]
+    org_name: String,
+}
+
 pub fn register(cfg: &mut actix_web::web::ServiceConfig) {
     cfg.service(web::resource("/users").route(web::get().to(list_users)));
+    cfg.service(
+        web::resource("/employees/{subjectId}/positions")
+            .route(web::get().to(list_subject_position_assignments)),
+    );
     cfg.service(
         web::resource("/departments")
             .route(web::get().to(list_departments))
@@ -2349,10 +1680,7 @@ pub fn register(cfg: &mut actix_web::web::ServiceConfig) {
             .route(web::get().to(list_positions))
             .route(web::post().to(create_position)),
     )
-    .service(
-        web::resource("/positions/templates")
-            .route(web::post().to(create_position_template)),
-    )
+    .service(web::resource("/positions/templates").route(web::post().to(create_position_template)))
     .service(
         web::resource("/positions/templates/{id}/instantiate")
             .route(web::post().to(instantiate_position_template)),
@@ -2423,6 +1751,10 @@ mod tests {
             category: "management".into(),
             org_ids: vec![1, 2],
             sub_org_ids: vec![3],
+            employees: vec![PositionEmployeeDto {
+                id: 42,
+                name: Some("李四".into()),
+            }],
         };
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains(r#""userId":"100""#));
@@ -2430,6 +1762,7 @@ mod tests {
         assert!(json.contains(r#""parentId":null"#));
         assert!(json.contains(r#""orgIds":["1","2"]"#));
         assert!(json.contains(r#""subOrgIds":["3"]"#));
+        assert!(json.contains(r#""employees":[{"id":"42","name":"李四"}]"#));
     }
 
     #[test]
@@ -2450,5 +1783,33 @@ mod tests {
         let json = serde_json::to_string(&dto).unwrap();
         assert!(json.contains(r#""departmentId":"10""#));
         assert!(json.contains(r#""positionId":"20""#));
+    }
+
+    /// 编制载体映射（P4 迁移）：note → comments 自由文本、max_heads → projection 载荷；
+    /// 缺省键不落列（NULL），note 空串/空白不落；读侧 fail-open（缺省/非数 → None）。
+    #[test]
+    fn test_headcount_carriers_roundtrip_and_defaults() {
+        let (projection, comments) = headcount_carriers(Some(5), Some("  需持证上岗  "));
+        assert_eq!(projection.as_deref(), Some("5"));
+        assert_eq!(comments.as_deref(), Some("需持证上岗"));
+        // comments 侧不得出现 JSON 信封（键名/花括号）
+        assert!(!comments.unwrap().contains(['{', '}', ':']));
+        // 读回一致 + 边界
+        assert_eq!(parse_headcount_cap(projection.as_deref()), Some(5));
+        assert_eq!(parse_headcount_cap(None), None);
+        assert_eq!(parse_headcount_cap(Some("")), None);
+        assert_eq!(parse_headcount_cap(Some("DIM-8f3a2b1c")), None);
+        // 缺省键 → 列 NULL
+        let (projection, comments) = headcount_carriers(None, Some("   "));
+        assert!(projection.is_none());
+        assert!(comments.is_none());
+    }
+
+    /// 无说明仅上限：comments 保持 NULL（自由文本语义未被结构化载荷污染）。
+    #[test]
+    fn test_headcount_carriers_comments_null_without_note() {
+        let (projection, comments) = headcount_carriers(Some(1), None);
+        assert_eq!(projection.as_deref(), Some("1"));
+        assert!(comments.is_none());
     }
 }

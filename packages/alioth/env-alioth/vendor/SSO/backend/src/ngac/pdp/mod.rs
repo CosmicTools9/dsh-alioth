@@ -1,9 +1,8 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::PgPool;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
@@ -514,38 +513,20 @@ impl Default for Pdp {
     }
 }
 
-/// `GET /api/ngac/policy-version` — 策略版本探针（fix-ngac-decision-consistency D4）。
-///
-/// Gateway PEP 的 per-worker 决策/列缓存以此版本为失效信号：版本变化即清空本
-/// worker 缓存。响应仅整数版本号（无敏感面）；挂 `/api/ngac` 前缀（PDP 决策类
-/// 既有豁免，SECURITY_SPEC §3.1），与 decide 同一信任面。
-pub async fn get_policy_version(pool: web::Data<PgPool>) -> HttpResponse {
-    match sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(MAX(version), 0) FROM isahl_auth.ngac_policy_version",
-    )
-    .fetch_one(pool.get_ref())
-    .await
-    {
-        Ok(version) => HttpResponse::Ok().json(serde_json::json!({ "version": version })),
-        Err(e) => {
-            log::error!("get_policy_version: query failed: {}", e);
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to fetch policy version"
-            }))
-        }
-    }
-}
-
+/// `GET /api/ngac/policy-version` 已随 VersionProbe 直查移除
+/// （tighten-pdp-decision-surface：HTTP 探针端点零消费者后删除）。
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    // tighten-pdp-decision-surface B：服务决策端点统一收编 /pdp 子 scope
+    // （check/batch/list/columns/decide——全部 Bearer-only + 主体一致性）；
+    // /decide/explain（admin 面）与本人族留在 scope 根。
     cfg.service(
         web::scope("/pdp")
             .route("/check", web::post().to(check_access))
             .route("/check/batch", web::post().to(check_access_batch))
             .route("/list", web::post().to(list_resource_access))
-            .route("/columns", web::post().to(list_column_access)),
+            .route("/columns", web::post().to(list_column_access))
+            .route("/decide", web::post().to(ngac_decide)),
     )
-    .route("/decide", web::post().to(ngac_decide))
-    .route("/policy-version", web::get().to(get_policy_version))
     .route("/decide/explain", web::post().to(ngac_decide_explain))
     // 本人作用域（add-ngac-self-access-review D1）：SSO handler 内强制 JWT，
     // 主体恒取 token sub；PEP 层 /api/ngac 前缀豁免仅免除 Gateway PEP 决策。
@@ -560,6 +541,69 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     .configure(crate::ngac::delegation::configure_self_routes)
     // 绑定申请本人端点（add-ngac-binding-request D2）
     .configure(crate::ngac::binding_request::configure_self_routes);
+}
+
+// ── 服务决策主体一致性（tighten-pdp-decision-surface A/B）──────────────────────
+
+/// Bearer 通道检查（B：服务决策面拒绝纯 cookie 通道——JWT 有效性已由
+/// RequireAuth 保证，此处只确认调用来源为 Authorization 头）。
+pub(crate) fn require_bearer_channel(req: &HttpRequest) -> Result<(), HttpResponse> {
+    let bearer_ok = req
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.len() > 7 && v.starts_with("Bearer "))
+        .unwrap_or(false);
+    if bearer_ok {
+        Ok(())
+    } else {
+        Err(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "BEARER_REQUIRED"
+        })))
+    }
+}
+
+/// 服务决策端点（decide/check/check_batch/list/columns）主体一致性校验。
+/// 调用者 Claims 由 RequireAuth 在验证通过后注入 req extensions——
+/// 自然人 token：`sub == user_id`；服务令牌（`sub=client:*`）：
+/// `svc_user_id == user_id`（PEP 服务端代问语义）。不一致 → 403，不执行决策。
+pub(crate) fn enforce_decision_subject(
+    req: &HttpRequest,
+    user_id: i64,
+) -> Result<(), HttpResponse> {
+    require_bearer_channel(req)?;
+    let extensions = req.extensions();
+    let claims = match extensions.get::<crate::auth::jwt::Claims>() {
+        Some(c) => c,
+        None => {
+            log::error!("decision subject check: caller claims missing (middleware ordering?)");
+            return Err(HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "claims_missing"
+            })));
+        }
+    };
+    let ok = if claims.sub.starts_with("client:") {
+        claims.svc_user_id > 0 && claims.svc_user_id == user_id
+    } else {
+        claims
+            .sub
+            .parse::<i64>()
+            .map(|v| v == user_id)
+            .unwrap_or(false)
+    };
+    if ok {
+        Ok(())
+    } else {
+        log::warn!(
+            "decision subject mismatch: caller sub='{}' svc_user_id={} vs body user_id={}",
+            claims.sub,
+            claims.svc_user_id,
+            user_id
+        );
+        Err(HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "CROSS_SUBJECT_DECISION_DENIED"
+        })))
+    }
 }
 
 #[cfg(test)]

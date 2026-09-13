@@ -11,4 +11,4 @@ pub mod service;
 pub use models::{
     ContactInfo, ContactInfoValue, ContactsEntity, CreateContactRequest, UpdateContactRequest,
 };
-pub use service::ContactsService;
+pub use service::{ContactsService, UserContactRef};

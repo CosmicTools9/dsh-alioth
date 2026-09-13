@@ -11,8 +11,10 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 common = { path = "../common" }
+trigger-registry = { path = "../trigger-registry" }
 tokio = { workspace = true }
 log = { workspace = true }
+ontology-binding = { path = "../ontology-binding" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

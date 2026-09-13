@@ -109,14 +109,22 @@ async fn seed_voters(pool: &PgPool, tag: &str) {
         // 2026-09-03 语义接线：节点 role = 岗位名（position.notice 直配）——两投票人
         // 岗位 notice 同置 role 名（code 保持唯一），resolve 按 notice 命中双岗；
         // NGAC UA（ensure_role_member）仅为授权保留，不再承担岗位解析。
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+                .await
+                .unwrap();
         sqlx::query(
             r#"INSERT INTO isahl."zc_id_subj-position"
-               (id, code, notice, fk_user, created_by_id, created_at, updated_at)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $3, NOW(), NOW())"#,
+               (id, code, notice, fk_user, created_by_id, created_at, updated_at, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $3, NOW(), NOW(), $4, $5, $6)"#,
         )
         .bind(&code)
         .bind(&role)
         .bind(uid)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(pool)
         .await
         .unwrap();
@@ -125,19 +133,33 @@ async fn seed_voters(pool: &PgPool, tag: &str) {
 
 /// 在 zc_id_task-commission 建范畴定义行（scope-definition）与业务实体行
 async fn seed_task_commission(pool: &PgPool) -> (i64, i64) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH"))
+        .await
+        .unwrap();
     let scope_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, _t_, created_by_id)
-           VALUES (isahl.gen_next_zuid(), '投票-任务委派', 'scope-definition', 1)
+        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, _t_, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), '投票-任务委派', 'scope-definition', 1, $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert scope-def row");
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH"))
+        .await
+        .unwrap();
     let entity_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, code, created_by_id)
-           VALUES (isahl.gen_next_zuid(), '委派实体', 'VIP-VOTE', 1)
+        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), '委派实体', 'VIP-VOTE', 1, '实现', '范例', $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert entity row");
@@ -145,17 +167,38 @@ async fn seed_task_commission(pool: &PgPool) -> (i64, i64) {
 }
 
 async fn create_flow(pool: &PgPool, name: &str, ctx_id: Option<i64>, graph: &Value) -> i64 {
-    sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, fk_context, created_by_id, _f_, _t_)
-           VALUES ($1, $2::jsonb, $3, $4, 1, '实现', '范例') RETURNING id"#,
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
+    let flow_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, $3, 1, '实现', '范例', $4, $5, $6) RETURNING id"#,
     )
     .bind(name)
     .bind(graph.to_string())
     .bind(format!("VOTE-{}", name))
-    .bind(ctx_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
-    .unwrap()
+    .unwrap();
+    if let Some(ctx) = ctx_id {
+        // 输入范畴经 zc_id_process_rr_context 桥落行（物理列已移除）
+        sqlx::query(
+            r#"INSERT INTO isahl."zc_id_process_rr_context"
+               (ref_left, ref_right, code, notice, created_by_id)
+               VALUES ($1, $2, 'bind-context', '流程上下文绑定', 1)"#,
+        )
+        .bind(flow_id)
+        .bind(ctx)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    flow_id
 }
 
 fn vote_graph(quorum: i64) -> Value {
@@ -510,14 +553,22 @@ async fn vote_weighted_sources_quorum_advances_on_weight_sum() {
         .unwrap();
         for uid in uids {
             ensure_role_member(&pool, role, uid).await.unwrap();
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+                    .await
+                    .unwrap();
             sqlx::query(
                 r#"INSERT INTO isahl."zc_id_subj-position"
-                   (id, code, notice, fk_user, created_by_id, created_at, updated_at)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $3, NOW(), NOW())"#,
+                   (id, code, notice, fk_user, created_by_id, created_at, updated_at, dk_scene, dk_factor, dk_function)
+                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $3, NOW(), NOW(), $4, $5, $6)"#,
             )
             .bind(format!("{}-p{}", role, uid))
             .bind(format!("{}-p{}", role, uid))
             .bind(uid)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .execute(&pool)
             .await
             .unwrap();

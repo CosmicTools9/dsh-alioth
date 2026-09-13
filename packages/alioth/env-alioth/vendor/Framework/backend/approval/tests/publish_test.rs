@@ -34,12 +34,20 @@ async fn publish_creates_event_rows() {
         ]
     });
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'draft', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'draft', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind("发布测试流程")
     .bind(graph.to_string())
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -107,12 +115,20 @@ async fn publish_rejects_subflow_with_missing_target() {
         ]
     });
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'draft', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'draft', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind("subflow拒绝测试流程")
     .bind(graph.to_string())
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -192,13 +208,21 @@ async fn publish_retires_old_batch_and_marks_version() {
         .unwrap();
     ensure_role_member(&pool, "legal", user_id).await.unwrap();
     let pos_code = format!("TST-POS-LEGAL-{}", test_code("pos"));
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .unwrap();
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_user)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_user, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6)"#,
     )
     .bind("法务岗（publish 测试）")
     .bind(&pos_code)
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .unwrap();
@@ -232,12 +256,21 @@ async fn publish_retires_old_batch_and_marks_version() {
             {"source": "n-start", "target": "n-appr"}
         ]
     });
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    // （本函数上方已用 subj-position 的 dk_* 名，故此处分离命名）
+    let (flow_dk_scene, flow_dk_factor, flow_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'draft', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'draft', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind("版本化测试流程")
     .bind(graph1.to_string())
+    .bind(flow_dk_scene)
+    .bind(flow_dk_factor)
+    .bind(flow_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -414,12 +447,20 @@ async fn publish_blocked_by_inflight_instance() {
             {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
         ]
     });
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'draft', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'draft', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind("在途阻断测试流程")
     .bind(graph.to_string())
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -449,12 +490,20 @@ async fn publish_blocked_by_inflight_instance() {
     .unwrap();
     // tpl_id = 节点事件：在途守卫按 tpl_id IS NOT NULL 判别真实实例
     // （操作定义行 tpl_id NULL 不参与在途计数）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .unwrap();
     let inflight_instance: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, created_by_id, tpl_id)
-           VALUES ('在途实例', $1, $1, $2) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, created_by_id, tpl_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('在途实例', $1, $1, $2, '实现', '实例', $3, $4, $5) RETURNING id"#,
     )
     .bind(user_id)
     .bind(node_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -527,12 +576,20 @@ async fn publish_review_action_nodes_materialize_operation() {
         ]
     });
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'FLOW-RA', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'FLOW-RA', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind("评审执行测试流程")
     .bind(graph.to_string())
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -704,12 +761,20 @@ async fn publish_unpublish_code_column_authority() {
         }
     });
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (notice, meta, code, created_by_id)
-           VALUES ($1, $2::jsonb, 'FLOW-TEST', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'FLOW-TEST', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind("状态双写测试流程")
     .bind(graph.to_string())
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -805,6 +870,7 @@ async fn publish_unpublish_code_column_authority() {
         meta: None,
         context_id: None,
         context_table: None,
+        expected_updated_at: None,
     };
     repo.update(flow_id, req, user_id).await.unwrap();
 

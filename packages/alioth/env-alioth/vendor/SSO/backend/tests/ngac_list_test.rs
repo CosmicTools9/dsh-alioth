@@ -158,12 +158,23 @@ async fn call_list(
     user_id: i64,
     resource_type: &str,
 ) -> ngac_contract::PdpListResponse {
+    use actix_web::HttpMessage;
     let body = web::Json(PdpListRequest {
         user_id,
         resource_type: resource_type.to_string(),
         action: "read".to_string(),
     });
-    let resp = list_resource_access(web::Data::new(pool.clone()), body).await;
+    // 模拟 RequireAuth：Bearer 头 + claims 注入（tighten-pdp-decision-surface A）
+    let req = actix_web::test::TestRequest::get()
+        .insert_header(("Authorization", "Bearer test-token"))
+        .to_http_request();
+    req.extensions_mut()
+        .insert(gateway_sso::auth::jwt::Claims::new(
+            &user_id.to_string(),
+            "",
+            false,
+        ));
+    let resp = list_resource_access(req, web::Data::new(pool.clone()), body).await;
     let bytes = resp.into_body().try_into_bytes().unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }

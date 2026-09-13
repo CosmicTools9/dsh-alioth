@@ -17,6 +17,7 @@ tokio = { workspace = true }
 dotenvy = { workspace = true }
 rust_decimal = { workspace = true, features = ["serde-with-float"] }
 common = { path = "../../../../../../../Framework/backend/common" }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }
 crud = { path = "../../../../../../../Framework/backend/crud" }
 
 [lib]

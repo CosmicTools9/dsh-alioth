@@ -6,13 +6,14 @@ use actix_web::{
     body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header,
-    web, Error, HttpResponse,
+    web, Error, HttpMessage, HttpResponse,
 };
+use chrono::Utc;
 use futures::future::LocalBoxFuture;
 use std::collections::HashMap;
 use std::future::{ready, Ready};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use common::{ErrorResponse, PublicRouteMatcher};
@@ -27,15 +28,16 @@ use serde_json::json;
 
 /// 认证端点速率限制器（SECURITY_SPEC §4）：每 IP N 请求/窗口 令牌桶（内存近似）。
 ///
-/// 上限与窗口可通过环境变量 `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SEC` 调整，
-/// 默认 10 请求 / 60 秒。设计为进程内近似实现：窗口从首个请求开始计时，达到上限后
-/// 拒绝并返回 429。多实例部署应前置共享限流层（如网关/Redis），此处为单实例基线防护。
-pub struct RateLimiter {
-    inner: Mutex<HashMap<String, (u32, Instant)>>,
-    max: u32,
-    window: Duration,
-}
-
+/// 认证端点速率限制（SECURITY_SPEC §4）：DB-backed 固定窗口（fix-sso-residual-gaps G3）。
+///
+/// 计数存 `isahl_auth.auth_rate_limits`（scope+ip+窗口起点联合主键，UPSERT 原子递增）——
+/// 独立进程与 Gateway 内嵌共享同一 DB，限流跨实例一致（取代旧进程内
+/// `Mutex<HashMap>` 近似实现，SECURITY_SPEC §11.1 内存态清单已同步移除）。
+/// 窗口固定对齐 epoch（60s 默认），窗口边界最多放行 ≤2× 上限（固定窗口语义，接受）。
+/// DB 故障 fail-open 放行并记日志（限流为防护面非授权面）；窗口行由 housekeeping 清理。
+///
+/// 上限与窗口通过环境变量 `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SEC` /
+/// `RATE_LIMIT_REGISTER_MAX` 调整，默认 10 请求 / 60 秒（外部注册 3 请求/窗口）。
 /// 从环境变量读取限流上限（默认 10 请求/窗口）。
 fn rate_limit_max() -> u32 {
     std::env::var("RATE_LIMIT_MAX")
@@ -44,47 +46,71 @@ fn rate_limit_max() -> u32 {
         .unwrap_or(10)
 }
 
-/// 从环境变量读取限流窗口（默认 60 秒）。
-fn rate_limit_window() -> Duration {
+/// 从环境变量读取限流窗口秒数（默认 60 秒）。
+fn rate_limit_window_secs() -> u64 {
     std::env::var("RATE_LIMIT_WINDOW_SEC")
         .ok()
         .and_then(|v| v.parse().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(60))
+        .unwrap_or(60)
 }
 
-impl RateLimiter {
-    pub fn new(max: u32, window: Duration) -> Self {
-        Self {
-            inner: Mutex::new(HashMap::new()),
-            max,
-            window,
-        }
-    }
+/// 外部注册限流上限（默认 3 请求/窗口；防护分级——公开注册面严于通用认证端点）。
+fn register_rate_limit_max() -> u32 {
+    std::env::var("RATE_LIMIT_REGISTER_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3)
+}
 
-    /// 返回 `true` 表示允许请求；`false` 表示触发限流。
-    pub fn check(&self, key: &str) -> bool {
-        let mut map = self.inner.lock().unwrap();
-        let now = Instant::now();
-        match map.get_mut(key) {
-            Some((count, start)) => {
-                if now.duration_since(*start) >= self.window {
-                    *count = 1;
-                    *start = now;
-                    true
-                } else if *count < self.max {
-                    *count += 1;
-                    true
-                } else {
-                    false
-                }
-            }
-            None => {
-                map.insert(key.to_string(), (1, now));
-                true
-            }
-        }
+/// 幂等建表（进程内一次；多进程并发 IF NOT EXISTS 安全）。
+static ENSURE_TABLE: OnceLock<()> = OnceLock::new();
+
+async fn ensure_rate_limit_table(pool: &PgPool) {
+    if ENSURE_TABLE.get().is_some() {
+        return;
     }
+    let _ = sqlx::query(
+        "CREATE TABLE IF NOT EXISTS isahl_auth.auth_rate_limits (
+            id BIGINT DEFAULT isahl.gen_next_zuid() NOT NULL,
+            scope TEXT NOT NULL,
+            ip TEXT NOT NULL,
+            window_start TIMESTAMPTZ NOT NULL,
+            count INTEGER NOT NULL DEFAULT 1,
+            created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+            CONSTRAINT auth_rate_limits_pkey PRIMARY KEY (scope, ip, window_start)
+        )",
+    )
+    .execute(pool)
+    .await;
+    let _ = ENSURE_TABLE.set(());
+}
+
+/// DB-backed 限流判定：原子递增当前窗口计数。
+/// `Ok(true)` 放行；`Ok(false)` 超限（调用方 429）；`Err` DB 故障（调用方 fail-open）。
+async fn db_rate_limit_check(
+    pool: &PgPool,
+    scope: &str,
+    ip: &str,
+    max: u32,
+    window_secs: u64,
+) -> Result<bool, sqlx::Error> {
+    ensure_rate_limit_table(pool).await;
+    let now_epoch = Utc::now().timestamp();
+    let window_epoch = now_epoch - now_epoch.rem_euclid(window_secs as i64);
+    let window_start = chrono::DateTime::from_timestamp(window_epoch, 0).unwrap_or_else(Utc::now);
+    let count: i32 = sqlx::query_scalar(
+        "INSERT INTO isahl_auth.auth_rate_limits (scope, ip, window_start, count) \
+         VALUES ($1, $2, $3, 1) \
+         ON CONFLICT (scope, ip, window_start) \
+         DO UPDATE SET count = isahl_auth.auth_rate_limits.count + 1 \
+         RETURNING count",
+    )
+    .bind(scope)
+    .bind(ip)
+    .bind(window_start)
+    .fetch_one(pool)
+    .await?;
+    Ok((count as u32) <= max)
 }
 
 /// 是否为需要限流的认证端点路径。
@@ -97,20 +123,9 @@ fn is_external_register_path(path: &str) -> bool {
     path == "/auth/register/external" || path == "/api/auth/register/external"
 }
 
-/// 外部注册限流上限（默认 3 请求/窗口；防护分级——公开注册面严于通用认证端点）。
-fn register_rate_limit_max() -> u32 {
-    std::env::var("RATE_LIMIT_REGISTER_MAX")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3)
-}
-
 /// Require valid JWT for all non-public routes
 pub struct RequireAuth {
     matcher: PublicRouteMatcher,
-    rate_limiter: Arc<RateLimiter>,
-    /// 外部注册通道独立限流器（防护分级）
-    register_limiter: Arc<RateLimiter>,
 }
 
 impl RequireAuth {
@@ -120,31 +135,18 @@ impl RequireAuth {
             matcher: PublicRouteMatcher::new()
                 .prefix("/auth/")
                 .prefix("/api/auth/")
-                .prefix("/api/ngac/")
                 .prefix("/oauth/")
                 .prefix("/slo/")
                 .prefix("/oidc/")
                 .exact("/health")
                 .exact("/.well-known/jwks.json")
                 .exact("/.well-known/openid-configuration"),
-            rate_limiter: Arc::new(RateLimiter::new(rate_limit_max(), rate_limit_window())),
-            register_limiter: Arc::new(RateLimiter::new(
-                register_rate_limit_max(),
-                rate_limit_window(),
-            )),
         }
     }
 
     /// 使用自定义公开路由匹配器创建中间件
     pub fn with_matcher(matcher: PublicRouteMatcher) -> Self {
-        Self {
-            matcher,
-            rate_limiter: Arc::new(RateLimiter::new(rate_limit_max(), rate_limit_window())),
-            register_limiter: Arc::new(RateLimiter::new(
-                register_rate_limit_max(),
-                rate_limit_window(),
-            )),
-        }
+        Self { matcher }
     }
 }
 
@@ -170,8 +172,6 @@ where
         ready(Ok(RequireAuthService {
             service: Rc::new(service),
             matcher: self.matcher.clone(),
-            rate_limiter: self.rate_limiter.clone(),
-            register_limiter: self.register_limiter.clone(),
         }))
     }
 }
@@ -179,8 +179,6 @@ where
 pub struct RequireAuthService<S> {
     service: Rc<S>,
     matcher: PublicRouteMatcher,
-    rate_limiter: Arc<RateLimiter>,
-    register_limiter: Arc<RateLimiter>,
 }
 
 impl<S, B> Service<ServiceRequest> for RequireAuthService<S>
@@ -198,8 +196,6 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let service = self.service.clone();
         let matcher = self.matcher.clone();
-        let rate_limiter = self.rate_limiter.clone();
-        let register_limiter = self.register_limiter.clone();
 
         Box::pin(async move {
             let path = req.path().to_string();
@@ -213,20 +209,45 @@ where
                     path
                 );
 
-                // 认证端点速率限制（SECURITY_SPEC §4）：10 请求/分钟/IP
+                // 认证端点速率限制（SECURITY_SPEC §4）：DB-backed 固定窗口（G3），
+                // 跨实例一致。防护分级：外部注册通道独立更严档。
                 if is_auth_throttled_path(&path) {
                     let remote_ip = req
                         .connection_info()
                         .realip_remote_addr()
                         .map(|s| s.to_string());
                     if let Some(ip) = remote_ip {
-                        // 防护分级（add-dual-register-channels）：外部注册通道独立更严档
-                        let limiter = if is_external_register_path(&path) {
-                            &register_limiter
+                        let (scope, max) = if is_external_register_path(&path) {
+                            ("register", register_rate_limit_max())
                         } else {
-                            &rate_limiter
+                            ("auth", rate_limit_max())
                         };
-                        if !limiter.check(&ip) {
+                        let window_secs = rate_limit_window_secs();
+                        let allowed = match req.app_data::<web::Data<PgPool>>() {
+                            Some(pool) => {
+                                db_rate_limit_check(
+                                    pool.get_ref(),
+                                    scope,
+                                    &ip,
+                                    max,
+                                    window_secs,
+                                )
+                                .await
+                                .unwrap_or_else(|e| {
+                                    // DB 故障 fail-open（限流为防护面非授权面）
+                                    log::warn!(
+                                        "SSO middleware: rate limit DB check failed (fail-open): {}",
+                                        e
+                                    );
+                                    true
+                                })
+                            }
+                            None => {
+                                log::error!("SSO middleware: PgPool missing for rate limiting");
+                                true
+                            }
+                        };
+                        if !allowed {
                             log::warn!(
                                 "SSO middleware: rate limit exceeded for {} on {}",
                                 ip,
@@ -303,6 +324,9 @@ where
                         }
                     }
                     log::debug!("SSO middleware: {} {} auth accepted", method, path);
+                    // fix（tighten-pdp-decision-surface A）：claims 注入 extensions，
+                    // 服务决策 handler 做主体一致性校验免二次验签
+                    req.extensions_mut().insert(claims.clone());
                     let res = service.call(req).await?;
                     log::debug!(
                         "SSO middleware: {} {} protected response status {}",
@@ -587,15 +611,70 @@ fn map_pep_resource(path: &str, method: &str) -> Option<(String, i64, String)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_rate_limiter_allows_up_to_max_then_blocks() {
-        let rl = RateLimiter::new(10, Duration::from_secs(60));
-        for _ in 0..10 {
-            assert!(rl.check("1.2.3.4"), "first 10 requests should be allowed");
+    async fn test_pool() -> PgPool {
+        let url = std::env::var("DATABASE_URL")
+            .or_else(|_| std::env::var("SSO_TEST_DATABASE_URL"))
+            .unwrap_or_else(|_| {
+                let user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+                format!("postgres://{}@localhost:5432/aliothstudio_test", user)
+            });
+        PgPool::connect(&url)
+            .await
+            .expect("无法连接测试库，请先运行 `bash scripts/db/reset-db.sh --test`")
+    }
+
+    /// 固定窗口内前 max 次放行，超限拒绝；窗口翻转后恢复（G3 DB-backed 语义）。
+    #[tokio::test]
+    async fn test_db_rate_limit_allows_up_to_max_then_blocks() {
+        let pool = test_pool().await;
+        let scope = format!("test-{}", uuid::Uuid::new_v4().simple());
+        let ip = format!("10.0.0.{}", rand::random::<u8>());
+
+        // 清理历史（防残留污染断言）
+        let _ = sqlx::query("DELETE FROM isahl_auth.auth_rate_limits WHERE scope = $1")
+            .bind(&scope)
+            .execute(&pool)
+            .await;
+
+        let max = 3u32;
+        let window_secs = 1u64;
+        for _ in 0..max {
+            assert!(
+                db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
+                    .await
+                    .expect("check"),
+                "first {} requests should be allowed",
+                max
+            );
         }
-        assert!(!rl.check("1.2.3.4"), "11th request should be blocked");
-        // Different key is unaffected
-        assert!(rl.check("5.6.7.8"), "different key should be allowed");
+        assert!(
+            !db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
+                .await
+                .expect("check"),
+            "request above max should be blocked"
+        );
+        // 不同 key（ip）不受影响
+        assert!(
+            db_rate_limit_check(&pool, &scope, "10.0.0.254", max, window_secs)
+                .await
+                .expect("check"),
+            "different ip should be allowed"
+        );
+
+        // 窗口翻转（1s 窗口）→ 恢复放行
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(
+            db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
+                .await
+                .expect("check"),
+            "new window should reset count"
+        );
+
+        // 清理测试数据
+        let _ = sqlx::query("DELETE FROM isahl_auth.auth_rate_limits WHERE scope = $1")
+            .bind(&scope)
+            .execute(&pool)
+            .await;
     }
 
     #[test]

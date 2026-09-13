@@ -55,10 +55,14 @@ impl
         req: CreateOpenApiConfigRequest,
         user_id: i64,
     ) -> Result<OpenApiConfig, ApiError> {
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("FF", "FJA", "↓_HF"))
+                .await
+                .unwrap();
         sqlx::query_as::<_, OpenApiConfig>(
             r#"INSERT INTO isahl."zc_id_prot-openapi_config"
-               (notice, code, comments, settings, enc_fields, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6)
+               (notice, code, comments, settings, enc_fields, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING id, notice AS name, code, comments, settings, enc_fields,
                          created_at, updated_at, deleted_at"#,
         )
@@ -68,7 +72,7 @@ impl
         .bind(&req.settings)
         .bind(&req.enc_fields)
         .bind(user_id)
-        .fetch_one(self.generic.pool())
+        .bind(dk_scene).bind(dk_factor).bind(dk_function).fetch_one(self.generic.pool())
         .await
         .map_err(ApiError::from)
     }
@@ -146,12 +150,16 @@ impl AliothRepository<OpenApiSales, CreateOpenApiSalesRequest, UpdateOpenApiSale
         req: CreateOpenApiSalesRequest,
         user_id: i64,
     ) -> Result<OpenApiSales, ApiError> {
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("FF", "FJA", "↓.HA"))
+                .await
+                .unwrap();
         sqlx::query_as::<_, OpenApiSales>(
             r#"INSERT INTO isahl."zc_id_prod-openapi-sales"
                (notice, code, comments, projection, tpl_id, p_number,
                 "fk_subj-demand", "fk_subj-provider", qk_price, fk_process, sk_currency, qk_size,
-                created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                RETURNING id, notice AS name, code, comments, projection, tpl_id, p_number,
                          "fk_subj-demand" AS fk_subj_demand, "fk_subj-provider" AS fk_subj_provider,
                          qk_price, fk_process, sk_currency, qk_size,
@@ -170,6 +178,9 @@ impl AliothRepository<OpenApiSales, CreateOpenApiSalesRequest, UpdateOpenApiSale
         .bind(req.sk_currency)
         .bind(req.qk_size)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(self.generic.pool())
         .await
         .map_err(ApiError::from)
@@ -272,12 +283,16 @@ impl
         req: CreateOpenApiPurchaseRequest,
         user_id: i64,
     ) -> Result<OpenApiPurchase, ApiError> {
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("FF", "FJA", "↓.HB"))
+                .await
+                .unwrap();
         sqlx::query_as::<_, OpenApiPurchase>(
             r#"INSERT INTO isahl."zc_id_prod-openapi-purchase"
                (notice, code, comments, projection, tpl_id, p_number,
                 "fk_subj-demand", "fk_subj-provider", qk_price, fk_process, sk_currency, qk_size,
-                created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                RETURNING id, notice AS name, code, comments, projection, tpl_id, p_number,
                          "fk_subj-demand" AS fk_subj_demand, "fk_subj-provider" AS fk_subj_provider,
                          qk_price, fk_process, sk_currency, qk_size,
@@ -296,6 +311,9 @@ impl
         .bind(req.sk_currency)
         .bind(req.qk_size)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(self.generic.pool())
         .await
         .map_err(ApiError::from)
@@ -390,12 +408,16 @@ impl AliothRepository<OpenApiMade, CreateOpenApiMadeRequest, UpdateOpenApiMadeRe
         req: CreateOpenApiMadeRequest,
         user_id: i64,
     ) -> Result<OpenApiMade, ApiError> {
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("FF", "FJB", "↓.HB"))
+                .await
+                .unwrap();
         sqlx::query_as::<_, OpenApiMade>(
             r#"INSERT INTO isahl."zc_id_prod-openapi-made"
                (notice, code, comments, projection, tpl_id, p_number,
                 "fk_subj-demand", "fk_subj-provider", qk_price, fk_process, sk_currency, qk_size,
-                created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                RETURNING id, notice AS name, code, comments, projection, tpl_id, p_number,
                          "fk_subj-demand" AS fk_subj_demand, "fk_subj-provider" AS fk_subj_provider,
                          qk_price, fk_process, sk_currency, qk_size,
@@ -414,6 +436,9 @@ impl AliothRepository<OpenApiMade, CreateOpenApiMadeRequest, UpdateOpenApiMadeRe
         .bind(req.sk_currency)
         .bind(req.qk_size)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(self.generic.pool())
         .await
         .map_err(ApiError::from)

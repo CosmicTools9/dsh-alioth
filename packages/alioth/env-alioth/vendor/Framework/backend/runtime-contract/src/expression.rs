@@ -313,7 +313,7 @@ pub fn parse_constraint_expression(input: &str) -> Result<ConstraintExpr, Constr
 fn parse_or_expr(input: &str) -> Result<ConstraintExpr, ConstraintParseError> {
     // flow 条件文法兼容：`||` 与 `OR` 等价
     if let Some(pos) = find_any_logical_op(input, &["OR", "||"]) {
-        let op_len = if input[pos..].starts_with("||") { 2 } else { 2 };
+        let op_len = 2; // `||` 与 `OR` 同为 2 字符，无需分支
         let left = &input[..pos].trim();
         let right = &input[pos + op_len..].trim();
         return Ok(ConstraintExpr::Or(
@@ -326,6 +326,12 @@ fn parse_or_expr(input: &str) -> Result<ConstraintExpr, ConstraintParseError> {
 
 /// 解析 AND 表达式
 fn parse_and_expr(input: &str) -> Result<ConstraintExpr, ConstraintParseError> {
+    // FEEL 子集（extend-dmn-decision-table-full D4）：`X between A and B` 三元
+    // 比较。between 内含 and 关键字，必须先于普通 AND 拆分整体消费——否则
+    // `y between 2 and 3` 会被拆成 `y between 2` AND `3`（错）。
+    if let Some(btw) = try_parse_between(input) {
+        return btw;
+    }
     // flow 条件文法兼容：`&&` 与 `AND` 等价
     if let Some(pos) = find_any_logical_op(input, &["AND", "&&"]) {
         let op_len = if input[pos..].starts_with("&&") { 2 } else { 3 };
@@ -339,14 +345,73 @@ fn parse_and_expr(input: &str) -> Result<ConstraintExpr, ConstraintParseError> {
     parse_comparison(input)
 }
 
+/// 尝试解析 FEEL between 三元形态：`X between A and B`（大小写不敏感），
+/// 展开为 `X >= A and X <= B`（数值闭区间，A/B 可为字段引用——求值期取值）。
+/// 仅当 between 位于括号外顶层且其左侧无更高层 AND/OR 组合时消费
+/// （`a > 1 and b between 2 and 3` 的 between 属 AND 右操作数——外层先拆 AND，
+/// 递归右段时本函数接管）。
+fn try_parse_between(input: &str) -> Option<Result<ConstraintExpr, ConstraintParseError>> {
+    let upper = input.to_uppercase();
+    let between_pos = find_top_level_word(upper.as_str(), "BETWEEN")?;
+    // between 左侧若含顶层 AND/OR → 该 and/or 优先级更高，先外层拆分
+    if find_any_logical_op(&input[..between_pos], &["AND", "OR", "&&", "||"]).is_some() {
+        return None;
+    }
+    let after = &input[between_pos + "BETWEEN".len()..];
+    let and_rel = find_any_logical_op(after, &["AND", "&&"])?;
+    let and_len = if after[and_rel..].starts_with("&&") {
+        2
+    } else {
+        3
+    };
+    let left_src = input[..between_pos].trim();
+    let mid_src = after[..and_rel].trim();
+    let after_and = &after[and_rel + and_len..];
+    // 右界 N 扫描至下一顶层逻辑 op（tail 保留原样继续递归组合）
+    let tail_at =
+        find_any_logical_op(after_and, &["AND", "OR", "&&", "||"]).unwrap_or(after_and.len());
+    let right_src = after_and[..tail_at].trim();
+    let tail = after_and[tail_at..].trim();
+    if left_src.is_empty() || mid_src.is_empty() || right_src.is_empty() {
+        return None;
+    }
+    // 展开为 `(X) >= (A) AND (X) <= (B)` 字符串再走统一递归（X 复用两次——
+    // 纯表达式无副作用，文本重写语义无损）；tail 若存在则随外层 AND/OR 合并。
+    let rewritten = if tail.is_empty() {
+        format!("({left_src}) >= ({mid_src}) AND ({left_src}) <= ({right_src})")
+    } else {
+        format!("(({left_src}) >= ({mid_src}) AND ({left_src}) <= ({right_src})) {tail}")
+    };
+    Some(parse_and_expr(&rewritten))
+}
+
 /// 解析比较表达式
 fn parse_comparison(input: &str) -> Result<ConstraintExpr, ConstraintParseError> {
     let input = input.trim();
 
-    // 括号包裹
-    if input.starts_with('(') && input.ends_with(')') {
-        let inner = &input[1..input.len() - 1].trim();
-        return parse_or_expr(inner);
+    // 括号包裹：仅当整个串是单一括号表达式时剥壳。判定 = 首 `(` 开始计深，
+    // 深度首次归零的位置必须是串尾——`(a) >= (b)` 中途归零 → 复合表达式
+    // （含顶层比较），不剥壳（2026-09-07 FEEL between 展开暴露）。
+    if input.starts_with('(') {
+        let mut depth = 0i32;
+        let mut is_single = false;
+        for (i, c) in input.char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        is_single = i == input.len() - 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if is_single {
+            let inner = &input[1..input.len() - 1].trim();
+            return parse_or_expr(inner);
+        }
     }
 
     // 一元 NOT（flow 条件文法：`!expr`；`!=` 是二元运算符，须排除）
@@ -398,6 +463,15 @@ fn parse_comparison(input: &str) -> Result<ConstraintExpr, ConstraintParseError>
                 let left = &input[..i].trim();
                 let right = &input[after_pos..].trim();
 
+                // FEEL 区间（extend-dmn-decision-table-full D4）：`X in (A..B]` /
+                // `[A..B)` / `(A..B)` / `[A..B]` ——开区间端点严格比较。右值
+                // 特征：以括号起止且内部含 `..`（区别于 `in [a, b, c]` 列表）。
+                if *op == BinaryOp::In && right.contains("..") {
+                    if let Some(rng) = parse_range_comparison(left, right) {
+                        return rng;
+                    }
+                }
+
                 return Ok(ConstraintExpr::Binary(
                     Box::new(parse_additive_expr(left)?),
                     *op,
@@ -409,6 +483,83 @@ fn parse_comparison(input: &str) -> Result<ConstraintExpr, ConstraintParseError>
 
     // 无比较运算符，按算术表达式解析
     parse_additive_expr(input)
+}
+
+/// FEEL 开闭区间 `X in (A..B]` 形态：右值须以 `(`/`[` 起、`)`/`]` 止（可混合），
+/// 内部含顶层 `..` 分隔端点。展开为两个比较的 And（开端点严格 >/闭 >=，
+/// 端止点严格 </闭 <=）。端点 A/B 经 parse_additive_expr 解析（可为数值/字段
+/// 引用/算术——求值期取值）。语法形态不合法返回 None（调用方回落既有
+/// `in [list]`/普通二元路径报错）。
+fn parse_range_comparison(
+    left: &str,
+    right: &str,
+) -> Option<Result<ConstraintExpr, ConstraintParseError>> {
+    let right = right.trim();
+    if right.len() < 5 {
+        return None;
+    }
+    let (open_c, close_c) = (right.as_bytes()[0] as char, right.chars().last().unwrap());
+    let open_ok = open_c == '(' || open_c == '[';
+    let close_ok = close_c == ')' || close_c == ']';
+    if !open_ok || !close_ok {
+        return None;
+    }
+    let inner = &right[1..right.len() - 1];
+    // 列表形态防护：`[` 起始的内层含逗号或引号 → 是 `[a, b]` 列表/字符串
+    // 元素（如 `['a..b','c']`），回落普通路径；区间端点纯数值/字段/算术。
+    if open_c == '[' && (inner.contains(',') || inner.contains('\'') || inner.contains('"')) {
+        return None;
+    }
+    if (open_c == '(' || close_c == ')') && (inner.contains('\'') || inner.contains('"')) {
+        return None;
+    }
+    // 顶层 `..` 定位（端点可含括号/字段点号；`..` 双点整体为分隔符）
+    let mut depth = 0i32;
+    let mut found = None;
+    for (i, c) in inner.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '.' if depth == 0 && inner[i..].starts_with("..") => {
+                found = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let sep = found?;
+    let lo_src = inner[..sep].trim();
+    let hi_src = inner[sep + 2..].trim();
+    if lo_src.is_empty() || hi_src.is_empty() {
+        return None;
+    }
+    let l_op = if open_c == '(' {
+        BinaryOp::Gt
+    } else {
+        BinaryOp::Ge
+    };
+    let h_op = if close_c == ')' {
+        BinaryOp::Lt
+    } else {
+        BinaryOp::Le
+    };
+    let left_expr = || parse_additive_expr(left);
+    let lo_expr = || parse_additive_expr(lo_src);
+    let hi_expr = || parse_additive_expr(hi_src);
+    // X 重复出现两次（lo 与 hi 各一）——纯表达式复制无副作用；解析失败冒泡。
+    Some(match (left_expr(), lo_expr()) {
+        (Ok(lx), Ok(lo)) => {
+            let lower = ConstraintExpr::Binary(Box::new(lx), l_op, Box::new(lo));
+            match (left_expr(), hi_expr()) {
+                (Ok(lx2), Ok(hi)) => Ok(ConstraintExpr::And(
+                    Box::new(lower),
+                    Box::new(ConstraintExpr::Binary(Box::new(lx2), h_op, Box::new(hi))),
+                )),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            }
+        }
+        (Err(e), _) | (_, Err(e)) => Err(e),
+    })
 }
 
 /// 解析加减表达式
@@ -660,6 +811,37 @@ fn find_logical_op(input: &str, op: &str) -> Option<usize> {
 /// 多个候选逻辑运算符中取最左命中（flow 条件文法：`||`/`&&` 与 OR/AND 等价）
 fn find_any_logical_op(input: &str, ops: &[&str]) -> Option<usize> {
     ops.iter().filter_map(|op| find_logical_op(input, op)).min()
+}
+
+/// 在括号外部查找单词关键字位置（大小写不敏感；词边界=前后非字母数字）。
+/// 入参 input 须为与原文等长的 ascii 大写副本（BETWEEN 等长映射回原文索引）。
+fn find_top_level_word(upper_input: &str, word: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < upper_input.len() {
+        let c = upper_input[i..].chars().next().unwrap();
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ if depth == 0 && upper_input[i..].starts_with(word) => {
+                let after = i + word.len();
+                let before_ok =
+                    i == 0 || !upper_input[..i].chars().last().unwrap().is_alphanumeric();
+                let after_ok = after >= upper_input.len()
+                    || !upper_input[after..]
+                        .chars()
+                        .next()
+                        .unwrap()
+                        .is_alphanumeric();
+                if before_ok && after_ok {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += c.len_utf8();
+    }
+    None
 }
 /// 检查是否为合法标识符（flow 条件文法允许连字符：`act-group` 等叶表物理列名；
 /// 2026-09-01 起允许点号——`_refs.ck_category.notice` 成员访问，外键列经

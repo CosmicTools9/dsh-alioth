@@ -22,10 +22,13 @@ use version::entity::{
 /// Alioth 版本响应形状
 #[derive(Debug, Clone, Serialize)]
 pub struct VersionResp {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub version_number: Option<i64>,
     pub revision: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub previous_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,

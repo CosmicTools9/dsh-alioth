@@ -253,7 +253,7 @@ where
         .await?;
     Ok(
         HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
-            "id": new_id,
+            "id": new_id.to_string(),
             "table": table,
         }))),
     )
@@ -288,7 +288,7 @@ async fn delete_leaf(
     }
     Ok(
         HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
-            "id": id,
+            "id": id.to_string(),
             "table": table,
             "deleted": true
         }))),

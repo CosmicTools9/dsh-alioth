@@ -38,7 +38,7 @@ async fn insert_storage_row(
     .await
     .expect("insert cap scalar");
     sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_production_rr_storage"
+        r#"INSERT INTO isahl."zc_id_file_rr_url"
            (ref_left, ref_right, qk_qty, qk_p_capacity, code)
            VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
     )
@@ -124,15 +124,29 @@ async fn name_resolution_via_namespace_resolver() {
     let pool = ::common::testing::connect_test_db().await;
     setup_test_schema(&pool).await.expect("setup failed");
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FRA", "↓_EE"))
+            .await
+            .expect("resolve dk coords");
     let production: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_production" (notice) VALUES ($1) RETURNING id"#,
+        // 物料制成品夹具 → 叶 zc_id_prod-material-made
+        r#"INSERT INTO isahl."zc_id_prod-material-made" (notice, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, '实现', '实例', $2, $3, $4) RETURNING id"#,
     )
     .bind(test_code("prod"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert production");
     let storage: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_stor-container" (notice) VALUES ($1) RETURNING id"#,
+        // 储元夹具 → 叶 stor-ctn-box（家族 storage→stor-container→箱型叶）+ 坐标 TX/FJA/↓_GG
+        r#"INSERT INTO isahl."zc_id_stor-ctn-box" (notice, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, '实现', '实例',
+                   (SELECT id FROM isahl.zc_id_scene    WHERE code = 'TX'   AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FJA'  AND deleted_at IS NULL LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_GG' AND deleted_at IS NULL LIMIT 1)) RETURNING id"#,
     )
     .bind(test_code("stor"))
     .fetch_one(&pool)

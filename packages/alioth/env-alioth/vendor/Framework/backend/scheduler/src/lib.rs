@@ -252,7 +252,7 @@ mod tests {
 
     #[tokio::test]
     async fn cron_matches_now() {
-        let s = CronSchedule::EveryMinutes(1);
+        let s = CronSchedule::parse("* * * * *").expect("parse every-minute cron");
         assert!(s.matches(Utc::now().timestamp()));
     }
 

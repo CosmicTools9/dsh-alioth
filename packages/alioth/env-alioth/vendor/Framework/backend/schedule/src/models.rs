@@ -39,7 +39,7 @@ pub struct Plan {
     // 业务分类
     pub _f_: Option<String>,
     pub _t_: Option<String>,
-    // 提醒等扩展元数据（comments JSON：{"reminder_offset_min": N}）
+    // 备注（纯文本；提醒设置不在此承载——见 service.rs REMINDER_EVENT_CODE 预警事件路）
     pub comments: Option<String>,
     // 重复模式
     pub cron: Option<serde_json::Value>,
@@ -219,7 +219,8 @@ pub struct CreatePlanRequest {
     /// 类型（event/todo/meeting…）——解析优先级低于 code
     #[serde(default)]
     pub r#type: Option<String>,
-    /// 提醒提前分钟数（0/5/15/30/60/1440；None=不设置）。落 comments JSON {"reminder_offset_min": N}
+    /// 提醒提前分钟数（0/5/15/30/60/1440；0=不设置/清除，缺省=不修改）。
+    /// 承载：预警事件（`zc_id_even-alert.code='schedule-reminder'`）`qk_date` = 计划起始 − N 分钟
     #[serde(default)]
     pub reminder_offset_min: Option<i32>,
 }
@@ -236,8 +237,7 @@ pub struct UpdatePlanRequest {
     pub exclude: Option<serde_json::Value>,
     #[serde(with = "common::serde_zuid::opt")]
     pub sort: Option<i64>,
-    /// 提醒提前分钟数（0/5/15/30/60/1440；None=不修改）。落 comments JSON
-    #[serde(default)]
+    /// 提醒提前分钟数（0/5/15/30/60/1440；0=清除，缺省=不修改）。\n    /// 承载：预警事件（`zc_id_even-alert.code='schedule-reminder'`）`qk_date` = 计划起始 − N 分钟\n    #[serde(default)]
     pub reminder_offset_min: Option<i32>,
 }
 

@@ -7,7 +7,7 @@
 //! - 税号 tax_no ← `zc_id_identity`（BUSINESS_LICENSE 营业执照，经 zc_id_entity_rr_identity 桥）证照号
 //! - 电话 tel ← contacts 链路 `zc_id_info-telephone.notice`
 //! - 开户行/账号 ← 最近一张 `zc_id_subj-bank`（comments / o_number）
-//! - 地址 addr ← 恒 null（`zc_id_subjects_rr_place` 实名「主体↔储位」，非通讯地址，模型无落点）
+//! - 地址 addr ← contacts 链路 `zc_id_info-postal.notice`（通讯地址，与电话同链）
 //!
 //! 无独立持久化实体、无写端点——六件套各归其主（主体编辑/证照/联系人/银行卡）。
 //! 「默认开票信息」概念已随默认卡一并抹除。
@@ -37,7 +37,7 @@ pub struct SubjectInvoiceInfo {
     pub company_name: String,
     /// 税号（BUSINESS_LICENSE 证照号）
     pub tax_no: Option<String>,
-    /// 地址（模型无落点，恒 null；deprecated）
+    /// 地址（通讯地址；contacts 链 postal 叶表 notice）
     pub addr: Option<String>,
     /// 电话（contacts 链路 telephone）
     pub tel: Option<String>,
@@ -98,6 +98,23 @@ async fn latest_tel(pool: &PgPool, subject_id: i64) -> Result<Option<String>, Ap
     .await?;
     Ok(v)
 }
+
+/// 最新通讯地址（contacts 链路：主体 → 联系人 → 联系方式 → 邮政地址叶表）
+async fn latest_postal_addr(pool: &PgPool, subject_id: i64) -> Result<Option<String>, ApiError> {
+    let v: Option<String> = sqlx::query_scalar(
+        r#"SELECT p.notice FROM "isahl"."zc_id_entity_rr_contacts" rc
+           JOIN "isahl"."zc_id_contacts" ct ON ct.id = rc.ref_right AND ct.deleted_at IS NULL
+           JOIN "isahl"."zc_id_contacts_rr_infos" ri ON ri.ref_left = ct.id AND ri.deleted_at IS NULL
+           JOIN "isahl"."zc_id_info-postal" p ON p.id = ri.ref_right AND p.deleted_at IS NULL
+           WHERE rc.ref_left = $1 AND rc.deleted_at IS NULL
+           ORDER BY p.id DESC LIMIT 1"#,
+    )
+    .bind(subject_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(v)
+}
+
 /// 最近银行账户（经 rr_account 桥：账号=code，开户机构=fk_trustee 主体名）
 async fn latest_bank(
     pool: &PgPool,
@@ -134,7 +151,10 @@ pub async fn get_subject_invoice_info(
     .await?;
 
     let tax_no = latest_tax_no(pool.get_ref(), subject_id).await?;
-    let tel = latest_tel(pool.get_ref(), subject_id).await?;
+    let (tel, addr) = (
+        latest_tel(pool.get_ref(), subject_id).await?,
+        latest_postal_addr(pool.get_ref(), subject_id).await?,
+    );
     let bank = latest_bank(pool.get_ref(), subject_id).await?;
     let (bank_name, account) = bank.unwrap_or((None, None));
 
@@ -144,7 +164,7 @@ pub async fn get_subject_invoice_info(
             subject_id,
             company_name: company_name.unwrap_or_default(),
             tax_no,
-            addr: None,
+            addr,
             tel,
             bank_name,
             account,

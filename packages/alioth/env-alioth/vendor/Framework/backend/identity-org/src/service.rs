@@ -1,5 +1,7 @@
 //! 身份实体 Service — 业务逻辑层
 
+pub mod org_write;
+
 use common::data::{ListQuery, PaginatedResponse};
 use common::AliothError as ApiError;
 use crud::repository::AliothRepository;

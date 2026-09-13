@@ -65,18 +65,13 @@ impl AIContactPort for DbAIContactAdapter {
         Ok(Some(row))
     }
 
+    /// 用户发送方地址（`zc_id_contact_infos` id）：账号 1:1 绑定实体 → 默认联系人 → 首选联系方式。
+    /// 复用 framework_contacts 的联系链唯一实现；未绑定 / 实体无联系人 → None（发送方留空）。
     async fn resolve_user_contact_id(&self, user_id: i64) -> Result<Option<i64>, String> {
-        let row = sqlx::query_scalar::<_, i64>(
-            r#"SELECT c.id FROM isahl.zc_id_contact_infos c
-               JOIN isahl.zc_id_subjects_rr_storage r ON r.ref_right = c.id
-               WHERE r.ref_left = $1 AND c.deleted_at IS NULL AND r.deleted_at IS NULL
-               LIMIT 1"#,
+        Ok(
+            framework_contacts::ContactsService::resolve_user_contact(&self.pool, user_id)
+                .await?
+                .and_then(|r| r.info_id),
         )
-        .bind(user_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| format!("DB error: {}", e))?;
-
-        Ok(row)
     }
 }

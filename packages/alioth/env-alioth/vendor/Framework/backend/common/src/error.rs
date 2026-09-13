@@ -65,6 +65,10 @@ pub enum AliothError {
     #[error("资源不存在：{0}")]
     NotFound(String),
 
+    /// 资源版本冲突/并发编辑 (HTTP 409)——fix-flow-designer-editing-gaps E2
+    #[error("冲突：{0}")]
+    Conflict(String),
+
     /// 字段验证错误 (HTTP 400)
     #[error("字段 '{field}' 验证失败：{message}")]
     Validation {
@@ -233,6 +237,7 @@ impl ResponseError for AliothError {
             AliothError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AliothError::Forbidden(_) => StatusCode::FORBIDDEN,
             AliothError::NotFound(_) => StatusCode::NOT_FOUND,
+            AliothError::Conflict(_) => StatusCode::CONFLICT,
             AliothError::Internal(_)
             | AliothError::Database(_)
             | AliothError::Serialization(_)
@@ -248,6 +253,7 @@ impl ResponseError for AliothError {
             AliothError::Unauthorized(_) => "UNAUTHORIZED",
             AliothError::Forbidden(_) => "FORBIDDEN",
             AliothError::NotFound(_) => "NOT_FOUND",
+            AliothError::Conflict(_) => "CONFLICT",
             AliothError::Validation { .. } => "VALIDATION_ERROR",
             AliothError::Internal(_) => "INTERNAL_ERROR",
             AliothError::Database(_) => "DATABASE_ERROR",

@@ -30,6 +30,28 @@ async fn cleanup(pool: &PgPool, table: &str) {
         .expect("cleanup change logs");
 }
 
+/// 等待 outbox→data_change_logs 转写落库（有界轮询）。
+///
+/// 竞态背景：`OutboxWorker::run_once` 处理**全表**待转写行，测试二进制内并行用例
+/// 的 worker 实例可能先用 `FOR UPDATE SKIP LOCKED` 领走本用例的行——此时本实例的
+/// run_once 领不到，需等待对方提交。故断言前用有界轮询而非一次性读取。
+async fn wait_relayed_identity(pool: &PgPool, table: &str) -> Option<String> {
+    for _ in 0..40 {
+        let row: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT performed_by_email FROM isahl_audit.data_change_logs WHERE table_name = $1",
+        )
+        .bind(table)
+        .fetch_optional(pool)
+        .await
+        .expect("轮询血缘落库行");
+        if let Some(identity) = row {
+            return identity;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    None
+}
+
 fn event(table: &str, record_id: i64, action: AuditAction) -> OutboxEvent {
     OutboxEvent::new(table, record_id, action)
         .with_user(1)
@@ -95,6 +117,53 @@ async fn audit_scope_groups_transaction_id() {
 }
 
 #[tokio::test]
+async fn actor_scope_populates_operator_identity() {
+    let pool = connect_test_db().await;
+    let table = test_table();
+
+    // 作用域内：操作者标识由请求作用域自动注入（无需逐调用点传参），
+    // 且经 worker 转写后 data_change_logs 同行保留（SECURITY_SPEC §10.1 口径）。
+    let outbox_id = AuditScope::actor_scope(
+        "alice".to_string(),
+        enqueue(&pool, &event(&table, 3002, AuditAction::Insert)),
+    )
+    .await
+    .expect("enqueue in actor scope");
+    let scoped: Option<String> =
+        sqlx::query_scalar("SELECT performed_by_email FROM isahl_audit.audit_outbox WHERE id = $1")
+            .bind(outbox_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch outbox identity");
+    assert_eq!(
+        scoped.as_deref(),
+        Some("alice"),
+        "作用域内写入须带上操作者标识（血缘面口径 = username）"
+    );
+
+    OutboxWorker::new(pool.clone())
+        .run_once()
+        .await
+        .expect("run_once");
+    let relayed = wait_relayed_identity(&pool, &table).await;
+    assert_eq!(relayed.as_deref(), Some("alice"), "转写后标识须保留");
+
+    // 作用域外（异步子任务等）：行仍写入，标识允许为空——不因缺失丢事件
+    let unscoped_id = enqueue(&pool, &event(&table, 3003, AuditAction::Insert))
+        .await
+        .expect("enqueue outside scope");
+    let unscoped: Option<String> =
+        sqlx::query_scalar("SELECT performed_by_email FROM isahl_audit.audit_outbox WHERE id = $1")
+            .bind(unscoped_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch unscoped identity");
+    assert_eq!(unscoped, None, "无作用域时标识为空（行仍须写入）");
+
+    cleanup(&pool, &table).await;
+}
+
+#[tokio::test]
 async fn worker_relays_to_change_logs() {
     let pool = connect_test_db().await;
     let table = test_table();
@@ -110,17 +179,28 @@ async fn worker_relays_to_change_logs() {
             .expect("fetch outbox ts");
 
     let worker = OutboxWorker::new(pool.clone());
-    let n = worker.run_once().await.expect("run_once");
-    assert!(n >= 1, "至少转写一条");
+    let _ = worker.run_once().await.expect("run_once");
 
     // data_change_logs 有对应行，action_timestamp 透传业务事务时刻
-    let (action, record_id, ts): (String, i64, chrono::DateTime<Utc>) = sqlx::query_as(
-        "SELECT action, record_id, action_timestamp FROM isahl_audit.data_change_logs WHERE table_name = $1",
-    )
-    .bind(&table)
-    .fetch_one(&pool)
-    .await
-    .expect("fetch data_change_logs row");
+    // （行可能由并行用例的 worker 实例先行转写 → 有界轮询，避免竞态抖动）
+    let (action, record_id, ts): (String, i64, chrono::DateTime<Utc>) = {
+        let mut found = None;
+        for _ in 0..40 {
+            let row: Option<(String, i64, chrono::DateTime<Utc>)> = sqlx::query_as(
+                "SELECT action, record_id, action_timestamp FROM isahl_audit.data_change_logs WHERE table_name = $1",
+            )
+            .bind(&table)
+            .fetch_optional(&pool)
+            .await
+            .expect("轮询血缘落库行");
+            if row.is_some() {
+                found = row;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        found.expect("data_change_logs row 应在有界等待内出现")
+    };
     assert_eq!(action, "UPDATE");
     assert_eq!(record_id, 3001);
     assert_eq!(

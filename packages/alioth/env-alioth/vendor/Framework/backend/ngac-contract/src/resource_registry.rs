@@ -429,6 +429,35 @@ impl ResourceRegistry {
         self.register_all(cosmic);
         self
     }
+
+    /// SE namespace 资源（研发预算管理）——3 段风格 /service/{svc}/{entity}，
+    /// 实体名取 parts[2]（resolve 器对注册实体自动按 3 段解析）。
+    /// 表归属见 Pre-Proc/SE/domain-mapping.md（零建表定稿）。
+    pub fn with_se_defaults(mut self) -> Self {
+        let se = vec![
+            // rd-project（研发项目主数据）
+            ResourceTypeDef::new("projects", "zc_id_project"),
+            // budget-core（预算/调整/结算/成本要素）
+            ResourceTypeDef::new("budgets", "zc_id_plan-project"),
+            ResourceTypeDef::new("adjustments", "zc_id_plan-project"),
+            ResourceTypeDef::new("settlements", "zc_id_plan-payment"),
+            ResourceTypeDef::new("cost_elements", "zc_id_tags-finance"),
+            // sap-execution（导入作业/过账/聚合/对账）
+            ResourceTypeDef::new("import_jobs", "zc_id_event"),
+            ResourceTypeDef::new("postings", "zc_id_stat-smt-voucher"),
+            ResourceTypeDef::new("aggregates", "zc_id_stat-smt-voucher"),
+            ResourceTypeDef::new("reconciliation", "zc_id_plan-project"),
+            // budget-analysis（差异/报表/BI——派生查询集合级）
+            ResourceTypeDef::new("variance", "zc_id_plan-project"),
+            ResourceTypeDef::new("reports", "zc_id_plan-project"),
+            ResourceTypeDef::new("bi", "zc_id_plan-project"),
+            // rd-milestone（节点目录/桥行）
+            ResourceTypeDef::new("node_templates", "zc_id_tags-milestone"),
+            ResourceTypeDef::new("milestones", "zc_id_project_r_milestone-tags"),
+        ];
+        self.register_all(se);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -617,6 +646,43 @@ mod tests {
             .with_alioth_defaults()
             .with_wz_defaults();
         assert!(reg.resolve("/api/service/nonexistent/create").is_none());
+    }
+
+    #[test]
+    fn test_resolve_se_three_segment_list() {
+        // SE 3 段风格：/service/se-rd-project/projects → parts[2]=projects → projects:0
+        let reg = ResourceRegistry::new()
+            .with_alioth_defaults()
+            .with_se_defaults();
+        let r = reg.resolve("/api/service/se-rd-project/projects").unwrap();
+        assert_eq!(r.resource, "projects:0");
+        assert_eq!(r.type_name, "projects");
+        assert_eq!(r.table_name, "zc_id_project");
+    }
+
+    #[test]
+    fn test_resolve_se_three_segment_item() {
+        // /service/se-rd-project/projects/{id} → projects:{id}
+        let reg = ResourceRegistry::new()
+            .with_alioth_defaults()
+            .with_se_defaults();
+        let r = reg
+            .resolve("/api/service/se-rd-project/projects/123")
+            .unwrap();
+        assert_eq!(r.resource, "projects:123");
+        assert_eq!(r.resource_id, 123);
+    }
+
+    #[test]
+    fn test_resolve_se_milestone_templates() {
+        let reg = ResourceRegistry::new()
+            .with_alioth_defaults()
+            .with_se_defaults();
+        let r = reg
+            .resolve("/api/service/se-rd-milestone/node-templates")
+            .unwrap();
+        assert_eq!(r.type_name, "node_templates");
+        assert_eq!(r.table_name, "zc_id_tags-milestone");
     }
 
     #[test]

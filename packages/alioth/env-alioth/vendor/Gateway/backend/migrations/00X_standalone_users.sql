@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS isahl_auth.standalone_users (
     created_at     timestamptz NOT NULL DEFAULT now()
 );
 
+-- token_version（fix-sso-noauth-removal）：登出即时失效——logout bump 版本，
+-- 旧 token 在 /auth 自管端与 Gateway PEP 校验失败；运行时 ensure 亦幂等补列。
+ALTER TABLE isahl_auth.standalone_users
+    ADD COLUMN IF NOT EXISTS token_version bigint NOT NULL DEFAULT 0;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_standalone_users_username_norm
     ON isahl_auth.standalone_users (username_norm);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_standalone_users_namespace

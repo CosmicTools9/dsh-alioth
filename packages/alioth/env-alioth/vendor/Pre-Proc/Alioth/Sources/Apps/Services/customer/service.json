@@ -24,11 +24,6 @@
       {
         "name": "Customer",
         "table": "isahl.zc_id_cate-organization",
-        "coordinates": {
-          "scene": "zc",
-          "factor": "cate",
-          "function": "organization"
-        },
         "inherits": null,
         "notes": "类目-组织：客户主记录，含编码、名称、分类、联系人、状态等字段",
         "field_mappings": [

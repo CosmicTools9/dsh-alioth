@@ -1,6 +1,79 @@
-use actix_web::{web, HttpResponse, Result};
+use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, Result};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// App 可见性判定（add-app-visibility-ngac-isolation D2/D3）：
+/// PDP `resource_type='app'` visible ids ∩ OA identifier 映射。
+/// - SSO_SERVICE_URL 未配置（standalone 无 PDP 面）→ None（不过滤，部署形态边界）
+/// - `visible_ids: None`（admin/全局 bootstrap 豁免，NGAC_SPEC §6.2）→ None（不过滤）
+/// - `visible_ids: Some(ids)` → 显式集合（含空集 = fail-closed 零可见）
+/// - PDP 调用失败 → Some(∅)（fail-closed）+ warn
+async fn visible_app_codes(
+    req: &HttpRequest,
+    pool: &web::Data<sqlx::PgPool>,
+) -> Option<HashSet<String>> {
+    let sso_url = std::env::var("SSO_SERVICE_URL").unwrap_or_default();
+    if sso_url.is_empty() {
+        return None;
+    }
+    let fail_closed = Some(HashSet::new());
+    let Some(uid) = req
+        .extensions()
+        .get::<common::context::RequestContext>()
+        .map(|c| c.user_id)
+    else {
+        return fail_closed; // JWT scope 内必有；缺失按 fail-closed
+    };
+    let mut token = req
+        .headers()
+        .get(actix_web::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("")
+        .to_string();
+    // cookie 会话（记住我 7 天免登录）无 Authorization 头：回退读 access_token cookie
+    // 作 PDP 委托凭证——否则 cookie 认证用户被 fail-closed 成空 App 清单
+    // （实测根因：GW FE api-client 全 credentials:include，token 存 httpOnly cookie）
+    if token.is_empty() {
+        token = req
+            .cookie("access_token")
+            .map(|c| c.value().to_string())
+            .unwrap_or_default();
+    }
+    let client = ngac_contract::HttpNgacClient::new(sso_url.trim_end_matches('/').to_string());
+    let resp = client
+        .list(
+            &ngac_contract::PdpListRequest {
+                user_id: uid,
+                resource_type: "app".to_string(),
+                action: "read".to_string(),
+            },
+            &token,
+        )
+        .await;
+    let ids = match resp {
+        Ok(r) => match r.visible_ids {
+            None => return None, // admin/bootstrap 豁免：不过滤
+            Some(ids) => ids,
+        },
+        Err(e) => {
+            common::telemetry::warn!("App 可见性 PDP 不可用（fail-closed 空集）: {e}");
+            return fail_closed;
+        }
+    };
+    if ids.is_empty() {
+        return fail_closed;
+    }
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r#"SELECT resource_identifier FROM isahl_auth.ngac_object_attribute
+           WHERE resource_type = 'app' AND deleted_at IS NULL AND fk_resource = ANY($1)"#,
+    )
+    .bind(&ids)
+    .fetch_all(pool.get_ref())
+    .await
+    .unwrap_or_default();
+    Some(rows.into_iter().map(|(c,)| c).collect())
+}
 
 /// 按 namespace 分组的路由响应
 #[derive(Serialize)]
@@ -266,7 +339,19 @@ fn aggregate_raw_apps_from_dir(deploy_path: &str) -> Vec<serde_json::Value> {
     raw
 }
 
-fn read_apps_data() -> Vec<AppInstance> {
+/// 读取应用发现数据（`Pre-Proc` 目录树 / `apps.json` 文件系统扫描）。
+///
+/// 在阻塞线程池执行——扫描 + 逐 app.json 读取属同步 IO，直接在 actix worker 上跑会
+/// 占住事件循环线程（每页加载一次 `/api/apps` + `/api/apps/routes`）。
+async fn read_apps_data_offloaded() -> Result<Vec<AppInstance>> {
+    web::block(read_apps_data).await.map_err(|e| {
+        actix_web::error::ErrorInternalServerError(format!(
+            "app discovery blocking task failed: {e}"
+        ))
+    })
+}
+
+pub(crate) fn read_apps_data() -> Vec<AppInstance> {
     // Phase 1: DEPLOY_PATH 模式（production/release）—— 从聚合文件读取
     if let Ok(deploy_path) = std::env::var("DEPLOY_PATH") {
         let path = std::path::Path::new(&deploy_path).join("apps.json");
@@ -400,8 +485,16 @@ fn read_apps_data() -> Vec<AppInstance> {
 /// ```json
 /// { "namespaces": [{ "namespace": "AVIC-CAASEC", "modules": [{ "module_id": "system-dev" }] }] }
 /// ```
-pub async fn get_active_routes() -> Result<HttpResponse> {
-    let apps = read_apps_data();
+pub async fn get_active_routes(
+    req: HttpRequest,
+    pool: web::Data<sqlx::PgPool>,
+) -> Result<HttpResponse> {
+    let visible = visible_app_codes(&req, &pool).await;
+    let apps: Vec<_> = read_apps_data_offloaded()
+        .await?
+        .into_iter()
+        .filter(|a| visible.as_ref().is_none_or(|v| v.contains(&a.app_code)))
+        .collect();
 
     // 按 namespace 分组去重
     let mut namespace_map: std::collections::BTreeMap<String, Vec<String>> =
@@ -488,8 +581,15 @@ pub async fn get_active_routes() -> Result<HttpResponse> {
 /// ```json
 /// { "apps": [{ "appCode": "...", "workspaceCapabilities": { "approval": true, "ai": false } }] }
 /// ```
-pub async fn get_app_overrides() -> Result<HttpResponse> {
-    let apps = read_apps_data();
+pub async fn get_app_overrides(
+    req: HttpRequest,
+    pool: web::Data<sqlx::PgPool>,
+) -> Result<HttpResponse> {
+    let visible = visible_app_codes(&req, &pool).await;
+    let apps = read_apps_data_offloaded()
+        .await?
+        .into_iter()
+        .filter(|a| visible.as_ref().is_none_or(|v| v.contains(&a.app_code)));
     let overrides: Vec<AppCapabilityOverride> = apps
         .into_iter()
         .filter(|a| a.app_capability_overrides.is_some())
@@ -508,9 +608,12 @@ pub async fn get_app_overrides() -> Result<HttpResponse> {
 /// { "apps": [{ "code": "...", "name": "...", "namespace": "WZ",
 ///              "modules": ["..."], "config": { "modules": [...] } }] }
 /// ```
-pub async fn list_apps() -> Result<HttpResponse> {
-    let apps: Vec<AppInfoResponse> = read_apps_data()
+pub async fn list_apps(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> Result<HttpResponse> {
+    let visible = visible_app_codes(&req, &pool).await;
+    let apps: Vec<AppInfoResponse> = read_apps_data_offloaded()
+        .await?
         .into_iter()
+        .filter(|a| visible.as_ref().is_none_or(|v| v.contains(&a.app_code)))
         .map(|a| AppInfoResponse {
             code: a.app_code,
             name: a.name,

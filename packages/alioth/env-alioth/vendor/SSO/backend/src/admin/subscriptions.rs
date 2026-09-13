@@ -17,6 +17,7 @@ use crate::auth::AuthState;
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct PlanResponse {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub code: String,
     pub tier: i16,
@@ -31,6 +32,7 @@ pub struct PlanResponse {
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct SubscriptionResponse {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
     pub client_name: String,
@@ -188,7 +190,7 @@ pub async fn change_plan(
     {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(serde_json::json!({
             "updated": true,
-            "id": sub_id,
+            "id": sub_id.to_string(),
             "plan_code": body.plan_code,
         })),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({
@@ -230,7 +232,7 @@ pub async fn set_status(
     {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(serde_json::json!({
             "updated": true,
-            "id": sub_id,
+            "id": sub_id.to_string(),
             "status": status,
         })),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({
@@ -492,7 +494,7 @@ pub async fn reconcile_export(
         .into_iter()
         .map(|(client_id, plan_code, total, errors, avg, p95, tier)| {
             serde_json::json!({
-                "client_id": client_id,
+                "client_id": client_id.to_string(),
                 "plan": plan_code,
                 "plan_tier": tier,
                 "total_requests": total,

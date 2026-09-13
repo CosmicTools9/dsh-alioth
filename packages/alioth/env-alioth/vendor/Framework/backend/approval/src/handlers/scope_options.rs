@@ -2,7 +2,7 @@
 //!
 //! 为「新建流程」对话框提供两棵树：
 //! - branches：zc_id_process 的叶表分支（流程自身范畴，一级分类）
-//! - domains：流程输入范畴（fk_context 可选值）三域——task（任务）/
+//! - domains：流程输入范畴（rr_context 桥可绑定值）三域——task（任务）/
 //!   event（非审批事件）/ approve（审批事件），叶表项附业务概念与范畴定义行 scopeId
 //!
 //! 运行时可见性约束（2026-08-27 裁决）：isahl_meta 在 app 运行时不可见——

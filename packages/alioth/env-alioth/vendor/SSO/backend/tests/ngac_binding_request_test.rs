@@ -121,20 +121,30 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
 
     // 组织主体（组织类白名单内）
     let org_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_orga-non-banking-legal\" (id, notice, code, created_by_id)
-         VALUES (isahl.gen_next_zuid(), '绑定测试公司', $1, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_orga-non-banking-legal\" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '绑定测试公司', $1, 1,
+                 (SELECT id FROM isahl.zc_id_scene    WHERE code = 'TX'   AND deleted_at IS NULL),
+                 (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FJA'  AND deleted_at IS NULL),
+                 (SELECT id FROM isahl.zc_id_function WHERE code = '↓_GG' AND deleted_at IS NULL)) RETURNING id",
     )
     .bind(format!("BIND-ORG-{}", suffix))
     .fetch_one(pool)
     .await
     .expect("insert org");
 
-    // 岗位
+    // 岗位（坐标三元组 §6.12 声明即必须：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID）
+    // 声明来源：isahl-db/service.json Position = TX/FJA/↓_GG
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve zc_id_subj-position coords (Position)");
     let position_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id)
-         VALUES (isahl.gen_next_zuid(), '绑定测试岗位', $1, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '绑定测试岗位', $1, 1, $2, $3, $4) RETURNING id",
     )
     .bind(format!("BIND-POS-{}", suffix))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert position");

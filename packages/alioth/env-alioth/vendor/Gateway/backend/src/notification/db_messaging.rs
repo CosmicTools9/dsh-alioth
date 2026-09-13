@@ -42,10 +42,16 @@ impl DbMessagingService {
         benefit_users: &[i64],
         thread_id: Option<i64>,
     ) -> Result<(), AliothError> {
+        // 坐标三元组（§6.12 声明即必须）：msgs-system 族坐标（JB/GHC/↓_KC，与 inbox /
+        // scheduler 同表既有写入一致），值经 ontology_binding 解析 code→ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(&self.pool, ("JB", "GHC", "↓_KC"))
+                .await
+                .map_err(|e| AliothError::Database(e.to_string()))?;
         let result = sqlx::query(
             r#"
-            INSERT INTO isahl."zc_id_msgs-system" (notice, comments, created_by_id, ak_benefit_user, fk_thread, deleted_at)
-            VALUES ($1, $2, $3, $4, $5, NULL)
+            INSERT INTO isahl."zc_id_msgs-system" (notice, comments, created_by_id, ak_benefit_user, fk_thread, deleted_at, dk_scene, dk_factor, dk_function)
+            VALUES ($1, $2, $3, $4, $5, NULL, $6, $7, $8)
             "#,
         )
         .bind(notice)
@@ -53,6 +59,9 @@ impl DbMessagingService {
         .bind(created_by_id)
         .bind(benefit_users)
         .bind(thread_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(&self.pool)
         .await;
 
@@ -144,11 +153,17 @@ impl MessagingService for DbMessagingService {
             return Ok(());
         }
 
+        // 坐标三元组（§6.12 声明即必须）：msgs-system 族坐标（JB/GHC/↓_KC，与同文件
+        // insert_message / inbox / scheduler 同表既有写入一致），值经 ontology_binding 解析 code→ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(&self.pool, ("JB", "GHC", "↓_KC"))
+                .await
+                .map_err(|e| AliothError::Database(e.to_string()))?;
         // 批量 INSERT（unnest 展开用户数组，单语句）
         let result = sqlx::query(
             r#"
-            INSERT INTO isahl."zc_id_msgs-system" (notice, comments, created_by_id, ak_benefit_user, deleted_at)
-            SELECT $1, $2, $3, ARRAY[uid], NULL
+            INSERT INTO isahl."zc_id_msgs-system" (notice, comments, created_by_id, ak_benefit_user, deleted_at, dk_scene, dk_factor, dk_function)
+            SELECT $1, $2, $3, ARRAY[uid], NULL, $5, $6, $7
             FROM unnest($4::bigint[]) AS uid
             "#,
         )
@@ -156,6 +171,9 @@ impl MessagingService for DbMessagingService {
         .bind(content)
         .bind(from as i64)
         .bind(&user_ids)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(&self.pool)
         .await;
 

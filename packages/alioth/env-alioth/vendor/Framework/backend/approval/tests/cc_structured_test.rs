@@ -55,12 +55,21 @@ macro_rules! post_json {
 
 async fn seed_scope(pool: &PgPool) -> (i64, i64) {
     // 收件人用户（employee 实体：subj-employee.notice → fk_user；无 engineer 实体）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("ZJ", "LNC", "↓_EH"))
+        .await
+        .unwrap();
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-employee"
-           (id, code, notice, fk_user, created_by_id, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), 'cc-emp', 'cc-target', $1, 1, NOW(), NOW())"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural"
+           (id, code, notice, fk_user, created_by_id, created_at, updated_at, _f_, _t_,
+            dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), 'cc-emp', 'cc-target', $1, 1, NOW(), NOW(), '实现', '范例',
+                   $2, $3, $4)"#,
     )
     .bind(CC_USER)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .unwrap();
@@ -74,19 +83,29 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64) {
     .execute(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH"))
+        .await
+        .unwrap();
     let scope_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, _t_, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'cc结构化-任务委派', 'scope-definition', 1)
+        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, _t_, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), 'cc结构化-任务委派', 'scope-definition', 1, $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
     let entity_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, code, created_by_id)
-           VALUES (isahl.gen_next_zuid(), '委派实体', 'CCS-VIP', 1)
+        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), '委派实体', 'CCS-VIP', 1, '实现', '范例', $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -94,17 +113,38 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64) {
 }
 
 async fn create_flow(pool: &PgPool, name: &str, ctx_id: Option<i64>, graph: &Value) -> i64 {
-    sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, fk_context, created_by_id, _f_, _t_)
-           VALUES ($1, $2::jsonb, $3, $4, 1, '实现', '范例') RETURNING id"#,
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
+    let flow_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, $3, 1, '实现', '范例', $4, $5, $6) RETURNING id"#,
     )
     .bind(name)
     .bind(graph.to_string())
     .bind(format!("CCS-{}", name))
-    .bind(ctx_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
-    .unwrap()
+    .unwrap();
+    if let Some(ctx) = ctx_id {
+        // 输入范畴经 zc_id_process_rr_context 桥落行（物理列已移除）
+        sqlx::query(
+            r#"INSERT INTO isahl."zc_id_process_rr_context"
+               (ref_left, ref_right, code, notice, created_by_id)
+               VALUES ($1, $2, 'bind-context', '流程上下文绑定', 1)"#,
+        )
+        .bind(flow_id)
+        .bind(ctx)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+    flow_id
 }
 
 fn cc_graph(refs: Value) -> Value {

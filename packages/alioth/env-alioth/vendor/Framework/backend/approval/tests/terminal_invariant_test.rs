@@ -52,33 +52,59 @@ async fn test_user(pool: &sqlx::PgPool) -> i64 {
     .await
     .unwrap();
     // 员工行（审批实例 fk_subject/fk_operator 落员工域）
+    // 叶表定点：员工 = 自然人（zc_id_subj-employee 非叶，唯一语义叶 zc_id_empl-natural）；
+    // 坐标三元组（§6.12）：TX/FJA/↓_GG（跨库现存行实证，identity-org 同族惯例），值经 resolve 解析
+    let (emp_dk_scene, emp_dk_factor, emp_dk_function) =
+        ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .unwrap();
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_subj-employee" (notice, created_by_id)
-           VALUES ('tguard-员工', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural" (notice, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('tguard-员工', 1, '实现', '范例', $1, $2, $3) RETURNING id"#,
     )
+    .bind(emp_dk_scene)
+    .bind(emp_dk_factor)
+    .bind(emp_dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
 }
 
 async fn insert_approve_event(pool: &sqlx::PgPool, notice: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+    // 坐标三元组（§6.12 声明即必须）：审批节点事件载体落叶表 zc_id_appr-process；
+    // 坐标 JC/FTA/↑_NA（审批流程族，库内既有行实证），值经 ontology_binding 解析，禁硬编码 ZUID
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
+    let event_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, 'flow-context', $2, $3, $4) RETURNING id"#,
     )
     .bind(notice)
+    .bind(even_dk_scene)
+    .bind(even_dk_factor)
+    .bind(even_dk_function)
     .fetch_one(pool)
     .await
-    .unwrap()
+    .unwrap();
+    event_id
 }
 
 async fn insert_instance(pool: &sqlx::PgPool, notice: &str, event_id: i64, subject: i64) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let instance_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, fk_operator, created_by_id)
-           VALUES ($1, $2, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, fk_operator, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $2, 1, '实现', '实例', $3, $4, $5) RETURNING id"#,
     )
     .bind(notice)
     .bind(subject)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -226,19 +252,36 @@ async fn sla_check_skips_withdrawn_instance() {
     .fetch_one(&pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：节点事件载体落叶表 zc_id_appr-process；
+    // 坐标 JC/FTA/↑_NA（审批流程族，库内既有行实证），值经 ontology_binding 解析，禁硬编码 ZUID
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let event_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, qk_sla, created_by_id)
-           VALUES ('SLA 守卫事件', $1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, qk_sla, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('SLA 守卫事件', $1, 1, 'flow-context', $2, $3, $4) RETURNING id"#,
     )
     .bind(sla_id)
+    .bind(even_dk_scene)
+    .bind(even_dk_factor)
+    .bind(even_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .unwrap();
     let instance_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (notice, created_at, created_by_id)
-           VALUES ('SLA 守卫实例', NOW() - interval '2 hours', 1) RETURNING id"#,
+           (notice, created_at, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('SLA 守卫实例', NOW() - interval '2 hours', 1, '实现', '实例', $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

@@ -23,19 +23,24 @@ pub struct ApprovalFlow {
     pub meta: Option<serde_json::Value>,
     /// 流程整体结构 mermaid 文本（保存时引擎自动生成，幂等）
     pub mermaid: Option<String>,
-    /// 流程输入范畴（fk_context → zc_id_proc-context 族 scope-definition 行）
+    /// 流程输入范畴（桥派生只读：zc_id_process_rr_context 最早活跃桥行 ref_right →
+    /// zc_id_proc-context 族行；物理列已由模型中心移除）
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_context: Option<i64>,
     /// 实际落位叶表（tableoid 派生，如 zc_id_proc-approve）
     pub branch: Option<String>,
     /// 输入范畴业务概念（proc-context 读聚合解析 notice）
     pub context_concept: Option<String>,
-    /// 输入范畴落位叶表（fk_context 行 tableoid 派生——发起端点 entity_table 数据源）
+    /// 输入范畴落位叶表（桥行 ref_right 指向行 tableoid 派生——发起端点 entity_table 数据源）
     pub context_leaf: Option<String>,
     /// 生命周期主状态（zc_id_lifecycle_r_primary-status 桥 + zc_id_stus-process 字典派生；
     /// create/update RETURNING 不派生——新流程/更新无状态变化，回退 None）
     #[sqlx(default)]
     pub status: Option<String>,
+    /// 治理标记（派生只读：meta->>'managed'；'model-seed' = 模型级种子流程——
+    /// 写面受后端守卫拒绝、设计器只读）。create/RETURNING 路径不派生，回退 None
+    #[sqlx(default)]
+    pub managed_by: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -52,15 +57,23 @@ impl AliothDbEntity for ApprovalFlow {
         "isahl.zc_id_process"
     }
     const SELECT_FIELDS: &'static str =
-        "id, notice AS name, code, t_color_, comments, meta, mermaid, fk_context, \
+        "id, notice AS name, code, t_color_, comments, meta, mermaid, \
+         (SELECT rc.ref_right FROM isahl.\"zc_id_process_rr_context\" rc \
+          WHERE rc.ref_left = e.id AND rc.deleted_at IS NULL \
+          ORDER BY rc.id LIMIT 1) AS fk_context, \
          e.tableoid::regclass::text AS branch, \
          (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
-          WHERE c.id = e.fk_context AND c.deleted_at IS NULL) AS context_concept, \
+          JOIN isahl.\"zc_id_process_rr_context\" rc2 ON rc2.ref_right = c.id AND rc2.deleted_at IS NULL \
+          WHERE rc2.ref_left = e.id AND rc2.deleted_at IS NULL AND c.deleted_at IS NULL \
+          ORDER BY rc2.id LIMIT 1) AS context_concept, \
          (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
-          WHERE c.id = e.fk_context AND c.deleted_at IS NULL) AS context_leaf, \
+          JOIN isahl.\"zc_id_process_rr_context\" rc3 ON rc3.ref_right = c.id AND rc3.deleted_at IS NULL \
+          WHERE rc3.ref_left = e.id AND rc3.deleted_at IS NULL AND c.deleted_at IS NULL \
+          ORDER BY rc3.id LIMIT 1) AS context_leaf, \
          (SELECT s.code FROM isahl.\"zc_id_lifecycle_r_primary-status\" ls \
           JOIN isahl.\"zc_id_stus-process\" s ON s.id = ls.ref_right \
           WHERE ls.ref_left = e.id AND ls.deleted_at IS NULL) AS status, \
+         e.meta->>'managed' AS managed_by, \
          created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "approval-flow";
     const SOFT_DELETE: bool = true;
@@ -217,7 +230,7 @@ pub struct CreateApprovalFlowRequest {
     #[serde(default, with = "common::serde_zuid::opt")]
     pub context_id: Option<i64>,
     /// 流程输入上下文叶表（新契约：选定域叶表后在域父表创建流程专属
-    /// 上下文范例行 `_t_='flow-context'`，fk_context → 范例行）
+    /// 上下文范例行 `_t_='flow-context'`，绑定经 zc_id_process_rr_context 桥落行）
     pub context_table: Option<String>,
 }
 
@@ -234,6 +247,10 @@ pub struct UpdateApprovalFlowRequest {
     pub context_id: Option<i64>,
     /// 流程输入上下文叶表重绑（新契约：域父表建新范例行）
     pub context_table: Option<String>,
+    /// 乐观锁期望值（fix-flow-designer-editing-gaps E2）：客户端读取时的
+    /// updated_at；与库中失配 → 409 Conflict（并发编辑不得静默覆盖）
+    #[serde(default)]
+    pub expected_updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 // FlowNode requests

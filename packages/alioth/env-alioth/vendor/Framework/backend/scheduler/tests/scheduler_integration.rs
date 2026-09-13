@@ -46,16 +46,27 @@ impl ScheduledHandler for CountHandler {
 
 /// 种子计划：插入测试计划行（幂等，code 唯一）
 async fn seed_test_plan(pool: &PgPool, code: &str, cron: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：plan-perform 族坐标（JE/FMA/↓_CH，与 wz 既有行一致）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve_conn(
+        // resolve_conn 需连接；此处以 pool 获取坐标（与 resolve 同源实现）
+        &mut *pool.acquire().await.unwrap(),
+        ("JE", "FMA", "↓_CH"),
+    )
+    .await
+    .unwrap();
     let id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO isahl."zc_id_plan-perform" (notice, code, cron, created_by_id)
-        VALUES ($1, $2, $3, 1)
+        INSERT INTO isahl."zc_id_plan-perform" (notice, code, cron, created_by_id, dk_scene, dk_factor, dk_function)
+        VALUES ($1, $2, $3, 1, $4, $5, $6)
         RETURNING id
         "#,
     )
     .bind(format!("scheduler-test-{code}"))
     .bind(code)
     .bind(cron)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert test plan");
@@ -64,7 +75,7 @@ async fn seed_test_plan(pool: &PgPool, code: &str, cron: &str) -> i64 {
 
 #[tokio::test]
 async fn cron_matches_current_minute() {
-    let s = CronSchedule::EveryMinutes(1);
+    let s = CronSchedule::parse("*/1 * * * *").expect("parse */1 cron");
     let now = chrono::Utc::now().timestamp();
     assert!(s.matches(now), "*/1 should match any minute");
 }

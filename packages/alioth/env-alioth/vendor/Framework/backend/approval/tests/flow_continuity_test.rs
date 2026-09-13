@@ -96,26 +96,50 @@ async fn approve_action_writes_qk_date_anchor() {
     setup_test_schema(&pool).await.unwrap();
 
     // 夹具：工程师 + 审批事件 + 审批实例（对齐 approve_reject_test 范式）
+    // 叶表定点：员工 = 自然人（zc_id_subj-employee 非叶）；坐标 TX/FJA/↓_GG（跨库实证）
+    let (emp_dk_scene, emp_dk_factor, emp_dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .unwrap();
     let eng_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_subj-employee" (notice, created_by_id)
-           VALUES ('流程连续性测试工程师', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural" (notice, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('流程连续性测试工程师', 1, '实现', '范例', $1, $2, $3) RETURNING id"#,
     )
+    .bind(emp_dk_scene)
+    .bind(emp_dk_factor)
+    .bind(emp_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：JC/FTA/↑_NA（审批流程族帧；库内既有行实证）；值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let approve_event_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id)
-           VALUES ('流程连续性测试审批事项', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+                   VALUES ('流程连续性测试审批事项', 1, 'flow-context', $1, $2, $3) RETURNING id"#,
     )
+    .bind(even_dk_scene)
+    .bind(even_dk_factor)
+    .bind(even_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .unwrap();
     let instance_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (notice, fk_subject, fk_operator, created_by_id)
-           VALUES ('节点1审核', $1, $1, 1) RETURNING id"#,
+           (notice, fk_subject, fk_operator, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('节点1审核', $1, $1, 1, '实现', '实例', $2, $3, $4) RETURNING id"#,
     )
     .bind(eng_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

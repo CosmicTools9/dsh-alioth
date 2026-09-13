@@ -165,22 +165,41 @@ async fn subjects_rr_place_bridge_semantics() {
     let sfx = suffix();
 
     // 准备：一个主体 + 一个 place 目标（lifecycle 叶）
+    // 类契约派生源（§4.3.3 形态 1）：Identity 实体 JE/FJA/↑_DA（identity-org 静态绑定），
+    // 值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (subj_scene, subj_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FJA", "↑_DA"))
+            .await
+            .expect("resolve subject coords");
     let subject_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subjects\" (notice, code, created_by_id) \
-         VALUES ($1, $2, 1) RETURNING id",
+        // 测试主体 → 叶 zc_id_orga-non-banking-legal（父表 zc_id_subjects 禁直写）+ 三坐标取本夹具解析值
+        "INSERT INTO isahl.\"zc_id_orga-non-banking-legal\" (notice, code, created_by_id, dk_scene, dk_factor, dk_function) \
+         VALUES ($1, $2, 1, $3, $4, $5) RETURNING id",
     )
     .bind(format!("测试主体-{sfx}"))
     .bind(format!("T-SUBJ-{sfx}"))
+    .bind(subj_scene)
+    .bind(subj_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert subject");
 
+    // 场所叶（构建 subjects_rr_place 桥）：落 zc_id_stor-plc-asset（场所-资产）——
+    // 同 crate 生产路径 subjects.rs::create_subject 建「财产储位」同叶同坐标（TX/FJA/↓_EV）
+    let (place_dk_scene, place_dk_factor, place_dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_EV"))
+            .await
+            .expect("resolve place coords");
     let place_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_lifecycle\" (notice, code, created_by_id) \
-         VALUES ($1, $2, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_stor-plc-asset\" (notice, code, created_by_id, dk_scene, dk_factor, dk_function) \
+         VALUES ($1, $2, 1, $3, $4, $5) RETURNING id",
     )
     .bind(format!("测试场所-{sfx}"))
     .bind(format!("T-PLACE-{sfx}"))
+    .bind(place_dk_scene)
+    .bind(place_dk_factor)
+    .bind(place_dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert place");

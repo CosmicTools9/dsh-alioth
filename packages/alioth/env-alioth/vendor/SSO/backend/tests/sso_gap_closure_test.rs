@@ -178,9 +178,19 @@ async fn audit_ingest_endpoint() {
     )
     .await;
 
-    let token = mint_token(&ast, 70201, "audit@example.com");
+    // tighten-pdp-decision-surface C：摄入仅服务令牌——构造 sub=client:* + svc_user_id
+    let svc_token = {
+        use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Claims};
+        configure_token_validation(
+            "http://localhost:9002".to_string(),
+            "http://localhost:9002".to_string(),
+        );
+        let mut claims = Claims::new("client:audit-ingest-test", "", false);
+        claims.svc_user_id = 70201;
+        encode_access_token(&claims, &ast.jwt_private_key).expect("mint service token")
+    };
     let auth =
-        actix_web::http::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap();
+        actix_web::http::header::HeaderValue::from_str(&format!("Bearer {}", svc_token)).unwrap();
 
     let resp = test::call_service(
         &app,
@@ -199,4 +209,26 @@ async fn audit_ingest_endpoint() {
     assert_eq!(resp.status().as_u16(), 201, "audit ingest returns 201");
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(body["id"].as_i64().is_some(), "returns event id");
+
+    // 自然人令牌摄入 → 403（防伪造审计）
+    let user_token = mint_token(&ast, 70201, "audit@example.com");
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri("/api/ngac/audit")
+            .insert_header(("Authorization", format!("Bearer {}", user_token)))
+            .set_json(json!({
+                "subject_id": 70201,
+                "object_type": "document",
+                "operation": "read",
+                "success": false
+            }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        resp.status().as_u16(),
+        403,
+        "natural-person token must be forbidden from audit ingest"
+    );
 }

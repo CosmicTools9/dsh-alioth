@@ -46,9 +46,14 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
         // fix-fk-approve-residual-consumers：fk_approve 物理列已移除——
         // 创建后写 rr_event 桥行承载审批事件关联
         let id: i64 = sqlx::query_scalar(
+            // 坐标三元组（§6.12）：oper-* 族 = JE/FTA/↓_EZ（家族既有写入同值；禁硬编码 ZUID）
             r#"INSERT INTO isahl."zc_id_oper-sales_order"
-               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, qk_work_duration, fk_operator, fk_subject, qk_period, "ck_cate-wh", "sk_unit-working", qk_arrived, "ck_cate-biz", qk_sla, lk_urgent, "ck_cate-proc_op", created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, qk_work_duration, fk_operator, fk_subject, qk_period, "ck_cate-wh", "sk_unit-working", qk_arrived, "ck_cate-biz", qk_sla, lk_urgent, "ck_cate-proc_op", created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                       (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JE'   AND deleted_at IS NULL LIMIT 1),
+                       (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FTA'  AND deleted_at IS NULL LIMIT 1),
+                       (SELECT id FROM isahl.zc_id_function WHERE code = '↓_EZ' AND deleted_at IS NULL LIMIT 1))
                RETURNING id"#,
         )
         .bind(&req.notice)

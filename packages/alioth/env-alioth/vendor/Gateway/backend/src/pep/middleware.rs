@@ -32,7 +32,7 @@
 //! ```
 
 use super::cache::{ProbeOutcome, VersionProbe};
-use crate::epp::{record_audit_event, Decision as AuditDecision};
+use crate::epp::{record_audit_event_with_metadata, Decision as AuditDecision};
 use crate::pep::jwks::{JwksError, SsoJwksClient};
 use actix_web::{
     body::EitherBody,
@@ -40,7 +40,8 @@ use actix_web::{
     Error, HttpMessage, HttpResponse,
 };
 use common::context::RequestContext;
-use common::telemetry::{error, info, warn};
+use common::telemetry::{debug, error, warn};
+use crud::audit_outbox::AuditScope;
 use futures::future::{ok, LocalBoxFuture, Ready};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use ngac_contract::{HttpNgacClient, ResourceRegistry};
@@ -158,6 +159,11 @@ pub struct Claims {
     #[serde(default)]
     #[serde(with = "common::serde_zuid")]
     pub svc_user_id: i64,
+    /// standalone token_version（fix-sso-noauth-removal）：standalone 登录 token
+    /// 携带（Some）；SSO/服务令牌无此声明（None）。PEP 对 Some 值比对
+    /// `standalone_users.token_version`——logout bump 后旧 token 即时失效。
+    #[serde(default)]
+    pub tv: Option<i64>,
 }
 
 /// NGAC (Next Generation Access Control) Policy Enforcer.
@@ -209,7 +215,9 @@ pub struct NgacEnforcer {
     audience: String,
     /// Resource registry mapping URL patterns to isahl tables.
     /// When None, falls back to the old map_resource behavior.
-    resource_registry: Option<ngac_contract::ResourceRegistry>,
+    /// `Arc` 持有：注册表在 worker 生命周期内不变（alioth+wz 合计 145 条），
+    /// 请求内只做引用计数拷贝，不再逐请求深拷贝整表（含 ~500 个 String）。
+    resource_registry: Option<Arc<ngac_contract::ResourceRegistry>>,
     /// Paths that completely bypass JWT authentication and NGAC PDP.
     /// Used for auth endpoints (login, register, etc.) that must be
     /// accessible without any credentials.
@@ -226,6 +234,8 @@ impl NgacEnforcer {
         // 客户端（ngac_client=None），持有有效 JWT 即放行；此前构造空 URL 客户端使
         // decide/list 必网络失败 → fail-close 全量 403，standalone fail-open 失效。
         let has_pdp_endpoint = !sso_service_url.trim().is_empty();
+        // tighten-pdp-decision-surface B：探针 pool 直查（与 self.pool 同源）
+        let probe_pool = pool.clone();
         Self {
             pool: Some(pool),
             jwt_public_key,
@@ -236,7 +246,7 @@ impl NgacEnforcer {
                 None
             },
 
-            version_probe: Arc::new(VersionProbe::new()),
+            version_probe: Arc::new(VersionProbe::with_pool(probe_pool)),
             column_cache: std::sync::Arc::new(super::cache::ColumnCache::with_defaults()),
             ngac_client: if has_pdp_endpoint {
                 Some(HttpNgacClient::new(sso_service_url))
@@ -246,7 +256,7 @@ impl NgacEnforcer {
             issuer: "http://localhost:9002".to_string(),
             audience: "http://localhost:9002".to_string(),
             public_noauth_paths: HashSet::new(),
-            resource_registry: Some(ngac_resource_registry()),
+            resource_registry: Some(Arc::new(ngac_resource_registry())),
         }
     }
 
@@ -265,7 +275,26 @@ impl NgacEnforcer {
             issuer: "http://localhost:9002".to_string(),
             audience: "http://localhost:9002".to_string(),
             public_noauth_paths: HashSet::new(),
-            resource_registry: Some(ngac_resource_registry()),
+            resource_registry: Some(Arc::new(ngac_resource_registry())),
+        }
+    }
+
+    /// 无 DB 池、但注入 PDP 客户端的形态（测试 seam）——用于验证 PEP 判定路径
+    /// （list/decide 的发起与合并语义）而不依赖真实 SSO 与数据库：会话吊销校验与
+    /// 审计写仅在持有 pool 时执行（`pool: None` 时跳过）。
+    pub fn new_without_pool_with_pdp(sso_service_url: impl Into<String>) -> Self {
+        Self {
+            pool: None,
+            jwt_public_key: TEST_SSO_JWT_PUBLIC_KEY.to_vec(),
+            jwt_public_key_prev: Vec::new(),
+            jwks_client: None,
+            version_probe: Arc::new(VersionProbe::new()),
+            column_cache: std::sync::Arc::new(super::cache::ColumnCache::with_defaults()),
+            ngac_client: Some(HttpNgacClient::new(sso_service_url.into())),
+            issuer: "http://localhost:9002".to_string(),
+            audience: "http://localhost:9002".to_string(),
+            public_noauth_paths: HashSet::new(),
+            resource_registry: Some(Arc::new(ngac_resource_registry())),
         }
     }
 
@@ -282,7 +311,7 @@ impl NgacEnforcer {
     /// Configure a custom resource registry.
     /// Overrides the default alioth resource mappings.
     pub fn with_resource_registry(mut self, registry: ngac_contract::ResourceRegistry) -> Self {
-        self.resource_registry = Some(registry);
+        self.resource_registry = Some(Arc::new(registry));
         self
     }
     /// Configure a set of paths that completely bypass JWT authentication
@@ -480,6 +509,57 @@ async fn call_pdp_remote(
     Ok(response.permitted)
 }
 
+/// NGAC 审计主体标识（fix-ngac-audit-subject-identity）：**username 优先**；
+/// 缺失/空 → `user:{user_id}`（保留唯一性，禁止跨主体共享常量占位）。
+/// 服务令牌（`sub=client:*`）以 client 标识为主体。
+fn resolve_audit_subject(
+    username: &str,
+    user_id: i64,
+    is_service_token: bool,
+    service_id: &str,
+) -> String {
+    // 服务令牌主体 = client 标识（区别于自然人 username 空间）；
+    // 自然人主体走跨审计面唯一实现（common::audit::resolve_subject）。
+    if is_service_token && !service_id.is_empty() {
+        return service_id.to_string();
+    }
+    common::audit::resolve_subject(username, user_id)
+}
+
+/// 授权审计 fire-and-forget（NGAC_SPEC §8「每个决策产生审计（fire-and-forget，
+/// 量级 = 请求率）」+ SECURITY_SPEC §11.2）：写库不阻塞请求响应，写入失败仅 telemetry
+/// 记录、不改变响应结果。「已决策未落库」丢失窗口见 SECURITY_SPEC §11.2。
+///
+/// 主体标识 = `subject`（username 优先，回落 `user:{id}`，规则见 `resolve_audit_subject`）；
+/// email 属联系方式，存在时随 `metadata.email` 保留（不作为标识）。
+fn spawn_audit_event(
+    pool: PgPool,
+    user_id: i64,
+    subject: &str,
+    email: &str,
+    resource: &str,
+    action: &str,
+    decision: AuditDecision,
+) {
+    let subject = subject.to_string();
+    let resource = resource.to_string();
+    let action = action.to_string();
+    let metadata = if email.is_empty() {
+        serde_json::json!({})
+    } else {
+        serde_json::json!({ "email": email })
+    };
+    tokio::spawn(async move {
+        if let Err(e) = record_audit_event_with_metadata(
+            &pool, user_id, &subject, &resource, &action, &decision, metadata,
+        )
+        .await
+        {
+            warn!("NGAC audit event write failed: {}", e);
+        }
+    });
+}
+
 /// Map HTTP method to action string
 fn method_to_action(method: &str) -> &'static str {
     match method {
@@ -570,7 +650,7 @@ pub struct NgacEnforcerService<S> {
     audience: String,
     /// Resource registry for URL → isahl table resolution.
     /// When None, falls back to the old map_resource logic.
-    resource_registry: Option<ngac_contract::ResourceRegistry>,
+    resource_registry: Option<Arc<ngac_contract::ResourceRegistry>>,
     /// Paths that completely bypass JWT authentication and NGAC PDP.
     public_noauth_paths: HashSet<String>,
 }
@@ -673,7 +753,7 @@ where
                     _ => false,
                 };
                 if !is_service_token {
-                    info!("No-auth path access permitted: {}", req.path());
+                    debug!("No-auth path access permitted: {}", req.path());
                     let response = svc.call(req).await?;
                     return Ok(response.map_into_left_body());
                 }
@@ -761,6 +841,39 @@ where
                 }
             };
 
+            // standalone token_version 校验（fix-sso-noauth-removal）：
+            // standalone logout bump 版本后，已签发 token 即时失效（无 30min TTL 残留）。
+            if let Some(tv) = claims.tv {
+                let tv_ok = match &pool {
+                    Some(p) => match claims.sub.parse::<i64>() {
+                        Ok(uid) => {
+                            match sqlx::query_scalar::<_, i64>(
+                                "SELECT token_version FROM isahl_auth.standalone_users WHERE id = $1",
+                            )
+                            .bind(uid)
+                            .fetch_optional(p)
+                            .await
+                            {
+                                Ok(Some(current)) => current == tv,
+                                Ok(None) | Err(_) => false,
+                            }
+                        }
+                        Err(_) => false,
+                    },
+                    None => true, // 无 DB 池（测试）跳过
+                };
+                if !tv_ok {
+                    warn!("Access denied: standalone token revoked (version mismatch)");
+                    return Ok(req.into_response(
+                        HttpResponse::Unauthorized()
+                            .json(serde_json::json!({
+                                "error": "Token revoked"
+                            }))
+                            .map_into_right_body(),
+                    ));
+                }
+            }
+
             // 会话吊销检查：若 token 绑定 SSO 会话且会话已失效（注销/过期），
             // 即使 JWT 签名有效也拒绝访问，使 logout 即时生效。
             if !claims.sid.is_empty() {
@@ -793,7 +906,7 @@ where
             let user_id_i64 = if is_service_token {
                 // Gap C（fail-closed）：服务令牌必须对应 enabled 且未过期的 client。
                 // 吊销/禁用/过期 → 401（旧 JWT 在 TTL 内也不可用）。
-                if let Some(ref db_pool) = pool {
+                if let Some(db_pool) = &pool {
                     let client_id = user_id_str.strip_prefix("client:").unwrap_or(&user_id_str);
                     let client_ok: Option<(bool,)> = sqlx::query_as(
                         "SELECT enabled FROM isahl_auth.api_clients \
@@ -826,6 +939,14 @@ where
             } else {
                 user_id_str.parse::<i64>().unwrap_or(0)
             };
+            // 审计主体标识（fix-ngac-audit-subject-identity）：username 优先，
+            // 回落 user:{id}；服务令牌以 client 标识为主体。
+            let audit_subject = resolve_audit_subject(
+                &claims.username,
+                user_id_i64,
+                is_service_token,
+                &user_id_str,
+            );
             // Create RequestContext (kept in local var; inserted after visible_ids lookup)
             let mut request_context = RequestContext::with_username(
                 user_id_i64,
@@ -852,7 +973,7 @@ where
                 || req.path() == "/api/openapi"
                 || req.path() == "/api/openapi/";
             if is_openapi_doc_path {
-                info!(
+                debug!(
                     "OpenAPI doc access permitted for user={} path={}",
                     user_id_str,
                     req.path()
@@ -931,210 +1052,209 @@ where
                 }
             }
 
-            info!(
+            debug!(
                 "PEP checking access for user={} resource={} action={}",
                 user_id_str, resource, action
             );
 
-            // NGAC_FAIL_OPEN 判定提前到 PDP list 之前：fail-open 下列表端点同样
+            // NGAC_FAIL_OPEN 判定提前到 PDP 判定之前：fail-open 下列表端点同样
             // 跳过 PDP（与 decide 路径一致，消除 standalone/fail-open 下列表恒 403），
             // 按 §2.7 降级为不注入 visible_ids（None → crud 无 RLS 约束）。
             let fail_open = std::env::var("NGAC_FAIL_OPEN")
                 .unwrap_or_default()
                 .eq_ignore_ascii_case("true");
-
-            // For list endpoints (resource_id == 0), query PDP for visible_ids
-            // and inject into RequestContext for RLS filtering downstream.
-            // 仅 read 动作注入（NGAC_SPEC §5.5.2：visible_ids 为行级读过滤）；
-            // create/update/delete 集合操作走 decide 判定，不被 PDP list 耦合。
-            if !fail_open {
-                if let Some(resolved) = resolved.as_ref() {
-                    if resolved.resource_id == 0 && action == "read" {
-                        if let Some(ngac_client_ref) = &ngac_client {
-                            let list_req = ngac_contract::PdpListRequest {
-                                user_id: user_id_i64,
-                                resource_type: resolved.type_name.clone(),
-                                action: action.to_string(),
-                            };
-                            match ngac_client_ref.list(&list_req, &token).await {
-                                Ok(list_resp) if list_resp.permitted => {
-                                    // visible_ids=None = admin 全量（NGAC_SPEC §6.2）：
-                                    // 不注入 header / 不设置 RLS——crud 侧缺失 = 无约束（全表）。
-                                    // Some([]) = 显式空授权 → 注入 `none`（恒假谓词零行）。
-                                    // Some(ids) = 行级过滤集。
-                                    if let Some(visible) = list_resp.visible_ids {
-                                        request_context.set_visible_resource_ids(
-                                            resolved.type_name.clone(),
-                                            visible.clone(),
-                                        );
-                                        // 空集必须注入显式 `none` 标记——crud 解析为 Some([]) →
-                                        // 恒假谓词零行；header 缺失在 crud 侧为无约束，不能作为空权限信号
-                                        let header_val = if visible.is_empty() {
-                                            "none".to_string()
-                                        } else {
-                                            visible
-                                                .iter()
-                                                .map(|i| i.to_string())
-                                                .collect::<Vec<_>>()
-                                                .join(",")
-                                        };
-                                        req.headers_mut().insert(
-                                            actix_web::http::header::HeaderName::from_static(
-                                                "x-visible-ids",
-                                            ),
-                                            actix_web::http::header::HeaderValue::from_str(
-                                                &header_val,
-                                            )
-                                            .unwrap_or_else(|_| {
-                                                actix_web::http::header::HeaderValue::from_static(
-                                                    "none",
-                                                )
-                                            }),
-                                        );
-                                    }
-                                }
-                                _ => {
-                                    // PDP list 调用失败或 permitted=false → fail-close：
-                                    // 缺失 header 在 crud 侧 = 无约束（全表），不得静默放行
-                                    warn!(
-                                    "NGAC list check failed/denied for user={} type={} action={}",
-                                    user_id_str, resolved.type_name, action
-                                );
-                                    return Ok(req.into_response(
-                                        HttpResponse::Forbidden()
-                                            .json(serde_json::json!({
-                                                "error": "Access denied",
-                                                "reason": "List permission check failed or denied"
-                                            }))
-                                            .map_into_right_body(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Insert context AFTER visible_ids enrichment so downstream sees RLS
-            req.extensions_mut().insert(request_context);
-
             // 版本探针（remove-ngac-pep-decision-cache）：决策不缓存——权限立即
             // 生效为硬性要求，每次请求现查 PDP；探针仅服务列级缓存（ColumnCache，
             // association 派生、版本化 ≤2s）失效。探针失败 → 本请求列授权绕过
             // 缓存直查（不服务陈旧条目）。无 PDP 客户端（standalone/FAIL_OPEN/e2e）不探针。
             let column_cache_bypass = match &ngac_client {
-                Some(client) if !fail_open => matches!(
-                    version_probe.ensure_fresh(client, &column_cache).await,
+                Some(_client) if !fail_open => matches!(
+                    version_probe.ensure_fresh(&column_cache).await,
                     ProbeOutcome::Unavailable
                 ),
                 _ => false,
             };
 
-            {
-                // Cache miss — need PDP decision
+            // 开发环境：NGAC_FAIL_OPEN=true 时完全跳过 PDP 调用，消除 SSO 依赖
+            if fail_open {
+                debug!(
+                    "NGAC_FAIL_OPEN: skipping PDP for user={} resource={}",
+                    user_id_str, resource
+                );
+                // 无 PDP 形态：注入显式全量列授权（与 standalone/e2e 交付语义一致），
+                // 使「header 缺失」恒为异常信号（crud 对缺失 fail-closed）
+                req.headers_mut().insert(
+                    actix_web::http::header::HeaderName::from_static("x-authorized-columns"),
+                    actix_web::http::header::HeaderValue::from_static("*"),
+                );
+                req.extensions_mut().insert(request_context);
+                let response =
+                    AuditScope::actor_scope(audit_subject.clone(), svc.call(req)).await?;
+                return Ok(response.map_into_left_body());
+            }
 
-                // 开发环境：NGAC_FAIL_OPEN=true 时完全跳过 PDP 调用，消除 SSO 依赖
-                if fail_open {
-                    info!(
-                        "NGAC_FAIL_OPEN: skipping PDP for user={} resource={}",
-                        user_id_str, resource
-                    );
-                    // 无 PDP 形态：注入显式全量列授权（与 standalone/e2e 交付语义一致），
-                    // 使「header 缺失」恒为异常信号（crud 对缺失 fail-closed）
-                    req.headers_mut().insert(
-                        actix_web::http::header::HeaderName::from_static("x-authorized-columns"),
-                        actix_web::http::header::HeaderValue::from_static("*"),
-                    );
-                    let response = svc.call(req).await?;
-                    return Ok(response.map_into_left_body());
+            // 正常 PDP 路径
+            let ngac_client = match &ngac_client {
+                Some(client) => client,
+                None => {
+                    error!("No NGAC client configured for PDP decision");
+                    return Ok(req.into_response(
+                        HttpResponse::InternalServerError()
+                            .json(serde_json::json!({
+                                "error": "Internal server error",
+                                "reason": "PDP decision service unavailable"
+                            }))
+                            .map_into_right_body(),
+                    ));
                 }
+            };
 
-                // 正常 PDP 路径
-                let ngac_client = match &ngac_client {
-                    Some(client) => client,
-                    None => {
-                        error!("No NGAC client configured for PDP decision");
-                        return Ok(req.into_response(
-                            HttpResponse::InternalServerError()
-                                .json(serde_json::json!({
-                                    "error": "Internal server error",
-                                    "reason": "PDP decision service unavailable"
-                                }))
-                                .map_into_right_body(),
-                        ));
-                    }
-                };
+            // 行级可见性（仅 collection read 需要）与资源级决策是两次**输入互相独立**的
+            // PDP 调用 → 并发发起（合并语义与错误优先级与串行版逐字一致，仅省一次往返等待）。
+            let list_req = resolved.as_ref().and_then(|r| {
+                (r.resource_id == 0 && action == "read").then(|| ngac_contract::PdpListRequest {
+                    user_id: user_id_i64,
+                    resource_type: r.type_name.clone(),
+                    action: action.to_string(),
+                })
+            });
+            let decide_fut = call_pdp_remote(ngac_client, &token, user_id_i64, &resource, action);
+            let (list_outcome, decide_outcome) = match &list_req {
+                Some(list_req) => {
+                    let (list_res, decide_res) =
+                        tokio::join!(ngac_client.list(list_req, &token), decide_fut);
+                    (Some(list_res), decide_res)
+                }
+                None => (None, decide_fut.await),
+            };
 
-                match call_pdp_remote(ngac_client, &token, user_id_i64, &resource, action).await {
-                    Ok(permitted) => {
-                        if permitted {
-                            info!("Access permitted for user={}", user_id_str);
-                            if let Some(ref db_pool) = pool {
-                                let _ = record_audit_event(
-                                    db_pool,
-                                    user_id_i64,
-                                    &user_email,
-                                    &resource,
-                                    action,
-                                    &AuditDecision::Permit,
-                                )
-                                .await;
-                            }
-                            // 列级授权注入（所有 read 动作：列表 resource_id==0 与详情
-                            // resource_id!=0 统一注入；crud 引擎按 SENSITIVE_COLUMNS
-                            // 与该 header 求交裁剪敏感列（fail-closed：none/缺失 = 空集）。
-                            if let Some(resolved) = resolved.as_ref() {
-                                if action == "read" {
-                                    Self::inject_authorized_columns(
-                                        &column_cache,
-                                        Some(ngac_client),
-                                        user_id_i64,
-                                        &resolved.type_name,
-                                        is_service_token,
-                                        &token,
-                                        &mut req,
-                                        column_cache_bypass,
-                                    )
-                                    .await;
-                                }
-                            }
-                            let response = svc.call(req).await?;
-                            Ok(response.map_into_left_body())
+            // visible_ids=None = admin 全量（NGAC_SPEC §6.2）：不注入 header /
+            // 不设置 RLS——crud 侧缺失 = 无约束（全表）。
+            // Some([]) = 显式空授权 → 注入 `none`（恒假谓词零行）。
+            // Some(ids) = 行级过滤集。
+            let visible_ids = match list_outcome {
+                None => None,
+                Some(Ok(list_resp)) if list_resp.permitted => list_resp.visible_ids,
+                Some(_) => {
+                    // PDP list 调用失败或 permitted=false → fail-close：
+                    // 缺失 header 在 crud 侧 = 无约束（全表），不得静默放行
+                    warn!(
+                        "NGAC list check failed/denied for user={} type={} action={}",
+                        user_id_str,
+                        resolved
+                            .as_ref()
+                            .map(|r| r.type_name.as_str())
+                            .unwrap_or_default(),
+                        action
+                    );
+                    return Ok(req.into_response(
+                        HttpResponse::Forbidden()
+                            .json(serde_json::json!({
+                                "error": "Access denied",
+                                "reason": "List permission check failed or denied"
+                            }))
+                            .map_into_right_body(),
+                    ));
+                }
+            };
+
+            match decide_outcome {
+                Ok(true) => {
+                    if let (Some(visible), Some(resolved)) = (visible_ids, resolved.as_ref()) {
+                        request_context
+                            .set_visible_resource_ids(resolved.type_name.clone(), visible.clone());
+                        // 空集必须注入显式 `none` 标记——crud 解析为 Some([]) →
+                        // 恒假谓词零行；header 缺失在 crud 侧为无约束，不能作为空权限信号
+                        let header_val = if visible.is_empty() {
+                            "none".to_string()
                         } else {
-                            warn!("Access denied for user={}", user_id_str);
-                            if let Some(ref db_pool) = pool {
-                                let _ = record_audit_event(
-                                    db_pool,
-                                    user_id_i64,
-                                    &user_email,
-                                    &resource,
-                                    action,
-                                    &AuditDecision::Deny,
-                                )
-                                .await;
-                            }
-                            Ok(req.into_response(
-                                HttpResponse::Forbidden()
-                                    .json(serde_json::json!({
-                                        "error": "Access denied",
-                                        "reason": "Permission denied by policies"
-                                    }))
-                                    .map_into_right_body(),
-                            ))
+                            visible
+                                .iter()
+                                .map(|i| i.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        };
+                        req.headers_mut().insert(
+                            actix_web::http::header::HeaderName::from_static("x-visible-ids"),
+                            actix_web::http::header::HeaderValue::from_str(&header_val)
+                                .unwrap_or_else(|_| {
+                                    actix_web::http::header::HeaderValue::from_static("none")
+                                }),
+                        );
+                    }
+                    // Insert context AFTER visible_ids enrichment so downstream sees RLS
+                    req.extensions_mut().insert(request_context);
+
+                    debug!("Access permitted for user={}", user_id_str);
+                    if let Some(db_pool) = &pool {
+                        spawn_audit_event(
+                            db_pool.clone(),
+                            user_id_i64,
+                            &audit_subject,
+                            &user_email,
+                            &resource,
+                            action,
+                            AuditDecision::Permit,
+                        );
+                    }
+                    // 列级授权注入（所有 read 动作：列表 resource_id==0 与详情
+                    // resource_id!=0 统一注入；crud 引擎按 SENSITIVE_COLUMNS
+                    // 与该 header 求交裁剪敏感列（fail-closed：none/缺失 = 空集）。
+                    if let Some(resolved) = resolved.as_ref() {
+                        if action == "read" {
+                            Self::inject_authorized_columns(
+                                &column_cache,
+                                Some(ngac_client),
+                                user_id_i64,
+                                &resolved.type_name,
+                                is_service_token,
+                                &token,
+                                &mut req,
+                                column_cache_bypass,
+                            )
+                            .await;
                         }
                     }
-                    Err(e) => {
-                        error!("PDP check failed: {}", e);
-                        // Already checked fail_open above; this is fail-close (production)
-                        warn!("PDP unavailable, denying access (fail-close)");
-                        Ok(req.into_response(
-                            HttpResponse::Forbidden()
-                                .json(serde_json::json!({
-                                    "error": "Access denied",
-                                    "reason": "Policy decision service unavailable"
-                                }))
-                                .map_into_right_body(),
-                        ))
+                    // 血缘审计（data_change_logs/audit_outbox）操作者标识来源：
+                    // 作用域内全部 enqueue 自动带上（SECURITY_SPEC §10.1 口径）
+                    let response =
+                        AuditScope::actor_scope(audit_subject.clone(), svc.call(req)).await?;
+                    Ok(response.map_into_left_body())
+                }
+                Ok(false) => {
+                    warn!("Access denied for user={}", user_id_str);
+                    if let Some(db_pool) = &pool {
+                        spawn_audit_event(
+                            db_pool.clone(),
+                            user_id_i64,
+                            &audit_subject,
+                            &user_email,
+                            &resource,
+                            action,
+                            AuditDecision::Deny,
+                        );
                     }
+                    Ok(req.into_response(
+                        HttpResponse::Forbidden()
+                            .json(serde_json::json!({
+                                "error": "Access denied",
+                                "reason": "Permission denied by policies"
+                            }))
+                            .map_into_right_body(),
+                    ))
+                }
+                Err(e) => {
+                    error!("PDP check failed: {}", e);
+                    // fail_open 已在上方短路；此处为 fail-close（生产语义）
+                    warn!("PDP unavailable, denying access (fail-close)");
+                    Ok(req.into_response(
+                        HttpResponse::Forbidden()
+                            .json(serde_json::json!({
+                                "error": "Access denied",
+                                "reason": "Policy decision service unavailable"
+                            }))
+                            .map_into_right_body(),
+                    ))
                 }
             }
         })
@@ -1408,5 +1528,32 @@ mod tests {
             verify_token_with_keys(&[bad, TEST_SSO_JWT_PUBLIC_KEY], "not-a-token", &validation);
         // token 无效（非坏钥导致），错误应为 decode 类而非坏钥短路
         assert!(matches!(err, Err(PdpError::TokenDecodeError(_))));
+    }
+
+    #[test]
+    fn audit_subject_prefers_username_over_email() {
+        // 唯一性标识 = username；即使 email 可用也不作为主体（fix-ngac-audit-subject-identity）
+        assert_eq!(resolve_audit_subject("alice", 42, false, "42"), "alice");
+    }
+
+    #[test]
+    fn audit_subject_falls_back_to_unique_user_id() {
+        // username 缺失/空 → user:{id}（保唯一，不同用户不折叠）
+        assert_eq!(resolve_audit_subject("", 42, false, "42"), "user:42");
+        assert_eq!(resolve_audit_subject("   ", 42, false, "42"), "user:42");
+        assert_ne!(
+            resolve_audit_subject("", 42, false, "42"),
+            resolve_audit_subject("", 43, false, "43"),
+            "回落值必须对每个主体唯一"
+        );
+    }
+
+    #[test]
+    fn audit_subject_service_token_uses_client_identity() {
+        // 服务令牌主体为 client 标识（区别于自然人 username 空间）
+        assert_eq!(
+            resolve_audit_subject("", 7, true, "client:demo"),
+            "client:demo"
+        );
     }
 }

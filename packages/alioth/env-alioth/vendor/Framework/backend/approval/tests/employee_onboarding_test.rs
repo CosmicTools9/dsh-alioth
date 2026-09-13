@@ -34,13 +34,21 @@ async fn insert_applicant(pool: &sqlx::PgPool, name: &str) -> i64 {
 
 /// 插入审批流程（code 匹配 FLOW_EMPLOYEE_ONBOARDING）
 async fn insert_process(pool: &sqlx::PgPool, code: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_process" (notice, code, created_by_id)
-           VALUES ($1, $2, 1)
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, 1, $3, $4, $5)
            RETURNING id"#,
     )
     .bind(format!("流程-{code}"))
     .bind(code)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -49,22 +57,39 @@ async fn insert_process(pool: &sqlx::PgPool, code: &str) -> i64 {
 /// 插入审批节点（桥链模型）：even 语义行（comments 纯文本——与生产写路一致的
 /// 文本语义）+ oper 主体 + rro 在册锚 + 模板桥（rr_event）。返回 even id。
 async fn insert_even(pool: &sqlx::PgPool, flow_id: i64, applicant_name: &str) -> i64 {
+    // 落点：审批域叶表 zc_id_appr-authorization（注册行语义 = 访问授权审批，与生产
+    // 写路 register.rs / approval_seed.rs 同叶；禁直写域父表 zc_id_even-approve）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let even_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_even-approve"
-           (notice, code, comments, created_by_id)
-           VALUES ($1, 'user-register-approval', $2, 1)
+        r#"INSERT INTO isahl."zc_id_appr-authorization"
+           (notice, code, comments, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'user-register-approval', $2, 1, 'flow-context', $3, $4, $5)
            RETURNING id"#,
     )
     .bind(format!("用户 {applicant_name} 访问授权审批"))
     .bind(format!("申请人：{applicant_name}"))
+    .bind(ev_dk_scene)
+    .bind(ev_dk_factor)
+    .bind(ev_dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let op_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id)
-           VALUES ($1, 'user-register-approval', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'user-register-approval', 1, '实现', '范例', $2, $3, $4) RETURNING id"#,
     )
     .bind(format!("节点-{applicant_name}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -94,12 +119,19 @@ async fn insert_even(pool: &sqlx::PgPool, flow_id: i64, applicant_name: &str) ->
 /// 插入审批实例（fk_approve=事件；notice 必填——enriched 解码 node_name
 /// 为 Option，但 NULL notice 行会污染共享测试库的实例列表查询）
 async fn insert_oper(pool: &sqlx::PgPool, even_id: i64) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let instance_id: i64 = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (notice, fk_subject, created_by_id)
-           VALUES ('员工入职实例', 1, 1)
+           (notice, fk_subject, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('员工入职实例', 1, 1, '实现', '实例', $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();

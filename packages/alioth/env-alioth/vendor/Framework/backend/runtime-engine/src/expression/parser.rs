@@ -197,4 +197,107 @@ mod tests {
         let fields = extract_field_references("_refs.ck_category.notice == 'x'");
         assert!(fields.contains(&"_refs.ck_category.notice".to_string()));
     }
+
+    // ── FEEL 子集（extend-dmn-decision-table-full D4）──
+    #[test]
+    fn test_parse_between() {
+        // between 展开为 X >= A AND X <= B
+        let expr = parse_constraint_expression("amount between 1000 and 5000").unwrap();
+        let ConstraintExpr::And(lo, hi) = &expr else {
+            panic!("Expected And");
+        };
+        match (&**lo, &**hi) {
+            (
+                ConstraintExpr::Binary(l1, BinaryOp::Ge, r1),
+                ConstraintExpr::Binary(l2, BinaryOp::Le, r2),
+            ) => {
+                assert!(matches!(&**l1, ConstraintExpr::FieldRef(f) if f == "amount"));
+                assert!(matches!(&**l2, ConstraintExpr::FieldRef(f) if f == "amount"));
+                assert!(matches!(
+                    &**r1,
+                    ConstraintExpr::Literal(ConstraintLiteral::Integer(1000))
+                ));
+                assert!(matches!(
+                    &**r2,
+                    ConstraintExpr::Literal(ConstraintLiteral::Integer(5000))
+                ));
+            }
+            _ => panic!("Expected Ge/Le pair"),
+        }
+    }
+
+    #[test]
+    fn test_parse_between_with_tail_and_field_endpoints() {
+        // between 作 AND 右操作数：外层 AND 先拆，右段递归 between
+        let expr =
+            parse_constraint_expression("status == 'A' and amount between low and high").unwrap();
+        let ConstraintExpr::And(outer_l, outer_r) = &expr else {
+            panic!("Expected outer And");
+        };
+        assert!(matches!(
+            &**outer_l,
+            ConstraintExpr::Binary(_, BinaryOp::Eq, _)
+        ));
+        assert!(matches!(&**outer_r, ConstraintExpr::And(_, _)));
+
+        // between 后接 tail：`(X>=A AND X<=B) AND ...`
+        let expr2 =
+            parse_constraint_expression("amount between 1000 and 5000 and status == 'OK'").unwrap();
+        assert!(matches!(&expr2, ConstraintExpr::And(_, _)));
+    }
+
+    #[test]
+    fn test_parse_range_operators() {
+        // 左开右闭 (A..B]：X > A AND X <= B
+        let expr = parse_constraint_expression("amount in (1000..5000]").unwrap();
+        let ConstraintExpr::And(lo, hi) = &expr else {
+            panic!("Expected And");
+        };
+        match (&**lo, &**hi) {
+            (
+                ConstraintExpr::Binary(_, BinaryOp::Gt, _),
+                ConstraintExpr::Binary(_, BinaryOp::Le, _),
+            ) => {}
+            _ => panic!("Expected Gt/Le pair for (A..B]"),
+        }
+
+        // 全闭 [A..B]：>= 与 <=
+        let expr2 = parse_constraint_expression("amount in [1000..5000]").unwrap();
+        let ConstraintExpr::And(lo2, hi2) = &expr2 else {
+            panic!("Expected And");
+        };
+        assert!(matches!(&**lo2, ConstraintExpr::Binary(_, BinaryOp::Ge, _)));
+        assert!(matches!(&**hi2, ConstraintExpr::Binary(_, BinaryOp::Le, _)));
+
+        // 全开 (A..B)：严格 > 与 <
+        let expr3 = parse_constraint_expression("amount in (1000..5000)").unwrap();
+        let ConstraintExpr::And(lo3, hi3) = &expr3 else {
+            panic!("Expected And");
+        };
+        assert!(matches!(&**lo3, ConstraintExpr::Binary(_, BinaryOp::Gt, _)));
+        assert!(matches!(&**hi3, ConstraintExpr::Binary(_, BinaryOp::Lt, _)));
+
+        // 小数端点与负号
+        let expr4 = parse_constraint_expression("score in (-1.5..2.5]").unwrap();
+        assert!(matches!(expr4, ConstraintExpr::And(_, _)));
+    }
+
+    #[test]
+    fn test_parse_range_list_disambiguation() {
+        // `in [a, b, c]` 列表形态不受区间干扰（含字符串元素中的 `..`）
+        let expr = parse_constraint_expression("code in ['a..b', 'c']").unwrap();
+        assert!(matches!(
+            expr,
+            ConstraintExpr::Binary(_, BinaryOp::In, right)
+                if matches!(&*right, ConstraintExpr::Literal(ConstraintLiteral::List(items)) if items.len() == 2)
+        ));
+
+        // 连字符标识符不受 `..` 影响（act-group 单标识符）
+        let expr2 = parse_constraint_expression("act-group == 1").unwrap();
+        assert!(matches!(
+            expr2,
+            ConstraintExpr::Binary(left, BinaryOp::Eq, _)
+                if matches!(&*left, ConstraintExpr::FieldRef(f) if f == "act-group")
+        ));
+    }
 }

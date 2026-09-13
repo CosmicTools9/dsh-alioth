@@ -73,10 +73,15 @@ impl AliothRepository<VersionRecord, CreateVersionRequest, UpdateVersionRequest,
         user_id: i64,
     ) -> Result<VersionRecord, ApiError> {
         let p = self.generic.pool();
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(p, ("JE", "GEB", "↑_DA"))
+                .await
+                .map_err(ApiError::from)?;
         sqlx::query_as::<_, VersionRecord>(
-            r#"INSERT INTO isahl.zc_id_version
-               (tpl_id, notice, code, comments, tk_version, tk_batch_no, reversion, fk_previous, ck_branch, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            r#"INSERT INTO isahl."zc_id_bom-file"
+               (tpl_id, notice, code, comments, tk_version, tk_batch_no, reversion, fk_previous, ck_branch, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                RETURNING id, tpl_id, notice, code, comments, tk_version, tk_batch_no, reversion, fk_previous, ck_branch, created_at, updated_at, deleted_at"#,
         )
         .bind(req.tpl_id)
@@ -89,6 +94,9 @@ impl AliothRepository<VersionRecord, CreateVersionRequest, UpdateVersionRequest,
         .bind(req.fk_previous)
         .bind(req.ck_branch)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(p)
         .await
         .map_err(ApiError::from)

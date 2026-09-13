@@ -15,9 +15,16 @@ use sqlx::PgPool;
 
 #[derive(serde::Deserialize)]
 struct WsIncoming {
-    message: String,
+    /// 帧类型：缺省 = 消息帧（兼容旧客户端）；"cancel" = 取消当前生成（D2.9）
+    #[serde(rename = "type", default)]
+    frame_type: Option<String>,
+    message: Option<String>,
     /// Optional page/entity context, same semantics as CreateMessageRequest.context.
     context: Option<serde_json::Value>,
+    /// 附件 [{type:"image",mime,data_base64}]（D2.6；S2 data_base64 唯一通道）
+    attachments: Option<serde_json::Value>,
+    /// 命中的知识引用 [{key,title}]（D2.15）
+    knowledge_refs: Option<serde_json::Value>,
     /// 模型档位（chat 模型切换）："deep" | "flash"；缺省 = deep（主模型）
     model: Option<String>,
 }
@@ -32,10 +39,68 @@ pub struct ChatWsSession {
     i18n: I18nManagerRef,
     user_id: Option<i64>,
     locale: String,
+    /// 当前轮生成取消信号（每消息帧重建；cancel 帧置位）
+    cancel_tx: Option<tokio::sync::watch::Sender<bool>>,
+    /// 心跳未收 Pong 计数（连续 2 次 → 断开，D2.10）
+    pong_missed: u8,
+}
+
+/// 出向 typed 帧（D2.10 v2）：chunk / tool(start|end) / final / error。
+/// 旧裸帧格式不再发送（前端 M3 同步升级，兼容逻辑在前端）。
+fn error_frame(error: &str) -> String {
+    serde_json::json!({ "type": "error", "error": error }).to_string()
+}
+
+fn final_frame(message: &super::ChatMessageResponse) -> String {
+    let mut v = serde_json::to_value(message).unwrap_or_else(|_| serde_json::json!({}));
+    if let serde_json::Value::Object(ref mut map) = v {
+        map.insert("type".to_string(), serde_json::json!("final"));
+    }
+    v.to_string()
+}
+
+fn stream_frame(ev: super::orchestrator::TurnStreamEvent) -> String {
+    match ev {
+        super::orchestrator::TurnStreamEvent::Chunk(content) => {
+            serde_json::json!({ "type": "chunk", "content": content }).to_string()
+        }
+        super::orchestrator::TurnStreamEvent::ToolStart { name, arguments } => serde_json::json!({
+            "type": "tool",
+            "event": "start",
+            "name": name,
+            "arguments": arguments
+        })
+        .to_string(),
+        super::orchestrator::TurnStreamEvent::ToolEnd {
+            name,
+            success,
+            output,
+        } => serde_json::json!({
+            "type": "tool",
+            "event": "end",
+            "name": name,
+            "success": success,
+            "output": output
+        })
+        .to_string(),
+    }
 }
 
 impl Actor for ChatWsSession {
     type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        // D2.10 心跳：30s 间隔 ws Ping；连续 2 次未收 Pong（死连接）→ 断开。
+        ctx.run_interval(std::time::Duration::from_secs(30), |act, ctx| {
+            if act.pong_missed >= 2 {
+                common::telemetry::info!("Gateway WS 心跳超时断开: session={}", act.session_id);
+                ctx.stop();
+                return;
+            }
+            act.pong_missed += 1;
+            ctx.ping(b"heartbeat");
+        });
+    }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         // WS 断连：会话状态已由 orchestrator 每轮 turn 持久化（update_session_state），
@@ -63,10 +128,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                 let body: WsIncoming = match serde_json::from_str(&text) {
                     Ok(b) => b,
                     Err(_) => {
-                        ctx.text("{\"error\":\"invalid_json\"}");
+                        ctx.text(error_frame("invalid_json"));
                         return;
                     }
                 };
+
+                // D2.9：cancel 帧 → 置位当前轮取消信号（无 in-flight 轮则空操作）
+                if body.frame_type.as_deref() == Some("cancel") {
+                    if let Some(tx) = &self.cancel_tx {
+                        let _ = tx.send(true);
+                    }
+                    return;
+                }
 
                 let addr = ctx.address();
                 let pool = self.pool.clone();
@@ -75,13 +148,19 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                 let user_id = match self.user_id {
                     Some(id) => id,
                     None => {
-                        addr.do_send(ChatResult(
-                            "{\"error\":\"authentication_required\"}".to_string(),
-                        ));
+                        addr.do_send(ChatResult(error_frame("authentication_required")));
                         return;
                     }
                 };
                 let locale = self.locale.clone();
+                let Some(message) = body.message else {
+                    addr.do_send(ChatResult(error_frame("missing_message")));
+                    return;
+                };
+
+                // 本轮取消通道：actor 持 sender（cancel 帧置位），turn 持 receiver
+                let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+                self.cancel_tx = Some(cancel_tx);
 
                 tokio::spawn(async move {
                     let orchestrator = build_orchestrator(&pool, i18n);
@@ -89,11 +168,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                     let addr_for_chunks = addr.clone();
 
                     if let Err(e) = orchestrator
-                        .add_message(session_id, &body.message, body.context, user_id)
+                        .add_message(
+                            session_id,
+                            &message,
+                            body.context,
+                            body.attachments,
+                            body.knowledge_refs,
+                            user_id,
+                        )
                         .await
                     {
-                        let err = serde_json::json!({"error": e});
-                        addr.do_send(ChatResult(err.to_string()));
+                        addr.do_send(ChatResult(error_frame(&e)));
                         return;
                     }
 
@@ -102,16 +187,17 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                         user_id,
                         locale,
                         model: body.model,
+                        cancel: Some(cancel_rx),
                     };
 
                     match orchestrator
                         .process_turn(
                             input,
-                            // 真流式（P1-6）：LLM 逐 chunk → 增量帧（前端 onChunk 渐进渲染）
+                            // D2.10 typed 帧：LLM chunk / 工具事件 → 增量帧
                             Some(Box::new({
                                 let addr = addr_for_chunks.clone();
-                                move |chunk: String| {
-                                    let frame = serde_json::json!({ "content": chunk }).to_string();
+                                move |ev: super::orchestrator::TurnStreamEvent| {
+                                    let frame = stream_frame(ev);
                                     addr.do_send(ChatResult(frame));
                                 }
                             })),
@@ -119,23 +205,23 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                         .await
                     {
                         Ok(result) => {
-                            // 终止帧：完整 ChatMessageResponse（含 id/agent_code，前端 resolve）。
-                            // 增量帧已渐进渲染；终止帧 content 与累积文本一致 → 最终一致。
-                            let json =
-                                serde_json::to_string(&result.message).unwrap_or_else(|_| {
-                                    "{\"error\":\"serialization_failed\"}".to_string()
-                                });
-                            addr.do_send(ChatResult(json));
+                            // 终止帧：{"type":"final", ...ChatMessageResponse}
+                            // （含 id/agent_code，前端 resolve；content 与增量帧累积一致）
+                            let frame = final_frame(&result.message);
+                            addr.do_send(ChatResult(frame));
                         }
                         Err(e) => {
-                            let err = serde_json::json!({"error": e});
-                            addr.do_send(ChatResult(err.to_string()));
+                            addr.do_send(ChatResult(error_frame(&e)));
                         }
                     }
                 });
             }
             Ok(ws::Message::Ping(data)) => {
                 ctx.pong(&data);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                // D2.10：Pong 已收 → 清零心跳计数
+                self.pong_missed = 0;
             }
             Ok(ws::Message::Close(reason)) => {
                 ctx.close(reason);
@@ -171,6 +257,8 @@ pub async fn ws_connect(
         i18n: i18n_manager.get_ref().clone(),
         user_id,
         locale,
+        cancel_tx: None,
+        pong_missed: 0,
     };
 
     ws::start(session, &req, stream)

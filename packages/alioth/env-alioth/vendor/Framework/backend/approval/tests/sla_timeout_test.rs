@@ -34,11 +34,20 @@ async fn insert_sla_duration(pool: &sqlx::PgPool, hours: i64) -> i64 {
 }
 
 async fn insert_approve_event(pool: &sqlx::PgPool, sla_id: i64) -> i64 {
+    // 落点：审批域叶表 zc_id_appr-authorization（禁直写域父表 zc_id_even-approve）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, qk_sla, created_by_id)
-           VALUES ('SLA 测试审批事件', $1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-authorization" (notice, qk_sla, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('SLA 测试审批事件', $1, 1, 'flow-context', $2, $3, $4) RETURNING id"#,
     )
     .bind(sla_id)
+    .bind(ev_dk_scene)
+    .bind(ev_dk_factor)
+    .bind(ev_dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -46,13 +55,20 @@ async fn insert_approve_event(pool: &sqlx::PgPool, sla_id: i64) -> i64 {
 
 /// created_hours_ago：负值表示创建于过去（超时），正数表示未来/未超时
 async fn insert_instance(pool: &sqlx::PgPool, event_id: i64, created_hours_ago: i32) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let instance_id: i64 = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (notice, created_at, created_by_id)
-           VALUES ('SLA 测试实例', NOW() - ($1 || ' hours')::interval, 1)
+           (notice, created_at, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('SLA 测试实例', NOW() - ($1 || ' hours')::interval, 1, '实现', '实例', $2, $3, $4)
            RETURNING id"#,
     )
     .bind(created_hours_ago)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -176,11 +192,17 @@ async fn sla_timeout_auto_rejects_registration_and_disables_user() {
     .unwrap();
 
     // 注册审批事件（code=user-register-approval + comments.applicant_id + qk_sla）
+    // 落点：审批域叶表 zc_id_appr-authorization（与 register.rs 生产写路同叶；禁直写域父表）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let sla_id = insert_sla_duration(&pool, 1).await; // 1 小时 SLA
     let event_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, code, comments, qk_sla, created_by_id)
+        r#"INSERT INTO isahl."zc_id_appr-authorization" (notice, code, comments, qk_sla, created_by_id, _t_, dk_scene, dk_factor, dk_function)
            VALUES ($1, 'user-register-approval',
-                   $2, $3, $4) RETURNING id"#,
+                   $2, $3, $4, 'flow-context', $5, $6, $7) RETURNING id"#,
     )
     .bind(format!("用户 {applicant_name} 访问授权审批"))
     .bind(format!(
@@ -188,6 +210,9 @@ async fn sla_timeout_auto_rejects_registration_and_disables_user() {
     ))
     .bind(sla_id)
     .bind(applicant_id)
+    .bind(ev_dk_scene)
+    .bind(ev_dk_factor)
+    .bind(ev_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -278,12 +303,20 @@ async fn sla_timeout_escalates_to_supervisor() {
 
     let sla_id = insert_sla_duration(&pool, 1).await;
     // 节点带 escalateTo meta
+    // 坐标三元组（§6.12 声明即必须）：节点事件载体落叶表 zc_id_appr-process，经 ontology_binding 解析
+    let (node_dk_scene, node_dk_factor, node_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .expect("resolve zc_id_appr-process coords");
     let event_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, qk_sla, comments, created_by_id)
-           VALUES ('SLA 测试审批事件', $1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, qk_sla, comments, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('SLA 测试审批事件', $1, $2, 1, 'flow-context', $3, $4, $5) RETURNING id"#,
     )
     .bind(sla_id)
     .bind(json!({"escalateTo": "sup_role"}).to_string())
+    .bind(node_dk_scene)
+    .bind(node_dk_factor)
+    .bind(node_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -355,12 +388,20 @@ async fn sla_timeout_escalates_to_supervisor() {
     // 场景 3：escalateTo 岗位无成员 → 不投递
     let noop3 = Arc::new(common::noop_messaging::NoopMessaging::default());
     let messaging3: Arc<dyn ::common::messaging::MessagingService> = noop3.clone();
+    // 坐标三元组（§6.12 声明即必须）：节点事件载体落叶表 zc_id_appr-process，经 ontology_binding 解析
+    let (node_dk_scene, node_dk_factor, node_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .expect("resolve zc_id_appr-process coords");
     let event_empty: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, qk_sla, comments, created_by_id)
-           VALUES ('SLA 测试审批事件', $1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, qk_sla, comments, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('SLA 测试审批事件', $1, $2, 1, 'flow-context', $3, $4, $5) RETURNING id"#,
     )
     .bind(sla_id)
     .bind(json!({"escalateTo": "sup_role_empty"}).to_string())
+    .bind(node_dk_scene)
+    .bind(node_dk_factor)
+    .bind(node_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

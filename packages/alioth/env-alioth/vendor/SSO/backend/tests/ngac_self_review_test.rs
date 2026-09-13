@@ -58,20 +58,33 @@ async fn seed_cognition_user_with_grant(pool: &PgPool, suffix: &str) -> Fixture 
             .await
             .expect("fetch user");
 
+    // 坐标三元组（§6.12 声明即必须）：TX/FJA/↓_GG（主体族），值经 ontology_binding 解析 code→ZUID，
+    // 禁硬编码 ZUID（Gateway entity_binding_integration_test 同款）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve subject coords");
     let employee_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_empl-natural\" (id, notice, code, fk_user, created_by_id)
-         VALUES (isahl.gen_next_zuid(), '自审雇员', $1, $2, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_empl-natural\" \
+         (id, notice, code, fk_user, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '自审雇员', $1, $2, 1, $3, $4, $5) RETURNING id",
     )
     .bind(format!("SR-EMP-{}", suffix))
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert employee");
     let position_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id)
-         VALUES (isahl.gen_next_zuid(), '自审岗位', $1, 1) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_subj-position\" \
+         (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '自审岗位', $1, 1, $2, $3, $4) RETURNING id",
     )
     .bind(format!("SR-POS-{}", suffix))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert position");

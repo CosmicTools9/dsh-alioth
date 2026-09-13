@@ -45,6 +45,10 @@ pub struct StandaloneClaims {
     pub aud: Option<String>,
     #[serde(default)]
     pub sid: String,
+    /// token_version（fix-sso-noauth-removal：登出即时失效——logout bump 版本，
+    /// 旧 token 校验失败；旧 token 无此声明 → None 宽限至自然过期）
+    #[serde(default)]
+    pub tv: Option<i64>,
 }
 
 // ── Issuer ─────────────────────────────────────────────────────────────────────
@@ -189,16 +193,18 @@ async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpRe
     }
 
     let username_norm = raw.to_lowercase();
-    let existing: Option<(i64, String, String)> = sqlx::query_as(
-        "SELECT id, username, namespace FROM isahl_auth.standalone_users WHERE username_norm = $1",
+    ensure_token_version_column(pool.get_ref()).await;
+    let existing: Option<(i64, String, String, i64)> = sqlx::query_as(
+        "SELECT id, username, namespace, token_version FROM isahl_auth.standalone_users \
+         WHERE username_norm = $1",
     )
     .bind(&username_norm)
     .fetch_optional(pool.get_ref())
     .await
     .unwrap_or(None);
 
-    let (user_id, username, namespace, is_new) = match existing {
-        Some((id, uname, ns)) => (id, uname, ns, false),
+    let (user_id, username, namespace, token_version, is_new) = match existing {
+        Some((id, uname, ns, tv)) => (id, uname, ns, tv, false),
         None => {
             let ns = match derive_namespace(raw) {
                 Ok(n) => n,
@@ -218,7 +224,7 @@ async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpRe
             .fetch_optional(pool.get_ref())
             .await
             {
-                Ok(Some((id,))) => (id, raw.to_string(), ns, true),
+                Ok(Some((id,))) => (id, raw.to_string(), ns, 0, true),
                 Ok(None) | Err(_) => {
                     return HttpResponse::Conflict().json(serde_json::json!({
                         "error": "namespace_conflict",
@@ -230,7 +236,7 @@ async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpRe
     };
 
     let now = chrono::Utc::now();
-    let exp = (now.timestamp() + 1800) as i64;
+    let exp = now.timestamp() + 1800;
     let claims = StandaloneClaims {
         sub: user_id.to_string(),
         email: format!("{}@standalone.local", username),
@@ -241,6 +247,7 @@ async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpRe
         iss: Some(STANDALONE_ISSUER.to_string()),
         aud: Some(STANDALONE_ISSUER.to_string()),
         sid: String::new(),
+        tv: Some(token_version),
     };
 
     let token = match jsonwebtoken::encode(
@@ -262,25 +269,50 @@ async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpRe
             "user": { "id": user_id, "username": username, "namespace": namespace, "is_new": is_new }
         }))
 }
-/// POST /auth/logout — no-op
-///
-/// Standalone mode has no server-side sessions to invalidate.
-async fn logout() -> HttpResponse {
+/// POST /auth/logout — bump token_version（fix-sso-noauth-removal：
+/// 已签发 token 即时失效——PEP 与 /auth 自管端校验版本，无需等待 30min TTL）
+async fn logout(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
+    let claims = match extract_and_verify_token(&req) {
+        Ok(c) => c,
+        Err(resp) => return resp,
+    };
+    if let Ok(user_id) = claims.sub.parse::<i64>() {
+        ensure_token_version_column(pool.get_ref()).await;
+        let _ = sqlx::query(
+            "UPDATE isahl_auth.standalone_users SET token_version = token_version + 1 \
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .execute(pool.get_ref())
+        .await;
+    }
     HttpResponse::Ok().json(serde_json::json!({ "message": "Logged out" }))
 }
 
 /// POST /auth/refresh — re-issue JWT with fresh expiry
 ///
 /// Verifies the current Bearer token, then issues a new 30-minute token
-/// with the same claims but a fresh `exp` and `iat`.
-async fn refresh(req: HttpRequest) -> HttpResponse {
+/// with the same claims but a fresh `exp`/`iat` and current `token_version`.
+async fn refresh(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
     let claims = match extract_and_verify_token(&req) {
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    // fix-sso-noauth-removal：logout bump 后旧 token 不得刷新
+    ensure_token_version_column(pool.get_ref()).await;
+    if !verify_token_version(pool.get_ref(), &claims).await {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "token_revoked",
+            "message": "Token revoked (logout)"
+        }));
+    }
+    let current_tv = match claims.sub.parse::<i64>() {
+        Ok(uid) => current_token_version(pool.get_ref(), uid).await,
+        Err(_) => 0,
+    };
 
     let now = chrono::Utc::now();
-    let exp_ts = (now.timestamp() + 1800) as i64;
+    let exp_ts = now.timestamp() + 1800;
     let new_claims = StandaloneClaims {
         sub: claims.sub,
         email: claims.email,
@@ -291,6 +323,7 @@ async fn refresh(req: HttpRequest) -> HttpResponse {
         iss: Some(STANDALONE_ISSUER.to_string()),
         aud: Some(STANDALONE_ISSUER.to_string()),
         sid: String::new(),
+        tv: Some(current_tv),
     };
 
     let token = match jsonwebtoken::encode(
@@ -323,6 +356,13 @@ async fn me(
         Ok(c) => c,
         Err(resp) => return resp,
     };
+    // fix-sso-noauth-removal：logout bump 后旧 token 即时失效
+    if !verify_token_version(pool.get_ref(), &claims).await {
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "token_revoked",
+            "message": "Token revoked (logout)"
+        }));
+    }
 
     let user_id: i64 = match claims.sub.parse() {
         Ok(id) => id,
@@ -506,6 +546,55 @@ async fn mode() -> HttpResponse {
 ///
 /// Returns decoded `StandaloneClaims` on success, or an error `HttpResponse`
 /// (401 Unauthorized) on failure.
+/// ensure `standalone_users.token_version` 列（幂等；isahl_auth 工程 schema 自愈模式）
+static ENSURE_TV_COLUMN: OnceLock<()> = OnceLock::new();
+
+async fn ensure_token_version_column(pool: &PgPool) {
+    if ENSURE_TV_COLUMN.get().is_some() {
+        return;
+    }
+    let _ = sqlx::query(
+        "ALTER TABLE isahl_auth.standalone_users \
+         ADD COLUMN IF NOT EXISTS token_version BIGINT NOT NULL DEFAULT 0",
+    )
+    .execute(pool)
+    .await;
+    let _ = ENSURE_TV_COLUMN.set(());
+}
+
+/// 校验当前 token 的 token_version 与 DB 一致（fix-sso-noauth-removal：
+/// logout bump 后旧 token 即时失效）。tv=None 的旧 token 宽限（无法比对签发时版本）。
+async fn verify_token_version(pool: &PgPool, claims: &StandaloneClaims) -> bool {
+    let Some(tv) = claims.tv else { return true };
+    let Some(user_id) = claims.sub.parse::<i64>().ok() else {
+        return false;
+    };
+    match sqlx::query_scalar::<_, i64>(
+        "SELECT token_version FROM isahl_auth.standalone_users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(Some(current)) => current == tv,
+        // 用户不存在/查询失败：fail-closed
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// 读取用户当前 token_version（login/refresh 签发时取值）。
+async fn current_token_version(pool: &PgPool, user_id: i64) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT token_version FROM isahl_auth.standalone_users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+}
+
 fn extract_and_verify_token(req: &HttpRequest) -> Result<StandaloneClaims, HttpResponse> {
     let auth_header = req
         .headers()
@@ -526,6 +615,9 @@ fn extract_and_verify_token(req: &HttpRequest) -> Result<StandaloneClaims, HttpR
     let mut validation = Validation::new(jsonwebtoken::Algorithm::ES256);
     validation.set_required_spec_claims(&["sub", "exp", "iat"]);
     validation.validate_exp = true;
+    // 签发恒为 STANDALONE_ISSUER：aud 白名单锁死（缺失时 jsonwebtoken 对携带
+    // aud 的 token 报 InvalidAudience——me/refresh 曾全 401 的潜伏缺陷）
+    validation.set_audience(&[STANDALONE_ISSUER]);
     // Accept any issuer (our `iss: "gateway-standalone"` or unset)
 
     match jsonwebtoken::decode::<StandaloneClaims>(token, &auth_config().decoding_key, &validation)
@@ -644,6 +736,7 @@ mod tests {
             iss: Some(STANDALONE_ISSUER.to_string()),
             aud: Some(STANDALONE_ISSUER.to_string()),
             sid: String::new(),
+            tv: Some(3),
         };
         let json = serde_json::to_value(&claims).unwrap();
         assert_eq!(json["sub"], "42");
@@ -651,6 +744,7 @@ mod tests {
         assert_eq!(json["aud"], STANDALONE_ISSUER);
         assert_eq!(json["sid"], "");
         assert_eq!(json["username"], "alice");
+        assert_eq!(json["tv"], 3);
     }
 
     /// standalone 认证链路集成测试：login 签发 token（iss=STANDALONE_ISSUER）→
@@ -747,6 +841,120 @@ mod tests {
             200,
             "standalone token 应通过对齐 issuer 的 PEP（历史死锁回归：默认绑定曾致全 401）"
         );
+
+        let _ = sqlx::query("DELETE FROM isahl_auth.standalone_users WHERE username_norm = $1")
+            .bind(username.to_lowercase())
+            .execute(&pool)
+            .await;
+    }
+
+    /// fix-sso-noauth-removal：standalone logout bump token_version 后，
+    /// 已签发 token 在 /auth/me 与 /auth/refresh 即时失效（无 30min TTL 残留）。
+    #[actix_web::test]
+    async fn standalone_logout_revokes_issued_tokens() {
+        use actix_web::{test, web, App};
+        use std::sync::Mutex;
+
+        init_auth_config();
+        let pool = common::testing::connect_test_db().await;
+
+        for stmt in [
+            "CREATE TABLE IF NOT EXISTS isahl_auth.standalone_users (
+                id             bigint  PRIMARY KEY DEFAULT isahl.gen_next_zuid(),
+                username       text    NOT NULL,
+                username_norm  text    NOT NULL,
+                namespace      text    NOT NULL,
+                created_at     timestamptz NOT NULL DEFAULT now()
+             )",
+            "ALTER TABLE isahl_auth.standalone_users \
+             ADD COLUMN IF NOT EXISTS token_version bigint NOT NULL DEFAULT 0",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_standalone_users_username_norm_tv
+                ON isahl_auth.standalone_users (username_norm)",
+        ] {
+            let _ = sqlx::query(stmt).execute(&pool).await;
+        }
+
+        let username = format!(
+            "tv_test_{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..16]
+        );
+        let _ = sqlx::query("DELETE FROM isahl_auth.standalone_users WHERE username_norm = $1")
+            .bind(username.to_lowercase())
+            .execute(&pool)
+            .await;
+
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(pool.clone()))
+                .app_data(web::Data::new(Mutex::new(
+                    crate::preproc::discovery::PreprocDiscovery::new("", None),
+                )))
+                .configure(configure_routes),
+        )
+        .await;
+
+        // login → token（携带 tv=0）
+        let req = test::TestRequest::post()
+            .uri("/auth/login")
+            .set_json(serde_json::json!({ "username": username }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(resp.status().is_success(), "login 应成功");
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let token = body["token"].as_str().expect("token").to_string();
+
+        // 登出前：me 200
+        let req = test::TestRequest::get()
+            .uri("/auth/me")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200, "登出前 me 应通过");
+
+        // logout（Bearer-only）→ bump token_version
+        let req = test::TestRequest::post()
+            .uri("/auth/logout")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200, "logout 应成功");
+
+        // 旧 token 即时失效：me 401 + refresh 401
+        let req = test::TestRequest::get()
+            .uri("/auth/me")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status().as_u16(),
+            401,
+            "logout 后旧 token me 必须 401（无 TTL 残留）"
+        );
+        let req = test::TestRequest::post()
+            .uri("/auth/refresh")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status().as_u16(),
+            401,
+            "logout 后旧 token refresh 必须 401"
+        );
+
+        // 重新 login → 新 token 恢复可用；旧 token 仍拒
+        let req = test::TestRequest::post()
+            .uri("/auth/login")
+            .set_json(serde_json::json!({ "username": username }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let new_token = body["token"].as_str().expect("token").to_string();
+        let req = test::TestRequest::get()
+            .uri("/auth/me")
+            .insert_header(("Authorization", format!("Bearer {}", new_token)))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status().as_u16(), 200, "重新登录新 token 应可用");
 
         let _ = sqlx::query("DELETE FROM isahl_auth.standalone_users WHERE username_norm = $1")
             .bind(username.to_lowercase())

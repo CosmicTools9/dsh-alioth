@@ -35,27 +35,41 @@ fn tid(base: i64) -> i64 {
 }
 
 async fn ensure_org(pool: &PgPool, id: i64, notice: &str) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve org coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_orga-department" (id, notice, code)
-           VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING"#,
+        r#"INSERT INTO isahl."zc_id_orga-department" (id, notice, code, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(id)
     .bind(notice)
     .bind(format!("T-ORG-{id}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .expect("ensure org");
 }
 
 async fn ensure_position(pool: &PgPool, id: i64, notice: &str, parent_id: Option<i64>) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve position coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_parent)
-           VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING"#,
+        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_parent, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(id)
     .bind(notice)
     .bind(format!("T-POS-{id}"))
     .bind(parent_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     .expect("ensure position");
@@ -359,23 +373,39 @@ async fn employment_subject_routing_and_bridge() {
     let pos = tid(54);
     let org = tid(55);
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve natural coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code) VALUES ($1, $2, $3)
+        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(natural)
     .bind("自然人")
     .bind(format!("T-NAT-{natural}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("ensure natural");
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("ZJ", "LNC", "↓_EH"))
+            .await
+            .expect("resolve agent coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_empl-agent" (id, notice, code) VALUES ($1, $2, $3)
+        r#"INSERT INTO isahl."zc_id_empl-agent" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(agent)
     .bind("智能体")
     .bind(format!("T-AGT-{agent}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("ensure agent");
@@ -454,6 +484,74 @@ async fn employment_subject_routing_and_bridge() {
         !in_nat_unknown && !in_agt_unknown,
         "未知主体两叶表皆不命中 → handler 400 分支触发"
     );
+
+    // 通讯录联系人：employee-list「员工=通讯录」语义（fix-avic-employee-assignment-contacts），
+    // route_employee_subject 第三分支命中 → 桥可挂接
+    let contact = tid(56);
+    // 类契约：坐标形态（trigger-registry entity.rs 通讯联系触发器同款）——
+    // 按维度 notice 解析 ZUID 注入 dk_scene/dk_factor/dk_function，_f_/_t_ 由派生层处理
+    let dk_scene: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl.zc_id_scene WHERE notice = '通讯联络' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .ok();
+    let dk_factor: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl.zc_id_factor WHERE notice = '通讯主体' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .ok();
+    let dk_function: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl.zc_id_function WHERE notice = '通讯联系' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .ok();
+    sqlx::query(
+        r#"INSERT INTO isahl.zc_id_contacts (id, notice, code, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO NOTHING"#,
+    )
+    .bind(contact)
+    .bind("通讯录员工")
+    .bind(format!("T-CT-{contact}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
+    .execute(&pool)
+    .await
+    .expect("ensure contact");
+    let in_contact: bool = sqlx::query_scalar(
+        "SELECT COUNT(*) > 0 FROM isahl.zc_id_contacts WHERE id = $1 AND deleted_at IS NULL",
+    )
+    .bind(contact)
+    .fetch_one(&pool)
+    .await
+    .expect("contact check");
+    assert!(in_contact, "联系人在 zc_id_contacts 命中");
+    for (table, left) in [
+        ("zc_id_subj-post_rr_employee", pos),
+        ("zc_id_subj-org_rr_employee", org),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(
+            format!(
+                r#"INSERT INTO isahl."{}" (ref_left, ref_right) VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
+                table
+            )
+            .as_str(),
+        ))
+        .bind(left)
+        .bind(contact)
+        .execute(&pool)
+        .await
+        .expect("insert contact employment bridge");
+    }
+    assert_eq!(
+        bridge_count(&pool, "zc_id_subj-post_rr_employee", pos, contact).await,
+        1
+    );
+    assert_eq!(
+        bridge_count(&pool, "zc_id_subj-org_rr_employee", org, contact).await,
+        1
+    );
 }
 
 /// group 成员桥：挂接（幂等）与软删解除
@@ -463,23 +561,39 @@ async fn group_member_bridge_attach_and_detach() {
     let group = tid(61);
     let member = tid(62);
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("ZB", "LNC", "↓_DA"))
+            .await
+            .expect("resolve group coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-group" (id, notice, code) VALUES ($1, $2, $3)
+        r#"INSERT INTO isahl."zc_id_subj-group" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(group)
     .bind("测试群组")
     .bind(format!("T-GRP-{group}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("ensure group");
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve member coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code) VALUES ($1, $2, $3)
+        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(member)
     .bind("群成员")
     .bind(format!("T-MEM-{member}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("ensure member");
@@ -510,5 +624,169 @@ async fn group_member_bridge_attach_and_detach() {
     assert_eq!(
         bridge_count(&pool, "zc_id_subj-group_rr_member", group, member).await,
         0
+    );
+}
+
+/// 岗位类型显示回归（fix-avic-position-category-display）：
+/// ck_category 解析 = 类目-岗位 code → zc_id_category（父表跨子族）notice → ''，
+/// 绝不外泄 ck_category::text 数字 id（用户报告岗位列表显示 2251799813685249）。
+/// 直接执行与 org_tree.rs POSITION_SELECT 相同的 COALESCE 语义（handler 字段私有，
+/// SQL 即 handler 行为）。
+#[tokio::test]
+async fn position_category_resolves_visible_label_no_raw_id() {
+    let pool = test_pool().await;
+
+    // 治理类基表行（ngac.sql 同款：code='ccb_member'，notice='CCB 成员'）
+    let cat_base = tid(31);
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_cate-position" (id, notice, code)
+           VALUES ($1, 'CCB 成员', 'ccb_member') ON CONFLICT (id) DO NOTHING"#,
+    )
+    .bind(cat_base)
+    .execute(&pool)
+    .await
+    .expect("ensure base category");
+
+    // 基表行类岗位（业务 seed 同款：ck_category 直绑基表行 id）
+    let pos_gov = tid(32);
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve governance position coords");
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, ck_category, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'CCB 主席', $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING"#,
+    )
+    .bind(pos_gov)
+    .bind(format!("T-GOV-{pos_gov}"))
+    .bind(cat_base)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
+    .execute(&pool)
+    .await
+    .expect("ensure governance position");
+
+    // 无类别岗位（ck_category NULL）
+    let pos_none = tid(33);
+    ensure_position(&pool, pos_none, "无类别岗位", None).await;
+
+    // handler POSITION_SELECT 同款解析表达式
+    let resolved: String = sqlx::query_scalar(
+        r#"SELECT COALESCE(
+                 (SELECT c.code FROM isahl."zc_id_cate-position" c
+                  WHERE c.id = p.ck_category AND c.deleted_at IS NULL),
+                 (SELECT c2.notice FROM isahl.zc_id_category c2
+                  WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL),
+                 '')
+           FROM isahl."zc_id_subj-position" p WHERE p.id = $1 AND p.deleted_at IS NULL"#,
+    )
+    .bind(pos_gov)
+    .fetch_one(&pool)
+    .await
+    .expect("resolve governance category");
+    assert_eq!(
+        resolved, "CCB 成员",
+        "基表行类别应解析为其字典 notice，而非 ck_category::text 数字 id"
+    );
+
+    let resolved_none: String = sqlx::query_scalar(
+        r#"SELECT COALESCE(
+                 (SELECT c.code FROM isahl."zc_id_cate-position" c
+                  WHERE c.id = p.ck_category AND c.deleted_at IS NULL),
+                 (SELECT c2.notice FROM isahl.zc_id_category c2
+                  WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL),
+                 '')
+           FROM isahl."zc_id_subj-position" p WHERE p.id = $1 AND p.deleted_at IS NULL"#,
+    )
+    .bind(pos_none)
+    .fetch_one(&pool)
+    .await
+    .expect("resolve no category");
+    assert_eq!(resolved_none, "", "无类别岗位显示为空串");
+}
+
+/// 岗位读投影的任职员工 MUST 来自任职桥（fix-position-employee-binding-display）。
+///
+/// 回归：读投影曾只取主表 `fk_user`（岗位表单从不写、恒 NULL），而「添加任职员工」
+/// 写的是 `zc_id_subj-post_rr_employee` 桥 → 提示成功却恒不展示。
+/// 本用例直接调用生产投影常量 `POSITION_SELECT`（与 handler 同一 SQL，杜绝漂移）。
+#[tokio::test]
+async fn position_read_projection_exposes_bridge_employees() {
+    use identity_org::handlers::org_tree::{position_row_to_dto, PositionRow, POSITION_SELECT};
+
+    let pool = test_pool().await;
+    let pos = tid(60);
+    let employee = tid(61);
+
+    ensure_position(&pool, pos, "任职投影岗位", None).await;
+
+    // 任职主体 = 通讯录联系人（岗位页 picker 数据源）；坐标形态落库
+    // （trigger-registry 通讯联系触发器同款，与 employment_subject_routing_and_bridge 一致）
+    let dk_scene: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl.zc_id_scene WHERE notice = '通讯联络' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .ok();
+    let dk_factor: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl.zc_id_factor WHERE notice = '通讯主体' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .ok();
+    let dk_function: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl.zc_id_function WHERE notice = '通讯联系' LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .ok();
+    sqlx::query(
+        r#"INSERT INTO isahl.zc_id_contacts (id, notice, code, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING"#,
+    )
+    .bind(employee)
+    .bind("任职投影员工")
+    .bind(format!("T-CT-{employee}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
+    .execute(&pool)
+    .await
+    .expect("ensure contact employee");
+
+    // 任职桥（POST /positions/{id}/employees 写端落点）
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_subj-post_rr_employee" (ref_left, ref_right)
+           VALUES ($1, $2)"#,
+    )
+    .bind(pos)
+    .bind(employee)
+    .execute(&pool)
+    .await
+    .expect("attach employment bridge");
+
+    let sql = format!(
+        "{} WHERE p.id = $1 AND p.deleted_at IS NULL AND p._f_ IS NULL",
+        POSITION_SELECT
+    );
+    let row: PositionRow = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(pos)
+        .fetch_one(&pool)
+        .await
+        .expect("read position projection");
+    let json = serde_json::to_value(position_row_to_dto(row)).expect("serialize position dto");
+
+    assert_eq!(
+        json["employees"][0]["id"],
+        employee.to_string(),
+        "桥行 MUST 出现在读投影 employees（列表/详情同一投影）"
+    );
+    assert_eq!(
+        json["employees"][0]["name"], "任职投影员工",
+        "名称经 zc_id_subjects 根 → zc_id_contacts 兜底解析"
+    );
+    assert_eq!(
+        json["userId"],
+        serde_json::Value::Null,
+        "fk_user 未被岗位表单写入——任职展示不得依赖该标量列"
     );
 }

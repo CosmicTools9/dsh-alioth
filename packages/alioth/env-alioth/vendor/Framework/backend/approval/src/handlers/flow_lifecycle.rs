@@ -59,12 +59,19 @@ pub struct LifecycleFlowRow {
 }
 
 const LIFECYCLE_SELECT: &str =
-    "e.id, e.notice AS name, e.code, e.t_color_, e.comments, e.meta, e.fk_context, \
+    "e.id, e.notice AS name, e.code, e.t_color_, e.comments, e.meta, \
+     (SELECT rc.ref_right FROM isahl.\"zc_id_process_rr_context\" rc \
+      WHERE rc.ref_left = e.id AND rc.deleted_at IS NULL \
+      ORDER BY rc.id LIMIT 1) AS fk_context, \
      replace(e.tableoid::regclass::text, '\"', '') AS branch, \
      (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
-      WHERE c.id = e.fk_context AND c.deleted_at IS NULL) AS context_concept, \
+      JOIN isahl.\"zc_id_process_rr_context\" rc2 ON rc2.ref_right = c.id AND rc2.deleted_at IS NULL \
+      WHERE rc2.ref_left = e.id AND rc2.deleted_at IS NULL AND c.deleted_at IS NULL \
+      ORDER BY rc2.id LIMIT 1) AS context_concept, \
      (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
-      WHERE c.id = e.fk_context AND c.deleted_at IS NULL) AS context_leaf, \
+      JOIN isahl.\"zc_id_process_rr_context\" rc3 ON rc3.ref_right = c.id AND rc3.deleted_at IS NULL \
+      WHERE rc3.ref_left = e.id AND rc3.deleted_at IS NULL AND c.deleted_at IS NULL \
+      ORDER BY rc3.id LIMIT 1) AS context_leaf, \
      (SELECT s.code FROM isahl.\"zc_id_lifecycle_r_primary-status\" ls \
       JOIN isahl.\"zc_id_stus-process\" s ON s.id = ls.ref_right \
       WHERE ls.ref_left = e.id AND ls.deleted_at IS NULL) AS status, \
@@ -166,8 +173,9 @@ pub struct GenerateTemplateResponse {
 ///    draft/published/deprecated 三档）
 /// 4. 幂等守卫：同 tpl_id 且同 notice 的在册范例已存在 → 400（防连点重复克隆）
 ///
-/// 克隆：同叶表落 实现·范例 行——notice/code/comments/t_color_/fk_context/
-/// dk_scene/dk_factor 原样复制，dk_function 换 `↓.{suffix}` 码，tpl_id → 设计行。
+/// 克隆：同叶表落 实现·范例 行——notice/code/comments/t_color_/
+/// dk_scene/dk_factor 原样复制，dk_function 换 `↓.{suffix}` 码，tpl_id → 设计行；
+/// 输入范畴绑定经 zc_id_process_rr_context 桥复制到克隆行（不再复制物理列）。
 pub async fn generate_template(
     pool: web::Data<PgPool>,
     req: HttpRequest,
@@ -281,6 +289,21 @@ pub async fn generate_template(
             .await
             .map_err(AliothError::from)?;
 
+    // 设计行的输入范畴绑定经 rr_context 桥复制到范例行（ref_left=克隆行）。
+    // 桥复制幂等：同设计行可重复克隆（克隆行各自独立建桥，无冲突约束面）。
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_process_rr_context"
+           (ref_left, ref_right, code, notice, created_by_id)
+           SELECT $1, rc.ref_right, rc.code, rc.notice, rc.created_by_id
+           FROM isahl."zc_id_process_rr_context" rc
+           WHERE rc.ref_left = $2 AND rc.deleted_at IS NULL"#,
+    )
+    .bind(created.0)
+    .bind(design_id)
+    .execute(pool)
+    .await
+    .map_err(AliothError::from)?;
+
     Ok(
         HttpResponse::Ok().json(ApiResponse::success(GenerateTemplateResponse {
             id: created.0,
@@ -292,14 +315,15 @@ pub async fn generate_template(
     )
 }
 
-/// 克隆 INSERT：notice/code/comments/t_color_/fk_context/dk_scene/dk_factor 原样，
+/// 克隆 INSERT：notice/code/comments/t_color_/dk_scene/dk_factor 原样，
 /// dk_function → 实现·范例码 id（$2），tpl_id → 设计行（$1）。
+/// 流程↔输入范畴绑定不随列复制——克隆后由调用方经 zc_id_process_rr_context 桥重挂。
 fn clone_sql(table: &str) -> String {
     format!(
         r#"INSERT INTO {table}
-           (notice, code, comments, t_color_, meta, mermaid, fk_context, dk_scene, dk_factor, dk_function,
+           (notice, code, comments, t_color_, meta, mermaid, dk_scene, dk_factor, dk_function,
             tpl_id, created_by_id, _f_, _t_)
-           SELECT notice, code, comments, t_color_, meta, mermaid, fk_context, dk_scene, dk_factor, $2,
+           SELECT notice, code, comments, t_color_, meta, mermaid, dk_scene, dk_factor, $2,
                   $1,
                   (SELECT created_by_id FROM isahl.zc_id_process WHERE id = $1),
                   '实现', '范例'

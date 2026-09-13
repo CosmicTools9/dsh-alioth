@@ -1,4 +1,4 @@
-//! 状态模型（共享内核）——`isahl.zc_id_status`
+//! 状态模型（共享内核）——`isahl.zc_id_stus-project`
 //!
 //! 字段并集吸收 WZ/Alioth 两 ns 契约：
 //!
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::FromRow;
 
-/// 状态实体 — 映射 `isahl.zc_id_status`
+/// 状态实体 — 映射 `isahl.zc_id_stus-project`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Status {
     #[serde(with = "common::serde_zuid")]
@@ -39,7 +39,7 @@ impl Identifiable for Status {
 
 impl AliothDbEntity for Status {
     fn table_name() -> &'static str {
-        "\"isahl\".\"zc_id_status\""
+        "\"isahl\".\"zc_id_stus-project\""
     }
     const SELECT_FIELDS: &'static str =
         "id, notice, code, flag::text, enable, comments, created_at, updated_at, deleted_at";

@@ -1,6 +1,6 @@
 # Framework/backend mise 配置
 # Rust workspace 共享库
-# 使用本机系统 Rust 1.95.0（通过 rustup）
+# 使用本机系统 Rust 1.98.0（通过 rustup）
 
 [tasks]
 # 安装/验证依赖

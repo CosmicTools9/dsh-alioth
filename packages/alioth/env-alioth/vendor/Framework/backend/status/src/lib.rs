@@ -1,6 +1,6 @@
 //! status — 状态/事件共享内核（extract-status-core + unify-status-shells）
 //!
-//! `isahl.zc_id_status`（id 默认 gen_next_uid(12)）的唯一实现来源：
+//! `isahl.zc_id_stus-project`（id 默认 gen_next_uid(12)）的唯一实现来源：
 //! - Status 字段并集（WZ notice/code/flag/enable + Alioth name 别名/comments）
 //! - StatusRepository：完整 CRUD（create 列默认 gen_next_uid(12)）+ RLS 读覆盖
 //! - DamageReport / EventTracking / EventAccident（isahl 全局表）只读仓库

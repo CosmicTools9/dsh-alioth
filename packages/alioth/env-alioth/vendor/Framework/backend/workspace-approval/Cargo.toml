@@ -11,3 +11,4 @@ log = { workspace = true }
 chrono = { workspace = true }
 common = { path = "../common" }
 crud = { path = "../crud" }
+ontology-binding = { path = "../ontology-binding" }

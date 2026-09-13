@@ -41,6 +41,7 @@ pub mod event_types {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ApprovalCompletedPayload {
     pub entity_type: String,
+    #[serde(with = "common::serde_zuid")]
     pub entity_id: i64,
     pub result: String,
     pub comment: Option<String>,
@@ -203,6 +204,17 @@ async fn apply_onboarding_approved(
     applicant_name: &str,
     approver_id: i64,
 ) {
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：自然人叶行落 dk 三元组；
+    // 解析失败降级 NULL（不阻断创建，与既有错误面一致）
+    let (dk_scene, dk_factor, dk_function) =
+        match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkTxFjaGg).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::warn!("employee-onboarding: dk 坐标解析失败: {}", e);
+                (None, None, None)
+            }
+        };
+
     // 幂等守卫：code = emp-{applicant_id} 为确定性自然键，事件重放不重复创建
     let existing: Option<i64> = sqlx::query_scalar(
         r#"SELECT id FROM isahl."zc_id_empl-natural"
@@ -224,12 +236,16 @@ async fn apply_onboarding_approved(
             id
         }
         None => match sqlx::query_scalar::<_, i64>(
-            r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_empl-natural"
+               (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
         )
         .bind(applicant_name)
         .bind(format!("emp-{}", applicant_id))
         .bind(approver_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(pool)
         .await
         {
@@ -272,13 +288,32 @@ async fn apply_onboarding_approved(
 
     // profile 配置（员工新建分支才补；重放已存在员工时不重复插）
     if existing.is_none() {
+        // 叶表坐标（§6.12 声明即必须）：prot 配置族 = JE/GEC/↑_DA（同族先例 prot-env_config /
+        // prot-oss_config）；维度缺行 → NULL 降级（BACKEND_FRAMEWORK §7.3.3）
+        let (dk_scene, dk_factor, dk_function) =
+            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJeGecDa)
+                .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    common::telemetry::warn!(
+                        "employee-onboarding: profile 配置坐标解析失败（applicant {}）: {}",
+                        applicant_id,
+                        e
+                    );
+                    (None, None, None)
+                }
+            };
         if let Err(e) = sqlx::query(
-            r#"INSERT INTO isahl."zc_id_prot-profile_config" (id, notice, fk_employee, settings, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, '{}'::jsonb, $3)"#,
+            r#"INSERT INTO isahl."zc_id_prot-profile_config" (id, notice, fk_employee, settings, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, '{}'::jsonb, $3, $4, $5, $6)"#,
         )
         .bind(applicant_name)
         .bind(emp_id)
         .bind(applicant_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(pool)
         .await
         {

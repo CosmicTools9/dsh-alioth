@@ -25,14 +25,17 @@ struct EntityCreatedPayload {
 
 /// 范畴绑定已发布范例流程（双范畴契约）：
 /// - legacy：scope-definition 行直接落业务叶表 → 范畴行 tableoid == entity_table；
-/// - 新契约：flow-context 范例行落域父表（zc_id_event/zc_id_task/zc_id_even-approve）
-///   → entity_table 的域 == 范畴行的域（经 context_family_table 归一比对）。
+/// - 新契约：flow-context 范例行落**域内叶表**（zc_id_appr-* / zc_id_task-* / zc_id_even-*，
+///   route-flow-context-to-domain-leaves）→ entity_table 的域 == 范畴行的域
+///   （按叶表域比对；遗留父表落点经 `domain_of_leaf` 基表臂同样命中）。
 async fn bound_published_flow(pool: &PgPool, entity_table: &str) -> Result<Option<i64>, ApiError> {
     let candidates: Vec<(i64, String, String)> = sqlx::query_as(
         r#"SELECT p.id, replace(c.tableoid::regclass::text, '"', ''), c._t_
            FROM isahl.zc_id_process p
+           JOIN isahl."zc_id_process_rr_context" rc
+             ON rc.ref_left = p.id AND rc.deleted_at IS NULL
            JOIN isahl."zc_id_proc-context" c
-             ON c.id = p.fk_context AND c.deleted_at IS NULL
+             ON c.id = rc.ref_right AND c.deleted_at IS NULL
            WHERE p.deleted_at IS NULL
              AND p._f_ = '实现' AND p._t_ = '范例'
              AND EXISTS (
@@ -40,21 +43,26 @@ async fn bound_published_flow(pool: &PgPool, entity_table: &str) -> Result<Optio
                  JOIN isahl."zc_id_stus-process" s ON s.id = ls.ref_right
                  WHERE ls.ref_left = p.id AND ls.deleted_at IS NULL AND s.code = 'published'
              )
-           ORDER BY CASE WHEN p._f_ = '实现'
-                            AND (p._t_ = '范例' OR p._t_ IS NULL)
-                        THEN 0 ELSE 1 END,
-                    p.updated_at DESC"#,
+           ORDER BY p.updated_at DESC"#,
     )
     .fetch_all(pool)
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;
 
     let entity_domain = crate::context_domain::domain_of_leaf(entity_table).unwrap_or("");
-    let entity_family = crate::context_domain::context_family_table(entity_domain);
-    for (flow_id, ctx_leaf, ctx_t) in candidates {
+    // 单绑写入面保证同流程至多一条活跃桥；此处仍按流程去重兜底（多桥行仅取最早）
+    let mut seen = std::collections::HashSet::new();
+    for (flow_id, ctx_leaf, ctx_t) in candidates
+        .into_iter()
+        .filter(|(fid, _, _)| seen.insert(*fid))
+    {
         let matched = match ctx_t.as_str() {
             "scope-definition" => ctx_leaf == entity_table,
-            "flow-context" => entity_family == Some(ctx_leaf.as_str()),
+            // 域级匹配（不依赖域父表身份）：范畴行叶表域 == 实体域
+            "flow-context" => {
+                !entity_domain.is_empty()
+                    && crate::context_domain::domain_of_leaf(&ctx_leaf) == Some(entity_domain)
+            }
             _ => false,
         };
         if matched {

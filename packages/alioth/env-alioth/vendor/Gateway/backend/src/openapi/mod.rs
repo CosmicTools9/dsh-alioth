@@ -404,7 +404,7 @@ pub async fn get_usage_report(
     .unwrap_or_default();
 
     HttpResponse::Ok().json(serde_json::json!({
-        "client_id": client_id,
+        "client_id": client_id, // id-json-ok: OAuth client_id 为字符串标识（非 64bit 整数 id）
         "days": days,
         "total_requests": total,
         "error_requests": errors,
@@ -431,7 +431,7 @@ pub async fn get_usage_report(
         }).collect::<Vec<_>>(),
         "quotas": quota_rows.into_iter().map(|(cid, plan, qd, qm, used_d, used_m)| {
             serde_json::json!({
-                "client_id": cid,
+                "client_id": cid.to_string(),
                 "plan_code": plan,
                 "quota_daily": qd,
                 "quota_monthly": qm,
@@ -444,7 +444,7 @@ pub async fn get_usage_report(
         "sla": sla_rows.into_iter().map(|(cid, plan, sla_avail, sla_p95, total, srv_err, actual_p95)| {
             let actual_avail = actual_availability(total, srv_err);
             serde_json::json!({
-                "client_id": cid,
+                "client_id": cid.to_string(),
                 "plan_code": plan,
                 "sla_availability": sla_avail,
                 "sla_p95_ms": sla_p95,

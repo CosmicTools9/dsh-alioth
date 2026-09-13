@@ -180,10 +180,23 @@ impl ApprovalService {
                     return ApprovalActionResponse::fail(format!("写入审批意见失败: {}", e));
                 }
             };
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↓_NC")).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let _ = tx.rollback().await;
+                        return ApprovalActionResponse::fail(format!(
+                            "解析审批意见坐标失败: {}",
+                            e
+                        ));
+                    }
+                };
             if let Err(e) = sqlx::query(
                 r#"INSERT INTO isahl."zc_id_deta-opinion"
-                   (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW(), $6)"#,
+                   (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, created_by_id,
+                    dk_scene, dk_factor, dk_function)
+                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9)"#,
             )
             .bind(notice)
             .bind(opinion_text)
@@ -191,6 +204,9 @@ impl ApprovalService {
             .bind(a.user_id)
             .bind(date_anchor)
             .bind(a.user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .execute(&mut *tx)
             .await
             {

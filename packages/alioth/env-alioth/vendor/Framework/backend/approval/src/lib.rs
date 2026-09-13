@@ -15,14 +15,20 @@ pub mod advance;
 pub mod context_domain;
 pub mod context_meta;
 mod dk;
+pub mod dmn;
 pub mod handlers;
+pub mod llm_assist;
 pub mod mermaid;
 pub mod models;
 pub mod ngac_ensure;
 pub mod node_meta;
+pub mod probe;
 pub mod repositories;
+pub mod scan;
 pub mod services;
+pub mod simulate;
 pub mod sla_timeout;
+pub mod task_link;
 
 /// 注册审批因子的所有 handler（不含 scope——由调用方自持 scope 路径）
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
@@ -44,8 +50,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         // /approval-flows/validate 与 {id}/initiate 同理，必须在 CRUD scope 之前
         .configure(handlers::validate::register)
         .configure(handlers::initiate::register)
+        // DMN AI 起草/修订（migrate-dmn-assist-to-framework）：`/approval-flows/dmn-*`
+        // 字面路径须在 approval_flow CRUD scope（/approval-flows/{id}）之前注册，
+        // 否则被 {id} 参数段吞掉 → 404。scope 由调用方委托（Gateway 主 / ns 服务）。
+        .configure(handlers::dmn_assist::register)
         // /approval-flows/lifecycle/{class} 与 /{id}/generate-template 须在 CRUD scope 之前
         .configure(handlers::flow_lifecycle::register)
+        // /approval-flows/{id}/simulate 字面路径须在 CRUD scope（/approval-flows/{id}）之前
+        .configure(crate::simulate::register)
         .configure(handlers::approval_flow::register)
         // 所有 /approval-instances/{id}/* 子路径必须在 approval_instance CRUD scope 之前注册；
         // 字面路径（batch/approve、batch/reject）必须先于任何参数段（{id}/approve）注册——

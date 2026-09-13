@@ -29,6 +29,10 @@ base64 = { workspace = true }
 hex = { workspace = true }
 percent-encoding = "2"
 uuid = { workspace = true }
+# 生产依赖：`src/plan_execution.rs`（record_plan_execution/record_slice_flip，被 schedule/scheduler 调用）
+# 直接使用 `ontology_binding::resolve` 解析坐标三元组——此前误置于 [dev-dependencies]，导致
+# 任何以普通依赖方式编译 common 的场景（如 `cargo check -p <service>`）报 E0433。
+ontology-binding = { path = "../ontology-binding" }
 
 [lib]
 

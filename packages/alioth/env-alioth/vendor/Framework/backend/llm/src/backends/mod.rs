@@ -82,6 +82,10 @@ pub struct CompletionResponse {
     pub tool_calls: Vec<ToolCallResult>,
     /// token 用量（provider 返回；缺失或解析失败时为 None，不得报错）
     pub usage: Option<TokenUsage>,
+    /// Provider 停止原因（choices[0].finish_reason：normal/stop/length/tool_calls…）。
+    /// "length" = 输出达 max_tokens 上限被截断——调用方据此续写/标记。
+    /// 流式路径不填充（流按块消费）；非流 complete 填充。
+    pub finish_reason: Option<String>,
     /// Raw provider response (for logging / debugging).
     pub raw: serde_json::Value,
 }
@@ -91,6 +95,21 @@ pub struct ToolCallResult {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+}
+
+/// 流式工具调用累积结果（SSE `delta.tool_calls` 分片拼接完成后的产物）。
+///
+/// 后端 SSE 解析器在流消费过程中就地累积：`index` 区分并发工具、
+/// `function.arguments` 跨 chunk 追加。流消费完毕（BoxStream 返回 None）
+/// 后读取槽位；槽位恒 None = 后端未实现工具流式（不支持），调用方须报错。
+#[derive(Debug, Clone, Default)]
+pub struct StreamToolCallOutcome {
+    pub tool_calls: Vec<ToolCallResult>,
+    /// provider 最终帧 usage（多数 provider 需 stream_options.include_usage
+    /// 才下发；缺失为 None——不得伪装成 0）
+    pub usage: Option<TokenUsage>,
+    /// 停止原因（"length" = 输出达 max_tokens 上限被截断）
+    pub finish_reason: Option<String>,
 }
 
 /// Rate-limit information reported by the backend (parsed from response headers).
@@ -209,28 +228,57 @@ pub trait LlmBackend: Send + Sync {
         &self,
         req: CompletionRequest,
     ) -> futures_util::stream::BoxStream<'_, Result<String, BackendError>> {
-        let backend = self;
-        let fut = async move {
-            match backend.complete(req).await {
-                Ok(resp) => {
-                    let text = resp.text.unwrap_or_default();
-                    if text.is_empty() {
-                        futures_util::stream::empty().boxed()
-                    } else {
-                        futures_util::stream::once(async move { Ok(text) }).boxed()
+        self.complete_stream_meta(req).0
+    }
+
+    /// `complete_stream` 的 finish_reason 槽位变体：返回文本流 + 消费完毕后可读的
+    /// provider 停止原因槽位（"length" = 输出达 max_tokens 上限被截断）。默认实现
+    /// 转发 `complete_stream` 且槽位恒 None（非流式/未接线后端）；SSE 后端覆写为
+    /// 真实槽位（见 `spawn_sse_parser_with_finish`）。
+    #[allow(clippy::type_complexity)]
+    fn complete_stream_meta(
+        &self,
+        req: CompletionRequest,
+    ) -> (
+        futures_util::stream::BoxStream<'_, Result<String, BackendError>>,
+        std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    ) {
+        let slot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let stream = {
+            let backend = self;
+            let stream_fut = async move {
+                match backend.complete(req).await {
+                    Ok(resp) => {
+                        let text = resp.text.unwrap_or_default();
+                        if text.is_empty() {
+                            futures_util::stream::empty().boxed()
+                        } else {
+                            futures_util::stream::once(async move { Ok(text) }).boxed()
+                        }
                     }
+                    Err(e) => futures_util::stream::once(async move { Err(e) }).boxed(),
                 }
-                Err(e) => futures_util::stream::once(async move { Err(e) }).boxed(),
-            }
+            };
+            futures_util::stream::once(stream_fut).flatten().boxed()
         };
-        // 将 async block 的流展平为 BoxStream
-        futures_util::stream::once(async move {
-            // future 返回流，此处需要间接——用 async_stream 语义：直接返回 future 产出的流
-            let s = fut.await;
-            s
-        })
-        .flatten()
-        .boxed()
+        (stream, slot)
+    }
+
+    /// 流式 + 工具调用变体：文本 delta 逐 chunk 下发（与 `complete_stream_meta`
+    /// 同形态），SSE 解析层把 `delta.tool_calls` 分片就地累积，流结束后写
+    /// `outcome_slot`（[`StreamToolCallOutcome`]：完整 tool_calls + usage +
+    /// finish_reason）。默认实现退化为纯文本流且槽位恒 None——后端覆写为
+    /// 共享 `spawn_sse_tools_parser` 时槽位才会被填充。
+    #[allow(clippy::type_complexity)]
+    fn complete_stream_tools_meta(
+        &self,
+        req: CompletionRequest,
+    ) -> (
+        futures_util::stream::BoxStream<'_, Result<String, BackendError>>,
+        std::sync::Arc<std::sync::Mutex<Option<StreamToolCallOutcome>>>,
+    ) {
+        let (stream, _finish_slot) = self.complete_stream_meta(req);
+        (stream, std::sync::Arc::new(std::sync::Mutex::new(None)))
     }
 
     /// Probe with a tiny request to verify connectivity (e.g. on startup).

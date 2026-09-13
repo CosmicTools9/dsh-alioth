@@ -92,7 +92,7 @@ impl AliothRepository<Employee, CreateEmployeeRequest, UpdateEmployeeRequest, Al
         user_id: i64,
     ) -> Result<Employee, AliothError> {
         sqlx::query_as::<_, Employee>(
-            r#"INSERT INTO isahl."zc_id_subj-employee"
+            r#"INSERT INTO isahl."zc_id_empl-natural"
                (notice, code, fk_user, sk_currency, ck_category, sk_unit, created_by_id, dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING id, notice AS name, code, fk_user, sk_currency, ck_category, sk_unit,
@@ -542,23 +542,21 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
         req: CreateApproverRequest,
         user_id: i64,
     ) -> Result<Approver, AliothError> {
-        sqlx::query_as::<_, Approver>(
-            r#"INSERT INTO isahl."zc_id_subj-position"
-               (notice, ck_category, comments, created_by_id, dk_scene, dk_factor, dk_function)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               RETURNING id, notice AS name, fk_user, ck_category, comments AS description,
-                         created_at, updated_at, deleted_at"#,
+        // ADR A-2：岗位行写收束至 identity-org org_write（语义等价：类别=role id 直绑
+        // ck_category、dk_scene/dk_factor/dk_function 常量、不写桥、无 ON CONFLICT/复活）；
+        // heal 内建于 service 入口——原 M222 repo 层 heal 移除（时机/幂等语义不变）
+        let id = identity_org::service::org_write::create_approver_position(
+            &self.pool,
+            &req.name,
+            req.role,
+            req.description.as_deref(),
+            user_id,
         )
-        .bind(&req.name)
-        .bind(req.role)
-        .bind(&req.description)
-        .bind(user_id)
-        .bind(514i64)
-        .bind(529i64)
-        .bind(526i64)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(AliothError::from)
+        .await?;
+        // service 仅回 id（跨 crate 免行类型依赖）；行映射复用本 repo SELECT
+        Ok(self.get(id).await?.ok_or_else(|| {
+            AliothError::Internal(format!("approver row created but unreadable: {id}"))
+        })?)
     }
 
     async fn update(
@@ -567,42 +565,36 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
         req: UpdateApproverRequest,
         user_id: i64,
     ) -> Result<Option<Approver>, AliothError> {
+        // Some 门语义：未提供字段保持现值——先读 current 合并终值（现 repo 同款）
         let current = self.get(id).await?;
-        if current.is_none() {
+        let Some(current) = current else {
             return Ok(None);
-        }
-        let current = current.unwrap();
+        };
         let name = req.name.unwrap_or(current.name);
         let ck_category = req.role.or(current.ck_category);
         let description = req.description.or(current.description);
-        sqlx::query_as::<_, Approver>(
-            r#"UPDATE isahl."zc_id_subj-position"
-               SET notice = $1, ck_category = $2, comments = $3, updated_by_id = $4
-               WHERE id = $5 AND deleted_at IS NULL AND _f_ IS NULL
-               RETURNING id, notice AS name, fk_user, ck_category, comments AS description,
-                         created_at, updated_at, deleted_at"#,
+        // ADR A-2：写收束 org_write（已合并终值传入；heal 内建于 service）
+        let updated = identity_org::service::org_write::update_approver_position(
+            &self.pool,
+            id,
+            &name,
+            ck_category,
+            description.as_deref(),
+            user_id,
         )
-        .bind(&name)
-        .bind(ck_category)
-        .bind(&description)
-        .bind(user_id)
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(AliothError::from)
+        .await?;
+        if updated.is_none() {
+            return Ok(None);
+        }
+        // 行映射复用本 repo SELECT；并发软删竞态（heal 窗口内删除）→ Ok(None)/404，
+        // 与旧 RETURNING 路径不等价（旧返回删除前快照）——注释级限缩，approvers 低频端点可接受
+        self.get(id).await
     }
 
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
-        sqlx::query(
-            "UPDATE isahl.\"zc_id_subj-position\" SET deleted_at = NOW(), deleted_by_id = $1 \
-             WHERE id = $2 AND deleted_at IS NULL AND _f_ IS NULL",
-        )
-        .bind(user_id)
-        .bind(id)
-        .execute(&self.pool)
-        .await
-        .map_err(AliothError::from)?;
-        Ok(())
+        // ADR A-2：软删收束 org_write（仅软删岗位行、不级联桥、未命中静默成功——
+        // 与 delete_position 的四桥级联/404 语义不同，故不可复用主入口；heal 内建于 service）
+        identity_org::service::org_write::delete_approver_position(&self.pool, id, user_id).await
     }
 }
 

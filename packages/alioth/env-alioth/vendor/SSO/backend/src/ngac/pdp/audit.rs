@@ -24,11 +24,13 @@ pub(crate) fn audit_decision(
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string());
 
-    // audit_events.user_email 为 NOT NULL；本路径仅有 user_id，沿用
-    // handlers.rs / From<NgacEvent> 的占位值惯例（满足约束，避免 null-value 违规）。
+    // audit_events.user_email 为 NOT NULL；本路径仅有 user_id。
+    // 主体标识口径（fix-ngac-audit-subject-identity）：username 优先、回落
+    // `user:{id}`——此处无 username，用唯一回落；**禁止**跨主体共享常量
+    // （原 "audit@local" 会把全部用户折叠成同一审计主体）。
     let mut event = AccessEvent::new(
         user_id,
-        Some("audit@local".to_string()),
+        Some(format!("user:{user_id}")),
         object_path.to_string(),
         operation.to_string(),
         decision,

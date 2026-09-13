@@ -55,11 +55,18 @@ if (fieldNs && fieldNs !== ns) {
 const missing = [];
 // block.json 必填字段（BLOCK_SCHEMA + check-version-alignment 对齐；namespace 路径权威、可选）
 const REQUIRED_BLOCK_FIELDS = ['id', 'name', 'version', 'services'];
+// fix-layout-fork-appagent-omp：Sources 全量镜像——Sources/Apps 存在则用，
+// 否则回退扁平 Sources（与 preproc-layout gatewaySourcesDir 同契约；
+// 旧实现裸拼 Sources/Blocks，镜像 ns 下 block 恒判缺失）
+const sourcesRoot = join('Pre-Proc', ns, 'Sources');
+const blocksRoot = existsSync(join(sourcesRoot, 'Apps', 'Blocks'))
+  ? join(sourcesRoot, 'Apps', 'Blocks')
+  : join(sourcesRoot, 'Blocks');
 for (const b of blocks) {
   const id = b.id ?? b.blockId;
   if (!id) continue;
-  const blockJson = join('Pre-Proc', ns, 'Sources', 'Blocks', id, 'block.json');
-  const blockTsx = join('Pre-Proc', ns, 'Sources', 'Blocks', id, 'llm-tsx', 'block.tsx');
+  const blockJson = join(blocksRoot, id, 'block.json');
+  const blockTsx = join(blocksRoot, id, 'llm-tsx', 'block.tsx');
   if (!existsSync(blockJson) || !existsSync(blockTsx)) {
     missing.push(`${id}（缺 block.json 或 llm-tsx/block.tsx）`);
     continue;

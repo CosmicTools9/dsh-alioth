@@ -19,14 +19,22 @@ async fn language_crud_via_settings_jsonb() {
         "coverage": 85
     });
 
+    // 坐标三元组（§6.12 声明即必须）：JE/GEC/↑_DA（env_config 族），值经 ontology_binding 解析 code→ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "GEC", "↑_DA"))
+            .await
+            .expect("resolve zc_id_prot-env_config coords");
     let id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id)
-           VALUES ($1, $2, $3::jsonb, $4) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3::jsonb, $4, '实现', '实例', $5, $6, $7) RETURNING id"#,
     )
     .bind("English (US)")
     .bind(code)
     .bind(serde_json::to_string(&meta).unwrap_or_default())
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -69,22 +77,33 @@ async fn language_code_prefix_filters_non_language_rows() {
     setup_test_schema_light(&pool).await.unwrap();
     let uid: i64 = 1;
 
+    // 坐标三元组（§6.12 声明即必须）：JE/GEC/↑_DA（env_config 族），值经 ontology_binding 解析 code→ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "GEC", "↑_DA"))
+            .await
+            .expect("resolve zc_id_prot-env_config coords");
     // 插入一个非 lang:* 记录
     let _other: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, created_by_id)
-           VALUES ('other', 'env:aws-prod', $1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('other', 'env:aws-prod', $1, '实现', '实例', $2, $3, $4) RETURNING id"#,
     )
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
 
     // 插入一个 lang:* 记录
     let _lang: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, created_by_id)
-           VALUES ('Chinese', 'lang:zh-CN', $1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('Chinese', 'lang:zh-CN', $1, '实现', '实例', $2, $3, $4) RETURNING id"#,
     )
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

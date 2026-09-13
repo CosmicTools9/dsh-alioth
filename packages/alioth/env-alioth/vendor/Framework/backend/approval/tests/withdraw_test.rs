@@ -27,27 +27,47 @@ const WD_NGAC: i64 = 3401;
 
 /// 构造单节点流，返回 (flow_id, node_id=operation id)
 async fn make_simple_flow(pool: &PgPool, code: &str) -> (i64, i64) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (flow_dk_scene, flow_dk_factor, flow_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_process (id, notice, code, comments, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $1, 'test', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (id, notice, code, comments, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $1, 'test', 1, $2, $3, $4) RETURNING id"#,
     )
     .bind(code)
+    .bind(flow_dk_scene)
+    .bind(flow_dk_factor)
+    .bind(flow_dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
     // 桥链节点夹具（fk_process 已移除）：even 语义行 + oper 主体 +
     // rro 在册锚（ref_right=oper）+ 模板桥（rr_event: oper→even）
+    // 坐标三元组（§6.12 声明即必须）：节点事件载体落叶表 zc_id_appr-process；
+    // 复用本函数已解析的审批流程坐标 (JC, FTA, ↑_NA)。
     let even_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id, code, comments)
-           VALUES ('审批节点', 1, 'N1', 'N1') RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, created_by_id, code, comments, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('审批节点', 1, 'N1', 'N1', 'flow-context', $1, $2, $3) RETURNING id"#,
     )
+    .bind(flow_dk_scene)
+    .bind(flow_dk_factor)
+    .bind(flow_dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let node_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id)
-           VALUES ('审批节点', 'N1', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('审批节点', 'N1', 1, '实现', '范例', $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -84,10 +104,14 @@ async fn insert_instance(pool: &PgPool, node_id: i64, owner: i64, prev: Option<i
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let instance_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (id, notice, code, fk_subject, fk_operator, fk_previous, comments, created_by_id, tpl_id)
-           VALUES (isahl.gen_next_zuid(), '待审', 'N', $1, $2, $3, $4, $1, $5)
+           (id, notice, code, fk_subject, fk_operator, fk_previous, comments, created_by_id, tpl_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), '待审', 'N', $1, $2, $3, $4, $1, $5, '实现', '实例', $6, $7, $8)
            RETURNING id"#,
     )
     .bind(owner)
@@ -95,6 +119,9 @@ async fn insert_instance(pool: &PgPool, node_id: i64, owner: i64, prev: Option<i
     .bind(prev)
     .bind(r#"{"entityType":"x","entityId":77}"#)
     .bind(node_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -134,17 +161,34 @@ async fn owner_withdraw_cascades_chain() {
     let (flow_id, node1) = make_simple_flow(&pool, "FLOW-WD-1").await;
     // 下游节点 N2（桥链夹具）：even 语义行 + oper 主体 + rro 锚（ref_left=flow_id）
     // + 模板桥（rr_event: oper→even）
+    // 坐标三元组（§6.12 声明即必须）：节点事件载体落叶表 zc_id_appr-process；
+    // 坐标 JC/FTA/↑_NA（审批流程族，库内既有行实证），值经 ontology_binding 解析，禁硬编码 ZUID
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let even2: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id, code, comments)
-           VALUES ('下游节点', 1, 'N2', 'N2') RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, created_by_id, code, comments, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('下游节点', 1, 'N2', 'N2', 'flow-context', $1, $2, $3) RETURNING id"#,
     )
+    .bind(even_dk_scene)
+    .bind(even_dk_factor)
+    .bind(even_dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .unwrap();
     let node2: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id)
-           VALUES ('下游节点', 'N2', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('下游节点', 'N2', 1, '实现', '范例', $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

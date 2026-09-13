@@ -312,13 +312,19 @@ pub async fn approve_binding_request(
                 let employee_id: i64 = match employee {
                     Some((eid,)) => eid,
                     None => {
+                        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+                        let (dk_scene, dk_factor, dk_function) =
+                            ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG")).await?;
                         sqlx::query_scalar(
-                            "INSERT INTO isahl.\"zc_id_empl-natural\" (id, notice, code, fk_user, created_by_id) \
-                             VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1) RETURNING id",
+                            "INSERT INTO isahl.\"zc_id_empl-natural\" (id, notice, code, fk_user, created_by_id, dk_scene, dk_factor, dk_function) \
+                             VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1, $4, $5, $6) RETURNING id",
                         )
                         .bind(format!("自动雇员-{}", applicant))
                         .bind(format!("AUTO-EMP-{}", applicant))
                         .bind(applicant)
+                        .bind(dk_scene)
+                        .bind(dk_factor)
+                        .bind(dk_function)
                         .fetch_one(&mut *tx)
                         .await?
                     }

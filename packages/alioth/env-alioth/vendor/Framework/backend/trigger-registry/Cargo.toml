@@ -22,5 +22,6 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 common = { path = "../common" }
+ontology-binding = { path = "../ontology-binding" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

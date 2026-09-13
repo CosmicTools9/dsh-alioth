@@ -28,8 +28,10 @@ pub async fn publish_flow(
 
     // 1. 读取流程 + 设计图 JSON（meta jsonb——migrate-flow-design-storage-to-meta-mermaid；
     //    结构源唯一，不回退解析 comments 惰性文本）
-    let row = sqlx::query_as::<_, (String, Option<Value>)>(
-        r#"SELECT notice, meta FROM isahl.zc_id_process
+    //    + 治理标记（add-model-seed-flow-guard）：meta.managed='model-seed' 的模型级
+    //    种子流程（注册/实名/入驻审批链）拒绝发布——物化会覆盖种子图
+    let row = sqlx::query_as::<_, (String, Option<Value>, Option<String>)>(
+        r#"SELECT notice, meta, meta->>'managed' FROM isahl.zc_id_process
            WHERE id = $1 AND deleted_at IS NULL"#,
     )
     .bind(flow_id)
@@ -38,12 +40,51 @@ pub async fn publish_flow(
     .map_err(|e| ApiError::Database(e.to_string()))?
     .ok_or_else(|| ApiError::NotFound(format!("ApprovalFlow {} not found", flow_id)))?;
 
-    let (flow_name, meta_json) = row;
+    let (flow_name, meta_json, managed) = row;
+    if managed.as_deref() == Some("model-seed") {
+        return Err(ApiError::Validation {
+            field: "managed".into(),
+            message: "模型级种子流程不可发布——由模型种子通道持有".into(),
+        });
+    }
     // 2. 设计图（jsonb 直取，无序列化解析）
     let parsed = meta_json.ok_or_else(|| ApiError::Validation {
         field: "meta".into(),
         message: "设计图缺失——存量流程请执行迁移文稿（meta ← comments 惰性 JSON）或重新保存".into(),
     })?;
+
+    // 2.5 静态缺陷扫描（add-approval-flow-static-scan）：与 validate 同判据。
+    // errors（结构性硬错）→ 400 阻断发布（不物化、不推进版本、不改状态）；
+    // 仅 warnings → 放行。④ 空审批人实查经短连接（只读查询）；acquire 失败降级
+    // 为结构检查，不阻断发布主路径。
+    let (nodes, edges) = validate_graph(&parsed)?;
+    let mut conn = match pool.acquire().await {
+        Ok(c) => Some(c),
+        Err(e) => {
+            common::telemetry::warn!(
+                "approval publish: acquire db conn failed — {} （空审批人实查降级）",
+                e
+            );
+            None
+        }
+    };
+    let report = crate::scan::scan_graph(nodes, edges, conn.as_deref_mut()).await;
+    if !report.errors.is_empty() {
+        let first = &report.errors[0];
+        let total = report.errors.len();
+        let message = if total > 1 {
+            format!("{}（共 {} 项静态缺陷，发布被阻断）", first.message, total)
+        } else {
+            first.message.clone()
+        };
+        return Ok(
+            HttpResponse::BadRequest().json(common::error::ErrorResponse {
+                code: "VALIDATION_ERROR".to_string(),
+                message,
+                details: Some(serde_json::json!({ "errors": report.errors })),
+            }),
+        );
+    }
 
     // 3. 物化（版本恢复与发布共用同一物化路径）
     let payload = materialize_graph(pool.get_ref(), flow_id, user_id, &flow_name, parsed).await?;
@@ -609,6 +650,12 @@ pub(crate) async fn materialize_graph(
     let mut snapshot_written = false;
     let mut graph_snapshot_done = false;
 
+    // 坐标静态绑定（§6.12；循环外一次解析，循环内复用）：even-approve 事件模板 = JC/FTA/↑_NA
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        crate::dk::resolve_ontology_coords_conn(&mut *tx, crate::dk::DkEntity::DkJcFtaNa)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
+
     for (idx, node) in nodes.iter().enumerate() {
         let node_type = node
             .get("type")
@@ -716,6 +763,15 @@ pub(crate) async fn materialize_graph(
                 obj.insert("loopMaxIter".into(), serde_json::json!(iter));
             }
         }
+        // B3 DMN 决策表物化（timeline.dmn；运行时 advance 求值路由——输出绑出边 label）
+        if node_type == "decision" {
+            if let Some(dmn) = node.get("dmn") {
+                timeline
+                    .as_object_mut()
+                    .expect("timeline json object")
+                    .insert("dmn".into(), dmn.clone());
+            }
+        }
         // 2026-09-01 能力补齐：subflow target 物化（运行时 advance 触发被引用流程）
         if node_type == "subflow" {
             if let Some(target) = node.get("target").and_then(|v: &Value| v.as_str()) {
@@ -781,24 +837,36 @@ pub(crate) async fn materialize_graph(
             node_type,
             "approval" | "approve" | "oper-approve" | "review" | "action" | "vote"
         ) {
-            let esc_name: Option<String> = node
-                .get("roleEscalate")
+            // 对象键 escalate.pos 即岗位名（notice）→ 直接承载；
+            // 存量 roleEscalate=岗位 id → notice 反查；escalateTo=岗位名 读兼容。
+            let escalate_pos_name: Option<String> = node
+                .get("escalate")
+                .and_then(|v| v.get("pos"))
                 .and_then(|v| v.as_str())
                 .filter(|v| !v.trim().is_empty())
                 .map(|v| v.trim().to_string());
-            let esc_name = if let Some(id) = esc_name {
-                sqlx::query_scalar::<_, String>(
-                    r#"SELECT notice FROM isahl."zc_id_subj-position"
-                       WHERE id = $1::bigint AND deleted_at IS NULL LIMIT 1"#,
-                )
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| ApiError::Database(format!("escalate position name: {}", e)))?
+            let esc_name = if let Some(name) = escalate_pos_name {
+                Some(name)
             } else {
-                node.get("escalateTo")
-                    .and_then(|v: &Value| v.as_str())
-                    .map(|v| v.trim().to_string())
+                let legacy_id = node
+                    .get("roleEscalate")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| !v.trim().is_empty())
+                    .map(|v| v.trim().to_string());
+                if let Some(id) = legacy_id {
+                    sqlx::query_scalar::<_, String>(
+                        r#"SELECT notice FROM isahl."zc_id_subj-position"
+                           WHERE id = $1::bigint AND deleted_at IS NULL LIMIT 1"#,
+                    )
+                    .bind(id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(|e| ApiError::Database(format!("escalate position name: {}", e)))?
+                } else {
+                    node.get("escalateTo")
+                        .and_then(|v: &Value| v.as_str())
+                        .map(|v| v.trim().to_string())
+                }
             };
             if let Some(name) = esc_name {
                 if !name.is_empty() {
@@ -861,10 +929,10 @@ pub(crate) async fn materialize_graph(
                         .fetch_all(&mut *tx)
                         .await
                         .map_err(|e| ApiError::Database(format!("resolve vote engineer[{}]: {}", idx, e)))?
-                                            } else {
-                            // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
-                            common::ngac_org::resolve_member_user_ids(&mut *tx, id, 200).await
-                        };
+                    } else {
+                        // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
+                        common::ngac_org::resolve_member_user_ids(&mut *tx, id, 200).await
+                    };
                     for uid in users {
                         resolved.push(serde_json::json!({ "uid": uid, "weight": weight }));
                     }
@@ -1038,6 +1106,15 @@ pub(crate) async fn materialize_graph(
             }
             let insert_sql = context_meta::statement_leaf_insert_sql(leaf)
                 .expect("whitelisted statement leaf has insert arm");
+            // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
+            let (dk_scene, dk_factor, dk_function) = match context_meta::leaf_coords(leaf) {
+                Some((s, f, fx)) => ontology_binding::resolve_conn(&mut *tx, (s, f, fx))
+                    .await
+                    .map_err(|e| {
+                        ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
+                    })?,
+                None => (None, None, None),
+            };
             let row_id: i64 = sqlx::query_scalar(insert_sql)
                 .bind(label)
                 .bind(&graph_id)
@@ -1046,6 +1123,9 @@ pub(crate) async fn materialize_graph(
                 // 类写入契约 §4.3.3：发布物化 = 实现·范例（形态 2 显式字面量对）
                 .bind("实现")
                 .bind("范例")
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| ApiError::Database(format!("node statement[{}]: {}", idx, e)))?;
@@ -1069,6 +1149,15 @@ pub(crate) async fn materialize_graph(
             }
             let insert_sql = context_meta::task_leaf_insert_sql(leaf)
                 .expect("whitelisted task leaf has insert arm");
+            // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
+            let (dk_scene, dk_factor, dk_function) = match context_meta::leaf_coords(leaf) {
+                Some((s, f, fx)) => ontology_binding::resolve_conn(&mut *tx, (s, f, fx))
+                    .await
+                    .map_err(|e| {
+                        ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
+                    })?,
+                None => (None, None, None),
+            };
             let row_id: i64 = sqlx::query_scalar(insert_sql)
                 .bind(label)
                 .bind(&graph_id)
@@ -1077,25 +1166,45 @@ pub(crate) async fn materialize_graph(
                 // 类写入契约 §4.3.3：发布物化 = 实现·范例
                 .bind("实现")
                 .bind("范例")
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| ApiError::Database(format!("node task[{}]: {}", idx, e)))?;
             terminal_entity = Some(("task", row_id));
         } else {
+            // 决策节点：dmn.description（人类可读决策说明）落 operation 行 comments
+            // （relocate-decision-table-ai-authoring；comments-text-semantics 合规——
+            // 可执行计算公式走 operation↔standard↔formula.expression 链，不在此列）。
+            let node_comments: Option<String> = if node_type == "decision" {
+                node.get("dmn")
+                    .and_then(|d| d.get("description"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            } else {
+                None
+            };
+            // 落点叶表 zc_id_appr-process（even-approve 为域父表，禁直写；读/改经父表继承并集可见）；
+            // 节点事件载体行语义 = 审批-处理流程（域内声明叶表；坐标 JC/FTA/↑_NA 见上方 even_dk_*）。
             let tid: i64 = sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_even-approve"
-                   (notice, created_by_id, code, qk_sla, comments, timeline)
-                   VALUES ($1, $2, $3, $4, $5, $6)
+                r#"INSERT INTO isahl."zc_id_appr-process"
+                   (notice, created_by_id, code, qk_sla, comments, timeline,
+                    dk_scene, dk_factor, dk_function)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                    RETURNING id"#,
             )
             .bind(label)
             .bind(user_id)
             .bind(&graph_id)
             .bind(sla_id)
-            // 节点 meta 不再入 comments（comments-text-semantics；fix-avic-approval-node-model）：
-            // 审批人/签署模式物化到操作模型表，见下方节点接线块。
-            .bind(Option::<String>::None)
+            .bind(node_comments)
             .bind(timeline)
+            .bind(even_dk_scene)
+            .bind(even_dk_factor)
+            .bind(even_dk_function)
             .fetch_one(&mut *tx)
             .await
             .map_err(|e| ApiError::Database(format!("node template[{}]: {}", idx, e)))?;
@@ -1142,6 +1251,15 @@ pub(crate) async fn materialize_graph(
                 }
                 let insert_sql = context_meta::event_leaf_insert_sql(leaf)
                     .expect("whitelisted event leaf has insert arm");
+                // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
+                let (dk_scene, dk_factor, dk_function) = match context_meta::leaf_coords(leaf) {
+                    Some((s, f, fx)) => ontology_binding::resolve_conn(&mut *tx, (s, f, fx))
+                        .await
+                        .map_err(|e| {
+                            ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
+                        })?,
+                    None => (None, None, None),
+                };
                 let row_id: i64 = sqlx::query_scalar(insert_sql)
                     .bind(label)
                     .bind(&graph_id)
@@ -1149,6 +1267,9 @@ pub(crate) async fn materialize_graph(
                     .bind(user_id)
                     .bind("实现")
                     .bind("范例")
+                    .bind(dk_scene)
+                    .bind(dk_factor)
+                    .bind(dk_function)
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| ApiError::Database(format!("node event[{}]: {}", idx, e)))?;
@@ -1170,40 +1291,72 @@ pub(crate) async fn materialize_graph(
                     .get("backupThreshold")
                     .and_then(|v| v.as_i64())
                     .map(|n| serde_json::json!({ "backupThreshold": n }));
+                // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
+                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
+                    &mut *tx,
+                    crate::dk::DkEntity::DkJeFtaEz,
+                )
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar::<_, i64>(
                     r#"INSERT INTO isahl."zc_id_oper-approve"
-                           (notice, code, created_by_id, _f_, _t_, meta)
-                           VALUES ($1, $2, $3, '实现', '范例', $4) RETURNING id"#,
+                           (notice, code, created_by_id, _f_, _t_, meta, dk_scene, dk_factor, dk_function)
+                           VALUES ($1, $2, $3, '实现', '范例', $4, $5, $6, $7) RETURNING id"#,
                 )
                 .bind(label)
                 .bind(&graph_id)
                 .bind(user_id)
                 .bind(op_meta)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| ApiError::Database(format!("node operation[{}]: {}", idx, e)))?
             }
-            "action" => sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_oper-action"
-                       (notice, code, created_by_id, _f_, _t_)
-                       VALUES ($1, $2, $3, '实现', '范例') RETURNING id"#,
-            )
-            .bind(label)
-            .bind(&graph_id)
-            .bind(user_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| ApiError::Database(format!("node action[{}]: {}", idx, e)))?,
-            "review" => {
-                // 评审动作 → oper-check 子类（检查/评审语义；叶表 INSERT 规约）
+            "action" => {
+                // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
+                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
+                    &mut *tx,
+                    crate::dk::DkEntity::DkJeFtaEz,
+                )
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_oper-check"
-                       (notice, code, created_by_id, _f_, _t_)
-                       VALUES ($1, $2, $3, '实现', '范例') RETURNING id"#,
+                    r#"INSERT INTO isahl."zc_id_oper-action"
+                           (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+                           VALUES ($1, $2, $3, '实现', '范例', $4, $5, $6) RETURNING id"#,
                 )
                 .bind(label)
                 .bind(&graph_id)
                 .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| ApiError::Database(format!("node action[{}]: {}", idx, e)))?
+            }
+            "review" => {
+                // 评审动作 → oper-check 子类（检查/评审语义；叶表 INSERT 规约）
+                // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
+                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
+                    &mut *tx,
+                    crate::dk::DkEntity::DkJeFtaEz,
+                )
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
+                sqlx::query_scalar(
+                    r#"INSERT INTO isahl."zc_id_oper-check"
+                       (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+                       VALUES ($1, $2, $3, '实现', '范例', $4, $5, $6) RETURNING id"#,
+                )
+                .bind(label)
+                .bind(&graph_id)
+                .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| ApiError::Database(format!("node review[{}]: {}", idx, e)))?
@@ -1211,14 +1364,24 @@ pub(crate) async fn materialize_graph(
             _ => {
                 // 自动节点（start/end/condition/cc/parallel/branch/gate/loop）
                 // → oper-gate 子类（无 fk_approve 列；模板关联走 rr_event 桥）
+                // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
+                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
+                    &mut *tx,
+                    crate::dk::DkEntity::DkJeFbbEz,
+                )
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar(
                     r#"INSERT INTO isahl."zc_id_oper-gate"
-                       (notice, code, created_by_id, _f_, _t_)
-                       VALUES ($1, $2, $3, '实现', '范例') RETURNING id"#,
+                       (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+                       VALUES ($1, $2, $3, '实现', '范例', $4, $5, $6) RETURNING id"#,
                 )
                 .bind(label)
                 .bind(&graph_id)
                 .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| ApiError::Database(format!("node gate[{}]: {}", idx, e)))?
@@ -1341,7 +1504,7 @@ pub(crate) async fn materialize_graph(
                         id
                     }
                     None => sqlx::query_scalar(
-                        r#"INSERT INTO isahl.zc_id_formula
+                        r#"INSERT INTO isahl."zc_id_form-mapping"
                            (notice, code, expression, active, context, created_by_id)
                            VALUES ($1, $2, $3, true, '{"engine":"rhai"}'::jsonb, $4)
                            RETURNING id"#,
@@ -1356,6 +1519,13 @@ pub(crate) async fn materialize_graph(
                 };
                 // standard 范例 find-or-create + 实现·实例（tpl_id→范例）
                 let std_code = format!("LOOP-STD-{}", graph_id);
+                // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
+                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
+                    &mut *tx,
+                    crate::dk::DkEntity::DkJeFbaAb,
+                )
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
                 let std_tpl: i64 = match sqlx::query_scalar(
                     r#"SELECT id FROM isahl.zc_id_standard
                        WHERE code = $1 AND deleted_at IS NULL AND tpl_id IS NULL LIMIT 1"#,
@@ -1368,27 +1538,33 @@ pub(crate) async fn materialize_graph(
                 {
                     Some(id) => id,
                     None => sqlx::query_scalar(
-                        r#"INSERT INTO isahl.zc_id_standard
-                           (notice, code, _f_, _t_, created_by_id)
-                           VALUES ($1, $2, '实现', '范例', $3) RETURNING id"#,
+                        r#"INSERT INTO isahl."zc_id_stan-operation"
+                           (notice, code, _f_, _t_, created_by_id, dk_scene, dk_factor, dk_function)
+                           VALUES ($1, $2, '实现', '范例', $3, $4, $5, $6) RETURNING id"#,
                     )
                     .bind(label)
                     .bind(&std_code)
                     .bind(user_id)
+                    .bind(dk_scene)
+                    .bind(dk_factor)
+                    .bind(dk_function)
                     .fetch_one(&mut *tx)
                     .await
                     .map_err(|e| ApiError::Database(format!("create std tpl[{}]: {}", idx, e)))?,
                 };
                 // 实现·实例（用户裁决：创建 operation 时自动创建 standard 实现·实例）
                 let std_inst: i64 = sqlx::query_scalar(
-                    r#"INSERT INTO isahl.zc_id_standard
-                       (notice, code, tpl_id, _f_, _t_, created_by_id)
-                       VALUES ($1, $2, $3, '实现', '实例', $4) RETURNING id"#,
+                    r#"INSERT INTO isahl."zc_id_stan-operation"
+                       (notice, code, tpl_id, _f_, _t_, created_by_id, dk_scene, dk_factor, dk_function)
+                       VALUES ($1, $2, $3, '实现', '实例', $4, $5, $6, $7) RETURNING id"#,
                 )
                 .bind(label)
                 .bind(&std_code)
                 .bind(std_tpl)
                 .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| ApiError::Database(format!("create std inst[{}]: {}", idx, e)))?;
@@ -1559,15 +1735,13 @@ pub(crate) async fn materialize_graph(
                 "action" => "action",
                 _ => "approve",
             };
-            let role = node.get("role").and_then(|v| v.as_str()).unwrap_or("");
-            let role_kind = node
-                .get("roleKind")
-                .and_then(|v| v.as_str())
-                .unwrap_or("role");
-
-            if !role.is_empty() {
-                // roleKind：canonical 'role' | 'employee'；历史 'engineer' 别名读兼容（员工解析）
-                let is_employee = role_kind == "employee" || role_kind == "engineer";
+            // 审批人字段归一（add-approver-position-employee-cascade）：
+            // 规范对象键 direct/deputy/escalate/backup（{pos: 岗位名, user?: 员工}）优先；
+            // 存量标量键读兼容（role/roleKind、roleDeputy、roleEscalate/escalateTo、roleBackup）。
+            // 岗位按岗位名（notice）组解析=全部任职人；user 存在=员工优先精确到人。
+            let role_kind = node.get("roleKind").and_then(|v| v.as_str());
+            let direct = approver_sel_of(node, "direct", Some("role"), role_kind);
+            if !direct.pos.is_empty() || direct.user.is_some() {
                 // 动作桥分表：approve→rr_approve（带岗位类别 ck_cate-role 四类语义）/
                 // review→rr_review / action→rr_post（无岗位类别，单岗位直配）
                 let bridge_sql = match action {
@@ -1602,9 +1776,10 @@ pub(crate) async fn materialize_graph(
                     let backup_cate = approval_role_cate_id(&mut *tx, "ROLE-BACKUP")
                         .await
                         .map_err(cate_err)?;
-                    // 直管（role）解析；缺位兜底：直管岗位未设立/无活跃成员 → 代理岗位接管
+                    // 直管解析：员工优先（user 有值→该员工名下岗位行），
+                    // 否则岗位名组全部任职记录；缺位兜底：直管未解析到 → 代理接管
                     let mut pending: Vec<(i64, Option<i64>)> =
-                        resolve_approver_positions(&mut *tx, &role, is_employee)
+                        resolve_approver_sel(&mut *tx, &direct)
                             .await
                             .map_err(|e| {
                                 ApiError::Database(format!("resolve direct[{}]: {}", idx, e))
@@ -1613,42 +1788,41 @@ pub(crate) async fn materialize_graph(
                             .map(|p| (p, direct_cate))
                             .collect();
                     if pending.is_empty() {
-                        if let Some(dep) = node.get("roleDeputy").and_then(|v| v.as_str()) {
-                            if !dep.trim().is_empty() {
-                                let deputies =
-                                    resolve_approver_positions(&mut *tx, dep.trim(), false)
-                                        .await
-                                        .map_err(|e| {
-                                            ApiError::Database(format!(
-                                                "resolve deputy[{}]: {}",
-                                                idx, e
-                                            ))
-                                        })?;
-                                pending.extend(deputies.into_iter().map(|p| (p, deputy_cate)));
-                            }
+                        let deputy = approver_sel_of(node, "deputy", Some("roleDeputy"), None);
+                        if !deputy.pos.is_empty() || deputy.user.is_some() {
+                            let deputies =
+                                resolve_approver_sel(&mut *tx, &deputy).await.map_err(|e| {
+                                    ApiError::Database(format!("resolve deputy[{}]: {}", idx, e))
+                                })?;
+                            pending.extend(deputies.into_iter().map(|p| (p, deputy_cate)));
                         }
                     }
                     // 升级岗位（SLA 超时接管目标）：解析落桥；岗位名由 timeline 段物化（读兼容 sla_timeout）
-                    if let Some(esc) = node.get("roleEscalate").and_then(|v| v.as_str()) {
-                        if !esc.trim().is_empty() {
-                            let es = resolve_approver_positions(&mut *tx, esc.trim(), false)
-                                .await
-                                .map_err(|e| {
-                                    ApiError::Database(format!("resolve escalate[{}]: {}", idx, e))
-                                })?;
-                            pending.extend(es.into_iter().map(|p| (p, escalate_cate)));
+                    let mut escalate =
+                        approver_sel_of(node, "escalate", Some("roleEscalate"), None);
+                    if escalate.pos.is_empty() && escalate.user.is_none() {
+                        // 旧 escalateTo（岗位名，无员工维度）读兼容
+                        if let Some(to) = node.get("escalateTo").and_then(|v: &Value| v.as_str()) {
+                            if !to.trim().is_empty() {
+                                escalate.pos = to.trim().to_string();
+                            }
                         }
                     }
+                    if !escalate.pos.is_empty() || escalate.user.is_some() {
+                        let es = resolve_approver_sel(&mut *tx, &escalate)
+                            .await
+                            .map_err(|e| {
+                                ApiError::Database(format!("resolve escalate[{}]: {}", idx, e))
+                            })?;
+                        pending.extend(es.into_iter().map(|p| (p, escalate_cate)));
+                    }
                     // 备选岗位（直管过载后备选；运行时由 advance 按积压阈值判定并入待办）
-                    if let Some(bak) = node.get("roleBackup").and_then(|v| v.as_str()) {
-                        if !bak.trim().is_empty() {
-                            let bs = resolve_approver_positions(&mut *tx, bak.trim(), false)
-                                .await
-                                .map_err(|e| {
-                                    ApiError::Database(format!("resolve backup[{}]: {}", idx, e))
-                                })?;
-                            pending.extend(bs.into_iter().map(|p| (p, backup_cate)));
-                        }
+                    let backup = approver_sel_of(node, "backup", Some("roleBackup"), None);
+                    if !backup.pos.is_empty() || backup.user.is_some() {
+                        let bs = resolve_approver_sel(&mut *tx, &backup).await.map_err(|e| {
+                            ApiError::Database(format!("resolve backup[{}]: {}", idx, e))
+                        })?;
+                        pending.extend(bs.into_iter().map(|p| (p, backup_cate)));
                     }
                     for (pid, cate) in pending {
                         sqlx::query(bridge_sql)
@@ -1663,12 +1837,10 @@ pub(crate) async fn materialize_graph(
                             })?;
                     }
                 } else {
-                    // review/action：单岗位直配（无岗位类别）
-                    let pos_ids = resolve_approver_positions(&mut *tx, &role, is_employee)
-                        .await
-                        .map_err(|e| {
-                            ApiError::Database(format!("resolve role positions: {}", e))
-                        })?;
+                    // review/action：单岗位直配（无岗位类别；员工优先同直管）
+                    let pos_ids = resolve_approver_sel(&mut *tx, &direct).await.map_err(|e| {
+                        ApiError::Database(format!("resolve role positions: {}", e))
+                    })?;
                     for pid in pos_ids {
                         sqlx::query(bridge_sql)
                             .bind(op_id)
@@ -1739,7 +1911,7 @@ pub(crate) async fn materialize_graph(
                 }
             }
 
-            // event/task 为流程级上下文（fk_context 范畴绑定），节点不挂上下文；
+            // event/task 为流程级上下文（rr_context 桥范畴绑定），节点不挂上下文；
             // operation 自身无状态（状态在流程 _r_status 桥与实例生命周期桥）
         }
 
@@ -1894,6 +2066,76 @@ async fn approval_role_cate_id(
     .await
 }
 
+/// 审批人选择：岗位名 pos（notice 组语义）+ 可选员工 user（员工优先精确到人）。
+/// add-approver-position-employee-cascade 规范形态；两者皆空 = 该类不配置。
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ApproverSel {
+    pub(crate) pos: String,
+    pub(crate) user: Option<String>,
+}
+
+/// 审批人字段归一：规范对象键（direct/deputy/escalate/backup = {pos, user}）优先；
+/// 存量标量键读兼容——legacy_role 为标量引用键，legacy_kind 为 roleKind
+/// （employee/engineer ⇒ 该引用是员工标识，落 user；否则落 pos——存量 role=岗位
+/// id/岗位名 双形态均可在解析端 id-or-notice 兼容）。
+pub(crate) fn approver_sel_of(
+    node: &Value,
+    obj_key: &str,
+    legacy_role: Option<&str>,
+    legacy_kind: Option<&str>,
+) -> ApproverSel {
+    if let Some(obj) = node.get(obj_key).and_then(|v| v.as_object()) {
+        let pos = obj
+            .get("pos")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let user = obj
+            .get("user")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string());
+        if !pos.is_empty() || user.is_some() {
+            return ApproverSel { pos, user };
+        }
+    }
+    let mut sel = ApproverSel::default();
+    if let Some(role) = legacy_role
+        .and_then(|k| node.get(k))
+        .and_then(|v| v.as_str())
+    {
+        let role = role.trim();
+        if !role.is_empty() {
+            let is_employee = matches!(
+                legacy_kind.map(str::trim),
+                Some("employee") | Some("engineer")
+            );
+            if is_employee {
+                sel.user = Some(role.to_string());
+            } else {
+                sel.pos = role.to_string();
+            }
+        }
+    }
+    sel
+}
+
+/// 审批人选择 → 岗位行集合：user 存在 → 员工名下岗位行（员工优先）；
+/// 否则 pos 岗位名（notice 组）/岗位 id（存量）→ 该组全部任职记录。
+pub(crate) async fn resolve_approver_sel(
+    tx: &mut sqlx::PgConnection,
+    sel: &ApproverSel,
+) -> Result<Vec<i64>, sqlx::Error> {
+    if let Some(user) = sel.user.as_deref().filter(|s| !s.trim().is_empty()) {
+        resolve_approver_positions(tx, user.trim(), true).await
+    } else if !sel.pos.trim().is_empty() {
+        resolve_approver_positions(tx, sel.pos.trim(), false).await
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 /// backTo 上游可达校验（A5）：target 经出边（node.next 下标）可达 current 即合法。
 fn reject_back_reachable(nodes: &[Value], from: usize, to: usize) -> bool {
     let mut stack = vec![from];
@@ -1951,6 +2193,7 @@ pub(crate) fn validate_graph(parsed: &Value) -> Result<(&[Value], Option<&[Value
         "review",
         "action",
         "vote",
+        "decision",
         "condition",
         "cc",
         "parallel",
@@ -2135,6 +2378,218 @@ pub(crate) fn validate_graph(parsed: &Value) -> Result<(&[Value], Option<&[Value
                 }
             }
 
+            "decision" => {
+                // B3 DMN 决策表结构校验（fail-closed，与前端 validation.ts 同构；
+                // extend-dmn-decision-table-full：五策略 + COLLECT aggregation +
+                // PRIORITY priority + 多输出列 outputs/等长）：
+                // hitPolicy ∈ {UNIQUE,FIRST,ANY,PRIORITY,COLLECT}；输入列 ≥1；
+                // 规则 ≥1 且 match 与输入列等长（null 视为通配 cell）；output 非空。
+                let dmn = node.get("dmn").ok_or_else(|| ApiError::Validation {
+                    field: "nodes".into(),
+                    message: format!(
+                        "node[{}] '{}' (decision) 缺 dmn 决策表配置（hitPolicy/inputs/rules）",
+                        idx, label
+                    ),
+                })?;
+                let policy = dmn.get("hitPolicy").and_then(|v| v.as_str()).unwrap_or("");
+                if !matches!(policy, "UNIQUE" | "FIRST" | "ANY" | "PRIORITY" | "COLLECT") {
+                    return Err(ApiError::Validation {
+                        field: "nodes".into(),
+                        message: format!(
+                            "node[{}] '{}' (decision) hitPolicy '{}' 非法——须为 UNIQUE/FIRST/ANY/PRIORITY/COLLECT",
+                            idx, label, policy
+                        ),
+                    });
+                }
+                // COLLECT aggregation 合法（缺省 list）
+                if policy == "COLLECT" {
+                    if let Some(agg) = dmn.get("aggregation").and_then(|v| v.as_str()) {
+                        if !matches!(agg, "list" | "count" | "sum" | "min" | "max") {
+                            return Err(ApiError::Validation {
+                                field: "nodes".into(),
+                                message: format!(
+                                    "node[{}] '{}' (decision) COLLECT aggregation '{}' 非法——须为 list/count/sum/min/max",
+                                    idx, label, agg
+                                ),
+                            });
+                        }
+                    }
+                }
+                let inputs_len = dmn
+                    .get("inputs")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                if inputs_len == 0 {
+                    return Err(ApiError::Validation {
+                        field: "nodes".into(),
+                        message: format!("node[{}] '{}' (decision) 输入列数量须 ≥1", idx, label),
+                    });
+                }
+                // 多输出列（可选）：列名唯一且 ≥1；规则 output 与之等长
+                let outputs = dmn.get("outputs").and_then(|v| v.as_array());
+                let outputs_len = outputs.map(|a| a.len()).unwrap_or(0);
+                if let Some(out_arr) = outputs {
+                    let mut seen: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    for o in out_arr {
+                        let name = o.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        if name.trim().is_empty() {
+                            return Err(ApiError::Validation {
+                                field: "nodes".into(),
+                                message: format!(
+                                    "node[{}] '{}' (decision) 输出列 name 不能为空",
+                                    idx, label
+                                ),
+                            });
+                        }
+                        if !seen.insert(name) {
+                            return Err(ApiError::Validation {
+                                field: "nodes".into(),
+                                message: format!(
+                                    "node[{}] '{}' (decision) 输出列名 '{}' 重复",
+                                    idx, label, name
+                                ),
+                            });
+                        }
+                    }
+                }
+                let rules = dmn.get("rules").and_then(|v| v.as_array()).ok_or_else(|| {
+                    ApiError::Validation {
+                        field: "nodes".into(),
+                        message: format!("node[{}] '{}' (decision) 缺 rules 数组", idx, label),
+                    }
+                })?;
+                if rules.is_empty() {
+                    return Err(ApiError::Validation {
+                        field: "nodes".into(),
+                        message: format!("node[{}] '{}' (decision) 决策规则数量须 ≥1", idx, label),
+                    });
+                }
+                for (ri, rule) in rules.iter().enumerate() {
+                    let cells_len = rule
+                        .get("match")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    if cells_len != inputs_len {
+                        return Err(ApiError::Validation {
+                            field: "nodes".into(),
+                            message: format!(
+                                "node[{}] '{}' (decision) 规则 {} match 数 {} 与输入列数 {} 不等",
+                                idx,
+                                label,
+                                ri + 1,
+                                cells_len,
+                                inputs_len
+                            ),
+                        });
+                    }
+                    // PRIORITY 显式 priority ≥1
+                    if policy == "PRIORITY" {
+                        if let Some(p) = rule.get("priority").and_then(|v| v.as_i64()) {
+                            if p < 1 {
+                                return Err(ApiError::Validation {
+                                    field: "nodes".into(),
+                                    message: format!(
+                                        "node[{}] '{}' (decision) 规则 {} priority '{}' 须 ≥1",
+                                        idx,
+                                        label,
+                                        ri + 1,
+                                        p
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                    // output：多输出列时数组且与 outputs 等长；单列时字符串
+                    let out_vals: Vec<&str> = match rule.get("output") {
+                        Some(serde_json::Value::Array(arr)) => {
+                            if outputs_len > 0 && arr.len() != outputs_len {
+                                return Err(ApiError::Validation {
+                                    field: "nodes".into(),
+                                    message: format!(
+                                        "node[{}] '{}' (decision) 规则 {} output 数 {} 与输出列数 {} 不等",
+                                        idx, label, ri + 1, arr.len(), outputs_len
+                                    ),
+                                });
+                            }
+                            arr.iter()
+                                .map(|v| v.as_str().unwrap_or(""))
+                                .collect::<Vec<_>>()
+                        }
+                        Some(v) => {
+                            if outputs_len > 0 {
+                                return Err(ApiError::Validation {
+                                    field: "nodes".into(),
+                                    message: format!(
+                                        "node[{}] '{}' (decision) 规则 {} 定义了输出列但 output 非数组",
+                                        idx, label, ri + 1
+                                    ),
+                                });
+                            }
+                            vec![v.as_str().unwrap_or("")]
+                        }
+                        None => Vec::new(),
+                    };
+                    let route_out = out_vals.first().copied().unwrap_or("");
+                    if route_out.trim().is_empty() {
+                        return Err(ApiError::Validation {
+                            field: "nodes".into(),
+                            message: format!(
+                                "node[{}] '{}' (decision) 规则 {} 缺 output 输出值（路由列）",
+                                idx,
+                                label,
+                                ri + 1
+                            ),
+                        });
+                    }
+                    // 校验锚：多输出列时路由列=首列（dmn.rs evaluate 取 first）；无
+                    // outputs 单列同判。伴随列值不参与路由校验。
+                    let _ = &out_vals;
+                }
+                // 输出↔出边覆盖（与前端 validation.ts 同构，fail-closed）：
+                // 每条规则 output 须有匹配 label 的出边，或存在无 label 兜底边——
+                // 否则发布即必然停滞（advance 无匹配边仅 stall）。
+                // 边源 = 节点内 next（设计器/导入图契约；top-level edges 形态跳过本校验）
+                if let Some(next_arr) = node.get("next").and_then(|v| v.as_array()) {
+                    let mut edge_labels: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    let mut has_fallback = false;
+                    for e in next_arr {
+                        match e.get("label").and_then(|l| l.as_str()) {
+                            Some(l) if !l.trim().is_empty() => {
+                                edge_labels.insert(l);
+                            }
+                            _ => {
+                                has_fallback = true;
+                            }
+                        }
+                    }
+                    for (ri, rule) in rules.iter().enumerate() {
+                        // 路由列 = 首输出（多输出列数组取 [0]；单列字符串原样）
+                        let route_out = match rule.get("output") {
+                            Some(serde_json::Value::Array(arr)) => {
+                                arr.first().and_then(|v| v.as_str()).unwrap_or("").trim()
+                            }
+                            Some(v) => v.as_str().unwrap_or("").trim(),
+                            None => "",
+                        };
+                        if !route_out.is_empty()
+                            && !edge_labels.contains(route_out)
+                            && !has_fallback
+                        {
+                            return Err(ApiError::Validation {
+                                field: "nodes".into(),
+                                message: format!(
+                                    "node[{}] '{}' (decision) 规则 {} 输出 '{}' 无匹配 label 出边且无兜底边——发布后必然停滞",
+                                    idx, label, ri + 1, route_out
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
             "condition" => {
                 if let Some(r) = node.get("routing").and_then(|v| v.as_str()) {
                     if !matches!(r, "exclusive" | "inclusive") {
@@ -2211,18 +2666,27 @@ pub async fn unpublish_flow(
     let flow_id = path.into_inner();
     let user_id = context::require_auth(&req)?;
 
-    // 守卫：仅已发布（主状态桥 published）流程可停用
-    let published: bool = sqlx::query_scalar(
-        r#"SELECT EXISTS(
-             SELECT 1 FROM isahl."zc_id_lifecycle_r_primary-status" ls
-             JOIN isahl."zc_id_stus-process" s ON s.id = ls.ref_right
-             WHERE ls.ref_left = $1 AND ls.deleted_at IS NULL AND s.code = 'published'
-           )"#,
+    // 守卫：模型级种子流程不可下线（add-model-seed-flow-guard）；
+    // 及仅已发布（主状态桥 published）流程可停用——单查双取，零额外往返
+    let (managed, published): (Option<String>, bool) = sqlx::query_as(
+        r#"SELECT (SELECT meta->>'managed' FROM isahl.zc_id_process
+                    WHERE id = $1 AND deleted_at IS NULL),
+                  EXISTS(
+                    SELECT 1 FROM isahl."zc_id_lifecycle_r_primary-status" ls
+                    JOIN isahl."zc_id_stus-process" s ON s.id = ls.ref_right
+                    WHERE ls.ref_left = $1 AND ls.deleted_at IS NULL AND s.code = 'published'
+                  )"#,
     )
     .bind(flow_id)
     .fetch_one(&**pool)
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;
+    if managed.as_deref() == Some("model-seed") {
+        return Err(ApiError::Validation {
+            field: "managed".into(),
+            message: "模型级种子流程不可下线——由模型种子通道持有".into(),
+        });
+    }
     if !published {
         return Err(ApiError::NotFound(format!(
             "ApprovalFlow {} not found or not published",
@@ -2257,4 +2721,76 @@ pub fn register(cfg: &mut web::ServiceConfig) {
         "/approval-flows/{id}/unpublish",
         web::post().to(unpublish_flow),
     );
+}
+
+#[cfg(test)]
+mod approver_sel_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn node(fields: serde_json::Value) -> Value {
+        let mut n = json!({ "id": "n1", "type": "approval", "label": "x" });
+        if let Value::Object(m) = fields {
+            n.as_object_mut().unwrap().extend(m);
+        }
+        n
+    }
+
+    #[test]
+    fn legacy_role_employee_maps_to_user() {
+        let n = node(json!({ "role": "E-001", "roleKind": "employee" }));
+        let sel = approver_sel_of(&n, "direct", Some("role"), Some("employee"));
+        assert!(sel.pos.is_empty());
+        assert_eq!(sel.user.as_deref(), Some("E-001"));
+    }
+
+    #[test]
+    fn legacy_engineer_alias_maps_to_user() {
+        let n = node(json!({ "role": "E-002", "roleKind": "engineer" }));
+        let sel = approver_sel_of(&n, "direct", Some("role"), Some("engineer"));
+        assert_eq!(sel.user.as_deref(), Some("E-002"));
+    }
+
+    #[test]
+    fn legacy_role_id_maps_to_pos() {
+        let n = node(json!({ "role": "12345", "roleKind": "role" }));
+        let sel = approver_sel_of(&n, "direct", Some("role"), Some("role"));
+        assert_eq!(sel.pos, "12345");
+        assert!(sel.user.is_none());
+    }
+
+    #[test]
+    fn object_takes_precedence_over_legacy_scalar() {
+        let n = node(json!({
+            "role": "legacy-role",
+            "roleKind": "role",
+            "direct": { "pos": "型号总师", "user": "E-901" }
+        }));
+        let sel = approver_sel_of(&n, "direct", Some("role"), Some("role"));
+        assert_eq!(sel.pos, "型号总师");
+        assert_eq!(sel.user.as_deref(), Some("E-901"));
+    }
+
+    #[test]
+    fn empty_object_falls_back_to_legacy() {
+        let n = node(json!({
+            "role": "legacy-role",
+            "direct": { "pos": "", "user": "" }
+        }));
+        let sel = approver_sel_of(&n, "direct", Some("role"), Some("role"));
+        assert_eq!(sel.pos, "legacy-role");
+    }
+
+    #[test]
+    fn escalate_legacy_alt_used_when_role_missing() {
+        let n = node(json!({ "escalateTo": "质量经理" }));
+        let mut sel = approver_sel_of(&n, "escalate", Some("roleEscalate"), None);
+        assert!(sel.pos.is_empty() && sel.user.is_none());
+        if let Some(to) = n.get("escalateTo").and_then(|v| v.as_str()) {
+            if !to.trim().is_empty() {
+                sel.pos = to.trim().to_string();
+            }
+        }
+        assert_eq!(sel.pos, "质量经理");
+    }
 }

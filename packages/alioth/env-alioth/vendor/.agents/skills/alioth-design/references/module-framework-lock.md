@@ -1,7 +1,7 @@
 # ModuleLayout 框架锁定（参考）
 
 > **权威源**：`docs/specs/MODULE_SPEC.md` §11.11（ModuleLayout 统一布局）
-> **参考实现**：`Pre-Proc/AVIC-CAASEC/Sources/Modules/system-dev/frontend/src/App.tsx`（稳定工作示例）
+> **参考实现**：`Pre-Proc/AVIC-CAASEC/Sources/Apps/Modules/system-dev/frontend/src/App.tsx`（稳定工作示例）
 
 本技能产出的 Module 原型 MUST 匹配以下布局框架，禁止自行发明不同的 Shell 结构。
 
@@ -94,7 +94,7 @@ createModuleLayout({
 
 #### 11.8 App.tsx 标准模式（参考：system-settings）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Modules/system-settings/frontend/src/App.tsx`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/frontend/src/App.tsx`
 
 ```tsx
 import { Routes, Route, Navigate } from 'react-router';
@@ -167,7 +167,7 @@ export default function App() {
 
 #### 11.9 NavItem 与 i18n 键结构模式（参考：system-settings locale）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Modules/system-settings/frontend/src/locales/{zh-CN,en}.json`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/frontend/src/locales/{zh-CN,en}.json`
 
 ```json
 {
@@ -217,7 +217,7 @@ export default function App() {
 
 #### 11.10 主题色注入模式（参考：system-settings theme.css）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Modules/system-settings/frontend/src/theme.css.txt`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/frontend/src/theme.css.txt`
 
 模块的自有主题色通过**原始 CSS 文件**注入，不经过 Tailwind：  
 （Vite 的 `?raw` 后缀绕过 Tailwind 处理，保留原生 CSS 变量定义）
@@ -268,7 +268,7 @@ export default function App() {
 
 #### 11.11 module.json 字段模式（参考：system-settings）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Modules/system-settings/module.json`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/module.json`
 
 ```json
 {

@@ -65,6 +65,13 @@ impl FlowDesignAgent {
 - 审批节点必须说明是 会签(all) 还是 或签(any)
 - 状态命名使用物理列名风格（英文 snake_case）
 - 不生成实际 DDL，只生成流程定义
+
+## 决策表起草
+- 用户要求为决策表节点起草/修订规则（自然语言描述判定条件与路由）时，MUST 调用
+  dmn_draft 工具（新表）或 dmn_revise 工具（携带现有表修订），并把工具返回的整表与
+  逐条中文规则审阅整理给用户；经用户确认后以结构化动作
+  （kind=execute, action_type=apply_dmn, params 含 dmn）供其应用到画布选中节点。
+- 校验失败（valid=false）时 MUST 展示工具返回的错误明细并引导调整描述或改用手工网格。
 "#
             .to_string(),
             model_override: None,
@@ -75,6 +82,12 @@ impl FlowDesignAgent {
                 "生成配置".to_string(),
                 "导出 Mermaid".to_string(),
                 "模拟执行".to_string(),
+            ],
+            // add-dock-dmn-authoring：决策表起草/修订工具显式白名单（orchestrator
+            // 按名过滤，空=不过滤；显式列避免不确定性）
+            available_tools: vec![
+                crate::tools::executor::DmnDraftTool::definition(),
+                crate::tools::executor::DmnReviseTool::definition(),
             ],
             ..Default::default()
         };

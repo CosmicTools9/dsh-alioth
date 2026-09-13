@@ -136,26 +136,34 @@ impl FileService {
         // 3. URL 链（AVIC/WZ 实证）：info-url → stor-plc-url → file_rr_url
         //    info-url.notice 存 `sha256:{hex}`（checksum 零 DDL 落库位；scheme/path 列
         //    为存储定位权威，notice 不再冗余存 storage_key）
+        //    坐标三元组（§6.12 声明即必须）：URL 链继承本次上传请求的维度坐标
+        //    （与同事务的文件行同源 req.dk_*，不另行推导/硬编码 ZUID）
         let info_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_info-url"
-               (id, notice, scheme, path, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4) RETURNING id"#,
+               (id, notice, scheme, path, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(format!("sha256:{checksum}"))
         .bind(&scheme)
         .bind(&rel_path)
         .bind(req.created_by_id)
+        .bind(req.dk_scene)
+        .bind(req.dk_factor)
+        .bind(req.dk_function)
         .fetch_one(&mut *tx)
         .await?;
         let stor_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_stor-plc-url"
-               (id, notice, code, fk_address, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4) RETURNING id"#,
+               (id, notice, code, fk_address, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(format!("FIL-{} 存储位置", file_id))
         .bind(&code)
         .bind(info_id)
         .bind(req.created_by_id)
+        .bind(req.dk_scene)
+        .bind(req.dk_factor)
+        .bind(req.dk_function)
         .fetch_one(&mut *tx)
         .await?;
         sqlx::query(

@@ -63,6 +63,34 @@ impl AgentRouterAdapter {
         let lock = self.registry.read().await;
         f(&lock.0)
     }
+
+    /// 租用 per-user agent 实例（add-agent-pool-user-memory）：从 session 反查
+    /// owner，按 (user_id, agent_code) 建实例（池键隔离）。失败仅 warn——
+    /// 池实例只服务 memory 注入，不影响主链。
+    async fn rent_pool_instance(&self, session_id: i64, agent_code: &str) {
+        let session_owner: Option<i64> = sqlx::query_scalar(
+            r#"SELECT created_by_id FROM isahl."zc_id_thre-ai_session" WHERE id = $1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+        if let Some(owner) = session_owner {
+            if self
+                .agent_pool
+                .get_or_create(owner, agent_code)
+                .await
+                .is_none()
+            {
+                common::telemetry::warn!(
+                    "agent pool: failed to create instance for user {} agent {}",
+                    owner,
+                    agent_code
+                );
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -76,12 +104,38 @@ impl AgentDispatchPort for AgentRouterAdapter {
         locale: &str,
         llm: &llm::LlmService,
     ) -> Result<String, String> {
+        // D2.7 pinned_agent：会话 pin 命中且 registry 存在 → 直接返回，跳过
+        // router.route 与 routing state 写入（pin 由 switch-agent 设置/清除）。
+        // SQL NULL 与缺失等价（无 pin）；实例租用保持 memory 连续性。
+        let pinned: Option<String> = sqlx::query_scalar::<_, String>(
+            r#"SELECT agent_state->>'pinned_agent'
+               FROM isahl."zc_id_thre-ai_session" WHERE id = $1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+        if let Some(code) = pinned {
+            self.refresh_registry_if_needed().await;
+            let exists = self.with_registry(|r| r.get(&code).is_some()).await;
+            if exists {
+                self.rent_pool_instance(session_id, &code).await;
+                return Ok(code);
+            }
+        }
+
         self.refresh_registry_if_needed().await;
         let registry = self.with_registry(|r| r.clone()).await;
         let router = AgentRouter::new(registry);
 
         let suggested_agent = page_context.as_ref().and_then(|v| {
+            // 前端 AIChatContext 传输形态为嵌套 {pageContext:{suggestedAgent}}，
+            // 兼容顶层直传与嵌套两种形态（实测嵌套形态下顶层读取永 None →
+            // 页面建议加成失效，填单场景被路由到 general）。
             v.get("suggestedAgent")
+                .or_else(|| v.get("pageContext").and_then(|pc| pc.get("suggestedAgent")))
                 .and_then(|s| s.as_str())
                 .map(String::from)
         });
@@ -96,47 +150,26 @@ impl AgentDispatchPort for AgentRouterAdapter {
 
         let decision = router.route(&routing_ctx, Some(llm)).await;
 
-        let _ = sqlx::query(
-            r#"UPDATE isahl."zc_id_thre-ai_session"
-               SET agent_state = agent_state || $1
-               WHERE id = $2"#,
-        )
-        .bind(serde_json::json!({
-            "routing": {
+        // R3（D2.6）：routing 决策环形保留最近 10 条（append_bounded_state 读改写
+        // 截断；条目=单次决策）。无界 append 路径已消除；写失败上抛（既有语义）。
+        let _ = super::db_session::append_bounded_state(
+            &self.pool,
+            session_id,
+            "routing",
+            serde_json::json!({
+                "agent": decision.agent_code.clone(),
                 "confidence": decision.confidence,
-                "reason": decision.reason,
-                "level": format!("{:?}", decision.level)
-            }
-        }))
-        .bind(session_id)
-        .execute(&self.pool)
+                "reason": decision.reason.clone(),
+                "level": format!("{:?}", decision.level),
+                "at": chrono::Utc::now().timestamp(),
+            }),
+            super::db_session::ROUTING_STATE_CAP,
+        )
         .await
         .map_err(|e| format!("Failed to save routing state: {}", e))?;
 
-        // 租用 per-user agent 实例（add-agent-pool-user-memory）：
-        // 从 session 反查 owner，按 (user_id, agent_code) 建实例（池键隔离）。
-        let session_owner: Option<i64> = sqlx::query_scalar(
-            r#"SELECT created_by_id FROM isahl."zc_id_thre-ai_session" WHERE id = $1"#,
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten();
-        if let Some(owner) = session_owner {
-            if self
-                .agent_pool
-                .get_or_create(owner, &decision.agent_code)
-                .await
-                .is_none()
-            {
-                common::telemetry::warn!(
-                    "agent pool: failed to create instance for user {} agent {}",
-                    owner,
-                    decision.agent_code
-                );
-            }
-        }
+        self.rent_pool_instance(session_id, &decision.agent_code)
+            .await;
 
         Ok(decision.agent_code)
     }
@@ -161,5 +194,18 @@ impl AgentDispatchPort for AgentRouterAdapter {
 
     async fn load_user_memory(&self, user_id: i64) -> Result<serde_json::Value, String> {
         self.memory_store.load(user_id).await
+    }
+
+    async fn sync_user_memory(
+        &self,
+        user_id: i64,
+        agent_code: &str,
+        memory: serde_json::Value,
+    ) -> Result<(), String> {
+        // 池实例不存在（agent 非内置/未租用）→ 无实例可同步，主链不阻断
+        if let Some(inst) = self.agent_pool.get_or_create(user_id, agent_code).await {
+            inst.set_memory(memory).await;
+        }
+        Ok(())
     }
 }

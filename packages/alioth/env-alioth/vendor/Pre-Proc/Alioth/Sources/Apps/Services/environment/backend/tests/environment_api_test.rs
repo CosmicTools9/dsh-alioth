@@ -160,14 +160,22 @@ async fn environment_list_filters_out_language_records() {
         .expect("seed environments");
     assert_eq!(seeded, 5, "should seed 5 environments");
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "GEC", "↑_DA"))
+            .await
+            .unwrap();
     let lang_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_prot-env_config"
-           (notice, code, settings, created_by_id)
+           (notice, code, settings, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
            VALUES ('简体中文', 'lang:zh-CN',
                    jsonb_build_object('locale', '中国大陆', 'enabled', true, 'coverage', 1.0),
-                   1)
+                   1, '实现', '实例', $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

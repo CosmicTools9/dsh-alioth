@@ -44,22 +44,37 @@ async fn add_approve_node(
     assignees: &[i64],
     sign_mode: &str,
 ) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：库内既有行实证 JC/FTA/↑_NA；值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (even_dk_scene, even_dk_factor, even_dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let template_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id, code, comments)
-           VALUES ($1, 1, $2, $3) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, created_by_id, code, comments, _t_, dk_scene, dk_factor, dk_function)
+                   VALUES ($1, 1, $2, $3, 'flow-context', $4, $5, $6) RETURNING id"#,
     )
     .bind(code)
     .bind(code)
     .bind(code)
+    .bind(even_dk_scene)
+    .bind(even_dk_factor)
+    .bind(even_dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let op_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id)
-           VALUES ($1, $2, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, 1, '实现', '范例', $3, $4, $5) RETURNING id"#,
     )
     .bind(code)
     .bind(code)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -131,14 +146,21 @@ async fn create_first_instance(pool: &PgPool, node_id: i64, actor: i64) -> i64 {
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .unwrap();
     let instance_id: i64 = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (id, notice, code, fk_subject, fk_operator, created_by_id, tpl_id)
-           VALUES (isahl.gen_next_zuid(), '发起', 'START', $1, $1, 1, $2)
+           (id, notice, code, fk_subject, fk_operator, created_by_id, tpl_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), '发起', 'START', $1, $1, 1, $2, '实现', '实例', $3, $4, $5)
            RETURNING id"#,
     )
     .bind(actor)
     .bind(node_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -277,11 +299,19 @@ async fn delegation_rule_hits_on_downstream_instance_creation() {
     .expect("规则创建应成功");
 
     // n1 → n2 双审批节点，审批人均为 DELEGATOR（委托者）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     let flow_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, code, comments, created_by_id, _f_, _t_)
-           VALUES ('委托转派流程', 'DG-DL-FLOW', 'dl-test', 1, '实现', '范例')
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, code, comments, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ('委托转派流程', 'DG-DL-FLOW', 'dl-test', 1, '实现', '范例', $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .unwrap();

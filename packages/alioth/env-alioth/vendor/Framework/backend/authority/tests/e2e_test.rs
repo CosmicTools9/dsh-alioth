@@ -25,11 +25,18 @@ use sqlx::PgPool;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async fn insert_engineer(pool: &PgPool, notice: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("ZJ", "LNC", "↓_EH"))
+        .await
+        .expect("resolve dk coords");
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_subj-employee" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural" (notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, $2, $3, $4) RETURNING id"#,
     )
     .bind(notice)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -198,11 +205,18 @@ async fn count_approval_roles(pool: &PgPool) -> i64 {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async fn insert_ccb_member(pool: &PgPool, notice: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve dk coords");
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_subj-position" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_subj-position" (notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, $2, $3, $4) RETURNING id"#,
     )
     .bind(notice)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()

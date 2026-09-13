@@ -27,9 +27,9 @@
         "name": "LedgerEntry",
         "table": "isahl.zc_id_docu-accounting",
         "coordinates": {
-          "scene": "zc",
-          "factor": "id",
-          "function": "docu_accounting"
+          "scene": "",
+          "factor": "",
+          "function": ""
         },
         "inherits": null,
         "notes": "归档-会计凭证：会计凭证主记录，含凭证编号、凭证号、审批意见、受益用户、版本批次、前序凭证等字段",
@@ -256,11 +256,6 @@
       {
         "name": "Account",
         "table": "isahl.zc_id_stor-account",
-        "coordinates": {
-          "scene": "zc",
-          "factor": "stor",
-          "function": "account"
-        },
         "inherits": null,
         "notes": "储元-账户：账户主记录，含账户编号、账户名称、账号、单元、托管人、容量等字段",
         "field_mappings": [
@@ -494,11 +489,6 @@
       {
         "name": "SubjectAccount",
         "table": "isahl.zc_id_subjects_rr_account",
-        "coordinates": {
-          "scene": "zc",
-          "factor": "id",
-          "function": "subjects_rr_account"
-        },
         "inherits": null,
         "notes": "关联-主体↔账户：主体与账户的关联关系表，含主体ID、账户ID、会计期间等字段",
         "field_mappings": [

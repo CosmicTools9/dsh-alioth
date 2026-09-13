@@ -14,5 +14,6 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 common = { path = "../common" }
 crud = { path = "../crud" }
+ontology-binding = { path = "../ontology-binding" }
 framework-scheduler = { path = "../scheduler" }
 tokio = { workspace = true }

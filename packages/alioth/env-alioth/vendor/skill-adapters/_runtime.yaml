@@ -7,6 +7,13 @@
 # Matching rule: program MUST either equal an entry exactly, or start with
 # "<entry>/" so path-prefix entries like `target/debug/ontology-mapping`
 # work alongside bare-name entries like `bun`.
+#
+# 治理说明：`target/debug/ontology-mapping`（原型门禁 prototype-check）是契约
+# 出口，但该二进制属 Meta/backend workspace 产物（自身在 Meta/backend/target/
+# debug）。AppAgent 运行时（ensure_ontology_mapping_built）在 gate 执行前自动
+# `cargo build -p ontology-mapping` 并同步到此处——缺失即自愈，勿手改路径/手动
+# 拷贝；dev-meta.sh 启动预热仅为缓存升温（冗余可撤）。代码常量：
+# tool_registry::ONTOLOGY_MAPPING_GATE_BIN。
 
 allowed_programs:
   - target/debug/ontology-mapping

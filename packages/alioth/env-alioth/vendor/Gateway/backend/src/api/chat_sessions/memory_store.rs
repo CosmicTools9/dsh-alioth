@@ -31,10 +31,7 @@ impl UserMemoryStore {
     }
 
     /// 保存用户 memory（upsert + version 递增）。
-    ///
-    /// 当前由注入链路消费（load）；对话后记忆沉淀（从对话提取偏好写入）
-    /// 为独立后续——API 就绪，暂标 dead_code 避免 warning。
-    #[allow(dead_code)]
+    /// 由对话记忆沉淀消费（D2.14：每 5 轮 flash 提取后 save + 池实例同步）。
     pub async fn save(&self, user_id: i64, memory: Value) -> Result<(), String> {
         sqlx::query(
             r#"INSERT INTO isahl_auth.gateway_user_memory (user_id, memory, version, updated_at)

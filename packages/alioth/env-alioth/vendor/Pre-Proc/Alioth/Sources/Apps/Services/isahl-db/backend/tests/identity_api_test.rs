@@ -52,9 +52,18 @@ async fn identity_list_with_null_notice_record() {
         .await
         .unwrap();
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FJA", "↑_DA"))
+            .await
+            .expect("resolve zc_id_subjects coords");
     sqlx::query(
-        r#"INSERT INTO isahl.zc_id_subjects (notice, code, created_by_id) VALUES (NULL, NULL, 1)"#,
+        // 裸夹具主体（无业务语义）→ 落叶 zc_id_orga-non-banking-legal（父表禁直写）
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES (NULL, NULL, 1, '实现', '实例', $1, $2, $3)"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .unwrap();

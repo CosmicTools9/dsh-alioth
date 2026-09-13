@@ -21,6 +21,11 @@ const SEED_LANGUAGES: &[(&str, &str, &str, &str)] = &[
 pub async fn seed_languages(pool: &PgPool) -> Result<usize, AliothError> {
     let mut updated = 0usize;
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "GEC", "↑_DA"))
+        .await
+        .map_err(|e| AliothError::Internal(e.to_string()))?;
+
     for (name, code, region, coverage_str) in SEED_LANGUAGES {
         let full_code = format!("lang:{}", code);
         let coverage = Decimal::from_str(coverage_str)
@@ -61,13 +66,16 @@ pub async fn seed_languages(pool: &PgPool) -> Result<usize, AliothError> {
             log::info!("[lang-seed] updated: {} ({})", name, code);
         } else {
             sqlx::query(
-                r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id)
-                   VALUES ($1, $2, $3::jsonb, $4)"#,
+                r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id, dk_scene, dk_factor, dk_function)
+                   VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7)"#,
             )
             .bind(name)
             .bind(&full_code)
             .bind(&settings_json)
             .bind(SEED_USER_ID)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .execute(pool)
             .await
             .map_err(|e| AliothError::Internal(e.to_string()))?;
@@ -126,12 +134,20 @@ mod tests {
             .unwrap();
 
         // Simulate a legacy record where locale is a region name instead of a code.
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(&pool, ("JE", "GEC", "↑_DA"))
+                .await
+                .unwrap();
         sqlx::query(
-            r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id)
+            r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id, dk_scene, dk_factor, dk_function)
                VALUES ('简体中文', 'lang:zh-CN',
                        jsonb_build_object('locale', '中国大陆', 'enabled', true, 'coverage', 1.0),
-                       1)"#,
+                       1, $1, $2, $3)"#,
         )
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(&pool)
         .await
         .unwrap();

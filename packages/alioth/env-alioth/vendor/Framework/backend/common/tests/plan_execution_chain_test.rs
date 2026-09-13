@@ -22,10 +22,18 @@ async fn chain_returns_direct_and_decomposed_operations() {
     let pool = test_pool().await;
 
     // plan（personal 叶表）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FMA", "↓_CH"))
+            .await
+            .expect("resolve plan-personal coords");
     let plan_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_plan-personal" (notice, code, created_by_id)
-           VALUES ('chain-test-plan', 't-chain', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_plan-personal" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('chain-test-plan', 't-chain', 1, $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert plan");
@@ -36,10 +44,18 @@ async fn chain_returns_direct_and_decomposed_operations() {
         .expect("record direct");
     // task（task-testing 叶表——zc_id_task 有子表 commission/testing，INSERT 必须落叶；
     // 读侧 plan_execution_chain JOIN 父表继承可见）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FMA", "↓_CH"))
+            .await
+            .expect("resolve task-testing coords");
     let task_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-testing" (notice, code, created_by_id)
-           VALUES ('chain-test-task', 't-chain-task', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_task-testing" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('chain-test-task', 't-chain-task', 1, $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert task");
@@ -56,19 +72,27 @@ async fn chain_returns_direct_and_decomposed_operations() {
     // 两个操作（oper-planing 叶表，fk_subject 承载归属语义；插入序与查询序无关）
     let op2: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-planing"
-           (notice, code, fk_subject, created_by_id) VALUES ('op-two', 't-chain-op2', $1, 1)
+           (notice, code, fk_subject, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('op-two', 't-chain-op2', $1, 1, $2, $3, $4)
            RETURNING id"#,
     )
     .bind(task_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert op2");
     let op1: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-planing"
-           (notice, code, fk_subject, created_by_id) VALUES ('op-one', 't-chain-op1', $1, 1)
+           (notice, code, fk_subject, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('op-one', 't-chain-op1', $1, 1, $2, $3, $4)
            RETURNING id"#,
     )
     .bind(task_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert op1");

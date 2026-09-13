@@ -27,11 +27,13 @@ use crate::auth::AuthState;
 
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct ApiClientResponse {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
     pub client_type: String,
     pub client_name: String,
     pub scopes: Vec<String>,
+    #[serde(with = "common::serde_zuid")]
     pub fk_service_user: i64,
     pub enabled: bool,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -42,12 +44,14 @@ pub struct ApiClientResponse {
 
 #[derive(Debug, serde::Serialize)]
 pub struct ApiClientCreatedResponse {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
     pub client_type: String,
     pub client_name: String,
     /// 仅在创建时返回一次（oauth2=client_secret / apikey=api_key 明文）
     pub secret: String,
+    #[serde(with = "common::serde_zuid")]
     pub fk_service_user: i64,
     pub enabled: bool,
 }
@@ -248,7 +252,7 @@ pub async fn rotate_api_client_secret(
         Ok(Some(RotatedSecret { client_id, secret })) => {
             HttpResponse::Ok().json(serde_json::json!({
                 "data": {
-                    "client_id": client_id,
+                    "client_id": client_id.to_string(),
                     "secret": secret,
                 },
             }))
@@ -326,7 +330,7 @@ pub async fn update_api_client(
     match query.execute(pool.get_ref()).await {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok().json(serde_json::json!({
             "updated": true,
-            "id": client_id,
+            "id": client_id.to_string(),
         })),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Client not found",
@@ -352,9 +356,8 @@ pub async fn delete_api_client(
     let client_id = path.into_inner();
 
     match soft_delete_client(pool.get_ref(), client_id).await {
-        Ok(n) if n > 0 => {
-            HttpResponse::Ok().json(serde_json::json!({ "deleted": true, "id": client_id }))
-        }
+        Ok(n) if n > 0 => HttpResponse::Ok()
+            .json(serde_json::json!({ "deleted": true, "id": client_id.to_string() })),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Client not found",
         })),

@@ -98,6 +98,26 @@ pub(super) async fn revoke_all_user_tokens(pool: &PgPool, user_id: i64) -> Resul
     Ok(())
 }
 
+/// 物理删除超保留期的已吊销/过期 refresh token（fix-sso-auth-gaps G4）。
+/// 幂等；多实例并发执行安全。revoked 行保留至保留期（审计窗口），过期行同理。
+pub(crate) async fn purge_expired_tokens(
+    pool: &PgPool,
+    retention_days: i64,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM isahl_auth.refresh_tokens
+        WHERE (revoked = TRUE OR expires_at < NOW())
+          AND created_at < NOW() - ($1 * INTERVAL '1 day')
+        "#,
+    )
+    .bind(retention_days)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
 /// Record a failed login attempt, locking the account after `MAX_FAILED_ATTEMPTS`
 /// (5) consecutive failures for `LOCKOUT_MINUTES` (15) (SECURITY_SPEC §5).
 ///

@@ -48,18 +48,32 @@ async fn test_user(pool: &sqlx::PgPool) {
 }
 
 async fn seed_task_commission(pool: &sqlx::PgPool) -> (i64, i64) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH"))
+        .await
+        .unwrap();
     let scope_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, _t_, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'SN-委派定义', 'scope-definition', 1)
+        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, _t_, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), 'SN-委派定义', 'scope-definition', 1, $1, $2, $3)
            RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH"))
+        .await
+        .unwrap();
     let entity_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, code, created_by_id)
-           VALUES (isahl.gen_next_zuid(), '快照实体', 'VIP', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_task-commission" (id, notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), '快照实体', 'VIP', 1, '实现', '范例', $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();
@@ -67,16 +81,35 @@ async fn seed_task_commission(pool: &sqlx::PgPool) -> (i64, i64) {
 }
 
 async fn create_flow(pool: &sqlx::PgPool, name: &str, ctx_id: i64, graph: &Value) -> i64 {
-    sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, fk_context, created_by_id, _f_, _t_)
-           VALUES ($1, $2::jsonb, 'draft', $3, 1, '实现', '范例') RETURNING id"#,
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
+    let flow_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, 'draft', 1, '实现', '范例', $3, $4, $5) RETURNING id"#,
     )
     .bind(name)
     .bind(graph.to_string())
-    .bind(ctx_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
-    .unwrap()
+    .unwrap();
+    // 输入范畴经 zc_id_process_rr_context 桥落行（物理列已移除）
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_process_rr_context"
+           (ref_left, ref_right, code, notice, created_by_id)
+           VALUES ($1, $2, 'bind-context', '流程上下文绑定', 1)"#,
+    )
+    .bind(flow_id)
+    .bind(ctx_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    flow_id
 }
 
 /// 篡改设计草稿：condition expr 翻转为常假、start 图内 id 改写成不存在的节点

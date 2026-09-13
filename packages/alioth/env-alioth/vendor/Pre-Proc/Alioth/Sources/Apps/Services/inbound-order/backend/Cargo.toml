@@ -22,6 +22,7 @@ rust_decimal = { workspace = true }
 uuid = { workspace = true }
 common = { path = "../../../../../../../Framework/backend/common" }
 crud = { path = "../../../../../../../Framework/backend/crud" }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }
 
 [dev-dependencies]
 actix-rt = { workspace = true }

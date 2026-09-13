@@ -73,11 +73,14 @@ pub async fn record_plan_execution(
     if let Some(fr) = fact_ref {
         comments_text.push_str(&format!("（事实：{}#{}）", fr.table, fr.id));
     }
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH")).await?;
     sqlx::query(
         r#"
         INSERT INTO isahl."zc_id_oper-planing"
-            (notice, code, fk_subject, fk_operator, comments, created_by_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
+            (notice, code, fk_subject, fk_operator, comments, created_by_id, dk_scene, dk_factor, dk_function)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         "#,
     )
     .bind(format!("计划执行：{summary}"))
@@ -86,6 +89,9 @@ pub async fn record_plan_execution(
     .bind(user_id)
     .bind(comments_text)
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await?;
     Ok(())
@@ -193,18 +199,26 @@ pub async fn record_slice_flip(
     summary: &str,
     user_id: i64,
 ) -> Result<(i64, Option<i64>), PlanExecutionError> {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FBB", "↓_EE"))
+        .await
+        .map_err(PlanExecutionError::from)?;
     // 事件切片（even-alert 叶表——zc_id_event 有子表，INSERT 必须落叶）
     let event_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_even-alert"
-           (notice, code, comments, created_by_id)
-           VALUES ($1, $2, $3, $4) RETURNING id"#,
+           (notice, code, comments, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
     )
     .bind(format!("完成：{summary}"))
     .bind(format!("flip-{plan_id}"))
     .bind(
-        serde_json::json!({"slice_flip": true, "plan_id": plan_id, "summary": summary}).to_string(),
+        serde_json::json!({"slice_flip": true, "plan_id": plan_id.to_string(), "summary": summary})
+            .to_string(),
     )
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await?;
 
@@ -223,15 +237,23 @@ pub async fn record_slice_flip(
     // 任务归属挂接（operation_rr_task 正桥：动作归属 task）——先写动作再挂
     let mut op_link: Option<i64> = None;
     if let Some(tid) = task_id {
+        // 坐标三元组（§6.12 声明即必须）：oper-planing 族 JE/FMA/↓_CH（与 record_plan_execution 同源）
+        let (op_dk_scene, op_dk_factor, op_dk_function) =
+            ontology_binding::resolve(pool, ("JE", "FMA", "↓_CH"))
+                .await
+                .map_err(PlanExecutionError::from)?;
         let op_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_oper-planing"
-               (notice, code, fk_subject, fk_operator, created_by_id)
-               VALUES ($1, $2, $3, $4, $4) RETURNING id"#,
+               (notice, code, fk_subject, fk_operator, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(format!("翻转动作：{summary}"))
         .bind(format!("flip-op-{plan_id}"))
         .bind(plan_id)
         .bind(user_id)
+        .bind(op_dk_scene)
+        .bind(op_dk_factor)
+        .bind(op_dk_function)
         .fetch_one(pool)
         .await?;
         sqlx::query(

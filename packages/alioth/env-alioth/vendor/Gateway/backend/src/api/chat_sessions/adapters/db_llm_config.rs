@@ -84,6 +84,10 @@ pub(crate) fn build_llm_service(
         );
     }
 
+    // roles 由 model / flash_model 派生——必须在结构体字面量移动两者**之前**计算
+    // （2026-09-10 修复：HEAD 上 roles 内联在字面量里，导致 model/flash_model 先被
+    // 移入字段、再被借用 → E0382，整个 alioth-gateway lib 无法编译）。
+    let roles = llm::LlmServiceConfig::resolve_roles(&model, &flash_model);
     let config = LlmServiceConfig {
         provider,
         api_key: api_key.to_string(),
@@ -93,7 +97,7 @@ pub(crate) fn build_llm_service(
         timeout_seconds,
         max_retries,
         generation_params,
-        roles: Default::default(),
+        roles,
     };
 
     LlmService::new(config).map_err(|e| format!("Failed to init LLM: {}", e))
@@ -198,5 +202,25 @@ impl LlmConfigPort for DbLlmConfigAdapter {
             settings.as_ref(),
             Some(&env_fallback),
         )
+    }
+
+    /// D2.11 历史窗口：settings->>'max_history_messages'（正整数校验），
+    /// 缺省 50；无 DB 行/非法值 → 50。
+    async fn max_history_messages(&self) -> i64 {
+        let row: Option<i64> = sqlx::query_scalar(
+            r#"SELECT CASE
+                     WHEN settings->>'max_history_messages' ~ '^[1-9][0-9]*$'
+                     THEN (settings->>'max_history_messages')::bigint
+                     ELSE NULL END
+               FROM isahl."zc_id_prot-llm_config"
+               WHERE (settings->>'enabled')::boolean IS NOT FALSE AND deleted_at IS NULL
+               ORDER BY (settings->>'is_default')::boolean DESC, updated_at DESC
+               LIMIT 1"#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .ok()
+        .flatten();
+        row.unwrap_or(50)
     }
 }

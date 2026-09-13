@@ -17,35 +17,23 @@ use sqlx::{AssertSqlSafe, FromRow, PgPool};
 
 use super::models::*;
 
-/// 从 plan comments JSON 解析提醒设置（{"reminder_offset_min": N}）；无/非法 → None
-pub(crate) fn parse_reminder(comments: Option<&str>) -> Option<ReminderResponse> {
-    let raw = comments?;
-    let v: serde_json::Value = serde_json::from_str(raw).ok()?;
-    let offset = v.get("reminder_offset_min")?.as_i64()?;
-    if !(0..=1440).contains(&offset) {
-        return None;
-    }
-    Some(ReminderResponse {
+/// 提醒事件识别码（`zc_id_even-alert.code`）：日程提醒 = 计划起始前的预警事件。
+///
+/// 载体（零 DDL，全既有结构）：`zc_id_even-alert`（叶表）行 `qk_date` → `zc_id_scal-date`
+/// 承载提醒时刻，`zc_id_plan_rr_event`（ref_left=计划）桥关联；`comments` 不承载任何提醒数据。
+pub(crate) const REMINDER_EVENT_CODE: &str = "schedule-reminder";
+
+/// 提醒换算：`offset = 计划起始时刻 − 提醒事件时刻`（分钟）。
+/// 合法域 0..=1440（越界视为无提醒，与 DTO 校验域一致）。
+fn reminder_from_times(
+    start_at: DateTime<Utc>,
+    remind_at: DateTime<Utc>,
+) -> Option<ReminderResponse> {
+    let offset = (start_at - remind_at).num_minutes();
+    (0..=1440).contains(&offset).then(|| ReminderResponse {
         offset: offset as i32,
         channel: "app".to_string(),
     })
-}
-
-/// 将 reminder_offset_min 写入/更新 plan comments JSON（保留既有 comments 字段）
-pub(crate) fn apply_reminder_to_comments(
-    comments: Option<&str>,
-    reminder_offset_min: Option<i32>,
-) -> Option<String> {
-    let mut v: serde_json::Value = comments
-        .and_then(|c| serde_json::from_str(c).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    match reminder_offset_min {
-        Some(n) => {
-            v["reminder_offset_min"] = serde_json::json!(n);
-            Some(v.to_string())
-        }
-        None => comments.map(str::to_string),
-    }
 }
 
 // ============================================
@@ -102,6 +90,8 @@ pub struct RawScheduleItem {
     pub plan_type: Option<String>,
     pub plan_cron: Option<String>,
     pub plan_comments: Option<String>,
+    /// 提醒事件时刻（预警事件 `qk_date` → `zc_id_scal-date.date`，经 `zc_id_plan_rr_event` 桥）
+    pub remind_at: Option<chrono::DateTime<chrono::Utc>>,
     pub event_id: Option<i64>,
     pub event_fk_place: Option<i64>,
     pub event_fk_subject: Option<i64>,
@@ -130,37 +120,47 @@ pub(crate) struct RawTodoItem {
 // Repository
 // ============================================
 
-#[derive(Clone)]
-pub struct ScheduleRepository {
-    pool: PgPool,
-}
+/// 待办行判定谓词（用户可见的待办行）——徽标计数与待办清单共用的**唯一**来源。
+///
+/// `get_pending_todo_count`（`/schedule/overview` 徽标计数）与
+/// `list_todo_items`（`/schedule/todos` 待办清单）MUST 共用本片段：
+/// 两者曾各自维护过滤条件而漂移——2026-09-09 仅在清单侧排除系统翻转事实
+/// （`record_slice_flip` 产物：`code` 前缀 `flip-`、`notice` 形如「完成：实体状态推进」），
+/// 徽标仍把对账切片计为待办（AVIC-CAASEC/pre 实证：徽标 8 / 清单可见行 0）。
+/// 任何行级过滤条件的新增或修改只改此处，禁止单侧加条件。
+///
+/// 依赖调用方 FROM 中的别名：`e`（`zc_id_even-alert`）。
+const TODO_ROW_PREDICATE: &str = r#"
+              AND e.deleted_at IS NULL
+              AND e.code NOT LIKE 'flip-%'
+              AND e.notice IS NOT NULL AND e.notice <> ''"#;
 
-impl ScheduleRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
+/// 「未完成」状态判定——**仅**徽标计数追加，不用于清单：
+/// 清单须保留已完成行以支撑面板「显示已完成」展开与 `completedCount/totalCount` 头部统计
+/// （防误勾后无处恢复），未完成由前端 `items.filter(!done)` 呈现。
+///
+/// 契约：**徽标数 == 清单中 `done == false` 的行数**。
+/// 展开为三值逻辑安全形式：无主状态行（`st` 为 NULL）时 `NOT(...)` 得 NULL
+/// 会被 WHERE 排除，导致未完成待办漏计（曾返回 0）。
+/// 依赖调用方 FROM 中的别名：`st`（`zc_id_stus-event`）。
+const TODO_PENDING_PREDICATE: &str = r#"
+              AND (st.notice IS NULL OR st.notice <> '完成' OR st.flag <> 'end')"#;
 
-    pub fn from_arc(pool: std::sync::Arc<PgPool>) -> Self {
-        Self {
-            pool: (*pool).clone(),
-        }
-    }
-
-    // ----- Plan + Event 组装查询 -----
-
-    /// 列出日程项（Plan + 关联 Event + segm-date 跨度 + done 状态）
-    pub async fn list_schedule_items(
-        &self,
-        query: &ScheduleListQuery,
-        visible_ids: Option<&[i64]>,
-    ) -> Result<Vec<RawScheduleItem>, sqlx::Error> {
-        let mut sql = String::from(
-            r#"SELECT
+/// 日程项多跳聚合 SELECT（[`ScheduleRepository::list_schedule_items`] /
+/// [`ScheduleRepository::get_schedule_item`] 共用，禁止各自复制——列与聚合语义漂移会让
+/// 单条读与列表读出现字段级分歧）。
+///
+/// 语义：plan → plan_rr_event（关联事件 + 提醒事件）→ event → place/subjects/even-approve
+/// → segm-date（`COALESCE("qk_date-segm", "qk_time-segm")`），含 approval_status / done 派生列；
+/// 计划维度有且仅有一行（两个 `LEFT JOIN LATERAL ... LIMIT 1`）。
+/// 行级过滤由调用方在 `WHERE p.deleted_at IS NULL` 之后以参数绑定追加。
+const SCHEDULE_ITEM_SELECT: &str = r#"SELECT
                 p.id as plan_id,
                 p.notice as plan_notice,
                 p.code as plan_type,
                 p.cron::text as plan_cron,
                 p.comments as plan_comments,
+                rm.remind_at as remind_at,
                 e.id as event_id,
                 e.fk_place as event_fk_place,
                 e.fk_subject as event_fk_subject,
@@ -186,14 +186,53 @@ impl ScheduleRepository {
                 FROM isahl.zc_id_plan_rr_event pre
                 JOIN isahl.zc_id_event ev ON ev.id = pre.ref_right AND ev.deleted_at IS NULL
                 WHERE pre.ref_left = p.id AND pre.deleted_at IS NULL
+                  -- 提醒事件（code=schedule-reminder）语义是提醒，不参与「关联事件」选取
+                  AND NOT EXISTS (
+                      SELECT 1 FROM isahl."zc_id_even-alert" rmv
+                      WHERE rmv.id = ev.id AND rmv.code = 'schedule-reminder'
+                  )
                 ORDER BY pre.id DESC LIMIT 1
             ) e ON true
             LEFT JOIN isahl.zc_id_place pl ON pl.id = e.fk_place
             LEFT JOIN isahl.zc_id_subjects s ON s.id = e.fk_subject
             LEFT JOIN isahl."zc_id_even-approve" a ON a.id = e.id
+            LEFT JOIN LATERAL (
+                SELECT sd.date AS remind_at
+                FROM isahl.zc_id_plan_rr_event rpe
+                JOIN isahl."zc_id_even-alert" re ON re.id = rpe.ref_right AND re.deleted_at IS NULL
+                JOIN isahl."zc_id_scal-date" sd ON sd.id = re.qk_date
+                WHERE rpe.ref_left = p.id AND rpe.deleted_at IS NULL
+                  AND re.code = 'schedule-reminder'
+                ORDER BY rpe.id DESC LIMIT 1
+            ) rm ON true
             LEFT JOIN isahl."zc_id_segm-date" ds ON ds.id = COALESCE(p."qk_date-segm", p."qk_time-segm")
-            WHERE p.deleted_at IS NULL"#,
-        );
+            WHERE p.deleted_at IS NULL"#;
+
+#[derive(Clone)]
+pub struct ScheduleRepository {
+    pool: PgPool,
+}
+
+impl ScheduleRepository {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    pub fn from_arc(pool: std::sync::Arc<PgPool>) -> Self {
+        Self {
+            pool: (*pool).clone(),
+        }
+    }
+
+    // ----- Plan + Event 组装查询 -----
+
+    /// 列出日程项（Plan + 关联 Event + segm-date 跨度 + done 状态）
+    pub async fn list_schedule_items(
+        &self,
+        query: &ScheduleListQuery,
+        visible_ids: Option<&[i64]>,
+    ) -> Result<Vec<RawScheduleItem>, sqlx::Error> {
+        let mut sql = String::from(SCHEDULE_ITEM_SELECT);
 
         // 用户输入一律参数绑定，禁止 format! 拼接（SQL 注入）；qk_date-segm 是标量引用 ID（bigint）
         enum Param {
@@ -273,6 +312,26 @@ impl ScheduleRepository {
         q.fetch_all(&self.pool).await
     }
 
+    /// 按计划 ID 精确取单条日程项（`ScheduleService::find_item` 的取数路径）。
+    ///
+    /// 与 [`Self::list_schedule_items`] 共用 [`SCHEDULE_ITEM_SELECT`]，仅追加
+    /// `AND p.id = $1`——修复「`list_items(limit = 1)` + Rust 侧 `find`」对非首行计划
+    /// 恒 `None` 的缺陷（Gateway `GET /schedule/items/{id}` 与
+    /// `POST /schedule/items/{id}/event` 前置校验因此误判 404/失败）。
+    ///
+    /// 软删除（`deleted_at IS NOT NULL`）计划返回 `None`；计划维度唯一一行，
+    /// 无需 ORDER BY。
+    pub async fn get_schedule_item(
+        &self,
+        plan_id: i64,
+    ) -> Result<Option<RawScheduleItem>, sqlx::Error> {
+        let sql = format!("{} AND p.id = $1", SCHEDULE_ITEM_SELECT);
+        sqlx::query_as(AssertSqlSafe(sql.as_str()))
+            .bind(plan_id)
+            .fetch_optional(&self.pool)
+            .await
+    }
+
     /// 获取单个日程项的参与人列表
     pub(crate) async fn get_participants(
         &self,
@@ -303,6 +362,183 @@ impl ScheduleRepository {
             .bind(id)
             .fetch_optional(&self.pool)
             .await
+    }
+
+    // ----- 提醒（预警事件路线）-----
+
+    /// 读取计划提醒：提醒事件时刻 → `offset = 计划起始 − 事件时刻`（分钟）；无事件/无起始 → None
+    pub(crate) async fn read_reminder(
+        &self,
+        plan_id: i64,
+    ) -> Result<Option<ReminderResponse>, sqlx::Error> {
+        let row: Option<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> = sqlx::query_as(
+            r#"SELECT ds.date_st,
+                      (SELECT sd.date FROM isahl.zc_id_plan_rr_event rpe
+                       JOIN isahl."zc_id_even-alert" re
+                         ON re.id = rpe.ref_right AND re.deleted_at IS NULL
+                       JOIN isahl."zc_id_scal-date" sd ON sd.id = re.qk_date
+                       WHERE rpe.ref_left = p.id AND rpe.deleted_at IS NULL
+                         AND re.code = $2
+                       ORDER BY rpe.id DESC LIMIT 1) AS remind_at
+               FROM isahl.zc_id_plan p
+               LEFT JOIN isahl."zc_id_segm-date" ds
+                 ON ds.id = COALESCE(p."qk_date-segm", p."qk_time-segm")
+               WHERE p.id = $1 AND p.deleted_at IS NULL"#,
+        )
+        .bind(plan_id)
+        .bind(REMINDER_EVENT_CODE)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(
+            row.and_then(|(start_at, remind_at)| match (start_at, remind_at) {
+                (Some(start), Some(at)) => reminder_from_times(start, at),
+                _ => None,
+            }),
+        )
+    }
+
+    /// 计划起始时刻（`qk_date-segm`/`qk_time-segm` → `zc_id_segm-date.date_st`）；无 → None
+    async fn plan_start_at(&self, plan_id: i64) -> Result<Option<DateTime<Utc>>, sqlx::Error> {
+        let start_at: Option<DateTime<Utc>> = sqlx::query_scalar::<_, Option<DateTime<Utc>>>(
+            r#"SELECT ds.date_st FROM isahl.zc_id_plan p
+               LEFT JOIN isahl."zc_id_segm-date" ds
+                 ON ds.id = COALESCE(p."qk_date-segm", p."qk_time-segm")
+               WHERE p.id = $1 AND p.deleted_at IS NULL"#,
+        )
+        .bind(plan_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        Ok(start_at)
+    }
+
+    /// 写入/清除提醒（`reminder_offset_min` ↔ 预警事件 `qk_date`）；comments 零触碰。
+    ///
+    /// - `Some(n)`（n>0）：事件 `qk_date` = 计划起始 − n 分钟（缺起始 → 报错，不静默降级）
+    /// - `Some(0)`：清除（软删事件与桥；与前端 `reminder.none` 语义一致）
+    /// - `None`：不修改
+    pub(crate) async fn apply_reminder(
+        &self,
+        plan_id: i64,
+        reminder_offset_min: Option<i32>,
+    ) -> Result<(), sqlx::Error> {
+        let Some(offset) = reminder_offset_min else {
+            return Ok(());
+        };
+        let now = Utc::now();
+        let existing: Option<(i64, i64)> = sqlx::query_as(
+            r#"SELECT rpe.id, re.id FROM isahl.zc_id_plan_rr_event rpe
+               JOIN isahl."zc_id_even-alert" re ON re.id = rpe.ref_right AND re.deleted_at IS NULL
+               WHERE rpe.ref_left = $1 AND rpe.deleted_at IS NULL AND re.code = $2
+               ORDER BY rpe.id DESC LIMIT 1"#,
+        )
+        .bind(plan_id)
+        .bind(REMINDER_EVENT_CODE)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if offset <= 0 {
+            if let Some((bridge_id, event_id)) = existing {
+                sqlx::query(
+                    r#"UPDATE isahl.zc_id_plan_rr_event SET deleted_at = $1, updated_at = $1 WHERE id = $2"#,
+                )
+                .bind(now)
+                .bind(bridge_id)
+                .execute(&self.pool)
+                .await?;
+                sqlx::query(
+                    r#"UPDATE isahl."zc_id_even-alert" SET deleted_at = $1, updated_at = $1 WHERE id = $2"#,
+                )
+                .bind(now)
+                .bind(event_id)
+                .execute(&self.pool)
+                .await?;
+            }
+            return Ok(());
+        }
+        if offset > 1440 {
+            return Err(sqlx::Error::Protocol(format!(
+                "reminder_offset_min 超出合法域 0..=1440: {offset}"
+            )));
+        }
+
+        let start_at = self.plan_start_at(plan_id).await?.ok_or_else(|| {
+            sqlx::Error::Protocol(
+                "reminder_offset_min 需要计划起始时刻（qk_date-segm/qk_time-segm → zc_id_segm-date.date_st）"
+                    .to_string(),
+            )
+        })?;
+        let remind_at = start_at - chrono::Duration::minutes(offset as i64);
+
+        // 提醒时刻 → zc_id_scal-date 标量行（存在即复用，缺失则新建）
+        let scal_id: Option<i64> = sqlx::query_scalar(
+            r#"SELECT id FROM isahl."zc_id_scal-date" WHERE date = $1 ORDER BY id LIMIT 1"#,
+        )
+        .bind(remind_at)
+        .fetch_optional(&self.pool)
+        .await?;
+        let scal_id =
+            match scal_id {
+                Some(id) => id,
+                None => sqlx::query_scalar(
+                    r#"INSERT INTO isahl."zc_id_scal-date" (notice, date, created_at, updated_at)
+                       VALUES ($1, $2, $3, $3) RETURNING id"#,
+                )
+                .bind(format!("日程提醒 {}", remind_at.format("%Y-%m-%d %H:%M")))
+                .bind(remind_at)
+                .bind(now)
+                .fetch_one(&self.pool)
+                .await?,
+            };
+
+        match existing {
+            Some((_bridge_id, event_id)) => {
+                sqlx::query(
+                    r#"UPDATE isahl."zc_id_even-alert" SET qk_date = $1, updated_at = $2 WHERE id = $3"#,
+                )
+                .bind(scal_id)
+                .bind(now)
+                .bind(event_id)
+                .execute(&self.pool)
+                .await?;
+            }
+            None => {
+                let notice: Option<String> = sqlx::query_scalar::<_, Option<String>>(
+                    r#"SELECT notice FROM isahl.zc_id_plan WHERE id = $1"#,
+                )
+                .bind(plan_id)
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+                // 叶表坐标（§6.12）：值经 ontology_binding 解析 code→ZUID（禁硬编码 ZUID）
+                let (dk_scene, dk_factor, dk_function) =
+                    ontology_binding::resolve(&self.pool, ("JE", "FBB", "↓_EE")).await?;
+                let event_id: i64 = sqlx::query_scalar(
+                    r#"INSERT INTO isahl."zc_id_even-alert" (notice, code, qk_date, created_at, updated_at, dk_scene, dk_factor, dk_function)
+                       VALUES ($1, $2, $3, $4, $4, $5, $6, $7) RETURNING id"#,
+                )
+                .bind(format!("日程提醒：{}", notice.unwrap_or_default()))
+                .bind(REMINDER_EVENT_CODE)
+                .bind(scal_id)
+                .bind(now)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
+                .fetch_one(&self.pool)
+                .await?;
+                sqlx::query(
+                    r#"INSERT INTO isahl.zc_id_plan_rr_event (ref_left, ref_right, code, created_at, updated_at)
+                       VALUES ($1, $2, $3, $4, $4)"#,
+                )
+                .bind(plan_id)
+                .bind(event_id)
+                .bind(REMINDER_EVENT_CODE)
+                .bind(now)
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+        Ok(())
     }
 
     pub async fn create_plan(&self, req: &CreatePlanRequest) -> Result<Plan, sqlx::Error> {
@@ -340,18 +576,16 @@ impl ScheduleRepository {
             _ => r#"isahl."zc_id_plan-personal""#,
         };
         // _t_ / _f_ 由 dk_scene/dk_factor/dk_function 坐标触发器自动赋值
-        let comments = apply_reminder_to_comments(None, req.reminder_offset_min);
         let sql = format!(
             r#"INSERT INTO {table}
-                (notice, code, comments, "qk_date-segm", "qk_time-segm", cron, exclude, sort, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+                (notice, code, "qk_date-segm", "qk_time-segm", cron, exclude, sort, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
             RETURNING {}"#,
             Plan::SELECT_FIELDS
         );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
+        let plan: Plan = sqlx::query_as(AssertSqlSafe(sql.as_str()))
             .bind(&notice)
             .bind(&code)
-            .bind(&comments)
             .bind(qk_date_segm)
             .bind(qk_time_segm)
             .bind(&req.cron)
@@ -359,7 +593,11 @@ impl ScheduleRepository {
             .bind(req.sort)
             .bind(now)
             .fetch_one(&self.pool)
-            .await
+            .await?;
+        // 提醒设置 → 预警事件（comments 零触碰）
+        self.apply_reminder(plan.id, req.reminder_offset_min)
+            .await?;
+        Ok(plan)
     }
 
     /// 解析前端日期时间字符串为 `zc_id_segm-date` 标量行 id。
@@ -459,34 +697,23 @@ impl ScheduleRepository {
         req: &UpdatePlanRequest,
     ) -> Result<Option<Plan>, sqlx::Error> {
         let now = Utc::now();
-        // 读取当前 comments → 合并 reminder 更新
-        let current_comments: Option<String> = sqlx::query_scalar(
-            r#"SELECT comments FROM isahl.zc_id_plan WHERE id = $1 AND deleted_at IS NULL"#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
-        let comments =
-            apply_reminder_to_comments(current_comments.as_deref(), req.reminder_offset_min);
         let sql = format!(
             r#"UPDATE isahl.zc_id_plan SET
                 notice = COALESCE($1, notice),
                 code = COALESCE($2, code),
-                comments = COALESCE($3, comments),
-                "qk_date-segm" = COALESCE($4, "qk_date-segm"),
-                "qk_time-segm" = COALESCE($5, "qk_time-segm"),
-                cron = COALESCE($6, cron),
-                exclude = COALESCE($7, exclude),
-                sort = COALESCE($8, sort),
-                updated_at = $9
-            WHERE id = $10 AND deleted_at IS NULL
+                "qk_date-segm" = COALESCE($3, "qk_date-segm"),
+                "qk_time-segm" = COALESCE($4, "qk_time-segm"),
+                cron = COALESCE($5::text, cron),
+                exclude = COALESCE($6::json, exclude),
+                sort = COALESCE($7, sort),
+                updated_at = $8
+            WHERE id = $9 AND deleted_at IS NULL
             RETURNING {}"#,
             Plan::SELECT_FIELDS
         );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
+        let updated: Option<Plan> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
             .bind(&req.notice)
             .bind(&req.code)
-            .bind(&comments)
             .bind(req.qk_date_segm)
             .bind(req.qk_time_segm)
             .bind(&req.cron)
@@ -495,7 +722,13 @@ impl ScheduleRepository {
             .bind(now)
             .bind(id)
             .fetch_optional(&self.pool)
-            .await
+            .await?;
+        // 提醒设置 → 预警事件（comments 零触碰）
+        if let Some(plan) = &updated {
+            self.apply_reminder(plan.id, req.reminder_offset_min)
+                .await?;
+        }
+        Ok(updated)
     }
 
     pub async fn delete_plan(&self, id: i64) -> Result<u64, sqlx::Error> {
@@ -819,10 +1052,13 @@ impl ScheduleRepository {
 
     pub async fn create_event(&self, req: &CreateEventRequest) -> Result<Event, sqlx::Error> {
         let now = Utc::now();
+        // 叶表坐标（§6.12）：值经 ontology_binding 解析 code→ZUID（禁硬编码 ZUID）
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(&self.pool, ("JE", "FBB", "↓_EE")).await?;
         let sql = format!(
             r#"INSERT INTO "isahl.zc_id_even-alert" 
-                (notice, fk_place, fk_subject, qk_date, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $5)
+                (notice, fk_place, fk_subject, qk_date, created_at, updated_at, dk_scene, dk_factor, dk_function)
+            VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8)
             RETURNING {}"#,
             Event::SELECT_FIELDS
         );
@@ -832,6 +1068,9 @@ impl ScheduleRepository {
             .bind(req.fk_subject)
             .bind(req.qk_date)
             .bind(now)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&self.pool)
             .await
     }
@@ -945,12 +1184,19 @@ impl ScheduleRepository {
             .await
     }
 
-    /// 获取待办完成数量（排除 st.notice = '完成' 且 st.flag = 'end'）
+    /// 获取当前用户的未完成待办数量（徽标计数）。
+    ///
+    /// 行级谓词与 `list_todo_items` 共用 `TODO_ROW_PREDICATE`，创建者过滤亦与其对齐
+    /// （仅当前用户创建），再追加 `TODO_PENDING_PREDICATE`——保证
+    /// 「徽标数字 = 清单中 `done == false` 的行数」。未认证（`None`）返回 0。
     pub async fn get_pending_todo_count(
         &self,
         user_id: Option<i64>,
         visible_ids: Option<&[i64]>,
     ) -> Result<i64, sqlx::Error> {
+        let Some(user_id) = user_id else {
+            return Ok(0);
+        };
         let rls_clause = if visible_ids.is_some() {
             "AND e.id = ANY($2)"
         } else {
@@ -960,12 +1206,12 @@ impl ScheduleRepository {
             r#"SELECT COUNT(*) FROM isahl."zc_id_even-alert" e
             LEFT JOIN isahl."zc_id_lifecycle_r_primary-status" ps ON ps.ref_left = e.id AND ps.deleted_at IS NULL
             LEFT JOIN isahl."zc_id_stus-event" st ON st.id = ps.ref_right
-            WHERE e.deleted_at IS NULL
-              -- 三值逻辑安全：无主状态行（st 为 NULL）时 NOT(...) 得 NULL 会被 WHERE 排除，
-              -- 导致所有未完成待办漏计（曾返回 0 而非真实计数）
-              AND (st.notice IS NULL OR st.notice <> '完成' OR st.flag <> 'end')
-              AND ($1::bigint IS NULL OR e.created_by_id = $1)
+            WHERE e.created_by_id = $1
+              {rows}
+              {pending}
               {rls_clause}"#,
+            rows = TODO_ROW_PREDICATE,
+            pending = TODO_PENDING_PREDICATE,
             rls_clause = rls_clause
         );
         let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str())).bind(user_id);
@@ -977,7 +1223,11 @@ impl ScheduleRepository {
 
     // Event-based queries
 
-    /// 列出待办项（基于 zc_id_event + 主体 + 状态）
+    /// 列出待办项（基于 zc_id_event + 主体 + 状态）。
+    ///
+    /// 行级谓词 = `TODO_ROW_PREDICATE`（与徽标计数同源）；**不过滤状态**——
+    /// 已完成行照常返回（`done` 由主状态推导），供面板「显示已完成」展开与
+    /// `completedCount/totalCount` 统计使用，默认隐藏由前端 `items.filter(!done)` 负责。
     pub(crate) async fn list_todo_items(
         &self,
         user_id: i64,
@@ -1001,12 +1251,12 @@ impl ScheduleRepository {
             LEFT JOIN isahl.zc_id_subjects s ON s.id = e.fk_subject
             LEFT JOIN isahl."zc_id_lifecycle_r_primary-status" ps ON ps.ref_left = e.id AND ps.deleted_at IS NULL
             LEFT JOIN isahl."zc_id_stus-event" st ON st.id = ps.ref_right
-            WHERE e.deleted_at IS NULL
-              AND e.created_by_id = $1
-              AND e.notice IS NOT NULL AND e.notice != ''
+            WHERE e.created_by_id = $1
+              {rows}
               {rls_clause}
             ORDER BY e.qk_date ASC NULLS LAST, e.created_at DESC
             LIMIT $2 OFFSET $3"#,
+            rows = TODO_ROW_PREDICATE,
             rls_clause = rls_clause
         );
         let mut q = sqlx::query_as::<_, RawTodoItem>(sqlx::AssertSqlSafe(sql.as_str()))
@@ -1060,46 +1310,51 @@ impl ScheduleService {
         visible_ids: Option<&[i64]>,
     ) -> Result<Vec<ScheduleItemResponse>, ScheduleError> {
         let raw_items = self.repo.list_schedule_items(query, visible_ids).await?;
-        let mut items = Vec::new();
+        let mut items = Vec::with_capacity(raw_items.len());
 
         for raw in raw_items {
-            // 获取参与人
-            let participants = self
-                .repo
-                .get_participants(raw.plan_id)
-                .await
-                .unwrap_or_default()
-                .into_iter()
-                .map(|row| ParticipantResponse {
-                    id: row.id,
-                    name: row.notice.unwrap_or_default(),
-                    role: row
-                        .resp_type
-                        .and_then(|v| v.as_str().map(|s| s.to_string())),
-                })
-                .collect();
-
-            items.push(into_item_response(raw, participants));
+            items.push(self.assemble_item(raw).await);
         }
 
         Ok(items)
     }
 
+    /// 组装单条日程项 DTO（参与人 + 派生列）——`list_items` 与 `find_item` 共用。
+    ///
+    /// 参与人查询失败沿用列表读的容错语义（`unwrap_or_default`），不因参与者子查询
+    /// 异常丢掉整条日程项。
+    async fn assemble_item(&self, raw: RawScheduleItem) -> ScheduleItemResponse {
+        let participants = self
+            .repo
+            .get_participants(raw.plan_id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| ParticipantResponse {
+                id: row.id,
+                name: row.notice.unwrap_or_default(),
+                role: row
+                    .resp_type
+                    .and_then(|v| v.as_str().map(|s| s.to_string())),
+            })
+            .collect();
+
+        into_item_response(raw, participants)
+    }
+
+    /// 按计划 ID 取单条日程项（Gateway `GET /schedule/items/{id}`）。
+    ///
+    /// 走 [`ScheduleRepository::get_schedule_item`]（`WHERE p.id = $1`）——**不得**
+    /// 退回「`list_items(limit = 1)` + Rust 侧匹配」：那会把取数限制在排序首行，
+    /// 非首行计划恒判不存在。
     pub async fn find_item(
         &self,
         plan_id: i64,
     ) -> Result<Option<ScheduleItemResponse>, ScheduleError> {
-        let query = ScheduleListQuery {
-            qk_date_segm: None,
-            start_date_segm: None,
-            end_date_segm: None,
-            _t_: None,
-            done: None,
-            limit: 1,
-            offset: 0,
-        };
-        let items = self.list_items(&query, None).await?;
-        Ok(items.into_iter().find(|i| i.id == plan_id))
+        match self.repo.get_schedule_item(plan_id).await? {
+            Some(raw) => Ok(Some(self.assemble_item(raw).await)),
+            None => Ok(None),
+        }
     }
     pub async fn list_todos(
         &self,
@@ -1160,6 +1415,7 @@ impl ScheduleService {
         req: CreatePlanRequest,
     ) -> Result<ScheduleItemResponse, ScheduleError> {
         let plan = self.repo.create_plan(&req).await?;
+        let reminder = self.repo.read_reminder(plan.id).await?;
         let participants = Vec::new();
         Ok(into_item_response_from_plan(
             plan,
@@ -1169,6 +1425,7 @@ impl ScheduleService {
             None,
             None,
             participants,
+            reminder,
         ))
     }
 
@@ -1178,10 +1435,23 @@ impl ScheduleService {
         req: UpdatePlanRequest,
     ) -> Result<Option<ScheduleItemResponse>, ScheduleError> {
         let plan = self.repo.update_plan(id, &req).await?;
-        Ok(plan.map(|p| {
-            let participants = Vec::new();
-            into_item_response_from_plan(p, None, None, None, None, None, participants)
-        }))
+        match plan {
+            Some(p) => {
+                let reminder = self.repo.read_reminder(p.id).await?;
+                let participants = Vec::new();
+                Ok(Some(into_item_response_from_plan(
+                    p,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    participants,
+                    reminder,
+                )))
+            }
+            None => Ok(None),
+        }
     }
 
     pub async fn delete_plan(&self, id: i64) -> Result<bool, ScheduleError> {
@@ -1194,10 +1464,23 @@ impl ScheduleService {
         id: i64,
     ) -> Result<Option<ScheduleItemResponse>, ScheduleError> {
         let plan = self.repo.toggle_plan_done(id).await?;
-        Ok(plan.map(|p| {
-            let participants = Vec::new();
-            into_item_response_from_plan(p, None, None, None, None, None, participants)
-        }))
+        match plan {
+            Some(p) => {
+                let reminder = self.repo.read_reminder(p.id).await?;
+                let participants = Vec::new();
+                Ok(Some(into_item_response_from_plan(
+                    p,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    participants,
+                    reminder,
+                )))
+            }
+            None => Ok(None),
+        }
     }
 
     /// 切换事件完成状态（/schedule/todos 的待办 checkbox 传 event id 到 /toggle）
@@ -1367,7 +1650,10 @@ fn into_item_response(
         participants,
         done,
         progress_pct: progress,
-        reminder: parse_reminder(raw.plan_comments.as_deref()),
+        reminder: match (raw.segm_date_st, raw.remind_at) {
+            (Some(start_at), Some(remind_at)) => reminder_from_times(start_at, remind_at),
+            _ => None,
+        },
         linked_approval: raw.approval_status.map(|status| LinkedApprovalResponse {
             id: raw.event_id.unwrap_or(0),
             title: raw.approval_title.unwrap_or_default(),
@@ -1386,6 +1672,7 @@ fn into_item_response_from_plan(
     approval_status: Option<String>,
     approval_title: Option<String>,
     participants: Vec<ParticipantResponse>,
+    reminder: Option<ReminderResponse>,
 ) -> ScheduleItemResponse {
     let progress = Decimal::ZERO;
     let done = false;
@@ -1435,7 +1722,7 @@ fn into_item_response_from_plan(
         participants,
         done,
         progress_pct: progress,
-        reminder: parse_reminder(plan.comments.as_deref()),
+        reminder,
         linked_approval: approval_status.map(|status| LinkedApprovalResponse {
             id: plan.id,
             title: approval_title.unwrap_or_default(),

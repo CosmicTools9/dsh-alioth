@@ -1,0 +1,22 @@
+[package]
+name = "consignment-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "委托写链共享事务（orde-land 全链：标量/合同桥/分段/价格/销售产品/请求/桥/装卸/运力/凭证/明细 + 坐标）——Gateway WZ 与 OpenActivity 门户共用，禁止应用 HTTP 互调下的单份实现"
+
+[dependencies]
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = "1"
+common = { path = "../common" }
+contract-writer = { path = "../contract-writer" }
+ontology-binding = { path = "../ontology-binding" }
+trigger-registry = { path = "../trigger-registry" }
+log = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -19,6 +19,7 @@ common = { path = "../../../../../../../Framework/backend/common" }
 crud = { path = "../../../../../../../Framework/backend/crud" }
 version = { path = "../../../../../../../Framework/backend/version" }
 runtime-engine = { path = "../../../../../../../Framework/backend/runtime-engine" }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }
 
 [lib]
 path = "src/lib.rs"

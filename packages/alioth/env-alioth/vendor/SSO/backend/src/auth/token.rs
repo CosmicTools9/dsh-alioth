@@ -4,11 +4,13 @@
 //! 复用 `isahl_auth.api_clients` 表校验 `client_id` + `client_secret`，并按客户端
 //! 被授予的 scope 子集签发 service token（`sub = client:<client_id>`，
 //! `svc_user_id = api_clients.fk_service_user`，无用户级 claims）。
-//! （旧 `oidc_clients` 表保留给 L3 OIDC 授权码流程；服务令牌统一走 api_clients。）
+//! 签发前强制校验客户端存在激活订阅（fix-sso-auth-gaps G6，语义对齐 Gateway
+//! OpenAPI metering resolve_subscription）——订阅过期/停用后 401 拒于签发面。
 
 use actix_web::{web, HttpResponse};
 use sqlx::PgPool;
 
+use super::api_clients_common::client_subscription_active;
 use super::client_secret::verify_client_secret_async;
 use super::jwt::{encode_access_token, Claims};
 use super::AuthState;
@@ -47,14 +49,16 @@ fn bad_request(error: &str, description: &str) -> HttpResponse {
 ///
 /// 流程：
 /// 1. 校验 `grant_type == client_credentials`，否则 400 `unsupported_grant_type`。
-/// 2. 查询 `oidc_clients`：未知/禁用/已删除 client → 401；空 secret（public client）→ 401
+/// 2. 查询 `api_clients`：未知/禁用/已删除 client → 401；空 secret（public client）→ 401
 ///    （client_credentials 必须使用 secret）。
 /// 3. `verify_client_secret_async` 校验 secret，失败 → 401。
-/// 4. 按授予 scope 子集约束请求 scope：
+/// 4. 订阅门禁：client 无激活订阅（status/expires/plan 语义见
+///    `api_clients_common::client_subscription_active`）→ 401 `SUBSCRIPTION_INACTIVE`。
+/// 5. 按授予 scope 子集约束请求 scope：
 ///    - 未请求 scope → 授予全部 scope；
 ///    - client 未配置 scope（旧客户端兼容）→ 放行请求的全部 scope；
 ///    - 否则仅保留授予子集，若含未授予 scope → 400 `invalid_scope`。
-/// 5. 签发 access_token（`sub = client:<client_id>`，无刷新令牌）。
+/// 6. 签发 access_token（`sub = client:<client_id>`，无刷新令牌）。
 pub async fn token_handler(
     pool: web::Data<PgPool>,
     state: web::Data<AuthState>,
@@ -96,6 +100,30 @@ pub async fn token_handler(
         .is_err()
     {
         return unauthorized();
+    }
+
+    // 订阅门禁（G6）：无激活订阅 → 401，不签发（fail-closed；DB 查询失败同样拒绝）
+    match client_subscription_active(pool.get_ref(), client_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return HttpResponse::Unauthorized().json(TokenErrorResponse {
+                error: "invalid_client".to_string(),
+                error_description: Some(
+                    "SUBSCRIPTION_INACTIVE: no active subscription for this client".to_string(),
+                ),
+            });
+        }
+        Err(e) => {
+            log::error!(
+                "token: subscription check failed for client '{}': {}",
+                client_id,
+                e
+            );
+            return HttpResponse::InternalServerError().json(TokenErrorResponse {
+                error: "server_error".to_string(),
+                error_description: Some("failed to verify subscription".to_string()),
+            });
+        }
     }
 
     // 2. scope 子集约束
@@ -211,25 +239,57 @@ roJB3RHF1LfIsaCxcnVep0snC4+8StUixIjfLAZ8Mc8+uqa43ndeNEFm
         let svc_user_id = crate::auth::service_user::ensure_service_user(pool, &client_id, "test")
             .await
             .expect("ensure service user");
-        sqlx::query(
+        let client_row_id: i64 = sqlx::query_scalar(
             "INSERT INTO isahl_auth.api_clients \
              (client_id, client_type, client_name, secret_hash, scopes, fk_service_user, enabled) \
              VALUES ($1, 'oauth2', 'test', $2, $3::TEXT[], $4, TRUE) \
              ON CONFLICT (client_id) DO UPDATE SET \
-               secret_hash = $2, scopes = $3::TEXT[], fk_service_user = $4, deleted_at = NULL, enabled = TRUE",
+               secret_hash = $2, scopes = $3::TEXT[], fk_service_user = $4, deleted_at = NULL, enabled = TRUE \
+             RETURNING id",
         )
         .bind(&client_id)
         .bind(&secret_hash)
         .bind(scopes)
         .bind(svc_user_id)
-        .execute(pool)
+        .fetch_one(pool)
         .await
         .expect("insert client");
+        // 订阅门禁 fixture（fix-sso-auth-gaps G6）：激活订阅方可签发
+        let plan_code = format!("plan-{client_id}");
+        let plan_id: i64 = sqlx::query_scalar(
+            "INSERT INTO isahl_auth.api_plans \
+             (code, tier, rate_limit_rps, burst, quota_daily, quota_monthly, enabled) \
+             VALUES ($1, 0, 10.0, 50, 100000, 3000000, TRUE) RETURNING id",
+        )
+        .bind(&plan_code)
+        .fetch_one(pool)
+        .await
+        .expect("insert plan");
+        sqlx::query(
+            "INSERT INTO isahl_auth.api_subscriptions (fk_client, fk_plan, status, starts_at) \
+             VALUES ($1, $2, 'active', NOW())",
+        )
+        .bind(client_row_id)
+        .bind(plan_id)
+        .execute(pool)
+        .await
+        .expect("insert subscription");
         (client_id, secret.to_string())
     }
 
     async fn cleanup_client(pool: &PgPool, client_id: &str) {
-        // 清理 api_clients 与关联服务用户（定向，避免全表 DELETE 破坏 seed）
+        // 清理 api_clients、订阅/plan 与关联服务用户（定向，避免全表 DELETE 破坏 seed）
+        let _ = sqlx::query(
+            "DELETE FROM isahl_auth.api_subscriptions \
+             WHERE fk_client IN (SELECT id FROM isahl_auth.api_clients WHERE client_id = $1)",
+        )
+        .bind(client_id)
+        .execute(pool)
+        .await;
+        let _ = sqlx::query("DELETE FROM isahl_auth.api_plans WHERE code = $1")
+            .bind(format!("plan-{client_id}"))
+            .execute(pool)
+            .await;
         let svc_user: Option<i64> = sqlx::query_scalar(
             "SELECT fk_service_user FROM isahl_auth.api_clients WHERE client_id = $1",
         )

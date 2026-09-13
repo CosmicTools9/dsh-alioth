@@ -43,10 +43,16 @@ impl AliothRepository<InboundBom, CreateInboundBomRequest, UpdateInboundBomReque
         req: CreateInboundBomRequest,
         user_id: i64,
     ) -> Result<InboundBom, ApiError> {
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(&self.pool, ("GH", "FRA", "↓_GG"))
+                .await
+                .map_err(ApiError::from)?;
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_bom-inbound"
-               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, b_number, fk_editor, "type", created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, b_number, fk_editor, "type", created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                RETURNING id"#,
         )
         .bind(&req.notice)
@@ -61,6 +67,9 @@ impl AliothRepository<InboundBom, CreateInboundBomRequest, UpdateInboundBomReque
         .bind(req.fk_editor)
         .bind(&req.r#type)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&self.pool)
         .await
         .map_err(ApiError::from)?;

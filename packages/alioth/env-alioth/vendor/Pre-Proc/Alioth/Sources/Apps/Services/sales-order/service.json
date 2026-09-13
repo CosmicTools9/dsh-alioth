@@ -25,9 +25,9 @@
         "name": "SalesOrder",
         "table": "isahl.zc_id_oper-sales_order",
         "coordinates": {
-          "scene": "zc",
-          "factor": "oper",
-          "function": "sales_order"
+          "scene": "",
+          "factor": "",
+          "function": ""
         },
         "inherits": null,
         "notes": "操作-销售接单：销售订单主记录，含订单头信息、业务分类、操作员、审批等字段",

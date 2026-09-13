@@ -16,21 +16,30 @@ use crud::AliothRepository;
 
 /// 建一个测试类目，返回 (id, name)
 async fn insert_category(pool: &sqlx::PgPool, name: &str) -> (i64, String) {
-    let id: i64 =
-        sqlx::query_scalar(r#"INSERT INTO isahl.zc_id_category (notice) VALUES ($1) RETURNING id"#)
-            .bind(name)
-            .fetch_one(pool)
-            .await
-            .expect("insert category");
+    let id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_cate-project" (notice) VALUES ($1) RETURNING id"#,
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await
+    .expect("insert category");
     (id, name.to_string())
 }
 
 /// 建一个测试场所（zc_id_lifecycle 叶表），返回 (id, name)
 async fn insert_place(pool: &sqlx::PgPool, name: &str) -> (i64, String) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FJA", "↑_DA"))
+        .await
+        .expect("resolve dk coords");
     let id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_lifecycle (notice) VALUES ($1) RETURNING id"#,
+        // 测试场所 → 叶 zc_id_stor-plc-stop（zc_id_lifecycle 为 733 叶的根；场所语义）
+        r#"INSERT INTO isahl."zc_id_stor-plc-stop" (notice, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, '实现', '实例', $2, $3, $4) RETURNING id"#,
     )
     .bind(name)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert place");

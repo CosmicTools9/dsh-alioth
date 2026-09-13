@@ -489,6 +489,15 @@ impl TokenBucket {
         }
     }
 
+    /// 是否已回填至满额——满额桶与「不存在」等价（下次取用会重建为同一状态），
+    /// 故可作为无淘汰代价的清除对象。
+    fn is_full(&self) -> bool {
+        let elapsed = Instant::now()
+            .duration_since(self.last_refill)
+            .as_secs_f64();
+        (self.tokens + elapsed * self.refill_rate) >= self.capacity
+    }
+
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
@@ -496,6 +505,10 @@ impl TokenBucket {
         self.last_refill = now;
     }
 }
+
+/// 令牌桶表清扫阈值——达到即清掉「已回填至满额」的桶（语义等价，见 `TokenBucket::is_full`）。
+/// 取 4096：远超单进程活跃限流主体数（IP / 用户），清扫成本摊薄到可忽略。
+const BUCKET_EVICT_THRESHOLD: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct RateLimiter {
@@ -514,7 +527,13 @@ impl RateLimiter {
     }
 
     pub fn try_consume(&self, key: &str, cost: f64) -> bool {
-        let mut buckets = self.buckets.lock().unwrap();
+        let mut buckets = self.buckets.lock().unwrap_or_else(|p| p.into_inner());
+        // 桶表有界：超过阈值即惰性清扫「已回填至满额」的桶（满额桶与不存在的桶
+        // 语义等价，清除无损）。此前按 IP / JWT sub 无界增长——长期运行下成为内存
+        // 与锁持有时长的双重负担。
+        if buckets.len() >= BUCKET_EVICT_THRESHOLD {
+            buckets.retain(|_, bucket| !bucket.is_full());
+        }
         let bucket = buckets
             .entry(key.to_string())
             .or_insert_with(|| TokenBucket::new(self.capacity, self.refill_rate));
@@ -742,5 +761,63 @@ where
             let res = service.call(req).await?;
             Ok(res.map_into_left_body())
         })
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn cloned_limiters_share_bucket_state() {
+        // per-worker clone 必须共享桶表——否则声明额度会按 worker 数放大
+        let limiter = RateLimiter::new(1.0, 0.0);
+        let worker_clone = limiter.clone();
+        assert!(limiter.try_consume("1.2.3.4", 1.0), "首个令牌应放行");
+        assert!(
+            !worker_clone.try_consume("1.2.3.4", 1.0),
+            "同一 key 的第二个令牌应被另一 worker 的实例拒绝（桶表共享）"
+        );
+        assert!(
+            worker_clone.try_consume("5.6.7.8", 1.0),
+            "不同 key 互不影响"
+        );
+    }
+
+    #[test]
+    fn refilled_buckets_are_evicted() {
+        // 补率极高 → 每次取用后立即回满 → 全部桶都应被判定为「可清除」
+        // （1e12/s：纳秒级 elapsed 也足以回满，避免测试依赖挂钟精度）
+        let limiter = RateLimiter::new(1.0, 1e12);
+        for i in 0..(BUCKET_EVICT_THRESHOLD + 16) {
+            assert!(limiter.try_consume(&format!("key-{i}"), 1.0));
+        }
+        let len = limiter
+            .buckets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len();
+        assert!(
+            len < BUCKET_EVICT_THRESHOLD,
+            "桶表应有界（实际 {len}，阈值 {BUCKET_EVICT_THRESHOLD}）"
+        );
+    }
+
+    #[test]
+    fn saturated_buckets_survive_eviction() {
+        // refill_rate=0 → 取用后不再回填，桶保持未满状态 → 不得被清除（限流语义不变）
+        let limiter = RateLimiter::new(2.0, 0.0);
+        for i in 0..(BUCKET_EVICT_THRESHOLD + 16) {
+            assert!(limiter.try_consume(&format!("key-{i}"), 1.0));
+        }
+        let len = limiter
+            .buckets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .len();
+        assert_eq!(len, BUCKET_EVICT_THRESHOLD + 16);
+        // 受影响 key 仍受限（额度未被清扫重置）
+        limiter.try_consume("key-0", 1.0);
+        assert!(!limiter.try_consume("key-0", 1.0));
     }
 }

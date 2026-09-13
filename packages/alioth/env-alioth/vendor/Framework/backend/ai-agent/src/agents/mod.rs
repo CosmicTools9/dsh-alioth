@@ -47,7 +47,7 @@ impl AgentResult {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
@@ -123,6 +123,10 @@ pub enum ConfirmationLevel {
     Low,      // 简单确认提示
     High,     // 需显式确认
     Critical, // 需二次验证（如 MFA、审批流）
+    /// 先预览后执行（send_notification 等动作类型：UI 展示预览，确认后经 HTTP 端点执行）
+    Preview,
+    /// 必须 confirmed=true 才执行（batch_approve / status_transition 等写操作）
+    Explicit,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

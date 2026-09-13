@@ -28,6 +28,11 @@ const APPR_OTHER: i64 = -99013; // fk_operator = B，created_by = B（A 不可�
 async fn setup_approval_fixtures(pool: &PgPool) {
     cleanup_approval_fixtures(pool).await;
 
+    // 叶表坐标（§6.12）：审批实例行 dk 经静态绑定解析（循环外一次求得）
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .expect("resolve oper-approve coords");
+
     for (id, operator, creator, notice) in [
         (APPR_OPERATOR_A, Some(USER_A), USER_B, "T1.4待我审批"),
         (APPR_CREATED_A, None, USER_A, "T1.4我发起的"),
@@ -35,13 +40,16 @@ async fn setup_approval_fixtures(pool: &PgPool) {
     ] {
         sqlx::query(
             r#"INSERT INTO isahl."zc_id_oper-approve"
-               (id, notice, created_at, updated_at, created_by_id, fk_operator)
-               VALUES ($1, $4, NOW(), NOW(), $3, $2)"#,
+               (id, notice, created_at, updated_at, created_by_id, fk_operator, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $4, NOW(), NOW(), $3, $2, $5, $6, $7)"#,
         )
         .bind(id)
         .bind(operator)
         .bind(creator)
         .bind(notice)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .execute(pool)
         .await
         .expect("insert oper-approve fixture");
@@ -555,13 +563,22 @@ async fn t1_8_self_check_backfills_registration_instance() {
 
     // 构造注册审批事件（code=user-register-approval，comments 纯文本——comments-text-semantics
     // 契约：写侧禁止 JSON；申请人归属经 created_by_id → 补链 fk_subject）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JC", "FTA", "↑_NA"))
+            .await
+            .expect("resolve even-approve coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_even-approve" (id, notice, code, comments, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.8注册审批', 'user-register-approval', $2, $3, NOW(), NOW())"#,
+        r#"INSERT INTO isahl."zc_id_appr-authorization" (id, notice, code, comments, created_by_id, created_at, updated_at,
+                                                    dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.8注册审批', 'user-register-approval', $2, $3, NOW(), NOW(), $4, $5, $6)"#,
     )
     .bind(REG_EVENT)
     .bind("访问授权审批：申请人 t18")
     .bind(USER_A)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("insert registration event fixture");
@@ -795,13 +812,22 @@ async fn t1_10_self_check_heals_broken_oper_to_event() {
     .expect("insert subject user");
 
     // 构造断链 oper 实例（code=user-register-approval，无 rr_event 桥 = 断链）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .expect("resolve oper-approve coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (id, notice, code, fk_subject, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.10访问授权审批', 'user-register-approval', $2, $2, NOW(), NOW())"#,
+           (id, notice, code, fk_subject, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.10访问授权审批', 'user-register-approval', $2, $2, NOW(), NOW(), $3, $4, $5)"#,
     )
     .bind(REG_OPER)
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("insert broken oper fixture");
@@ -939,23 +965,41 @@ async fn t1_11_registration_approval_activates_user_via_fk_subject() {
     .expect("insert pending user");
 
     // 审批事件 + 实例（code=user-register-approval，fk_subject=REG_USER，comments 纯文本）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
+        ontology_binding::resolve(&pool, ("JC", "FTA", "↑_NA"))
+            .await
+            .expect("resolve even-approve coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_even-approve" (id, notice, code, comments, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.11注册审批', 'user-register-approval', $2, $3, NOW(), NOW())"#,
+        r#"INSERT INTO isahl."zc_id_appr-authorization" (id, notice, code, comments, created_by_id, created_at, updated_at,
+                                                    dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.11注册审批', 'user-register-approval', $2, $3, NOW(), NOW(), $4, $5, $6)"#,
     )
     .bind(REG_EVENT_11)
     .bind("访问授权审批：申请人 t1_11_user")
     .bind(REG_USER)
+    .bind(ev_dk_scene)
+    .bind(ev_dk_factor)
+    .bind(ev_dk_function)
     .execute(&pool)
     .await
     .expect("insert registration event");
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (op_dk_scene, op_dk_factor, op_dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .expect("resolve oper-approve coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (id, notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.11注册审批', 'user-register-approval', $2, $3, $2, NOW(), NOW())"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (id, notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at,
+                                                    dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.11注册审批', 'user-register-approval', $2, $3, $2, NOW(), NOW(), $4, $5, $6)"#,
     )
     .bind(REG_OPER_11)
     .bind(REG_USER)
     .bind(USER_A)
+    .bind(op_dk_scene)
+    .bind(op_dk_factor)
+    .bind(op_dk_function)
     .execute(&pool)
     .await
     .expect("insert registration instance");
@@ -1062,13 +1106,22 @@ async fn t1_12_broken_oper_with_missing_subject_not_reconstructed() {
     .ok();
 
     // 构造断链 oper：fk_subject 指向不存在的用户（-99099，auth_users 无此 id），无桥行
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .expect("resolve oper-approve coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (id, notice, code, fk_subject, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.12访问授权审批', 'user-register-approval', $2, $2, NOW(), NOW())"#,
+           (id, notice, code, fk_subject, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.12访问授权审批', 'user-register-approval', $2, $2, NOW(), NOW(), $3, $4, $5)"#,
     )
     .bind(REG_OPER)
     .bind(-99099) // 不存在的用户 id
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("insert broken oper with missing subject");
@@ -1135,13 +1188,22 @@ async fn t1_11_user_verify_broken_not_misreconstructed() {
         .ok();
 
     // 构造 user-verify 断链 oper 实例（无 rr_event 桥 = 断链）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .expect("resolve oper-approve coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (id, notice, code, fk_subject, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.11实名审核', 'user-verify', $2, $2, NOW(), NOW())"#,
+           (id, notice, code, fk_subject, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.11实名审核', 'user-verify', $2, $2, NOW(), NOW(), $3, $4, $5)"#,
     )
     .bind(VERIFY_OPER)
     .bind(USER_A)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("insert user-verify broken oper fixture");
@@ -1234,13 +1296,22 @@ async fn t1_13_inactive_subject_not_reconstructed() {
     .expect("insert inactive subject user");
 
     // 构造断链 oper：fk_subject = 该停用用户，无 rr_event 桥行
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .expect("resolve oper-approve coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (id, notice, code, fk_subject, created_by_id, created_at, updated_at)
-           VALUES ($1, 'T1.13访问授权审批', 'user-register-approval', $2, $2, NOW(), NOW())"#,
+           (id, notice, code, fk_subject, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'T1.13访问授权审批', 'user-register-approval', $2, $2, NOW(), NOW(), $3, $4, $5)"#,
     )
     .bind(INACTIVE_OPER)
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("insert broken oper with inactive subject");
@@ -1322,13 +1393,22 @@ async fn t_ext_subject_register_activation() {
     .expect("insert external user");
 
     // 构造外部入驻审批实例（外部 code——激活链扩展匹配面）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FTA", "↓_EZ"))
+            .await
+            .expect("resolve oper-approve coords");
     let instance_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_oper-approve"
-           (notice, code, fk_subject, created_by_id, created_at, updated_at)
-           VALUES ('T-EXT 外部主体入驻审批', 'external-subject-register-approval', $1, $1, NOW(), NOW())
+           (notice, code, fk_subject, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function)
+           VALUES ('T-EXT 外部主体入驻审批', 'external-subject-register-approval', $1, $1, NOW(), NOW(), $2, $3, $4)
            RETURNING id"#,
     )
     .bind(uid)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert external instance");

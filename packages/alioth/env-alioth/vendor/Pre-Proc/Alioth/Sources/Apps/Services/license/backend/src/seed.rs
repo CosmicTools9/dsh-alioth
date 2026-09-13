@@ -83,12 +83,19 @@ async fn ensure_subject(pool: &PgPool, notice: &str, code: &str) -> Result<i64, 
     if let Some(id) = id {
         return Ok(id);
     }
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FJA", "↑_DA"))
+        .await
+        .map_err(AliothError::from)?;
     sqlx::query_scalar(
-        "INSERT INTO isahl.zc_id_subjects (notice, code, created_by_id) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_orga-non-banking-legal\" (notice, code, created_by_id, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(notice)
     .bind(code)
     .bind(SEED_USER_ID)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .map_err(AliothError::from)
@@ -106,7 +113,7 @@ async fn ensure_category(pool: &PgPool, notice: &str, code: &str) -> Result<i64,
         return Ok(id);
     }
     sqlx::query_scalar(
-        "INSERT INTO isahl.zc_id_category (notice, code, created_by_id) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_cons-license-cate\" (notice, code, created_by_id) VALUES ($1, $2, $3) RETURNING id",
     )
     .bind(notice)
     .bind(code)
@@ -133,7 +140,7 @@ async fn ensure_status(
         return Ok(id);
     }
     sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_status (notice, flag, comments, created_by_id)
+        r#"INSERT INTO isahl."zc_id_stus-license" (notice, flag, comments, created_by_id)
            VALUES ($1, $2::isahl.status_flag, $3, $4) RETURNING id"#,
     )
     .bind(notice)

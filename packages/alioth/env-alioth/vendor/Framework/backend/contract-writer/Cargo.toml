@@ -1,0 +1,15 @@
+[package]
+name = "contract-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "合约写件与一式两份镜像（合约行对/合同方/MIR 桥/镜像解析与级联/运输产品行原语）——WZ 平台 contract 与 transport-dispatch 共用，禁止各 ns 复制同语义 SQL"
+
+[dependencies]
+sqlx = { workspace = true }
+common = { path = "../common" }
+trigger-registry = { path = "../trigger-registry" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

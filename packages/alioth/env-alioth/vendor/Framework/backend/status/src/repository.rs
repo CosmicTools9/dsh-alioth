@@ -1,6 +1,6 @@
 //! 状态 Repository（共享内核）——完整 CRUD + RLS 读覆盖
 //!
-//! create 依赖列默认 `gen_next_uid(12)`（zc_id_status 表 id 默认实测）。
+//! create 依赖列默认 `gen_next_uid(12)`（zc_id_stus-project 表 id 默认实测）。
 
 use async_trait::async_trait;
 use common::data::{ListQuery, PaginatedResponse};
@@ -73,7 +73,7 @@ impl AliothRepository<Status, CreateStatusRequest, UpdateStatusRequest, ApiError
     async fn create(&self, req: CreateStatusRequest, user_id: i64) -> Result<Status, ApiError> {
         let p = self.generic.pool();
         sqlx::query_as::<_, Status>(
-            r#"INSERT INTO "isahl"."zc_id_status"
+            r#"INSERT INTO "isahl"."zc_id_stus-project"
                (notice, code, flag, enable, comments, created_by_id)
                VALUES ($1, $2, $3::status_flag, $4, $5, $6)
                RETURNING id, notice, code, flag::text, enable, comments, created_at, updated_at, deleted_at"#,
@@ -130,7 +130,7 @@ impl AliothRepository<Status, CreateStatusRequest, UpdateStatusRequest, ApiError
         let id_param = idx + 1;
 
         let sql = format!(
-            r#"UPDATE "isahl"."zc_id_status"
+            r#"UPDATE "isahl"."zc_id_stus-project"
                SET {}
                WHERE id = ${} AND deleted_at IS NULL
                RETURNING id, notice, code, flag::text, enable, comments, created_at, updated_at, deleted_at"#,

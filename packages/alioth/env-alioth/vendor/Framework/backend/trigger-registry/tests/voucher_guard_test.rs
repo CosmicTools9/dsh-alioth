@@ -23,24 +23,34 @@ async fn seed_capacity_row(
     cap: f64,
     initial: f64,
 ) -> (i64, i64) {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↑_GG"))
+        .await
+        .expect("resolve dk coords");
     let pool_product: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_prod-freight_road-sales"
-           (id, code, notice, _t_, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, '范例', 1) RETURNING id"#,
+           (id, code, notice, _t_, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, '范例', 1, $3, $4, $5) RETURNING id"#,
     )
     .bind(format!("TEST-GUARD-POOL-{code_suffix}"))
     .bind(format!("测试容量池 {code_suffix}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert pool product");
 
     let line: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_stor-traffic_line"
-           (id, code, notice, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1) RETURNING id"#,
+           (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, 1, $3, $4, $5) RETURNING id"#,
     )
     .bind(format!("TEST-GUARD-LINE-{code_suffix}"))
     .bind(format!("测试线路 {code_suffix}"))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert line");
@@ -66,7 +76,7 @@ async fn seed_capacity_row(
     .expect("insert qty scalar");
 
     sqlx::query(
-        r#"INSERT INTO "isahl"."zc_id_production_rr_storage"
+        r#"INSERT INTO "isahl"."zc_id_file_rr_url"
            (id, code, notice, ref_left, ref_right, qk_p_capacity, qk_qty, created_by_id)
            VALUES (isahl.gen_next_zuid(), $1, '容量行', $2, $3, $4, $5, 1)"#,
     )
@@ -153,18 +163,23 @@ async fn insert_and_guard(
         "direction": side,
     })
     .to_string();
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve_conn(&mut **tx, ("GC", "FJA", "↓_BE"))
+            .await
+            .expect("resolve dk coords");
     let voucher_id: Option<i64> = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
            (id, code, notice, comments, fk_production, "fk_subj-storage", "fk_obj-storage",
-            qk_outgo, qk_income, qk_total, "ck_sto-title", _t_, created_by_id)
+            qk_outgo, qk_income, "ck_sto-title", _t_, created_by_id,
+            dk_scene, dk_factor, dk_function)
            VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4,
                    CASE WHEN $5 = 'OUT' THEN $6 ELSE NULL END,
                    CASE WHEN $5 = 'IN' THEN $6 ELSE NULL END,
                    CASE WHEN $5 = 'OUT' THEN $7 ELSE NULL END,
                    CASE WHEN $5 = 'IN' THEN $7 ELSE NULL END,
-                   $7,
                    (SELECT id FROM "isahl"."zc_id_cate-sto-title" WHERE code = 'STO-IDLE' LIMIT 1),
-                   '实例', 1)
+                   '实例', 1, $8, $9, $10)
            ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING
            RETURNING id"#,
     )
@@ -175,6 +190,9 @@ async fn insert_and_guard(
     .bind(side)
     .bind(line)
     .bind(weight_scalar)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_optional(&mut **tx)
     .await
     .expect("insert voucher");
@@ -379,15 +397,24 @@ async fn guarded_voucher_external_null_balance_fallback() {
     .fetch_one(&pool)
     .await
     .expect("ext scalar");
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("GC", "FJA", "↓_BE"))
+            .await
+            .expect("resolve dk coords");
     sqlx::query(
         r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
-           (id, code, notice, fk_production, "fk_obj-storage", qk_income, qk_total, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, '外源导入', $2, $3, $4, $4, 1)"#,
+           (id, code, notice, fk_production, "fk_obj-storage", qk_income, created_by_id,
+            dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, '外源导入', $2, $3, $4, 1, $5, $6, $7)"#,
     )
     .bind(format!("EXT-T{}-1", suffix))
     .bind(pool_product)
     .bind(line)
     .bind(weight_scalar)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("external voucher");
@@ -614,7 +641,7 @@ async fn chain_start_opening_balance_zero() {
         .execute(&pool)
         .await
         .ok();
-    sqlx::query(r#"DELETE FROM isahl."zc_id_production_rr_storage" WHERE ref_left = $1"#)
+    sqlx::query(r#"DELETE FROM isahl."zc_id_file_rr_url" WHERE ref_left = $1"#)
         .bind(pool_product)
         .execute(&pool)
         .await

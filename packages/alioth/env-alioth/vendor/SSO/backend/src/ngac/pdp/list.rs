@@ -1,4 +1,4 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use sqlx::PgPool;
 
 use crate::ngac::pip::{Pip, PostgresPip};
@@ -8,10 +8,15 @@ use crate::ngac::pip::{Pip, PostgresPip};
 /// Returns `visible_ids: None` for admin users (meaning "all resources"),
 /// or a filtered list of resource IDs for regular users.
 pub async fn list_resource_access(
+    req_http: HttpRequest,
     pool: web::Data<PgPool>,
     body: web::Json<ngac_contract::PdpListRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
+    // tighten-pdp-decision-surface A：调用者主体必须等于决策主体
+    if let Err(resp) = super::enforce_decision_subject(&req_http, req.user_id) {
+        return resp;
+    }
 
     // Bootstrap guard: check if any associations exist
     let has_policies: (bool,) = match sqlx::query_as(
@@ -97,10 +102,15 @@ pub async fn list_resource_access(
 /// 收集 `read:*`（通配 → 返回 `["*"]`）与 `read:{col}`（具体列）动作。bootstrap 阶段
 /// （无策略）或 admin 全通配时返回 `["*"]`（无列级限制）。
 pub async fn list_column_access(
+    req_http: HttpRequest,
     pool: web::Data<PgPool>,
     body: web::Json<ngac_contract::PdpColumnsRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
+    // tighten-pdp-decision-surface A：调用者主体必须等于决策主体
+    if let Err(resp) = super::enforce_decision_subject(&req_http, req.user_id) {
+        return resp;
+    }
 
     // Bootstrap guard: 无策略时放行（无列级限制）
     let has_policies: (bool,) = match sqlx::query_as(

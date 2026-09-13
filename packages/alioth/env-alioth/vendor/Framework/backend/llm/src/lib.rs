@@ -11,7 +11,7 @@ pub mod types;
 
 pub use backends::{
     BackendError, CompletionRequest, CompletionResponse, ImageContent, LlmBackend, MessageContent,
-    ToolCallResult,
+    StreamToolCallOutcome, ToolCallResult,
 };
 pub use service::{LlmError, LlmService};
 pub use types::{

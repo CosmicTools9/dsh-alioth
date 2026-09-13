@@ -23,22 +23,40 @@ mod common;
 use common::setup_test_schema;
 
 async fn insert_test_engineer(pool: &PgPool, notice: &str) -> i64 {
+    // 落点叶表 zc_id_empl-natural（主体-雇员父表 zc_id_subj-employee 禁直写）；
+    // 坐标三元组（§6.12 声明即必须）：雇员-自然人 = JE/FJA/↑_DA，经 ontology_binding 解析
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JE", "FJA", "↑_DA"))
+            .await
+            .expect("resolve zc_id_empl-natural coords");
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_subj-employee" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural" (notice, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, '实现', '范例', $2, $3, $4) RETURNING id"#,
     )
     .bind(notice)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
 }
 
 async fn insert_test_approve_event(pool: &PgPool, notice: &str) -> i64 {
+    // 落点叶表 zc_id_appr-process（审批域父表 zc_id_even-approve 禁直写）；
+    // 坐标三元组（§6.12 声明即必须）：节点事件载体 = JC/FTA/↑_NA，经 ontology_binding 解析
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .expect("resolve zc_id_appr-process coords");
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id)
-           VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-process" (notice, created_by_id, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 1, 'flow-context', $2, $3, $4) RETURNING id"#,
     )
     .bind(notice)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -51,13 +69,19 @@ async fn insert_test_approval_instance(
     fk_subject: i64,
     fk_operator: i64,
 ) -> i64 {
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ"))
+        .await
+        .expect("resolve dk coords");
     let instance_id: i64 = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, fk_operator, created_by_id)
-           VALUES ($1, $2, $3, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_oper-approve" (notice, fk_subject, fk_operator, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, 1, '实现', '实例', $4, $5, $6) RETURNING id"#,
     )
     .bind(node_name)
     .bind(fk_subject)
     .bind(fk_operator)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap();

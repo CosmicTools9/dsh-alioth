@@ -109,10 +109,16 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
             None => None,
         };
 
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("GH", "FRA", "↓_GG"))
+                .await
+                .map_err(ApiError::from)?;
         let row = sqlx::query_as::<_, Voucher>(
-            r#"INSERT INTO isahl."zc_id_stat-sto-voucher"
-               (fk_production, "fk_subj-storage", "fk_obj-storage", qk_qty, qk_income, qk_outgo, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+            r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
+               (fk_production, "fk_subj-storage", "fk_obj-storage", qk_qty, qk_income, qk_outgo, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                RETURNING id, fk_production AS production_id, "fk_subj-storage" AS from_storage_id,
                          "fk_obj-storage" AS to_storage_id, qk_qty AS qty, qk_income AS income,
                          qk_outgo AS outgo, qk_pre_balance AS pre_balance, qk_balance AS balance, created_at, updated_at, deleted_at"#,
@@ -124,6 +130,9 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
         .bind(income_id)
         .bind(outgo_id)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(self.generic.pool())
         .await
         .map_err(ApiError::from)?;
@@ -191,7 +200,7 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
         );
 
         let row = sqlx::query_as::<_, Voucher>(
-            r#"UPDATE isahl."zc_id_stat-sto-voucher" SET
+            r#"UPDATE isahl."zc_id_stat-whs-voucher" SET
                    fk_production = COALESCE($1, fk_production),
                    "fk_subj-storage" = COALESCE($2, "fk_subj-storage"),
                    "fk_obj-storage" = COALESCE($3, "fk_obj-storage"),
@@ -253,7 +262,7 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
         );
 
         sqlx::query(
-            r#"UPDATE isahl."zc_id_stat-sto-voucher"
+            r#"UPDATE isahl."zc_id_stat-whs-voucher"
                SET deleted_at = NOW(), updated_by_id = $2
                WHERE id = $1 AND deleted_at IS NULL"#,
         )

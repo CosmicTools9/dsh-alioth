@@ -202,8 +202,9 @@ pub struct CreateSubjectRequest {
     /// 证照（可选；落独立表 zc_id_identity + zc_id_entity_rr_identity 关联）
     #[serde(default)]
     pub identities: Option<Vec<CreateSubjectIdentity>>,
-    /// 雇佣状态 code（可选；EMPL-ACTIVE/EMPL-PROBATION/EMPL-RETIRED，字典 zc_id_stus-employ。
-    /// 有值时同事务建 zc_id_subj-employee 雇员行 + r_employ-status 任职状态关系）
+    /// 就业状态 code（可选；EMPL-ACTIVE/EMPL-PROBATION/EMPL-RETIRED，字典 zc_id_stus-employ=状态-就业。
+    /// 有值时同事务建 zc_id_subj-employee 雇员行 + r_employ-status 就业状态关系——主体单方属性；
+    /// 雇佣（双方）走 subj-org_rr_employee 链，不在此路径）
     #[serde(default)]
     pub employ_status: Option<String>,
 }
@@ -467,6 +468,94 @@ pub async fn list_subjects(
     )
 }
 
+/// GET /service/isahl-db/subjects/{id} — 单条主体详情（详情直达；与 list_subjects 字段口径一致，
+/// 字段演进需同步 list_subjects 的 SELECT 与 map）
+pub async fn get_subject(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    path: web::Path<i64>,
+) -> Result<HttpResponse, ApiError> {
+    let user_id = require_auth(&req)?;
+    require_resource_access(pool.get_ref(), user_id, "identities", 0, "list").await?;
+    ensure_subject_mdm(pool.get_ref()).await?;
+    let id = path.into_inner();
+    #[allow(clippy::type_complexity)] // sqlx 行类型
+    let row: Option<(
+        i64,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        serde_json::Value,
+        Option<String>,
+    )> = sqlx::query_as(
+        r#"SELECT s.id, s.code, s.notice, s.tableoid::regclass::text AS leaf, s.comments,
+                  COALESCE((SELECT ss.code FROM "isahl"."zc_id_lifecycle_r_primary-status" ps
+                    JOIN "isahl"."zc_id_stus-org" ss ON ss.id = ps.ref_right AND ss.deleted_at IS NULL
+                    WHERE ps.ref_left = s.id AND ps.deleted_at IS NULL LIMIT 1), 'normal') AS status,
+                  c.code AS category_code,
+                  COALESCE((SELECT json_agg(DISTINCT vt.code)
+                    FROM "isahl"."zc_id_subj-post_rr_view" e
+                    JOIN "isahl"."zc_id_relation-post_view_r_tags" r ON r.ref_left = e.ref_left AND r.deleted_at IS NULL
+                    JOIN "isahl"."zc_id_tags-post_view" vt ON vt.id = r.ref_right AND vt.deleted_at IS NULL
+                    WHERE e.ref_right = s.id AND e.deleted_at IS NULL), '[]') AS view_tags,
+                  mdm.mdm_code
+           FROM "isahl"."zc_id_subjects" s
+           LEFT JOIN "isahl"."zc_id_cate-subject" c ON c.id = s.ck_category AND c.deleted_at IS NULL
+           LEFT JOIN wz_fssc.subject_mdm mdm ON mdm.subject_id = s.id
+           WHERE s.deleted_at IS NULL AND s.id = $1
+           LIMIT 1"#,
+    )
+    .bind(id)
+    .fetch_optional(pool.get_ref())
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    let Some((id, code, notice, leaf, comments, status, category_code, view_tags, mdm_code)) = row
+    else {
+        return Err(ApiError::NotFound(format!("主体不存在: {}", id)));
+    };
+    // 与 list_subjects 同口径：父表行优先读 comments.kind 回退类型标签
+    let base = social_category(&leaf);
+    let social = if base == "主体" {
+        comments
+            .as_deref()
+            .and_then(|c| serde_json::from_str::<serde_json::Value>(c).ok())
+            .and_then(|v| {
+                v.get("kind").and_then(|k| k.as_str()).map(|k| {
+                    if k.starts_with("zc_id_") {
+                        social_category(k).to_string()
+                    } else {
+                        k.to_string()
+                    }
+                })
+            })
+            .unwrap_or_else(|| base.to_string())
+    } else {
+        base.to_string()
+    };
+    let item = SubjectListItem {
+        id,
+        code,
+        notice,
+        social_category: social,
+        category: category_code,
+        view_tags: view_tags
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        status,
+        comments,
+        mdm_code,
+    };
+    Ok(HttpResponse::Ok().json(ApiResponse::success(item)))
+}
+
 /// GET /service/isahl-db/subjects/{id}/view-tags — 读交易视角标签
 pub async fn get_subject_view_tags(
     req: HttpRequest,
@@ -576,7 +665,7 @@ pub async fn list_subject_accounts(
     let rows: Vec<(i64, i64, Option<String>)> = sqlx::query_as(
         "SELECT r.id, r.ref_right, a.notice \
          FROM \"isahl\".\"zc_id_subjects_rr_account\" r \
-         LEFT JOIN \"isahl\".\"zc_id_subjects\" a ON a.id = r.ref_right AND a.deleted_at IS NULL \
+         LEFT JOIN \"isahl\".\"zc_id_stor-account\" a ON a.id = r.ref_right AND a.deleted_at IS NULL \
          WHERE r.ref_left = $1 AND r.deleted_at IS NULL \
          ORDER BY r.id",
     )
@@ -599,7 +688,7 @@ pub async fn list_subject_accounts(
 
 #[derive(Debug, Deserialize)]
 pub struct AddAccountRequest {
-    /// 账户实体 id（ref_right，如 zc_id_bank-commercial 叶表行）
+    /// 账户储元 id（ref_right，zc_id_stor-account 继承链行，如 zc_id_stor-acc-bank / zc_id_stor-acc-cash 叶表行）
     #[serde(with = "common::serde_zuid")]
     pub account_id: i64,
 }
@@ -616,9 +705,9 @@ pub async fn add_subject_account(
     require_resource_access(pool.get_ref(), user_id, "identities", subject_id, "update").await?;
 
     ensure_subject_exists(pool.get_ref(), subject_id).await?;
-    // 账户实体存在性（subjects 继承链统一可见）
+    // 账户储元存在性（zc_id_stor-account 继承链统一可见 acc-* 叶表；主体/储元为 lifecycle 兄弟族互不可见）
     let account_exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM \"isahl\".\"zc_id_subjects\" WHERE id = $1 AND deleted_at IS NULL",
+        "SELECT COUNT(*) > 0 FROM \"isahl\".\"zc_id_stor-account\" WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(body.account_id)
     .fetch_one(pool.get_ref())
@@ -738,15 +827,23 @@ async fn ensure_subject_post(
 
     // 无指定岗位：自动建默认岗位 POST-AUTO-<subject_id>（幂等，与种子回填一致）
     // id 显式 gen_next_zuid（与 wz 库 zc_id_subj-position 表默认同生成器；测试库无表默认亦可用）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve_conn(&mut **tx, ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(ApiError::from)?;
     let inserted: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO \"isahl\".\"zc_id_subj-position\" (id, notice, code, created_by_id) \
-         SELECT isahl.gen_next_zuid(), '默认岗位', 'POST-AUTO-' || $1::text, $2 \
+        "INSERT INTO \"isahl\".\"zc_id_subj-position\" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function) \
+         SELECT isahl.gen_next_zuid(), '默认岗位', 'POST-AUTO-' || $1::text, $2, $3, $4, $5 \
          WHERE NOT EXISTS (SELECT 1 FROM \"isahl\".\"zc_id_subj-position\" p \
                            WHERE p.code = 'POST-AUTO-' || $1::text AND p.deleted_at IS NULL) \
          RETURNING id",
     )
     .bind(subject_id)
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_optional(&mut **tx)
     .await
     .map_err(ApiError::from_sqlx)?;
@@ -852,7 +949,20 @@ pub async fn create_subject(
     }
     // code 可选：空则自动生成 SUBJ-<zuid 后 6 位>（唯一性由 zuid 保证）
     let code = match body.code.as_deref().map(str::trim) {
-        Some(c) if !c.is_empty() => c.to_string(),
+        Some(c) if !c.is_empty() => {
+            // 显式主体编码（企业=统一社会信用代码，国标唯一）：同码活动主体存在则拒绝重复建档（批注 46814bfa）
+            let dup: Option<i64> = sqlx::query_scalar(
+                    r#"SELECT id FROM "isahl"."zc_id_subjects" WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
+                )
+                .bind(&c)
+                .fetch_optional(pool.get_ref())
+                .await
+                .map_err(ApiError::from_sqlx)?;
+            if dup.is_some() {
+                return Err(ApiError::BadRequest(format!("主体编码已存在: {}", c)));
+            }
+            c.to_string()
+        }
         _ => {
             let z: i64 = sqlx::query_scalar("SELECT isahl.gen_next_zuid()")
                 .fetch_one(pool.get_ref())
@@ -941,15 +1051,23 @@ pub async fn create_subject(
             }
             let category_id = category_id_by_code(pool.get_ref(), &ident.category_code).await?;
             let dname = ident.name.clone().unwrap_or_else(|| cert_no.clone());
+            // 坐标三元组（§6.12 声明即必须）：Identity = JE/FJA/↑_DA（identity-org
+            // repository/ontology_binding.rs coords_for_entity("Identity") 静态绑定），
+            // 值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                ontology_binding::resolve(pool.get_ref(), ("JE", "FJA", "↑_DA")).await?;
             let identity_id: i64 = sqlx::query_scalar(
-                r#"INSERT INTO "isahl"."zc_id_identity" (notice, identity, dname, ck_category, created_by_id, updated_by_id)
-                   VALUES ($1, $2, $3, $4, $5, $5) RETURNING id"#,
+                r#"INSERT INTO "isahl"."zc_id_identity" (notice, identity, dname, ck_category, created_by_id, updated_by_id, dk_scene, dk_factor, dk_function)
+                   VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8) RETURNING id"#,
             )
             .bind(format!("{} 证照 {}", notice, ii + 1))
             .bind(&cert_no)
             .bind(&dname)
             .bind(category_id)
             .bind(user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut *tx)
             .await
             .map_err(ApiError::from_sqlx)?;
@@ -968,7 +1086,7 @@ pub async fn create_subject(
         }
     }
 
-    // 雇佣状态落雇员链（主体-雇员 + 关系-雇员→任职状态；change: align-org-position-employment-chains）
+    // 就业状态落雇员链（主体-雇员 + 关系-雇员→就业状态；主体单方属性，change: align-org-position-employment-chains）
     if let Some(employ_status) = body
         .employ_status
         .as_deref()
@@ -984,16 +1102,25 @@ pub async fn create_subject(
         .map_err(ApiError::from_sqlx)?
         .ok_or_else(|| {
             ApiError::BadRequest(format!(
-                "未知雇佣状态 code: '{}'（字典 zc_id_stus-employ）",
+                "未知就业状态 code: '{}'（字典 zc_id_stus-employ）",
                 employ_status
             ))
         })?;
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve_conn(&mut *tx, ("ZJ", "LNC", "↓_EH"))
+                .await
+                .map_err(ApiError::from)?;
         let employee_id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO "isahl"."zc_id_subj-employee" (id, notice, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+            r#"INSERT INTO "isahl"."zc_id_empl-natural"
+               (id, notice, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5) RETURNING id"#,
         )
         .bind(format!("{} 雇员", notice))
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(ApiError::from_sqlx)?;
@@ -1009,6 +1136,62 @@ pub async fn create_subject(
         .await
         .map_err(ApiError::from_sqlx)?;
     }
+
+    // 缺省储元同步建立（本体裁决 2026-09-07）：主体建档即具备资金/财产承载位——
+    // 现金账户（账户-现金）+ 财产储位（场所-资产），经 typed 子桥挂主体；
+    // 总关系父表 rr_storage 不直写（PG 继承查子不见父）
+    // 坐标三元组（§6.12 声明即必须）：SettlementCash=TX/FJA/↓_EV（identity-org
+    // repository/ontology_binding.rs coords_for_entity 静态绑定），值经 ontology_binding 解析
+    let (cash_dk_scene, cash_dk_factor, cash_dk_function) =
+        ontology_binding::resolve(pool.get_ref(), ("TX", "FJA", "↓_EV")).await?;
+    let cash_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO "isahl"."zc_id_stor-acc-cash" (notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
+    )
+    .bind(format!("{} 现金账户", notice))
+    .bind(user_id)
+    .bind(cash_dk_scene)
+    .bind(cash_dk_factor)
+    .bind(cash_dk_function)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    sqlx::query(
+        r#"INSERT INTO "isahl"."zc_id_subjects_rr_account"
+           (notice, ref_left, ref_right, created_by_id, updated_by_id)
+           VALUES ($1, $2, $3, $4, $4)"#,
+    )
+    .bind(format!("subject-{} 账户", id))
+    .bind(id)
+    .bind(cash_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    let place_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO "isahl"."zc_id_stor-plc-asset" (notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
+    )
+    .bind(format!("{} 财产储位", notice))
+    .bind(user_id)
+    .bind(cash_dk_scene)
+    .bind(cash_dk_factor)
+    .bind(cash_dk_function)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    sqlx::query(
+        r#"INSERT INTO "isahl"."zc_id_subjects_rr_place"
+           (notice, ref_left, ref_right, created_by_id, updated_by_id)
+           VALUES ($1, $2, $3, $4, $4)"#,
+    )
+    .bind(format!("subject-{} 储位", id))
+    .bind(id)
+    .bind(place_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
 
     // 批注（修复：此前 edit 误删 commit——事务 drop 自动回滚，INSERT 全丢但返回 201）
     tx.commit().await.map_err(ApiError::from_sqlx)?;
@@ -1037,8 +1220,22 @@ pub async fn update_subject(
         }
     }
     if let Some(code) = &body.code {
-        if code.trim().is_empty() {
+        let trimmed = code.trim();
+        if trimmed.is_empty() {
             return Err(ApiError::BadRequest("code 不能为空".into()));
+        }
+        // code 变更同码查重（排除自身：同值无操作保存不误报；批注 46814bfa）
+        let dup: Option<i64> = sqlx::query_scalar(
+            r#"SELECT id FROM "isahl"."zc_id_subjects"
+                   WHERE code = $1 AND deleted_at IS NULL AND id <> $2 LIMIT 1"#,
+        )
+        .bind(trimmed)
+        .bind(id)
+        .fetch_optional(pool.get_ref())
+        .await
+        .map_err(ApiError::from_sqlx)?;
+        if dup.is_some() {
+            return Err(ApiError::BadRequest(format!("主体编码已存在: {}", trimmed)));
         }
     }
 
@@ -1288,7 +1485,7 @@ async fn ensure_subject_leaf(pool: &PgPool, subject_type: &str) -> Result<(), Ap
 /// 分类感知创建请求体。
 /// 扩展信息通过 Alioth 关联关系承载（零 DDL）：
 /// - view_tags    → 主体→岗位(`zc_id_subj-post_rr_view`)→`zc_id_relation-post_view_r_tags`→`zc_id_tags-post_view`
-/// - employ_status→ `zc_id_subj-employee_r_employ-status`（雇佣状态，ref_right→stus-employ 字典）
+/// - employ_status→ `zc_id_subj-employee_r_employ-status`（就业状态，ref_right→stus-employ 字典；雇佣双方链为 subj-org_rr_employee）
 /// - employer_id  → `zc_id_subj-org_rr_employee`（所属组织：ref_left=组织, ref_right=雇员）
 /// - position_id  → `zc_id_subj-post_rr_view`（视角锚点：ref_left=岗位, ref_right=被视角主体；任职关系不在此路径，由 entity-binding 经 post_rr_employee 承载）
 /// - place_id     → `zc_id_subjects_rr_place`（地址：ref_left=主体, ref_right=place）
@@ -1308,6 +1505,7 @@ pub fn register(cfg: &mut web::ServiceConfig) {
     )
     .service(
         web::resource("/subjects/{id}")
+            .route(web::get().to(get_subject))
             .route(web::put().to(update_subject))
             .route(web::delete().to(delete_subject)),
     )
@@ -1360,13 +1558,21 @@ pub(crate) async fn add_entity_contact(
     is_default: bool,
     user_id: i64,
 ) -> Result<i64, ApiError> {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve_conn(&mut **tx, ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(ApiError::from)?;
     let contact_row = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO "isahl"."zc_id_contacts" (id, code, notice, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#,
+        r#"INSERT INTO "isahl"."zc_id_contacts" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
     )
     .bind(format!("CT-ENT-{}", entity_id))
     .bind(contact_name.unwrap_or(&format!("{} 联系方式", display_name)))
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&mut **tx)
     .await
     .map_err(ApiError::from_sqlx)?;
@@ -1438,12 +1644,12 @@ pub async fn list_subject_contact_chain(
 
     let rows: Vec<SubjectContactItem> = sqlx::query_as(
         r#"SELECT c.id, COALESCE(c.notice, '') AS name,
-                  CASE btrim(ri.tableoid::regclass::text, '"')
-                       WHEN 'zc_id_info-email' THEN 'email'
-                       WHEN 'zc_id_info-im' THEN 'im'
-                       WHEN 'zc_id_info-isahl' THEN 'isahl'
-                       WHEN 'zc_id_info-postal' THEN 'postal'
-                       WHEN 'zc_id_info-zipcode' THEN 'zipcode'
+                  CASE WHEN p.id IS NOT NULL THEN 'postal'
+                       WHEN z.id IS NOT NULL THEN 'zipcode'
+                       WHEN e.id IS NOT NULL THEN 'email'
+                       WHEN im.id IS NOT NULL THEN 'im'
+                       WHEN isa.id IS NOT NULL THEN 'isahl'
+                       WHEN t.id IS NOT NULL THEN 'telephone'
                        ELSE 'telephone' END AS kind,
                   COALESCE(i.notice, '') AS value,
                   COALESCE(ri.default_info, false) AS is_default

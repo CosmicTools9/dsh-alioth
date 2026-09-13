@@ -1016,8 +1016,13 @@ async fn issue_session_and_tokens(
         session_id: Some(session.session_token.clone()),
     });
 
-    let response = set_access_cookie(response, &access_token, state.jwt_access_expiry_secs);
-    set_refresh_cookie(response, &refresh_token, state.jwt_refresh_expiry_secs)
+    let response = set_access_cookie(response, &access_token, state.jwt_access_expiry_secs, None);
+    set_refresh_cookie(
+        response,
+        &refresh_token,
+        state.jwt_refresh_expiry_secs,
+        None,
+    )
 }
 
 /// 路由注册

@@ -33,22 +33,59 @@ async fn seed_client(pool: &PgPool, client_id: &str, secret: &str, scopes: &[&st
         .await
         .expect("hash secret");
     let scope_arr = format!("{{{}}}", scopes.join(","));
-    sqlx::query(
+    let client_row_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl_auth.api_clients
            (id, client_id, client_type, client_name, secret_hash, scopes, fk_service_user, enabled)
-           VALUES (isahl.gen_next_zuid(), $1, 'apikey', '测试北斗终端', $2, $3::TEXT[], $4, TRUE)"#,
+           VALUES (isahl.gen_next_zuid(), $1, 'apikey', '测试北斗终端', $2, $3::TEXT[], $4, TRUE)
+           RETURNING id"#,
     )
     .bind(client_id)
     .bind(&hash)
     .bind(&scope_arr)
     .bind(svc_user)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await
     .expect("seed api_client");
+    // G6 订阅门禁 fixture：client 须持激活订阅方可签发（fix-sso-auth-gaps）
+    let plan_code = format!("test-plan-{client_id}");
+    let plan_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl_auth.api_plans \
+         (code, tier, rate_limit_rps, burst, quota_daily, quota_monthly, enabled) \
+         VALUES ($1, 0, 10.0, 50, 100000, 3000000, TRUE) RETURNING id",
+    )
+    .bind(&plan_code)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("seed plan");
+    sqlx::query(
+        "INSERT INTO isahl_auth.api_subscriptions (fk_client, fk_plan, status, starts_at) \
+         VALUES ($1, $2, 'active', NOW())",
+    )
+    .bind(client_row_id)
+    .bind(plan_id)
+    .execute(&mut *tx)
+    .await
+    .expect("seed subscription");
     tx.commit().await.expect("commit");
 }
 
 async fn cleanup(pool: &PgPool, client_id: &str) {
+    sqlx::query(
+        r#"DELETE FROM isahl_auth.api_subscriptions
+           WHERE fk_client IN (SELECT id FROM isahl_auth.api_clients WHERE client_id = $1)"#,
+    )
+    .bind(client_id)
+    .execute(pool)
+    .await
+    .expect("cleanup subscription");
+    sqlx::query(
+        r#"DELETE FROM isahl_auth.api_plans
+           WHERE code = $1"#,
+    )
+    .bind(format!("test-plan-{client_id}"))
+    .execute(pool)
+    .await
+    .expect("cleanup plan");
     sqlx::query(r#"DELETE FROM isahl_auth.api_clients WHERE client_id = $1"#)
         .bind(client_id)
         .execute(pool)

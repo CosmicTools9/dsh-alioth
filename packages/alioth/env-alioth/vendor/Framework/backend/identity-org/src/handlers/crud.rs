@@ -230,6 +230,12 @@ pub fn register_subject_domain(cfg: &mut web::ServiceConfig) {
         NaturalPersonRepository,
         ApiError,
     >("/natural-persons"));
+    // 证书物权（add-subject-certificate-title）：取得即编制初始物权凭证，
+    // 查询走 mv_title_ownership——主体持有证书（纸质/数字化）聚合
+    cfg.configure(crate::handlers::subject_certificates::configure);
+    // 供应商合作评价（wire-supplier-qualification-chain，B3 链）：
+    // cooperation_r_evaluation 桥消费——调级软删替换，读谓词 JOIN 类型/等级字典
+    cfg.configure(crate::handlers::cooperation_evaluations::configure);
     register_subject_leaves(cfg);
 }
 macro_rules! register_subject_leaf {

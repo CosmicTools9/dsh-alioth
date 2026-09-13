@@ -507,7 +507,6 @@ async fn formula_fix(
     }))
 }
 
-/// POST /api/approval-flows/expr-ast — 表达式 AST（G3 计算逻辑图数据源）
 #[derive(Debug, Deserialize)]
 pub struct ExprAstRequest {
     pub expression: String,

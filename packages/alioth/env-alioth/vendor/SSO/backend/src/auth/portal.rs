@@ -129,12 +129,14 @@ pub struct CreateSelfApiClientRequest {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct SelfApiClientResponse {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
     pub client_type: String,
     /// 剥离归属前缀后的显示名（DB 中为 `user:<uid>:<name>` 全量，审计可溯源）
     pub client_name: String,
     pub scopes: Vec<String>,
+    #[serde(with = "common::serde_zuid")]
     pub fk_service_user: i64,
     pub enabled: bool,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -144,12 +146,14 @@ pub struct SelfApiClientResponse {
 
 #[derive(Debug, Serialize)]
 pub struct SelfApiClientCreatedResponse {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
     pub client_type: String,
     pub client_name: String,
     /// 仅在创建时返回一次（oauth2=client_secret / apikey=api_key 明文）
     pub secret: String,
+    #[serde(with = "common::serde_zuid")]
     pub fk_service_user: i64,
     pub enabled: bool,
 }
@@ -382,7 +386,7 @@ pub async fn delete_self_api_client(
     match api_clients_common::soft_delete_client(pool.get_ref(), client_row_id).await {
         Ok(n) if n > 0 => HttpResponse::Ok().json(serde_json::json!({
             "deleted": true,
-            "id": client_row_id,
+            "id": client_row_id.to_string(),
         })),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({
             "error": "Client not found",

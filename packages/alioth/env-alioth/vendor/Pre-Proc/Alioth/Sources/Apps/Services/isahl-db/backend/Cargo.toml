@@ -16,6 +16,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 dotenvy = { workspace = true }
 common = { path = "../../../../../../../Framework/backend/common" }
+ontology-binding = { path = "../../../../../../../Framework/backend/ontology-binding" }
 crud = { path = "../../../../../../../Framework/backend/crud" }
 identity-org = { path = "../../../../../../../Framework/backend/identity-org" }
 

@@ -7,7 +7,7 @@
 //! - 创建或绑定用户
 //! - 颁发 JWT
 
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,6 +17,7 @@ use crate::auth::{
     jwt::{encode_access_token, encode_refresh_token, set_refresh_cookie, Claims},
     oauth::{OAuth2Client, PkceVerifier, TokenResponse},
     oidc::{extract_user_info_from_userinfo, NormalizedUserInfo},
+    session::{CreateSessionRequest, SessionManager},
 };
 
 /// OAuth 回调请求查询参数
@@ -197,15 +198,17 @@ fn build_wechat_auth_url(provider: &ProviderConfig, redirect_uri: &str, state: &
 
 /// 处理 OAuth 回调
 pub async fn oauth_callback(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
     state_data: web::Data<OAuthAuthState>,
     query: web::Query<OAuthCallbackQuery>,
 ) -> HttpResponse {
-    oauth_callback_handler(pool, state_data, query).await
+    oauth_callback_handler(req, pool, state_data, query).await
 }
 
 /// 处理 OAuth 回调 (内部处理函数)
 async fn oauth_callback_handler(
+    req: HttpRequest,
     pool: web::Data<PgPool>,
     state_data: web::Data<OAuthAuthState>,
     query: web::Query<OAuthCallbackQuery>,
@@ -291,13 +294,46 @@ async fn oauth_callback_handler(
         }
     };
 
+    // 生成 JWT 前先建持久会话并绑 sid（fix-sso-noauth-removal：OAuth 登录
+    // 登出即时失效——与密码登录 handlers.rs 同语义，PEP 活性检查依赖 sid）
+    let user_id_i64: i64 = match user.id.parse() {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("OAuth callback: invalid user id '{}': {}", user.id, e);
+            return HttpResponse::InternalServerError().json(OAuthErrorResponse {
+                error: "session_creation_failed".to_string(),
+                message: Some("Failed to create session".to_string()),
+            });
+        }
+    };
+    let session_manager = SessionManager::new(pool.get_ref().clone());
+    let session = match session_manager
+        .create_session(CreateSessionRequest {
+            user_id: user_id_i64,
+            ip_address: crate::auth::session::client_ip(&req),
+            user_agent: crate::auth::session::client_user_agent(&req),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("OAuth callback: failed to create session: {}", e);
+            return HttpResponse::InternalServerError().json(OAuthErrorResponse {
+                error: "session_creation_failed".to_string(),
+                message: Some("Failed to create session".to_string()),
+            });
+        }
+    };
+
     // 生成 JWT
-    let claims = Claims::with_expiry_seconds(
+    let mut claims = Claims::with_expiry_seconds(
         &user.id,
         user.email.as_deref().unwrap_or(""),
         false, // OAuth 登录不视为 MFA 验证
         state_data.jwt_access_expiry_secs,
     );
+    claims.sid = session.session_token.clone();
 
     let access_token = match encode_access_token(&claims, &state_data.jwt_private_key) {
         Ok(t) => t,
@@ -333,7 +369,12 @@ async fn oauth_callback_handler(
         .append_header(("Location", redirect_to.as_str()))
         .finish();
 
-    set_refresh_cookie(response, &refresh_token, state_data.jwt_refresh_expiry_secs)
+    set_refresh_cookie(
+        response,
+        &refresh_token,
+        state_data.jwt_refresh_expiry_secs,
+        None,
+    )
 }
 
 /// 获取身份提供商配置

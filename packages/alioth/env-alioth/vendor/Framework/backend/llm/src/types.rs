@@ -206,7 +206,7 @@ impl LlmServiceConfig {
     /// 角色缺省映射 + env 显式覆盖（`LLM_MODEL_<ROLE>`）。
     /// 缺省：slow→主模型（high effort / 16384 max_tokens）、task→flash（low effort）、
     /// vision/advisor→flash；default→主模型（兼容 LLM_MODEL）。
-    fn resolve_roles(model: &str, flash_model: &str) -> HashMap<ModelRole, RoleModel> {
+    pub fn resolve_roles(model: &str, flash_model: &str) -> HashMap<ModelRole, RoleModel> {
         use ReasoningEffort::{High, Low};
 
         let mut roles = HashMap::new();

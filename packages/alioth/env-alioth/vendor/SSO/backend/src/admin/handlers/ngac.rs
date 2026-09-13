@@ -386,9 +386,8 @@ pub async fn update_user_attribute(
     .await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
-            HttpResponse::Ok().json(serde_json::json!({"status": "updated", "id": attr_id}))
-        }
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
+            .json(serde_json::json!({"status": "updated", "id": attr_id.to_string()})),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "Attribute not found"})),
         Err(e) => {
             // 校验拒绝（环/父不存在/跨策略类）或事务失败
@@ -463,7 +462,8 @@ pub async fn delete_user_attribute(
                 return HttpResponse::InternalServerError()
                     .json(serde_json::json!({"error": "Failed to delete user attribute"}));
             }
-            HttpResponse::Ok().json(serde_json::json!({"status": "deleted", "id": attr_id}))
+            HttpResponse::Ok()
+                .json(serde_json::json!({"status": "deleted", "id": attr_id.to_string()}))
         }
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "Attribute not found"})),
         Err(e) => {
@@ -544,12 +544,12 @@ pub async fn bind_user_attribute(
     match result {
         Ok(Some(_)) => HttpResponse::Ok().json(serde_json::json!({
             "status": "bound",
-            "user_id": user_id_param,
+            "user_id": user_id_param.to_string(),
             "fk_user_attribute": body.fk_user_attribute,
         })),
         Ok(None) => HttpResponse::Ok().json(serde_json::json!({
             "status": "already_bound",
-            "user_id": user_id_param,
+            "user_id": user_id_param.to_string(),
             "fk_user_attribute": body.fk_user_attribute,
         })),
         Err(e) => {
@@ -645,8 +645,8 @@ pub async fn unbind_user_attribute(
             }
             HttpResponse::Ok().json(serde_json::json!({
                 "status": "unbound",
-                "user_id": user_id,
-                "fk_user_attribute": ua_id,
+                "user_id": user_id.to_string(),
+                "fk_user_attribute": ua_id.to_string(),
             }))
         }
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "Binding not found"})),
@@ -838,7 +838,7 @@ pub async fn create_object_attribute(
 
     match result {
         Ok((id,)) => HttpResponse::Created().json(serde_json::json!({
-            "id": id,
+            "id": id.to_string(),
             "o_name": body.o_name,
             "fk_policy_class": body.fk_policy_class,
             "resource_type": body.resource_type,
@@ -947,9 +947,8 @@ pub async fn update_object_attribute(
     .await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
-            HttpResponse::Ok().json(serde_json::json!({"status": "updated", "id": attr_id}))
-        }
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
+            .json(serde_json::json!({"status": "updated", "id": attr_id.to_string()})),
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "Attribute not found"})),
         Err(e) => {
             log::error!("update_object_attribute DB error: {}", e);
@@ -1301,7 +1300,7 @@ pub async fn create_association(
 
     match result {
         Ok(id) => HttpResponse::Created().json(serde_json::json!({
-            "id": id,
+            "id": id.to_string(),
             "fk_user_attribute": body.fk_user_attribute,
             "fk_object_attribute": body.fk_object_attribute,
             "ak_access_rights": body.ak_access_rights,
@@ -1397,9 +1396,8 @@ pub async fn update_association(
     .await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
-            HttpResponse::Ok().json(serde_json::json!({"status": "updated", "id": assoc_id}))
-        }
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
+            .json(serde_json::json!({"status": "updated", "id": assoc_id.to_string()})),
         Ok(_) => {
             HttpResponse::NotFound().json(serde_json::json!({"error": "Association not found"}))
         }
@@ -1773,9 +1771,8 @@ pub async fn update_prohibition(
     .await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
-            HttpResponse::Ok().json(serde_json::json!({"status": "updated", "id": prohibition_id}))
-        }
+        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
+            .json(serde_json::json!({"status": "updated", "id": prohibition_id.to_string()})),
         Ok(_) => {
             HttpResponse::NotFound().json(serde_json::json!({"error": "Prohibition not found"}))
         }

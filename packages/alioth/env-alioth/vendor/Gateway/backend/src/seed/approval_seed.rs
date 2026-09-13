@@ -1,25 +1,18 @@
-//! 审批域种子：基态 + 「实现·范例」流程模板（publish 物化同构）+ 一致性自愈
+//! 审批域种子组件：运行面一致性自愈（零模板，migrate-verctrl-seed-to-cosmic）
 //!
-//! 节点模型契约（refactor-flow-node-operation-model / advance.rs 消费面）：
-//! 每节点 = 事件载体行（`zc_id_even-approve`，code=图内编号，实例挂载体、节点解析
-//! 经接线桥反查）+ 节点主体行（approve→`zc_id_oper-approve`，start/end→
-//! `zc_id_oper-gate`；`_f_='实现'`/`_t_='范例'`，publish.rs 物化同形态）+
-//! cate 绑定（`ck_cate-proc_op` find-or-create）+ `zc_id_operation_rr_event`
-//! 接线桥 + `zc_id_process_rr_operation` 归属桥（code=图内编号、comments=节点
-//! label、`next-ops` 对象形态 `[{"id":N}]`）。流程行 `meta.nodes` 承载 start
-//! 定位契约（initiate_flow 解析 type='start' 的图内编号）。
+//! 种子职责全部外移——认证/授权域三流模板 + SLA 72h 归模型级种子
+//! `Framework/seed/seed-auth-approval-flows.sql`；FLOW-VERCTRL（ct-git 域）归
+//! Cosmic-Tools ns 级 `Pre-Proc/Cosmic-Tools/seed/seed-cosmic-approval-flows.sql`；
+//! 审批基态归字典基线。组件保留读侧自愈：审批实例断链修复、事件 tpl 绑定回填、
+//! SLA 回填（模板供给方 = 上述种子，启动时序 replay_model_seeds / replay_ns_seeds
+//! 先于本组件 ensure）。
 //!
-//! 覆盖：
-//! 1. `zc_id_stus-approve` 审批基态种子（pending/approved/rejected）——引擎
-//!    终态判定（`zc_id_lifecycle_r_primary-status` 桥 st.code）硬依赖。
-//! 2. 四个「实现·范例」流程模板（FLOW-USER-REGISTER / FLOW-USER-VERIFY /
-//!    FLOW-AUTHORIZATION / FLOW-VERCTRL），start→approve→end 线性 DAG。
-//! 3. 注册审批双表一致性自检（oper-approve ↔ even-approve 补链 + 断链告警）
-//!    + 模板绑定回填（tpl_id → approve 节点主体行）。
-//!
-//! uid 链码纪律：全部 INSERT 省略 `id` 列——DDL default（gen_next_uid(N)/
-//! gen_next_zuid()）是唯一链码真相源；禁止硬编码表码（模型重编号即漂移），
-//! 禁止对非 lifecycle 桥表显式调用 `gen_next_zuid()`。
+//! 节点模型契约（refactor-flow-node-operation-model / advance.rs 消费面，种子侧同构）：
+//! 每节点 = 事件载体行（`zc_id_even-approve`，code=图内编号）+ 节点主体行
+//! （approve→`zc_id_oper-approve`，start/end→`zc_id_oper-gate`；`_f_/_t_` 范例标记）
+//! + cate 绑定 + `zc_id_operation_rr_event` 接线桥 + `zc_id_process_rr_operation`
+//!   归属桥（code=图内编号、`next-ops` 对象形态）；流程行 `meta.nodes` 承载 start
+//!   定位契约（initiate_flow 解析 type='start' 的图内编号）。
 
 use sqlx::PgPool;
 
@@ -27,15 +20,12 @@ use super::SeedStats;
 
 /// 注册审批实例/事件 code（register.rs 双写契约，不变）
 pub const REGISTRATION_APPROVAL_CODE: &str = "user-register-approval";
-/// 注册审批流程模板 code
-pub const REGISTRATION_FLOW_CODE: &str = "FLOW-USER-REGISTER";
+
 /// 用户实名审核流程模板 code（zc_id_appr-user_verify 叶表）
 pub const VERIFY_FLOW_CODE: &str = "FLOW-USER-VERIFY";
 /// 访问授权流程模板 code（zc_id_appr-authorization 叶表）
 pub const AUTHORIZATION_FLOW_CODE: &str = "FLOW-AUTHORIZATION";
-/// 版控固化审批流程模板 code（ct-git verctrl freeze 审批实例 fk_process 对齐，
-/// add-ct-git-vc-interop）
-pub const VERCTRL_FLOW_CODE: &str = "FLOW-VERCTRL";
+
 /// 外部主体入驻流程模板 code（add-dual-register-channels：
 /// /auth/register/external 通道专用，与内部 FLOW-AUTHORIZATION 分流）
 pub const EXTERNAL_SUBJECT_FLOW_CODE: &str = "FLOW-EXTERNAL-SUBJECT";
@@ -46,84 +36,19 @@ pub const AUTHORIZATION_CODE: &str = "user-register-approval";
 /// 外部主体入驻审批事件 code（register.rs 外部通道写契约）
 pub const EXTERNAL_SUBJECT_APPROVAL_CODE: &str = "external-subject-register-approval";
 
-/// 注册审批 SLA 时长维度（zc_id_scal-duration）：72 小时
-/// ——add-register-approval-closure 缺口 2：SLA 超时自动驳回的前提。
+/// 注册审批 SLA 时长（zc_id_scal-duration o_number）——自检侧消费值：
+/// 供给方为模型级种子 seed-auth-approval-flows.sql（fix-register-binding-flow-gaps）。
 const REGISTRATION_SLA_HOURS: &str = "72h";
-const REGISTRATION_SLA_HOURS_VALUE: f64 = 72.0;
 
-/// 审批基态种子：code → notice
-const APPROVAL_STATUS_SEEDS: &[(&str, &str)] = &[
-    ("pending", "待审批"),
-    ("approved", "已通过"),
-    ("rejected", "已驳回"),
-];
-
-/// 流程模板节点：图内编号（meta.nodes[].id 与 rro.code 双向定位键）
-struct FlowNode {
-    graph_id: &'static str,
-    /// 节点类型（publish 白名单子集）：approve → oper-approve 主体，其余 → oper-gate
-    kind: &'static str,
-    label: &'static str,
-}
-
-/// 流程模板：code → (notice, 线性节点链 start→approve→end)
-/// 认证/权限授予域四流（REGISTRATION/VERIFY/AUTHORIZATION/EXTERNAL-SUBJECT）已迁出
-/// 组件——作为 namespace 治理数据预置（add-namespace-approval-seeds：
-/// Pre-Proc/{ns}/seed/seed-{ns}-approval-flows.sql），组件仅保留 VERCTRL
-/// 及运行面一致性自检兜底。
-const FLOW_TEMPLATES: &[(&str, &str, &[FlowNode])] = &[
-    (
-        VERCTRL_FLOW_CODE,
-        "版控固化审批",
-        &[
-            FlowNode {
-                graph_id: "N1",
-                kind: "start",
-                label: "固化发起",
-            },
-            FlowNode {
-                graph_id: "N2",
-                kind: "approve",
-                label: "版控固化审批",
-            },
-            FlowNode {
-                graph_id: "N3",
-                kind: "end",
-                label: "固化完成",
-            },
-        ],
-    ),
-];
-
-/// 审批域自检入口：基态 + 模板 + 一致性。
+/// 审批域自检入口：一致性自检（断链修复 + tpl/SLA 回填）。
 pub async fn ensure(pool: &PgPool) -> SeedStats {
     let mut stats = SeedStats::default();
 
-    let (existing, created) = ensure_approval_status_seeds(pool).await;
-    stats.existing += existing;
-    stats.created += created;
-
-    // 四个「实现·范例」流程模板（注册/实名审核/访问授权/版控固化，
-    // add-approval-leaf-template-seeds + add-ct-git-vc-interop）
-    for tpl in FLOW_TEMPLATES {
-        let (existing, created, healed) = ensure_flow_template(pool, tpl).await;
-        stats.existing += existing;
-        stats.created += created;
-        stats.healed += healed;
-    }
-
-    // SLA 时长维度（注册审批超时自动驳回的前提，add-register-approval-closure）
-    match ensure_sla_duration(pool).await {
-        Ok(preexisted) => {
-            if preexisted {
-                stats.existing += 1;
-            } else {
-                stats.created += 1;
-            }
-        }
-        Err(e) => common::telemetry::warn!("seed[approval]: SLA 时长维度自愈失败: {e}"),
-    }
-
+    // 组件零模板（migrate-verctrl-seed-to-cosmic）：认证/授权域三流归模型级种子
+    // Framework/seed/seed-auth-approval-flows.sql；FLOW-VERCTRL 归 Cosmic-Tools
+    // ns 级 seed-cosmic-approval-flows.sql——启动时序 replay_model_seeds /
+    // replay_ns_seeds 先行供给，组件仅留运行面自检。
+    //
     // 审批事件一致性自检（注册/外部入驻/实名审核，add-approval-leaf-template-seeds）：
     // 内部注册与访问授权共用 code "user-register-approval"（register.rs 双写契约）；
     // 外部入驻审批（add-dual-register-channels）为独立 code，
@@ -145,342 +70,6 @@ pub async fn ensure(pool: &PgPool) -> SeedStats {
     }
 
     stats
-}
-
-/// 1. 审批基态种子：缺则 INSERT（幂等）。
-async fn ensure_approval_status_seeds(pool: &PgPool) -> (usize, usize) {
-    let mut existing = 0usize;
-    let mut created = 0usize;
-    for (code, notice) in APPROVAL_STATUS_SEEDS {
-        let found: Option<i64> = match sqlx::query_scalar(
-            r#"SELECT id FROM isahl."zc_id_stus-approve"
-               WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
-        )
-        .bind(code)
-        .fetch_optional(pool)
-        .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                common::telemetry::warn!("seed[approval]: 状态种子查询失败 code={code}: {e}");
-                None
-            }
-        };
-        match found {
-            Some(_) => existing += 1,
-            None => match sqlx::query(
-                // id 省略——DDL default gen_next_uid(73) 为唯一链码真相源
-                r#"INSERT INTO isahl."zc_id_stus-approve" (code, notice)
-                   VALUES ($1, $2)"#,
-            )
-            .bind(code)
-            .bind(notice)
-            .execute(pool)
-            .await
-            {
-                Ok(_) => created += 1,
-                Err(e) => {
-                    common::telemetry::warn!("seed[approval]: 状态种子创建失败 code={code}: {e}");
-                }
-            },
-        }
-    }
-    (existing, created)
-}
-
-/// SLA 时长维度幂等确保（zc_id_scal-duration 72h 行，注册审批超时自动驳回前提）。
-/// 返回 (是否存在, 本轮之前已存在)。
-async fn ensure_sla_duration(pool: &PgPool) -> Result<bool, sqlx::Error> {
-    if let Some(_id) = sqlx::query_scalar::<_, i64>(
-        r#"SELECT id FROM isahl."zc_id_scal-duration"
-           WHERE o_number = $1 AND deleted_at IS NULL LIMIT 1"#,
-    )
-    .bind(REGISTRATION_SLA_HOURS)
-    .fetch_optional(pool)
-    .await?
-    {
-        return Ok(true);
-    }
-
-    sqlx::query(
-        r#"INSERT INTO isahl."zc_id_scal-duration" (o_number, mark, notice, code)
-           VALUES ($1, $2, $3, $4)"#,
-    )
-    .bind(REGISTRATION_SLA_HOURS)
-    .bind(REGISTRATION_SLA_HOURS_VALUE)
-    .bind("注册审批超时时限（72 小时）")
-    .bind("SLA-REG-72H")
-    .execute(pool)
-    .await?;
-
-    Ok(false)
-}
-
-/// 流程模板编排：流程行 → 节点物化（事件载体 + 主体行 + 接线桥 + 归属桥）→ next-ops。
-/// publish.rs materialize_graph 物化同构（线性图两阶段：先节点后边）。
-///
-/// 返回 (已存在, 新增, 修复)。修复 = 流程行本轮之前已存在但结构缺失的补建数。
-async fn ensure_flow_template(
-    pool: &PgPool,
-    tpl: &(&str, &str, &[FlowNode]),
-) -> (usize, usize, usize) {
-    let (flow_code, flow_notice, nodes) = tpl;
-    let mut existing = 0usize;
-    let mut created = 0usize;
-    let mut healed = 0usize;
-
-    // 2.1 流程行（幂等，lifecycle 链 → DDL default gen_next_zuid；meta.nodes 承载
-    // start 定位契约——initiate_flow 解析 type='start' 节点的图内编号）
-    let (flow_id, flow_preexisted) =
-        match ensure_process_row(pool, flow_code, flow_notice, nodes).await {
-            Ok(v) => v,
-            Err(e) => {
-                common::telemetry::warn!("seed[approval]: 流程模板行自愈失败 {flow_code}: {e}");
-                return (existing, created, healed);
-            }
-        };
-    if flow_preexisted {
-        existing += 1;
-    } else {
-        created += 1;
-    }
-
-    // 2.2 节点物化（幂等键 = 归属桥 (ref_left, code=图内编号)；publish 物化同构）
-    let mut op_ids: Vec<i64> = Vec::with_capacity(nodes.len());
-    for node in nodes.iter() {
-        match ensure_flow_node(pool, flow_id, node).await {
-            Ok((op_id, preexisted)) => {
-                if preexisted {
-                    existing += 1;
-                } else if flow_preexisted {
-                    healed += 1;
-                } else {
-                    created += 1;
-                }
-                op_ids.push(op_id);
-            }
-            Err(e) => {
-                common::telemetry::warn!(
-                    "seed[approval]: 流程节点自愈失败 {flow_code}/{}: {e}",
-                    node.graph_id
-                );
-                return (existing, created, healed);
-            }
-        }
-    }
-
-    // 2.3 next-ops 出边（对象形态 {"id":N}——parse_next_op_entries 契约；
-    // 无条件重写，顺带修复历史断边/裸数值旧形态）
-    for (idx, node) in nodes.iter().enumerate() {
-        let next_ops: serde_json::Value = match op_ids.get(idx + 1) {
-            Some(downstream) => serde_json::json!([{ "id": downstream }]), // id-json-ok（DB 内 JSONB：Rust as_i64 + jsonb @> containment 双契约要求数字形态）
-            None => serde_json::json!([]),
-        };
-        if let Err(e) = sqlx::query(
-            r#"UPDATE isahl.zc_id_process_rr_operation
-               SET "next-ops" = $1
-               WHERE ref_left = $2 AND ref_right = $3 AND deleted_at IS NULL"#,
-        )
-        .bind(&next_ops)
-        .bind(flow_id)
-        .bind(op_ids[idx])
-        .execute(pool)
-        .await
-        {
-            common::telemetry::warn!(
-                "seed[approval]: next-ops 写入失败 {flow_code}/{}: {e}",
-                node.graph_id
-            );
-            return (existing, created, healed);
-        }
-    }
-
-    (existing, created, healed)
-}
-
-/// 流程行幂等确保（meta.nodes 图结构随行写入）。返回 (流程 id, 本轮之前已存在)。
-async fn ensure_process_row(
-    pool: &PgPool,
-    flow_code: &str,
-    flow_notice: &str,
-    nodes: &[FlowNode],
-) -> Result<(i64, bool), sqlx::Error> {
-    if let Some(id) = sqlx::query_scalar(
-        "SELECT id FROM isahl.zc_id_process WHERE code = $1 AND deleted_at IS NULL LIMIT 1",
-    )
-    .bind(flow_code)
-    .fetch_optional(pool)
-    .await?
-    {
-        return Ok((id, true));
-    }
-
-    // 图内编号 → 节点类型（initiate_flow start 定位契约：meta.nodes[].id + type）
-    let meta = serde_json::json!({
-        "nodes": nodes
-            .iter()
-            .map(|n| serde_json::json!({ "id": n.graph_id, "type": n.kind }))
-            .collect::<Vec<_>>(),
-    });
-    let id: i64 = match sqlx::query_scalar::<_, i64>(
-        // 审批流程定义落 zc_id_proc-approve 子类（flow-process-continuity 规约：
-        // 基表 zc_id_process 读经继承并集兼容；子类缺失降级基表，防旧库自愈失败）
-        r#"INSERT INTO isahl."zc_id_proc-approve" (code, notice, meta)
-           VALUES ($1, $2, $3)
-           RETURNING id"#,
-    )
-    .bind(flow_code)
-    .bind(flow_notice)
-    .bind(&meta)
-    .fetch_one(pool)
-    .await
-    {
-        Ok(id) => id,
-        Err(e) if e.to_string().contains("42P01") => {
-            sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl.zc_id_process (code, notice, meta)
-                   VALUES ($1, $2, $3)
-                   RETURNING id"#,
-            )
-            .bind(flow_code)
-            .bind(flow_notice)
-            .bind(&meta)
-            .fetch_one(pool)
-            .await?
-        }
-        Err(e) => return Err(e),
-    };
-
-    Ok((id, false))
-}
-
-/// 单节点物化（publish.rs 物化同构，单事务原子）：
-/// 事件载体行（`zc_id_even-approve`，code=图内编号）→ 节点主体行
-/// （approve→`zc_id_oper-approve`，start/end→`zc_id_oper-gate`，范例标记
-/// `_f_='实现'`/`_t_='范例'`）→ cate 绑定（approve）→ end outcome meta →
-/// `zc_id_operation_rr_event` 接线桥 → `zc_id_process_rr_operation` 归属桥
-/// （code=图内编号、comments=节点 label；next-ops 由编排阶段二统一补写）。
-///
-/// 幂等键：归属桥 (ref_left, code)。返回 (节点主体行 id, 本轮之前已存在)。
-async fn ensure_flow_node(
-    pool: &PgPool,
-    flow_id: i64,
-    node: &FlowNode,
-) -> Result<(i64, bool), sqlx::Error> {
-    let existing_op: Option<i64> = sqlx::query_scalar(
-        r#"SELECT ref_right FROM isahl.zc_id_process_rr_operation
-           WHERE ref_left = $1 AND code = $2 AND deleted_at IS NULL LIMIT 1"#,
-    )
-    .bind(flow_id)
-    .bind(node.graph_id)
-    .fetch_optional(pool)
-    .await?;
-    if let Some(op_id) = existing_op {
-        return Ok((op_id, true));
-    }
-
-    let mut tx = pool.begin().await?;
-
-    // 事件载体行（节点↔载体 1:1；实例挂载体、advance 经接线桥反查节点）
-    let carrier_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_even-approve" (notice, created_by_id, code)
-           VALUES ($1, 1, $2)
-           RETURNING id"#,
-    )
-    .bind(node.label)
-    .bind(node.graph_id)
-    .fetch_one(&mut *tx)
-    .await?;
-
-    // 节点主体行（类型→子类分派同 publish；id 省略走 DDL default 生命周期链）
-    let op_id: i64 = if node.kind == "approve" {
-        sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, created_by_id, _f_, _t_)
-               VALUES ($1, $2, 1, '实现', '范例')
-               RETURNING id"#,
-        )
-        .bind(node.label)
-        .bind(node.graph_id)
-        .fetch_one(&mut *tx)
-        .await?
-    } else {
-        sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_oper-gate" (notice, code, created_by_id, _f_, _t_)
-               VALUES ($1, $2, 1, '实现', '范例')
-               RETURNING id"#,
-        )
-        .bind(node.label)
-        .bind(node.graph_id)
-        .fetch_one(&mut *tx)
-        .await?
-    };
-
-    // cate 绑定（非 terminal 节点；find-or-create 同 publish——类型判定 cate 优先）
-    if node.kind == "approve" {
-        let cate_id: i64 =
-            match sqlx::query_scalar(
-                r#"SELECT id FROM isahl."zc_id_cate-proc_op"
-               WHERE code = 'approve' AND deleted_at IS NULL LIMIT 1"#,
-            )
-            .fetch_optional(&mut *tx)
-            .await?
-            .flatten()
-            {
-                Some(id) => id,
-                None => sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_cate-proc_op" (notice, code, enable, created_by_id)
-                       VALUES ('approve', 'approve', TRUE, 1)
-                       RETURNING id"#,
-                )
-                .fetch_one(&mut *tx)
-                .await?,
-            };
-        sqlx::query(r#"UPDATE isahl.zc_id_operation SET "ck_cate-proc_op" = $1 WHERE id = $2"#)
-            .bind(cate_id)
-            .bind(op_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-
-    // end 节点终局语义（publish 同构：meta.end_outcome，缺省 complete）
-    if node.kind == "end" {
-        sqlx::query(
-            r#"UPDATE isahl.zc_id_operation
-               SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{end_outcome}',
-                     to_jsonb('complete'::text), true)
-               WHERE id = $1"#,
-        )
-        .bind(op_id)
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    // 接线桥（节点主体 ↔ 事件载体；实例挂载体行——create_approval_instances 契约）
-    sqlx::query(
-        r#"INSERT INTO isahl.zc_id_operation_rr_event (ref_left, ref_right, created_by_id)
-           VALUES ($1, $2, 1)"#,
-    )
-    .bind(op_id)
-    .bind(carrier_id)
-    .execute(&mut *tx)
-    .await?;
-
-    // 归属桥（code=图内编号、comments=节点 label——COALESCE(rro.comments, o.notice)
-    // 节点 label 解析契约；next-ops 编排阶段二补写）
-    sqlx::query(
-        r#"INSERT INTO isahl.zc_id_process_rr_operation
-           (code, ref_left, ref_right, comments, created_by_id)
-           VALUES ($1, $2, $3, $4, 1)"#,
-    )
-    .bind(node.graph_id)
-    .bind(flow_id)
-    .bind(op_id)
-    .bind(node.label)
-    .execute(&mut *tx)
-    .await?;
-
-    tx.commit().await?;
-    Ok((op_id, false))
 }
 
 /// 3. 审批事件一致性自检 + 模板绑定回填（按事件 code 分组，add-approval-leaf-template-seeds 泛化）。
@@ -563,6 +152,19 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
     // 自愈重建逻辑——若误按 AUTHORIZATION_FLOW_CODE 重建会绑错流程，故不在此
     // 自愈，断链维持告警由人工核查（fix-approval-event-adaptive-write 契约）。
     // leaf_check_ok=false 时同样跳过（无法确定事件写入目标表）。
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
+    // 本函数两处 oper-approve INSERT（自愈环内 register-context、尾部补建）复用同一结果。
+    let (dk_scene, dk_factor, dk_function) =
+        match ontology_binding::resolve(pool, ("JE", "FTA", "↓_EZ")).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::warn!(
+                    "seed[approval]: {event_code} 坐标解析失败（自愈/补建行坐标置空）: {e}"
+                );
+                (None, None, None)
+            }
+        };
+
     if broken_count > 0 && event_code == REGISTRATION_APPROVAL_CODE && leaf_check_ok {
         // 模板绑定目标：user-register-approval 事件绑 FLOW-AUTHORIZATION 的 approve 节点
         // 模板（与 approvals/apply、register.rs 写入契约一致）
@@ -669,12 +271,26 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                 }
             };
             let event_id: Result<i64, _> = if leaf_table_exists {
+                // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+                // （审批叶表继承 even-approve 坐标 JC/FTA/↑_NA）
+                let (leaf_dk_scene, leaf_dk_factor, leaf_dk_function) =
+                    match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            let _ = tx.rollback().await;
+                            common::telemetry::warn!(
+                                "seed[approval]: {event_code} appr-authorization 坐标解析失败 oper={oper_id}: {e}"
+                            );
+                            continue;
+                        }
+                    };
                 sqlx::query_scalar(
                     r#"
                     INSERT INTO isahl."zc_id_appr-authorization" (
                         created_by_id, updated_by_id, notice, code, comments,
-                        tpl_id, qk_sla, created_at, updated_at
-                    ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW())
+                        tpl_id, qk_sla, created_at, updated_at,
+                        dk_scene, dk_factor, dk_function
+                    ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
                     RETURNING id
                     "#,
                 )
@@ -684,15 +300,34 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                 .bind(&comments)
                 .bind(flow_binding.as_ref().and_then(|(_, t)| *t))
                 .bind(sla_duration_id)
+                .bind(leaf_dk_scene)
+                .bind(leaf_dk_factor)
+                .bind(leaf_dk_function)
                 .fetch_one(&mut *tx)
                 .await
             } else {
+                // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+                // （事件族坐标，与上方 oper-approve 的 JE/FTA/↓_EZ 不同 → 分离命名）
+                // 落点：审批域叶表 zc_id_appr-authorization（§ENVIRONMENT_SPEC「只能写叶表」；
+                // 注册行语义 = 访问授权审批，与上方 leaf 分支同表——回退不再写域父表）
+                let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
+                    match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            let _ = tx.rollback().await;
+                            common::telemetry::warn!(
+                                "seed[approval]: {event_code} even-approve 坐标解析失败 oper={oper_id}: {e}"
+                            );
+                            continue;
+                        }
+                    };
                 sqlx::query_scalar(
                     r#"
-                    INSERT INTO isahl."zc_id_even-approve" (
+                    INSERT INTO isahl."zc_id_appr-authorization" (
                         created_by_id, updated_by_id, notice, code, comments,
-                        tpl_id, qk_sla, created_at, updated_at
-                    ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW())
+                        tpl_id, qk_sla, created_at, updated_at,
+                        dk_scene, dk_factor, dk_function
+                    ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
                     RETURNING id
                     "#,
                 )
@@ -702,6 +337,9 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                 .bind(&comments)
                 .bind(flow_binding.as_ref().and_then(|(_, t)| *t))
                 .bind(sla_duration_id)
+                .bind(ev_dk_scene)
+                .bind(ev_dk_factor)
+                .bind(ev_dk_function)
                 .fetch_one(&mut *tx)
                 .await
             };
@@ -726,9 +364,13 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                             Some(v) => v,
                             None => {
                                 match sqlx::query_scalar::<_, i64>(
-                                    r#"INSERT INTO isahl."zc_id_oper-approve" (notice, created_by_id)
-                                       VALUES ('register-context', 1) RETURNING id"#,
+                                    r#"INSERT INTO isahl."zc_id_oper-approve"
+                                           (notice, created_by_id, dk_scene, dk_factor, dk_function)
+                                       VALUES ('register-context', 1, $1, $2, $3) RETURNING id"#,
                                 )
+                                .bind(dk_scene)
+                                .bind(dk_factor)
+                                .bind(dk_function)
                                 .fetch_one(&mut *tx)
                                 .await
                                 {
@@ -844,14 +486,16 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
         // 实例补建不带事件绑定，随后由 bridge_pairing 语句落 rr_event 桥行
         r#"
         INSERT INTO isahl."zc_id_oper-approve" (
-            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at
+            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function
         )
         SELECT
             COALESCE(e.notice, '审批'), e.code,
             e.created_by_id,
             $2,
             e.created_by_id,
-            NOW(), NOW()
+            NOW(), NOW(),
+            $3, $4, $5
         FROM isahl."zc_id_even-approve" e
         WHERE e.code = $1 AND e.deleted_at IS NULL
           AND NOT EXISTS (
@@ -863,6 +507,9 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
     )
     .bind(event_code)
     .bind(admin_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await
     {

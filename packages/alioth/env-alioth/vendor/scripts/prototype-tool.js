@@ -371,6 +371,9 @@ function showHelp() {
   console.log(
     'refresh-base-css [ns|file...]  [--dry-run]  \u5237\u65b0\u5185\u5d4c prototype-base.css \u4e3a\u5f53\u524d\u7248\u672c',
   );
+  console.log(
+    'refresh-overlay  [ns|file...]  [--dry-run]  \u5237\u65b0\u5185\u5d4c feedback overlay\uff08IIFE + \u6587\u6848\uff09\u4e3a\u5f53\u524d\u7248\u672c',
+  );
 }
 function genCSS(u) {
   var lines = ['  /* UTILITY CSS */'];
@@ -441,7 +444,7 @@ function cmdListUtilities() {
 
 function resolveBlockToModule(ns, blockId) {
   // block.json 的 sharing.ownerModule 已记录了所属 Module
-  var sj = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Blocks', blockId, 'block.json');
+  var sj = join(sourcesKindDir(ns, 'Blocks'), blockId, 'block.json');
   if (!existsSync(sj)) return null;
   try {
     var sc = JSON.parse(readFileSync(sj, 'utf-8'));
@@ -506,7 +509,7 @@ function cmdSyncServices(args) {
     console.error('Usage: sync-factors <namespace> <module>');
     exit(1);
   }
-  const modPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules', name, 'module.json');
+  const modPath = join(sourcesKindDir(ns, 'Modules'), name, 'module.json');
   if (!existsSync(modPath)) {
     console.error('module.json not found: ' + modPath);
     exit(1);
@@ -521,7 +524,7 @@ function cmdSyncServices(args) {
 
   var bindings = {};
   for (const sc of scenes) {
-    const sjPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Blocks', sc.id, 'block.json');
+    const sjPath = join(sourcesKindDir(ns, 'Blocks'), sc.id, 'block.json');
     if (!existsSync(sjPath)) {
       console.log('  Skipped (no block.json): ' + sc.id);
       continue;
@@ -708,7 +711,7 @@ function computeNextVersion(dir, prefix) {
 
 function findModulesByBlock(ns, blockId) {
   var found = [];
-  var modsDir = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules');
+  var modsDir = sourcesKindDir(ns, 'Modules');
   var files = globSync(join(modsDir, '*', 'module.json'));
   files.forEach(function (fp) {
     var mod = JSON.parse(readFileSync(fp, 'utf-8'));
@@ -783,6 +786,7 @@ var FEEDBACK_ZH_LABELS = {
   submitSuccess: '已提交',
   submitError: '提交失败，请重试',
   submitErrorUnreachable: '无法连接反馈服务——请先启动 bun scripts/feedback/server.ts',
+  submitErrorBlocked: '反馈服务已运行但拒绝本页来源——该 origin 不在 allowlist（FEEDBACK_ALLOWED_ORIGINS）',
 };
 
 function injectFeedbackOverlay(html, ns, htmlPath) {
@@ -1356,7 +1360,7 @@ function cmdPrepareBlockDistribution(args) {
   if (args[2] === '--briefs' && args[3]) {
     briefsFile = resolve(ROOT, args[3]);
   }
-  const modJsonPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules', name, 'module.json');
+  const modJsonPath = join(sourcesKindDir(ns, 'Modules'), name, 'module.json');
   if (!existsSync(modJsonPath)) {
     console.error('module.json not found: ' + modJsonPath);
     exit(1);
@@ -1380,7 +1384,7 @@ function cmdPrepareBlockDistribution(args) {
     needsScaffold = 0;
   for (const entry of sceneAssembly) {
     const sid = entry.id;
-    const srcDir = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Blocks', sid);
+    const srcDir = join(sourcesKindDir(ns, 'Blocks'), sid);
     const protoDir = join(ROOT, 'Pre-Proc', ns, 'Prototypes', 'Blocks', sid);
     const blockJsonPath = join(srcDir, 'block.json');
     const briefPath = join(srcDir, 'block-brief.json');
@@ -1436,15 +1440,8 @@ function cmdPrepareBlockDistribution(args) {
     }
   }
   // Write distribution state
-  const distPath = join(
-    ROOT,
-    'Pre-Proc',
-    ns,
-    'Sources',
-    'Modules',
-    name,
-    '.distribution-state.json',
-  );
+  const distPath = join(sourcesKindDir(ns, 'Modules'), name,
+  '.distribution-state.json',);
   const state = {
     ns: ns,
     module: name,
@@ -1497,16 +1494,9 @@ async function cmdCollectBlockResults(args) {
     console.error('Usage: collect-block-results <namespace> <module>');
     exit(1);
   }
-  const distPath = join(
-    ROOT,
-    'Pre-Proc',
-    ns,
-    'Sources',
-    'Modules',
-    name,
-    '.distribution-state.json',
-  );
-  const modJsonPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules', name, 'module.json');
+  const distPath = join(sourcesKindDir(ns, 'Modules'), name,
+  '.distribution-state.json',);
+  const modJsonPath = join(sourcesKindDir(ns, 'Modules'), name, 'module.json');
   if (!existsSync(modJsonPath)) {
     console.error('module.json not found.');
     exit(1);
@@ -1612,7 +1602,11 @@ async function cmdBuild(args) {
           await buildModule(mDir, m.name, ns, blockId + '(b-v' + ver + ')');
           var apps = findAppsByModule(ns, m.name);
           for (const a of apps) {
-            var appDir = join(ROOT, 'Pre-Proc', ns, 'Apps', a.code);
+            // 权威 App 源在 Prototypes/Apps/（见 module 级联注释）
+            var appProto = join(ROOT, 'Pre-Proc', ns, 'Prototypes', 'Apps', a.code);
+            var appDir = existsSync(join(appProto, 'llm-tsx', 'app.tsx'))
+              ? appProto
+              : join(ROOT, 'Pre-Proc', ns, 'Apps', a.code);
             if (existsSync(join(appDir, 'llm-tsx', 'app.tsx'))) {
               console.log('    Cascade to App: ' + a.code);
               await buildApp(appDir, a.code, ns, m.name + '(m-v?)');
@@ -1643,7 +1637,13 @@ async function cmdBuild(args) {
       await buildModule(modDir, moduleName, ns, modSceneRefs || '');
       var apps = findAppsByModule(ns, moduleName);
       for (const a of apps) {
-        var appDir = join(ROOT, 'Pre-Proc', ns, 'Apps', a.code);
+        // 权威 App 源在 Prototypes/Apps/{code}/llm-tsx/app.tsx；Pre-Proc/{ns}/Apps/
+        // 下残留的 scaffold 默认 llm-tsx（相对深度错误 + lifecycle 幽灵导入）不得
+        // 被级联构建（2026-09-09 实证：module 构建尾段 App 集成 5 个解析错误）
+        var appProto = join(ROOT, 'Pre-Proc', ns, 'Prototypes', 'Apps', a.code);
+        var appDir = existsSync(join(appProto, 'llm-tsx', 'app.tsx'))
+          ? appProto
+          : join(ROOT, 'Pre-Proc', ns, 'Apps', a.code);
         if (existsSync(join(appDir, 'llm-tsx', 'app.tsx'))) {
           console.log('  Cascade to App: ' + a.code);
           await buildApp(appDir, a.code, ns, moduleName + '(m-v' + modVer + ')');
@@ -1698,7 +1698,7 @@ async function buildAll(modPath) {
     console.error('Cannot extract module name');
     exit(1);
   }
-  var modJsonPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules', modName, 'module.json');
+  var modJsonPath = join(sourcesKindDir(ns, 'Modules'), modName, 'module.json');
   if (!existsSync(modJsonPath)) {
     console.error('module.json not found');
     exit(1);
@@ -1992,7 +1992,7 @@ async function cmdCheck(args) {
     exit(1);
   }
 
-  var modJsonPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules', modName, 'module.json');
+  var modJsonPath = join(sourcesKindDir(ns, 'Modules'), modName, 'module.json');
   if (!existsSync(modJsonPath)) {
     console.error('module.json not found: ' + modJsonPath);
     exit(1);
@@ -2219,7 +2219,7 @@ function cmdScaffold(args) {
   }
 
   if (level === 'module') {
-    var moduleJsonPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Modules', code, 'module.json');
+    var moduleJsonPath = join(sourcesKindDir(ns, 'Modules'), code, 'module.json');
     var moduleTsxPath = join(
       ROOT,
       'Pre-Proc',
@@ -2249,7 +2249,7 @@ function cmdScaffold(args) {
   }
 
   if (level === 'scene' || level === 'block') {
-    var blockJsonPath = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Blocks', code, 'block.json');
+    var blockJsonPath = join(sourcesKindDir(ns, 'Blocks'), code, 'block.json');
     var blockTsxPath = join(
       ROOT,
       'Pre-Proc',
@@ -2445,6 +2445,210 @@ function cmdRefreshBaseCss(args) {
   return changed;
 }
 
+/** 注入 options 解析：优先 JSON（当前生成形态），回落 JS AST（早期 prettier 多行 + 单引号
+ *  字面量变体——实证 9 个 Alioth `Pre-Proc/Alioth/Sources/Apps/**` 原型）。只取 namespace /
+ *  prototypeRef：labels 一律用当前文案表覆盖，故无需完整还原老式 labels。 */
+function overlayOptionsFromAst(payload) {
+  var ast;
+  try {
+    ast = js.parse('(' + payload + ')');
+  } catch (e) {
+    return null;
+  }
+  var obj = null;
+  walkAst(ast, function (node) {
+    if (!obj && node.type === 'ObjectExpression') obj = node;
+  });
+  if (!obj) return null;
+  var out = {};
+  var props = obj.properties || [];
+  for (var i = 0; i < props.length; i++) {
+    var p = props[i];
+    if (!p || p.type !== 'Property' || !p.key) continue;
+    var k =
+      p.key.type === 'Identifier'
+        ? p.key.name
+        : p.key.type === 'Literal'
+          ? String(p.key.value)
+          : null;
+    if (k && p.value && p.value.type === 'Literal') out[k] = p.value.value;
+  }
+  return out;
+}
+
+/* ═══ refresh-overlay：刷新已构建原型内嵌的 feedback overlay ═══
+   原型产物内联的是**构建期**的 overlay IIFE 快照 + 文案表（FEEDBACK_ZH_LABELS）；
+   core 逻辑或文案变更后旧产物不跟随（2026-09-11 实证：683 个已构建产物仍带修复前的
+   失败分类逻辑，blocked 场景误报「请先启动 server」）。本命令按标记定位注入对
+   （IIFE <script> + 紧随其后的 options <script>）原地替换正文——不重序列化 HTML、
+   不读 llm-tsx 源、不触发版本号增长，故不会混入未构建的源改动。 */
+function cmdRefreshOverlay(args) {
+  const MARKER = 'AliothFeedback.createFeedbackOverlay(';
+  const PARSER = join(ROOT, 'scripts/parser-utils.mjs');
+  const dryRun = args.indexOf('--dry-run') >= 0;
+  if (dryRun)
+    args = args.filter(function (a) {
+      return a !== '--dry-run';
+    });
+
+  var targets;
+  if (args.length > 0) {
+    var first = args[0];
+    var nsDir = join(ROOT, 'Pre-Proc', first);
+    if (
+      existsSync(nsDir) &&
+      statSync(nsDir).isDirectory() &&
+      first.indexOf('/') < 0 &&
+      first.indexOf('\\') < 0
+    ) {
+      targets = globSync(join(nsDir, '**', '*.html'));
+    } else {
+      targets = args
+        .map(function (f) {
+          return resolve(ROOT, f);
+        })
+        .filter(function (f) {
+          return existsSync(f) && f.endsWith('.html');
+        });
+    }
+  } else {
+    targets = globSync(join(ROOT, 'Pre-Proc', '**', '*.html'));
+  }
+
+  var iife = buildFeedbackIife();
+  if (!iife) {
+    console.error('overlay IIFE 构建失败（core 入口缺失或 esbuild 不可用）');
+    exit(1);
+  }
+  var newIife = '\n' + iife + '\n';
+
+  var changed = 0,
+    ok = 0,
+    skip = 0,
+    fail = 0;
+  for (var file of targets) {
+    var raw;
+    try {
+      raw = execSync('bun ' + JSON.stringify(PARSER) + ' extract-all-scripts ' + JSON.stringify(file), {
+        encoding: 'utf-8',
+        timeout: 20000,
+        maxBuffer: 32 * 1024 * 1024,
+      });
+    } catch (e) {
+      fail++;
+      continue;
+    }
+    var blocks;
+    try {
+      blocks = JSON.parse(raw.trim());
+    } catch (e) {
+      fail++;
+      continue;
+    }
+    if (!Array.isArray(blocks)) {
+      fail++;
+      continue;
+    }
+
+    var optIdx = -1;
+    for (var i = 0; i < blocks.length; i++) {
+      if (typeof blocks[i] === 'string' && blocks[i].indexOf(MARKER) >= 0) {
+        optIdx = i;
+        break;
+      }
+    }
+    if (optIdx <= 0) {
+      skip++; // 无注入，或注入块不在 IIFE 之后
+      continue;
+    }
+    var oldOpt = blocks[optIdx];
+    var oldIife = blocks[optIdx - 1];
+    if (oldIife.indexOf('AliothFeedback') < 0) {
+      skip++; // 前置块不是 overlay IIFE——拒绝改写未知结构
+      continue;
+    }
+    var jsonStart = oldOpt.indexOf(MARKER) + MARKER.length;
+    var jsonEnd = oldOpt.lastIndexOf(')');
+    if (jsonEnd <= jsonStart) {
+      fail++;
+      continue;
+    }
+    var opts = null;
+    try {
+      opts = JSON.parse(oldOpt.slice(jsonStart, jsonEnd));
+    } catch (e) {
+      opts = overlayOptionsFromAst(oldOpt.slice(jsonStart, jsonEnd));
+    }
+    if (!opts || typeof opts !== 'object' || !opts.namespace) {
+      fail++;
+      continue;
+    }
+    var newOpt =
+      '\n' +
+      MARKER +
+      JSON.stringify({
+        namespace: opts.namespace,
+        prototypeRef: opts.prototypeRef,
+        labels: FEEDBACK_ZH_LABELS,
+      }) +
+      ');\n';
+    if (oldOpt === newOpt && oldIife === newIife) {
+      ok++;
+      continue;
+    }
+
+    var rel = relative(ROOT, file).split(sep).join('/');
+    if (dryRun) {
+      console.log(
+        'STALE ' +
+          rel +
+          ' (iife ' +
+          oldIife.length +
+          '->' +
+          newIife.length +
+          ' bytes, labels ' +
+          Object.keys(opts.labels || {}).length +
+          '->' +
+          Object.keys(FEEDBACK_ZH_LABELS).length +
+          ')',
+      );
+      changed++;
+      continue;
+    }
+
+    var html = readFileSync(file, 'utf-8');
+    var p1 = html.indexOf(oldIife);
+    if (p1 < 0) {
+      fail++;
+      continue;
+    }
+    var next = html.slice(0, p1) + newIife + html.slice(p1 + oldIife.length);
+    var p2 = next.indexOf(oldOpt);
+    if (p2 < 0) {
+      fail++;
+      continue;
+    }
+    next = next.slice(0, p2) + newOpt + next.slice(p2 + oldOpt.length);
+    writeFileSync(file, next, 'utf-8');
+    console.log('UPD ' + rel);
+    changed++;
+  }
+
+  console.log(
+    '\n' +
+      changed +
+      (dryRun ? ' stale' : ' refreshed') +
+      ', ' +
+      ok +
+      ' current, ' +
+      skip +
+      ' no-overlay, ' +
+      fail +
+      ' failed',
+  );
+  if (fail > 0) exit(1);
+}
+
 async function cmdRenderShell(args) {
   // render-shell <block|module|app> [ns] [id] [--out <path>]
   // 渲染空壳骨架为 *-shell.html(仅 boot-skeleton + CSS,不含 bundle/mountScript)
@@ -2587,6 +2791,7 @@ async function main() {
     scaffold: cmdScaffold,
     'render-shell': cmdRenderShell,
     'refresh-base-css': cmdRefreshBaseCss,
+    'refresh-overlay': cmdRefreshOverlay,
   };
   if (map[cmd]) await map[cmd](argv.slice(3));
   else {

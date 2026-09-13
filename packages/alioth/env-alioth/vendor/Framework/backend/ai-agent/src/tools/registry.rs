@@ -3,7 +3,7 @@
 use super::{ToolCall, ToolContext, ToolResult};
 use crate::agents::ToolDefinition;
 use crate::tools::executor::{
-    ExecuteActionTool, QueryDocumentTool, QuerySchemaTool, QuerySqlTool, ValidateFormTool,
+    DmnDraftTool, DmnReviseTool, ExecuteActionTool, QuerySchemaTool, QuerySqlTool, ValidateFormTool,
 };
 use std::collections::HashMap;
 
@@ -19,13 +19,11 @@ impl ToolRegistry {
         definitions.insert("query_schema".to_string(), QuerySchemaTool::definition());
         definitions.insert("validate_form".to_string(), ValidateFormTool::definition());
         definitions.insert(
-            "query_document".to_string(),
-            QueryDocumentTool::definition(),
-        );
-        definitions.insert(
             "execute_action".to_string(),
             ExecuteActionTool::definition(),
         );
+        definitions.insert("dmn_draft".to_string(), DmnDraftTool::definition());
+        definitions.insert("dmn_revise".to_string(), DmnReviseTool::definition());
 
         Self { definitions }
     }
@@ -46,8 +44,9 @@ impl ToolRegistry {
             "query_sql" => QuerySqlTool::execute(call, ctx).await,
             "query_schema" => QuerySchemaTool::execute(call, ctx).await,
             "validate_form" => ValidateFormTool::execute(call, ctx).await,
-            "query_document" => QueryDocumentTool::execute(call, ctx).await,
             "execute_action" => ExecuteActionTool::execute(call, ctx).await,
+            "dmn_draft" => DmnDraftTool::execute(call, ctx).await,
+            "dmn_revise" => DmnReviseTool::execute(call, ctx).await,
             _ => Ok(ToolResult {
                 tool_call_id: call.id.clone(),
                 name: call.name.clone(),

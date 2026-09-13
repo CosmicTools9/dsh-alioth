@@ -1,0 +1,17 @@
+[package]
+name = "waybill-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "派车/运单写链共享事务（transport-dispatch 派车核心：运单主档 + 一式两份镜像 + 产品实例对 + 明细 + 派车凭证 + 履约库存 + 生命周期）——平台 transport-dispatch 与 OpenActivity 门户共用单份实现，禁止应用侧复制同语义 SQL"
+
+[dependencies]
+sqlx = { workspace = true }
+common = { path = "../common" }
+ontology-binding = { path = "../ontology-binding" }
+trigger-registry = { path = "../trigger-registry" }
+consignment-writer = { path = "../consignment-writer" }
+rust_decimal = "1"
+chrono = { workspace = true }
+log = "0.4"

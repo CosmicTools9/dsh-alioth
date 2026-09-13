@@ -15,6 +15,10 @@ pub async fn check_access(
     body: web::Json<PdpCheckRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
+    // tighten-pdp-decision-surface A：调用者主体必须等于决策主体
+    if let Err(resp) = super::enforce_decision_subject(&req_http, req.user_id) {
+        return resp;
+    }
     let decision = decide_access(pool.get_ref(), req.user_id, &req.resource, &req.action).await;
     let permitted = decision == Decision::Permit;
     let reason = match decision {
@@ -40,10 +44,15 @@ pub async fn check_access(
 /// `decide_access` 漂移；现收敛为同源委托，deny-overrides / admin 遍历后兜底 /
 /// bootstrap Permit / conditions 求值全部继承。
 pub async fn check_access_batch(
+    req_http: HttpRequest,
     pool: web::Data<PgPool>,
     body: web::Json<PdpCheckBatchRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
+    // tighten-pdp-decision-surface A：调用者主体必须等于决策主体
+    if let Err(resp) = super::enforce_decision_subject(&req_http, req.user_id) {
+        return resp;
+    }
 
     let mut results = Vec::with_capacity(req.checks.len());
     for check in req.checks {
@@ -471,6 +480,10 @@ pub async fn ngac_decide(
     body: web::Json<ngac_contract::PdpCheckRequest>,
 ) -> HttpResponse {
     let req = body.into_inner();
+    // tighten-pdp-decision-surface A：调用者主体必须等于决策主体
+    if let Err(resp) = super::enforce_decision_subject(&req_http, req.user_id) {
+        return resp;
+    }
     let decision = decide_access(pool.get_ref(), req.user_id, &req.resource, &req.action).await;
     let permitted = decision == Decision::Permit;
     let reason = match decision {

@@ -251,8 +251,8 @@ pub async fn bind_system_subject(
             // INSERT/查重均落在推定叶表（类型白名单 → 静态 SQL）
             let (insert_sql, dup_sql): (&str, &str) = match subject_type {
                 "org" => (
-                    "INSERT INTO isahl.\"zc_id_orga-non-banking-legal\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_orga-non-banking-legal\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_orga-non-banking-legal\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -260,8 +260,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "position" => (
-                    "INSERT INTO isahl.\"zc_id_subj-position\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_subj-position\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_subj-position\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -269,8 +269,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "employee" => (
-                    "INSERT INTO isahl.\"zc_id_empl-natural\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_empl-natural\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_empl-natural\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -278,8 +278,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "bank" => (
-                    "INSERT INTO isahl.\"zc_id_bank-commercial\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_bank-commercial\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_bank-commercial\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -287,8 +287,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "group" => (
-                    "INSERT INTO isahl.\"zc_id_subj-group\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_subj-group\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_subj-group\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -296,8 +296,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "central-bank" => (
-                    "INSERT INTO isahl.\"zc_id_bank-central\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_bank-central\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_bank-central\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -305,8 +305,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "department" => (
-                    "INSERT INTO isahl.\"zc_id_orga-department\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_orga-department\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_orga-department\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -314,8 +314,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "country" => (
-                    "INSERT INTO isahl.\"zc_id_subj-country\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_subj-country\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_subj-country\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -323,8 +323,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "supranational" => (
-                    "INSERT INTO isahl.\"zc_id_subj-supranational\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_subj-supranational\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_subj-supranational\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -332,8 +332,8 @@ pub async fn bind_system_subject(
                      WHERE code = $1 AND deleted_at IS NULL",
                 ),
                 "agent" => (
-                    "INSERT INTO isahl.\"zc_id_empl-agent\" (id, code, notice, created_by_id) \
-                     SELECT isahl.gen_next_zuid(), $1, $2, $3 \
+                    "INSERT INTO isahl.\"zc_id_empl-agent\" (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+                     SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6 \
                      WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_empl-agent\" \
                                        WHERE code = $1 AND deleted_at IS NULL) \
                      RETURNING id",
@@ -342,10 +342,32 @@ pub async fn bind_system_subject(
                 ),
                 _ => unreachable!("subject_type 已在 seat match 校验"),
             };
-            let subject_id: Option<i64> = sqlx::query_scalar(insert_sql)
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let coords: Option<ontology_binding::Coords> = match subject_type {
+                "org" | "position" | "employee" | "department" => Some(("TX", "FJA", "↓_GG")),
+                "group" => Some(("ZB", "LNC", "↓_DA")),
+                "country" | "supranational" | "central-bank" => Some(("UB", "LNC", "↓_DA")),
+                "agent" => Some(("ZJ", "LNC", "↓_EH")),
+                // bank-commercial：实证取值（非自创）——Gateway/src/api/entity_binding.rs:852-855
+                // 同表 INSERT 声明 ("ZH","LNK","↓_DA")；openspec/changes/enforce-ontology-coordinate-writes/
+                // migration-wz-base-rows.sql 的 subj-bank→bank-commercial 迁移映射同值
+                "bank-commercial" => Some(("ZH", "LNK", "↓_DA")),
+                _ => None,
+            };
+            let (dk_scene, dk_factor, dk_function) = match coords {
+                Some(c) => ontology_binding::resolve_conn(&mut *tx, c)
+                    .await
+                    .map_err(actix_web::error::ErrorInternalServerError)?,
+                None => (None, None, None),
+            };
+            let mut insert_q = sqlx::query_scalar(insert_sql)
                 .bind(&code)
                 .bind(&body.notice)
-                .bind(user_id)
+                .bind(user_id);
+            if coords.is_some() {
+                insert_q = insert_q.bind(dk_scene).bind(dk_factor).bind(dk_function);
+            }
+            let subject_id: Option<i64> = insert_q
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -396,14 +418,23 @@ pub async fn bind_system_subject(
     //    system 绑定主体后 → 建系统管理员岗位 → 关联 主体↔岗位、岗位↔雇员(mgm-agent)，
     //    使 isahl 登录时经 fk_user→empl-agent→post_rr_employee 可反查自身岗位。
     // 4a. 系统管理员岗位（zc_id_subj-position，code 幂等）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (pos_dk_scene, pos_dk_factor, pos_dk_function) =
+        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
     let pos_id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subj-position\" (code, notice, created_by_id) \
-         SELECT 'POS-SYSTEM-ADMIN', '系统管理员', $1 \
+        "INSERT INTO isahl.\"zc_id_subj-position\" \
+         (code, notice, created_by_id, dk_scene, dk_factor, dk_function) \
+         SELECT 'POS-SYSTEM-ADMIN', '系统管理员', $1, $2, $3, $4 \
          WHERE NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_subj-position\" \
                            WHERE code = 'POS-SYSTEM-ADMIN' AND deleted_at IS NULL) \
          RETURNING id",
     )
     .bind(user_id)
+    .bind(pos_dk_scene)
+    .bind(pos_dk_factor)
+    .bind(pos_dk_function)
     .fetch_optional(&mut *tx)
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;
@@ -419,9 +450,15 @@ pub async fn bind_system_subject(
     };
 
     // 4b. mgm-agent 智体（若 isahl 用户存在；fk_user=isahl，code 幂等）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (agent_dk_scene, agent_dk_factor, agent_dk_function) =
+        ontology_binding::resolve_conn(&mut *tx, ("ZJ", "LNC", "↓_EH"))
+            .await
+            .map_err(actix_web::error::ErrorInternalServerError)?;
     let agent_id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_empl-agent\" (code, notice, fk_user, created_by_id) \
-         SELECT 'mgm-agent', 'mgm-agent 智能体', u.id, $1 \
+        "INSERT INTO isahl.\"zc_id_empl-agent\" \
+         (code, notice, fk_user, created_by_id, dk_scene, dk_factor, dk_function) \
+         SELECT 'mgm-agent', 'mgm-agent 智能体', u.id, $1, $2, $3, $4 \
          FROM isahl_auth.auth_users u \
          WHERE u.username = 'isahl' \
            AND NOT EXISTS (SELECT 1 FROM isahl.\"zc_id_empl-agent\" a \
@@ -429,6 +466,9 @@ pub async fn bind_system_subject(
          RETURNING id",
     )
     .bind(user_id)
+    .bind(agent_dk_scene)
+    .bind(agent_dk_factor)
+    .bind(agent_dk_function)
     .fetch_optional(&mut *tx)
     .await
     .map_err(actix_web::error::ErrorInternalServerError)?;

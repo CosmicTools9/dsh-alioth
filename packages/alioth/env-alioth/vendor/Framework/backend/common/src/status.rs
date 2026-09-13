@@ -82,7 +82,7 @@ pub async fn upsert_renewal_status_tx(
     .map_err(AliothError::from_sqlx)?;
     if updated.rows_affected() == 0 {
         sqlx::query(
-            "INSERT INTO \"isahl\".\"zc_id_lifecycle_r_status\" \
+            "INSERT INTO \"isahl\".\"zc_id_lifecycle_r_primary-status\" \
              (ref_left, ref_right, code, notice, created_by_id) VALUES ($1, $2, 'renewal_status', '续约状态流转', $3)",
         )
         .bind(entity_id)
@@ -101,11 +101,13 @@ pub async fn upsert_status_tx(
     status_id: i64,
     user_id: i64,
 ) -> Result<(), AliothError> {
+    // 模型约束：`zc_id_lifecycle_r_primary-status` 上 `UNIQUE (ref_left)` 覆盖**含软删行**，
+    // 故按 (ref_left) 原地复活/更新，而不是「看不到未删行就 INSERT」（否则撞唯一键）。
     let updated = sqlx::query(
         "UPDATE \"isahl\".\"zc_id_lifecycle_r_primary-status\" SET \
            ref_right = $2, updated_at = NOW(), updated_by_id = $3, \
            deleted_at = NULL, deleted_by_id = NULL \
-         WHERE ref_left = $1 AND deleted_at IS NULL",
+         WHERE ref_left = $1",
     )
     .bind(entity_id)
     .bind(status_id)
@@ -116,7 +118,9 @@ pub async fn upsert_status_tx(
     if updated.rows_affected() == 0 {
         sqlx::query(
             "INSERT INTO \"isahl\".\"zc_id_lifecycle_r_primary-status\" \
-             (ref_left, ref_right, notice, created_by_id) VALUES ($1, $2, '状态流转', $3)",
+             (ref_left, ref_right, notice, created_by_id) VALUES ($1, $2, '状态流转', $3) \
+             ON CONFLICT (ref_left) DO UPDATE SET ref_right = EXCLUDED.ref_right, \
+               updated_at = NOW(), deleted_at = NULL, deleted_by_id = NULL",
         )
         .bind(entity_id)
         .bind(status_id)

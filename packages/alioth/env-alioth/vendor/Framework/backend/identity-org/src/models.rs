@@ -192,6 +192,20 @@ impl HasReferenceJoins for NaturalPerson {
                 target_table: r#"isahl."zc_id_unit""#,
                 display_fields: &["notice"],
             },
+            // 雇佣组织桥（zc_id_subj-org_rr_employee：ref_left=组织, ref_right=自然人）
+            // ——司机列表展示归属主体（未挂桥 → _refs.employer_orgs 为空数组）
+            ReferenceJoin {
+                name: "employer_orgs",
+                card: Card::ToMany,
+                kind: JoinKind::Junction {
+                    junction_table: r#""isahl"."zc_id_subj-org_rr_employee""#,
+                    source_fk: "ref_right",
+                    target_fk: "ref_left",
+                    order_by: Some("id"),
+                },
+                target_table: r#"isahl."zc_id_subjects""#,
+                display_fields: &["notice", "code"],
+            },
         ]
     }
 }
@@ -522,8 +536,8 @@ pub struct UpdateConsignmentRequest {
     /// 列表/详情经产品 comments 读取线路——修复编辑改线路不生效）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub traffic_line_id: Option<i64>,
-    /// 货量（吨，数值）——非本表列；更新 qk_total 指向的标量真值，
-    /// 修复编辑货量仅塞 comments 不更新标量（公路委托读 qk_total mark 不变）
+    /// 货量（吨，数值）——非本表列；更新 deta-trade_order.qk_w_qty 指向的
+    /// scal-weight 标量真值（修复编辑货量仅塞 comments 不更新标量）
     #[serde(default)]
     pub volume: Option<f64>,
     /// 运费（金额，数值）——非本表列；更新 qk_amount 指向的 scal-amount 标量真值，
@@ -549,8 +563,6 @@ pub struct Vehicle {
     pub notice: Option<String>,
     pub comments: Option<String>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_w_capacity: Option<i64>,
@@ -559,6 +571,8 @@ pub struct Vehicle {
     // 模型升级后 qk_v/qk_w/qk_c_capacity、sk_currency 列已回归（schema-info 实测）；
     // sk_v_unit/sk_w_unit 已移除且不再需要——统一吨/立方米模式单位隐含于标量 notice
     //（批注 80e456cb 幻影字段 500 的历史处置已由模型升级对齐）
+    // 2026-09-11：`sk_unit` 列亦已不在车辆表（wz/dev 实测 information_schema 均无；
+    // 该表只保留 `sk_currency`）——代码侧同步移除，否则车辆列表/详情/录入全量 500。
     #[sqlx(rename = "ck_r-type")]
     #[serde(with = "common::serde_zuid::opt", default)]
     pub ck_r_type: Option<i64>,
@@ -578,7 +592,7 @@ impl AliothDbEntity for Vehicle {
     fn table_name() -> &'static str {
         "\"isahl\".\"zc_id_stor-ctn-vehicle\""
     }
-    const SELECT_FIELDS: &'static str = "id, code, notice, comments, sk_unit, fk_trustee, qk_w_capacity, qk_v_capacity, \"ck_r-type\", created_at, updated_at, deleted_at";
+    const SELECT_FIELDS: &'static str = "id, code, notice, comments, fk_trustee, qk_w_capacity, qk_v_capacity, \"ck_r-type\", created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "vehicle";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -587,16 +601,6 @@ impl AliothDbEntity for Vehicle {
 impl HasReferenceJoins for Vehicle {
     fn reference_joins() -> Vec<ReferenceJoin> {
         vec![
-            ReferenceJoin {
-                name: "sk_unit",
-                card: Card::ToOne,
-                kind: JoinKind::Forward {
-                    local_fk: "sk_unit",
-                    target_key: "id",
-                },
-                target_table: r#"isahl."zc_id_unit""#,
-                display_fields: &["notice"],
-            },
             ReferenceJoin {
                 name: "fk_trustee",
                 card: Card::ToOne,
@@ -647,8 +651,6 @@ pub struct CreateVehicleRequest {
     pub notice: Option<String>,
     pub comments: Option<String>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_w_capacity: Option<i64>,
@@ -669,8 +671,6 @@ pub struct UpdateVehicleRequest {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -703,6 +703,9 @@ pub struct TrafficLine {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
+    /// 起讫文本镜像（模型 from→to 语义）；结构化端点为 rr_stop 桥（seq 0=起 / 末=讫）
+    pub _f_: Option<String>,
+    pub _t_: Option<String>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -725,7 +728,7 @@ impl AliothDbEntity for TrafficLine {
         "\"isahl\".\"zc_id_stor-traffic_line\""
     }
     const SELECT_FIELDS: &'static str =
-        "id, code, notice, comments, fk_trustee, qk_path, created_at, updated_at, deleted_at";
+        "id, code, notice, comments, \"_f_\", \"_t_\", fk_trustee, qk_path, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "traffic_line";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -763,6 +766,9 @@ pub struct CreateTrafficLineRequest {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
+    /// 起讫文本镜像（`_f_`=起始地 / `_t_`=目的地；结构化端点为 rr_stop 桥）
+    pub _f_: Option<String>,
+    pub _t_: Option<String>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -774,6 +780,9 @@ pub struct UpdateTrafficLineRequest {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
+    /// 起讫文本镜像（`_f_`=起始地 / `_t_`=目的地）
+    pub _f_: Option<String>,
+    pub _t_: Option<String>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -1080,8 +1089,6 @@ pub struct TradeOrder {
     pub qk_amount: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub sk_currency: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
     #[sqlx(default)]
     pub _refs: Option<Value>,
     pub created_at: DateTime<Utc>,
@@ -1098,7 +1105,7 @@ impl AliothDbEntity for TradeOrder {
     fn table_name() -> &'static str {
         "\"isahl\".\"zc_id_deta-trade_order\""
     }
-    const SELECT_FIELDS: &'static str = "id, code, notice, comments, fk_goods, fk_demand, fk_delivery, fk_deal, fk_biller, fk_counterparty, qk_price, qk_qty, qk_amount, sk_currency, sk_unit, created_at, updated_at, deleted_at";
+    const SELECT_FIELDS: &'static str = "id, code, notice, comments, fk_goods, fk_demand, fk_delivery, fk_deal, fk_biller, fk_counterparty, qk_price, qk_qty, qk_amount, sk_currency, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "trade_order";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -1251,8 +1258,6 @@ pub struct CreateTradeOrderRequest {
     pub qk_amount: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub sk_currency: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateTradeOrderRequest {
@@ -1281,8 +1286,6 @@ pub struct UpdateTradeOrderRequest {
     pub qk_amount: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub sk_currency: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
 }
 
 // 清算账单 — zc_id_bill-check (也是 Receipt 收款单)
@@ -2051,8 +2054,6 @@ pub struct SettlementBank {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_balance: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
     #[sqlx(rename = "qk_exchange-rate")]
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_exchange_rate: Option<i64>,
@@ -2070,7 +2071,7 @@ impl AliothDbEntity for SettlementBank {
     fn table_name() -> &'static str {
         "\"isahl\".\"zc_id_stat-smt-bank\""
     }
-    const SELECT_FIELDS: &'static str = r#"id, qk_date, qk_income, qk_outgo, qk_balance, qk_total, "qk_exchange-rate", created_at, updated_at, deleted_at"#;
+    const SELECT_FIELDS: &'static str = r#"id, qk_date, qk_income, qk_outgo, qk_balance, "qk_exchange-rate", created_at, updated_at, deleted_at"#;
     const ENTITY_NAME: &'static str = "settlement_bank";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -2093,8 +2094,6 @@ pub struct CreateSettlementBankRequest {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_balance: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_exchange_rate: Option<i64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2107,8 +2106,6 @@ pub struct UpdateSettlementBankRequest {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_balance: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_exchange_rate: Option<i64>,
 }
@@ -2129,8 +2126,6 @@ pub struct SettlementCash {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_amount: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
@@ -2146,7 +2141,7 @@ impl AliothDbEntity for SettlementCash {
         "\"isahl\".\"zc_id_stat-smt-cash\""
     }
     const SELECT_FIELDS: &'static str =
-        "id, qk_date, qk_income, qk_outgo, qk_amount, qk_total, created_at, updated_at, deleted_at";
+        "id, qk_date, qk_income, qk_outgo, qk_amount, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "settlement_cash";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -2168,8 +2163,6 @@ pub struct CreateSettlementCashRequest {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_amount: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSettlementCashRequest {
@@ -2181,8 +2174,6 @@ pub struct UpdateSettlementCashRequest {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_amount: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
 }
 
 // ═══════════════════════════════════════════════
@@ -2201,8 +2192,6 @@ pub struct SettlementChannel {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_amount: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
     #[sqlx(rename = "qk_exchange-rate")]
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_exchange_rate: Option<i64>,
@@ -2220,7 +2209,7 @@ impl AliothDbEntity for SettlementChannel {
     fn table_name() -> &'static str {
         "\"isahl\".\"zc_id_stat-smt-channel\""
     }
-    const SELECT_FIELDS: &'static str = r#"id, qk_date, qk_income, qk_outgo, qk_amount, qk_total, "qk_exchange-rate", created_at, updated_at, deleted_at"#;
+    const SELECT_FIELDS: &'static str = r#"id, qk_date, qk_income, qk_outgo, qk_amount, "qk_exchange-rate", created_at, updated_at, deleted_at"#;
     const ENTITY_NAME: &'static str = "settlement_channel";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -2243,8 +2232,6 @@ pub struct CreateSettlementChannelRequest {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_amount: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_exchange_rate: Option<i64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2257,8 +2244,6 @@ pub struct UpdateSettlementChannelRequest {
     pub qk_outgo: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_amount: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub qk_total: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_exchange_rate: Option<i64>,
 }
@@ -2399,7 +2384,8 @@ pub struct Seal {
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
-    /// 关联运单号（批注轮 68：封签对运单进行——seal→装车条 voucher→运单桥反查）
+    /// 关联运单号：优先装车条两跳桥（seal→tsp-voucher→orde-traffic）；否则回读投影列
+    /// `projection`（管理页新增/编辑关联运单编号，P3 迁移后 comments 不再承载 JSON）
     #[sqlx(default)]
     pub waybill_no: Option<String>,
     #[sqlx(default)]
@@ -2424,11 +2410,9 @@ impl AliothDbEntity for Seal {
               JOIN "isahl"."zc_id_stat-tsp-voucher" v ON v.id = bv.ref_right AND v.deleted_at IS NULL
               JOIN "isahl"."zc_id_tsp-voucher_rr_devi-seal" ds ON ds.ref_left = v.id AND ds.deleted_at IS NULL
               WHERE ds.ref_right = e.id AND w.deleted_at IS NULL LIMIT 1),
-             -- 批注轮 69：管理页新增/编辑关联运单（comments JSON waybill_id）
-             (SELECT w2.code FROM "isahl"."zc_id_orde-land" w2
-              WHERE w2.id = (CASE WHEN e.comments IS JSON OBJECT
-                                  THEN (e.comments::json->>'waybill_id')::bigint END)
-                AND w2.deleted_at IS NULL LIMIT 1)
+             -- P3 迁移：管理页新增/编辑关联运单编号直落 projection（文本载荷列；
+             -- comments 不再承载 JSON）；真结构路径（tsp-voucher 两跳桥）写侧属装车条组装
+             NULLIF(e.projection, '')
            ) AS waybill_no"#;
     const ENTITY_NAME: &'static str = "seal";
     const SOFT_DELETE: bool = true;
@@ -2457,7 +2441,7 @@ pub struct CreateSealRequest {
     pub comments: Option<String>,
     /// 铅封类型 code（如 TARPAULIN/CONTAINER；add-wz-seal-batch-creation）
     pub seal_type: Option<String>,
-    /// 关联运单 id（批注轮 69：封签对运单进行——新增/编辑下拉选运单，comments JSON 承载）
+    /// 关联运单 id（封签对运单进行——新增/编辑下拉选运单；服务端解析为运单编号落 projection）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub waybill_id: Option<i64>,
 }
@@ -2469,6 +2453,7 @@ pub struct UpdateSealRequest {
     pub comments: Option<String>,
     /// 铅封类型 code（如 TARPAULIN/CONTAINER；add-wz-seal-batch-creation）
     pub seal_type: Option<String>,
+    /// 关联运单 id（None = 不改动；Some → 运单编号落 projection）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub waybill_id: Option<i64>,
 }
@@ -2487,7 +2472,7 @@ pub struct CreateSealBatchRequest {
     pub count: Option<i64>,
     pub notice: Option<String>,
     pub comments: Option<String>,
-    /// 关联运单 id（comments JSON 承载，与单条创建一致）
+    /// 关联运单 id（落 projection 运单编号，与单条创建一致）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub waybill_id: Option<i64>,
 }
@@ -2794,6 +2779,10 @@ pub struct Contract {
     pub qk_valid_segm: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub tpl_id: Option<i64>,
+    /// 健康度（meta 声明 health：lk_health → zc_id_leve-health，m2o）——DTO 名 health
+    #[sqlx(default)]
+    #[serde(with = "common::serde_zuid::opt", default)]
+    pub lk_health: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub dk_scene: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -2817,6 +2806,10 @@ pub struct Contract {
     #[sqlx(default)]
     #[serde(rename = "partyB")]
     pub party_b: Option<String>,
+    /// 结算人（费用移交第三方/受票方）名称（rr_party 第 3 条 title——可选）
+    #[sqlx(default)]
+    #[serde(rename = "settleParty")]
+    pub party_c: Option<String>,
     /// 状态 code（draft/pending_approval/active/executing/expired/pending_renewal/renewed/not_renew）
     #[sqlx(default)]
     pub status: Option<String>,
@@ -2853,7 +2846,7 @@ impl AliothDbEntity for Contract {
         "\"isahl\".\"zc_id_contract\""
     }
     const SELECT_FIELDS: &'static str =
-        "id, notice, code, o_number, comments, projection, t_color_, qk_date, \"qk_valid-segm\", tpl_id, \
+        "id, notice, code, o_number, comments, projection, t_color_, qk_date, \"qk_valid-segm\", tpl_id, lk_health, \
          dk_scene, dk_factor, dk_function, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "contract";
     const SOFT_DELETE: bool = true;

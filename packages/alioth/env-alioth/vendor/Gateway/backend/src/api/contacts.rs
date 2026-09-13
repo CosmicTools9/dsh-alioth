@@ -189,34 +189,19 @@ pub async fn heartbeat(
                     ),
                 };
 
-            // 路径: auth_users.id (= user_id) → zc_id_entity.id (= entity_id)
-            //                         → zc_id_entity_rr_contacts
-            //                         → zc_id_contacts.id
-            //                         → zc_id_contacts_rr_infos
-            //                         → zc_id_contact_infos.id
-            //                         → zc_id_info-isahl (isahl_id = user_id)
-            let resolved: Option<i64> = sqlx::query_scalar(
-                r#"SELECT c.id
-               FROM isahl.zc_id_contacts c
-               JOIN isahl."zc_id_contacts_rr_infos" cri ON cri.ref_left = c.id
-               JOIN isahl.zc_id_contact_infos ci ON ci.id = cri.ref_right
-               JOIN isahl."zc_id_info-isahl" ii ON ii.id = ci.id
-               JOIN isahl.zc_id_entity_rr_contacts erc ON erc.ref_right = c.id
-               JOIN isahl.zc_id_entity e ON e.id = erc.ref_left
-               WHERE e.id = $1 AND c.deleted_at IS NULL AND ci.deleted_at IS NULL
-               LIMIT 1"#,
-            )
-            .bind(user_id)
-            .fetch_optional(pool.get_ref())
-            .await
-            .ok()
-            .flatten();
-
-            match resolved {
-                Some(id) => id,
-                None => return HttpResponse::BadRequest().json(
+            // 联系链唯一实现（framework-contacts）：账号 1:1 绑定实体（auth_users.entity_id）
+            // → 默认联系人（zc_id_entity_rr_contacts）→ zc_id_contacts.id。
+            match ContactsService::resolve_user_contact(pool.get_ref(), user_id).await {
+                Ok(Some(resolved)) => resolved.contact_id,
+                Ok(None) => return HttpResponse::BadRequest().json(
                     serde_json::json!({ "success": false, "message": "找不到对应的联系人记录" }),
                 ),
+                Err(e) => {
+                    log::error!("heartbeat: resolve user contact failed: {}", e);
+                    return HttpResponse::BadRequest().json(
+                    serde_json::json!({ "success": false, "message": "找不到对应的联系人记录" }),
+                );
+                }
             }
         } else {
             contact_id

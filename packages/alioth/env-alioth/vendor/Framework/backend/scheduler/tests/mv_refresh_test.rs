@@ -23,10 +23,18 @@ async fn three_sources_consistent_after_voucher() {
     let pool = test_pool().await;
 
     // 容量行（product rr_storage）
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JE", "FRA", "↓_EE"))
+            .await
+            .expect("resolve dk coords");
     let prod: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_production" (notice, code, created_by_id)
-           VALUES ('inv-test-prod', 't-inv-prod', 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_prod-freight_road-sales" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('inv-test-prod', 't-inv-prod', 1, $1, $2, $3) RETURNING id"#,
     )
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("prod");
@@ -46,7 +54,7 @@ async fn three_sources_consistent_after_voucher() {
     .expect("qty");
 
     let rr_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_production_rr_storage"
+        r#"INSERT INTO isahl."zc_id_file_rr_url"
            (notice, ref_left, ref_right, qk_qty, qk_p_capacity, created_by_id)
            VALUES ('inv-test-rr', $1, $1, $2, $3, 1) RETURNING id"#,
     )
@@ -75,15 +83,26 @@ async fn three_sources_consistent_after_voucher() {
     .await
     .expect("bal");
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("GH", "FRA", "↓_GG"))
+            .await
+            .expect("resolve dk coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_stat-sto-voucher"
-           (notice, code, fk_production, "fk_obj-storage", qk_outgo, qk_total, qk_balance, created_by_id)
-           VALUES ('inv-test-v', 't-inv-v-1', $1, $2, $3, $3, $4, 1)"#,
+        // 叶表铁律（§8.5）：仓储凭证行落 zc_id_stat-whs-voucher（事实-仓储凭证）——
+        // 同族先例 trigger-registry/tests/mv_title_ownership_self_heal_test.rs 同法；
+        // 父表 zc_id_stat-sto-voucher 的读/删（含 DELETE 级联）经继承仍覆盖该行。
+        r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
+           (notice, code, fk_production, "fk_obj-storage", qk_outgo, qk_balance, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ('inv-test-v', 't-inv-v-1', $1, $2, $3, $4, 1, $5, $6, $7)"#,
     )
     .bind(prod)
     .bind(prod)
     .bind(out_scalar)
     .bind(bal_scalar)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("voucher");
@@ -92,7 +111,7 @@ async fn three_sources_consistent_after_voucher() {
     // 校准语义：mv 从 rr_storage.qk_qty 取数（80）；链尾凭证余额 50 是"外部直插未走守卫"
     // 的差异标记——守卫写路径会同步 apply_stock_delta 改 rr，三源归一。
     let rr_qty: f64 = sqlx::query_scalar(
-        r#"SELECT sm.mark::float8 FROM isahl."zc_id_scale" sm JOIN isahl."zc_id_production_rr_storage" r
+        r#"SELECT sm.mark::float8 FROM isahl."zc_id_scale" sm JOIN isahl."zc_id_file_rr_url" r
            ON sm.id = r.qk_qty WHERE r.id = $1"#,
     )
     .bind(rr_id)
@@ -132,11 +151,11 @@ async fn three_sources_consistent_after_voucher() {
 
     // cleanup
     for sql in [
-        format!(r#"DELETE FROM isahl."zc_id_stat-sto-voucher" WHERE code = 't-inv-v-1'"#),
+        r#"DELETE FROM isahl."zc_id_stat-sto-voucher" WHERE code = 't-inv-v-1'"#.to_string(),
         format!(
             r#"DELETE FROM isahl."zc_id_scal-common" WHERE id IN ({cap_id},{qty_id},{out_scalar},{bal_scalar})"#
         ),
-        format!(r#"DELETE FROM isahl."zc_id_production_rr_storage" WHERE id = {rr_id}"#),
+        format!(r#"DELETE FROM isahl."zc_id_file_rr_url" WHERE id = {rr_id}"#),
         format!(r#"DELETE FROM isahl."zc_id_production" WHERE id = {prod}"#),
     ] {
         let s = sql.as_str();

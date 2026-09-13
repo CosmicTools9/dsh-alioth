@@ -169,22 +169,18 @@ async fn derive_from_class_is_idempotent() {
         .expect("soft-delete OA associations");
     }
     if let Some(u) = ua_id {
-        sqlx::query(
-            "UPDATE isahl_auth.ngac_user_attribute SET deleted_at = NOW() WHERE id = $1",
-        )
-        .bind(u)
-        .execute(&pool)
-        .await
-        .expect("soft-delete derived UA");
+        sqlx::query("UPDATE isahl_auth.ngac_user_attribute SET deleted_at = NOW() WHERE id = $1")
+            .bind(u)
+            .execute(&pool)
+            .await
+            .expect("soft-delete derived UA");
     }
     if let Some(o) = oa_id {
-        sqlx::query(
-            "UPDATE isahl_auth.ngac_object_attribute SET deleted_at = NOW() WHERE id = $1",
-        )
-        .bind(o)
-        .execute(&pool)
-        .await
-        .expect("soft-delete derived OA");
+        sqlx::query("UPDATE isahl_auth.ngac_object_attribute SET deleted_at = NOW() WHERE id = $1")
+            .bind(o)
+            .execute(&pool)
+            .await
+            .expect("soft-delete derived OA");
     }
     sqlx::query("UPDATE isahl_auth.org_policy_rule SET deleted_at = NOW() WHERE id = $1")
         .bind(rule_id)
@@ -255,7 +251,7 @@ async fn migrate_legacy_position_associations_is_idempotent() {
 
     // 基表类别行（tableoid = isahl.zc_id_category：直接 INSERT 基表）
     let cat_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.zc_id_category (code, notice, enable, created_at, updated_at) \
+        "INSERT INTO isahl.\"zc_id_cate-organization\" (code, notice, enable, created_at, updated_at) \
          VALUES ($1, $2, true, NOW(), NOW()) RETURNING id",
     )
     .bind(&cat_code)
@@ -265,14 +261,22 @@ async fn migrate_legacy_position_associations_is_idempotent() {
     .expect("insert base category row");
 
     // 真实岗位实例行：_f_ IS NULL、ck_category → 基表类别行
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve dk coords");
     let pos_id: i64 = sqlx::query_scalar(
         "INSERT INTO isahl.\"zc_id_subj-position\" \
-            (code, ck_category, _f_, notice, created_at, updated_at) \
-         VALUES ($1, $2, NULL, $3, NOW(), NOW()) RETURNING id",
+            (code, ck_category, _f_, notice, created_at, updated_at, dk_scene, dk_factor, dk_function) \
+         VALUES ($1, $2, NULL, $3, NOW(), NOW(), $4, $5, $6) RETURNING id",
     )
     .bind(&inst_code)
     .bind(cat_id)
     .bind(MARKER)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert live position row");
@@ -378,12 +382,14 @@ async fn migrate_legacy_position_associations_is_idempotent() {
     .execute(&pool)
     .await
     .expect("soft-delete associations");
-    sqlx::query("UPDATE isahl_auth.ngac_user_attribute SET deleted_at = NOW() WHERE id IN ($1, $2)")
-        .bind(legacy_ua_id)
-        .bind(dst_ua_id)
-        .execute(&pool)
-        .await
-        .expect("soft-delete UAs");
+    sqlx::query(
+        "UPDATE isahl_auth.ngac_user_attribute SET deleted_at = NOW() WHERE id IN ($1, $2)",
+    )
+    .bind(legacy_ua_id)
+    .bind(dst_ua_id)
+    .execute(&pool)
+    .await
+    .expect("soft-delete UAs");
     sqlx::query("UPDATE isahl_auth.ngac_object_attribute SET deleted_at = NOW() WHERE id = $1")
         .bind(oa_id)
         .execute(&pool)
@@ -406,5 +412,8 @@ async fn migrate_legacy_position_associations_is_idempotent() {
         copied, 1,
         "legacy association 应复制 1 条到目标类别 UA（copied={copied}, n1={n1}）"
     );
-    assert_eq!(src_alive, 1, "legacy association 必须保留（deleted_at IS NULL）");
+    assert_eq!(
+        src_alive, 1,
+        "legacy association 必须保留（deleted_at IS NULL）"
+    );
 }

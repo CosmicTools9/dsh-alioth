@@ -43,10 +43,17 @@ impl AliothRepository<InboundOrder, CreateInboundOrderRequest, UpdateInboundOrde
         req: CreateInboundOrderRequest,
         user_id: i64,
     ) -> Result<InboundOrder, ApiError> {
+        // 坐标三元组（§6.12 声明即必须）：计划族坐标（JE/FMA/↓_CH），
+        // 值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(&self.pool, ("JE", "FMA", "↓_CH"))
+                .await
+                .map_err(ApiError::from)?;
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_plan-inbound"
-               (notice, code, comments, ak_source, cron, sort, "qk_date-segm", "qk_time-segm", qk_progress, progress_pct, schedule_pct, lk_health, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+               (notice, code, comments, ak_source, cron, sort, "qk_date-segm", "qk_time-segm", qk_progress, progress_pct, schedule_pct, lk_health, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
                RETURNING id"#,
         )
         .bind(&req.notice)
@@ -62,6 +69,9 @@ impl AliothRepository<InboundOrder, CreateInboundOrderRequest, UpdateInboundOrde
         .bind(req.schedule_pct)
         .bind(req.lk_health)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&self.pool)
         .await
         .map_err(ApiError::from)?;

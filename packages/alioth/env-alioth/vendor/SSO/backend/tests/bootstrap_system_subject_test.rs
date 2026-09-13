@@ -193,12 +193,21 @@ async fn system_subject_bootstrap_bind_idempotent_and_adjust() {
     ensure_admin(&pool).await;
 
     // 改绑目标：非银行法人叶表行
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .expect("resolve target org coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, notice, code, created_by_id)
-           VALUES ($1, 'bootstrap 调整目标法人', 'BOOT-ADJ-ORG', 1)
+        r#"INSERT INTO isahl."zc_id_orga-non-banking-legal"
+               (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES ($1, 'bootstrap 调整目标法人', 'BOOT-ADJ-ORG', 1, $2, $3, $4)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(ORG_TARGET_ID)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(&pool)
     .await
     .expect("insert target org");

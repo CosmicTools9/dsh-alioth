@@ -101,10 +101,18 @@ impl AliothRepository<Counting, CreateCountingRequest, UpdateCountingRequest, Ap
         // 事件头 + 盘点范围（m2n）同事务写入（D2，复用 with_transaction 语义）
         let mut tx = self.generic.pool().begin().await.map_err(ApiError::from)?;
 
+        // 坐标三元组（§6.12 声明即必须）：盘点事件叶坐标（GH/FJA/↓_GD，同表声明见
+        // seed-flow-scope-definitions.sql；stock-count 同表写入同源），值经 ontology_binding 解析，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve(self.generic.pool(), ("GH", "FJA", "↓_GD"))
+                .await
+                .map_err(ApiError::from)?;
+
         let row = sqlx::query_as::<_, Counting>(
             r#"INSERT INTO isahl."zc_id_even-counting"
-               (fk_place, qk_date, "_t_", tpl_id, created_by_id)
-               VALUES ($1, $2, $3, $4, $5)
+               (fk_place, qk_date, "_t_", tpl_id, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id, fk_place AS place_id,
                          qk_date AS counted_date,
                          "_t_", tpl_id,
@@ -115,6 +123,9 @@ impl AliothRepository<Counting, CreateCountingRequest, UpdateCountingRequest, Ap
         .bind(kind)
         .bind(req.tpl_id)
         .bind(user_id)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(ApiError::from)?;

@@ -20,6 +20,7 @@ use status::StatusRepository;
 /// Alioth 状态响应形状（name = notice 别名）
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusResp {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub name: Option<String>,
     pub flag: Option<String>,

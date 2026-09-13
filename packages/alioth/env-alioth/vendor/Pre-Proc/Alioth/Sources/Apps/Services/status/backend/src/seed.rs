@@ -60,7 +60,7 @@ pub async fn seed_statuses(
         let id = match id {
             Some(existing) => existing,
             None => sqlx::query_scalar(
-                r#"INSERT INTO isahl.zc_id_status (notice, flag, comments, created_by_id)
+                r#"INSERT INTO isahl."zc_id_stus-license" (notice, flag, comments, created_by_id)
                        VALUES ($1, $2::isahl.status_flag, $3, $4)
                        RETURNING id"#,
             )

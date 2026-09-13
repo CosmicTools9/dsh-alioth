@@ -69,6 +69,24 @@ impl RoutingStrategy for KeywordStrategy {
         _llm: Option<&llm::LlmService>,
     ) -> Option<RoutingDecision> {
         let msg_lower = ctx.user_message.to_lowercase();
+
+        // 页面显式指定（suggested_agent）短路采纳：页面/开发者对当前场景的
+        // agent 显式指定是最高优先级信号——按权重加成（3.0/10.0=0.3）永远过不
+        // 了 0.5 阈值（实测填单页 suggestedAgent=form_filling 被路由到 general），
+        // 因此命中且存在时直接采纳，仅在指定 agent 不存在时落回评分链。
+        if let Some(suggested) = &ctx.suggested_agent {
+            if suggested != "general" {
+                if let Some(agent_obj) = registry.get(suggested) {
+                    return Some(RoutingDecision {
+                        agent_code: suggested.clone(),
+                        confidence: 1.0,
+                        reason: format!("页面显式指定 agent: {}", agent_obj.config().name),
+                        level: RoutingLevel::L1Rule,
+                    });
+                }
+            }
+        }
+
         let mut scores: Vec<(String, f64, String)> = Vec::new();
 
         for code in registry.codes() {

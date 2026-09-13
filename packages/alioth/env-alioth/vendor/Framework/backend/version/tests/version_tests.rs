@@ -132,10 +132,17 @@ impl VersionService for TestVersionService {
 }
 
 async fn insert_version_row(pool: &PgPool, notice: &str) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "GEB", "↑_DA"))
+        .await
+        .unwrap();
     sqlx::query_scalar(
-        r#"INSERT INTO isahl.zc_id_version (notice, created_at) VALUES ($1, NOW()) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_bom-file" (notice, created_at, dk_scene, dk_factor, dk_function) VALUES ($1, NOW(), $2, $3, $4) RETURNING id"#,
     )
     .bind(notice)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()

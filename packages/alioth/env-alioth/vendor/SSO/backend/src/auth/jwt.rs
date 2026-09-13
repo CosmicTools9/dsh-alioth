@@ -335,7 +335,7 @@ pub async fn jwks(state: web::Data<crate::auth::AuthState>) -> HttpResponse {
         .json(serde_json::json!({ "keys": keys }))
 }
 
-/// Validate access token from request (Cookie first, then Authorization header)
+/// Validate access token from request（提取优先级见 [`extract_token`]：scoped cookie → Bearer → 环境 cookie）
 pub async fn validate_access_token(
     req: &HttpRequest,
     public_keys: &[&[u8]],
@@ -501,32 +501,59 @@ pub fn refresh_access_token(
 use cookie::Cookie;
 use time::Duration;
 
-pub fn set_access_cookie(response: HttpResponse, token: &str, max_age_secs: i64) -> HttpResponse {
+/// 认证 cookie 应用作用域（isolate-auth-cookie-scope）：带 scope 时 cookie 名
+/// 前缀 `{scope}_`，实现同 host 跨端口应用（GW/OpenActivity）cookie 命名空间隔离；
+/// 缺省 None = 存量 `access_token`/`refresh_token`（GW 与全量消费面零改动）。
+pub fn access_cookie_name(scope: Option<&str>) -> String {
+    match scope {
+        Some(s) if !s.is_empty() => format!("{s}_access_token"),
+        _ => "access_token".to_string(),
+    }
+}
+
+pub fn refresh_cookie_name(scope: Option<&str>) -> String {
+    match scope {
+        Some(s) if !s.is_empty() => format!("{s}_refresh_token"),
+        _ => "refresh_token".to_string(),
+    }
+}
+
+pub fn set_access_cookie(
+    response: HttpResponse,
+    token: &str,
+    max_age_secs: i64,
+    scope: Option<&str>,
+) -> HttpResponse {
     set_cookie(
         response,
-        "access_token",
+        &access_cookie_name(scope),
         token,
         "/",
         Duration::seconds(max_age_secs),
     )
 }
 
-pub fn clear_access_cookie(response: HttpResponse) -> HttpResponse {
-    clear_cookie(response, "access_token", "/")
+pub fn clear_access_cookie(response: HttpResponse, scope: Option<&str>) -> HttpResponse {
+    clear_cookie(response, &access_cookie_name(scope), "/")
 }
 
-pub fn set_refresh_cookie(response: HttpResponse, token: &str, max_age_secs: i64) -> HttpResponse {
+pub fn set_refresh_cookie(
+    response: HttpResponse,
+    token: &str,
+    max_age_secs: i64,
+    scope: Option<&str>,
+) -> HttpResponse {
     set_cookie(
         response,
-        "refresh_token",
+        &refresh_cookie_name(scope),
         token,
         "/api/auth/refresh",
         Duration::seconds(max_age_secs),
     )
 }
 
-pub fn clear_refresh_cookie(response: HttpResponse) -> HttpResponse {
-    clear_cookie(response, "refresh_token", "/api/auth/refresh")
+pub fn clear_refresh_cookie(response: HttpResponse, scope: Option<&str>) -> HttpResponse {
+    clear_cookie(response, &refresh_cookie_name(scope), "/api/auth/refresh")
 }
 
 /// Whether auth cookies should carry the Secure flag.
@@ -588,22 +615,54 @@ fn clear_cookie(mut response: HttpResponse, name: &str, path: &str) -> HttpRespo
     response
 }
 
-/// Extract JWT access token from Cookie, falling back to Authorization header.
+/// 从请求提取访问令牌。优先级（本请求显式凭据 > 环境会话 cookie）：
+///
+/// 1. `x-auth-cookie-scope: <s>` 声明的应用命名空间 cookie（`{s}_access_token`）——
+///    调用方显式声明归属（fix-auth-cookie-scope 落地：同 host 跨端口应用隔离）；
+/// 2. `Authorization: Bearer <jwt>`——调用方为本请求显式提供的凭据；
+/// 3. 无前缀 `access_token` 环境 cookie（浏览器同站会话，SSO 自身 UI / 纯 cookie 客户端）。
+///
+/// 背景（fix-auth-token-precedence）：cookie **不区分端口**——同一 host 上平台（运营端）
+/// 与门户各自登录时都会下发 cookie；若把无前缀 cookie 排在显式 Bearer 之前，跨应用身份
+/// 会串号（实测：同浏览器先登录运营端 isahl，再在门户以 oa-supp01 登录 → 门户 `/auth/me`
+/// 被 isahl cookie 抢先解析 → 门户显示 isahl）。显式 Bearer 代表「本应用自己的会话」，
+/// 任何环境 cookie 不得覆盖。
 pub fn extract_token(req: &HttpRequest) -> Option<String> {
-    // 1. Try httpOnly cookie first (preferred)
-    if let Some(cookie) = req.cookie("access_token") {
-        let value = cookie.value().trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
+    // 1. 调用方声明的 cookie scope 命名空间
+    if let Some(scope) = req
+        .headers()
+        .get("x-auth-cookie-scope")
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(token) = cookie_token(req, &access_cookie_name(Some(scope))) {
+            return Some(token);
         }
     }
 
-    // 2. Fall back to Authorization header for backward compatibility
+    // 2. Authorization: Bearer（显式凭据优先于环境 cookie）
+    if let Some(token) = bearer_token(req) {
+        return Some(token);
+    }
+
+    // 3. 无前缀环境 cookie（向后兼容：纯 cookie 客户端与 SSO 自身 UI）
+    cookie_token(req, &access_cookie_name(None))
+}
+
+/// 读取非空 cookie 值（去空白；空串视为缺失）。
+fn cookie_token(req: &HttpRequest, name: &str) -> Option<String> {
+    req.cookie(name)
+        .map(|c| c.value().trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// 提取 `Authorization: Bearer <jwt>`（缺头/异格式/空串 → None）。
+fn bearer_token(req: &HttpRequest) -> Option<String> {
     req.headers()
         .get(actix_web::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .map(|s| s.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 #[cfg(test)]

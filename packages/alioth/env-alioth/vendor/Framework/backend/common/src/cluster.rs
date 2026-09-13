@@ -88,7 +88,7 @@ impl ClusterMessage {
 /// 集群节点信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeInfo {
-    pub node_id: u64,
+    pub node_id: u64, // id-json-ok: 集群内部节点 u64（非 Alioth 模型对象 id，仅 Rust 内部消费）
     pub endpoint: String,
     pub status: NodeStatus,
 }

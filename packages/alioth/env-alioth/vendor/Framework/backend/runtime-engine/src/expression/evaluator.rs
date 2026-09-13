@@ -72,6 +72,26 @@ impl ExpressionEvaluator {
             },
             ConstraintExpr::Literal(lit) => Ok(Self::literal_to_json(lit)),
             ConstraintExpr::Binary(left, op, right) => {
+                // FEEL null 判空（extend-dmn-decision-table-full D4）：`X = null` /
+                // `X != null`。右操作数为 null 字面量且左为字段引用时——字段缺失
+                // （strict 缺失标识符本应 Err）判空成立：`X = null` → true、
+                // `X != null` → false；字段存在但值为 JSON null 同判空；其余缺失
+                // 标识符路径保持 fail-closed 不变。
+                if matches!(op, BinaryOp::Eq | BinaryOp::Ne)
+                    && matches!(&**right, ConstraintExpr::Literal(ConstraintLiteral::Null))
+                {
+                    if let ConstraintExpr::FieldRef(name) = &**left {
+                        let present = Self::field_present(name, variables);
+                        if !present {
+                            let is_eq = *op == BinaryOp::Eq;
+                            return Ok(Value::Bool(is_eq));
+                        }
+                        // 字段存在：取实际值比较（null = null 亦判空）
+                        let lv = Self::eval_expr_to_json_inner(left, variables, strict)?;
+                        let rv = Self::eval_expr_to_json_inner(right, variables, strict)?;
+                        return Self::eval_binary_op(&lv, *op, &rv);
+                    }
+                }
                 let lv = Self::eval_expr_to_json_inner(left, variables, strict)?;
                 let rv = Self::eval_expr_to_json_inner(right, variables, strict)?;
                 Self::eval_binary_op(&lv, *op, &rv)
@@ -276,6 +296,27 @@ impl ExpressionEvaluator {
             }
             _ => Err(format!("Unknown function: {}", name)),
         }
+    }
+
+    /// 字段是否存在（含 `_refs.xxx.yyy` 点路径逐段成员遍历）；用于 null 判空
+    /// 特判——缺失字段判空不触发 strict fail-closed。
+    fn field_present(name: &str, variables: &HashMap<String, Value>) -> bool {
+        let mut cur: Option<&Value> = None;
+        for (i, seg) in name.split('.').enumerate() {
+            let next = if i == 0 {
+                variables.get(seg)
+            } else {
+                match cur {
+                    Some(Value::Object(m)) => m.get(seg),
+                    _ => None,
+                }
+            };
+            match next {
+                Some(v) => cur = Some(v),
+                None => return false,
+            }
+        }
+        true
     }
 
     /// 字面量转 JSON
@@ -535,5 +576,47 @@ mod tests {
             ExpressionEvaluator::eval_expr_to_json(&ast, &ctx).unwrap(),
             json!(false)
         );
+    }
+
+    // ── FEEL null 判空（extend-dmn-decision-table-full D4）──
+    fn eval_bool(expr: &str, ctx: &HashMap<String, Value>) -> Result<bool, String> {
+        let ast = super::super::parser::parse_constraint_expression(expr).unwrap();
+        ExpressionEvaluator::eval_expr_to_json_strict(&ast, ctx).map(|v| v == json!(true))
+    }
+
+    #[test]
+    fn test_null_check_missing_field_strict() {
+        // 缺失字段 `X = null` → true（判空不触发 strict fail-closed）
+        let ctx = vars(&[("amount", json!(3000))]);
+        assert_eq!(eval_bool("remark = null", &ctx).unwrap(), true);
+        assert_eq!(eval_bool("remark != null", &ctx).unwrap(), false);
+        // 字段存在且非 null → 判空 false
+        assert_eq!(eval_bool("amount = null", &ctx).unwrap(), false);
+        assert_eq!(eval_bool("amount != null", &ctx).unwrap(), true);
+    }
+
+    #[test]
+    fn test_null_check_existing_null_value() {
+        // 字段存在但值为 JSON null → 判空成立（null = null）
+        let ctx = vars(&[("remark", json!(null))]);
+        assert_eq!(eval_bool("remark = null", &ctx).unwrap(), true);
+        assert_eq!(eval_bool("remark != null", &ctx).unwrap(), false);
+    }
+
+    #[test]
+    fn test_null_check_member_path() {
+        // 点路径缺失成员判空（`_refs.xxx` 顶层缺失 → = null 判空）
+        let ctx = vars(&[("_refs", json!({ "ck_category": { "label": "合同类" } }))]);
+        assert_eq!(
+            eval_bool("_refs.missing.notice = null", &ctx).unwrap(),
+            true
+        );
+        assert_eq!(
+            eval_bool("_refs.ck_category.label = null", &ctx).unwrap(),
+            false
+        );
+        // 其余缺失标识符（非判空形态）仍 fail-closed
+        let ast = super::super::parser::parse_constraint_expression("remark == 'x'").unwrap();
+        assert!(ExpressionEvaluator::eval_expr_to_json_strict(&ast, &ctx).is_err());
     }
 }

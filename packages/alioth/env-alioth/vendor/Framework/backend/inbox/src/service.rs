@@ -29,9 +29,9 @@ impl InboxService {
             return InboxActionResponse::fail("消息不存在");
         }
 
-        // 在 zc_id_message_rr_contact-info 中记录该用户反馈为已读
+        // 在 zc_id_message_rr_recipients 中记录该用户反馈为已读
         let r1 = sqlx::query(
-            r#"UPDATE isahl."zc_id_message_rr_contact-info"
+            r#"UPDATE isahl."zc_id_message_rr_recipients"
                SET deleted_at = NULL, feedback = 'read'::isahl.zc_id_message_rr_contact_info_feedback_enum,
                    updated_at = NOW()
                WHERE ref_left = $1 AND ref_right = $2"#,
@@ -47,10 +47,10 @@ impl InboxService {
 
         // 若没有已有记录，插入新行
         let r1b = sqlx::query(
-            r#"INSERT INTO isahl."zc_id_message_rr_contact-info" (ref_left, ref_right, feedback)
+            r#"INSERT INTO isahl."zc_id_message_rr_recipients" (ref_left, ref_right, feedback)
                SELECT $1, $2, 'read'::isahl.zc_id_message_rr_contact_info_feedback_enum
                WHERE NOT EXISTS (
-                   SELECT 1 FROM isahl."zc_id_message_rr_contact-info"
+                   SELECT 1 FROM isahl."zc_id_message_rr_recipients"
                    WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL
                )"#,
         )
@@ -201,11 +201,21 @@ impl InboxService {
             None
         };
 
+        // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+        let (dk_scene, dk_factor, dk_function) =
+            match ontology_binding::resolve_conn(&mut *tx, ("JB", "GHC", "↓_KC")).await {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = tx.rollback().await;
+                    return InboxActionResponse::fail(format!("发送消息失败: 坐标解析失败 {}", e));
+                }
+            };
+
         // 插入消息主体（叶表 zc_id_msgs-system；zc_id_message 有子表，父表直写违规）
         let msg_id: i64 = match sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_msgs-system"
-                (notice, content, created_by_id, fk_previous, fk_thread, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+                (notice, content, created_by_id, fk_previous, fk_thread, created_at, updated_at, dk_scene, dk_factor, dk_function)
+            VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), $6, $7, $8)
             RETURNING id"#,
         )
         .bind(&req.title)
@@ -213,6 +223,9 @@ impl InboxService {
         .bind(sender_id)
         .bind(req.previous_id)
         .bind(fk_thread)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&mut *tx)
         .await
         {
@@ -223,10 +236,10 @@ impl InboxService {
             }
         };
 
-        // 为每个收件人插入 rr_recipients 记录（写入子表 zc_id_message_rr_contact-info）
+        // 为每个收件人插入 rr_recipients 记录（写入子表 zc_id_message_rr_recipients）
         for &recipient_id in &req.recipient_ids {
             let r = sqlx::query(
-                r#"INSERT INTO isahl."zc_id_message_rr_contact-info"
+                r#"INSERT INTO isahl."zc_id_message_rr_recipients"
                     (ref_left, ref_right, feedback)
                 VALUES ($1, $2, NULL::isahl.zc_id_message_rr_contact_info_feedback_enum)"#,
             )

@@ -29,5 +29,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     .route("/Groups", web::post().to(handlers::create_group))
     .route("/Groups/{id}", web::get().to(handlers::get_group))
     .route("/Groups/{id}", web::put().to(handlers::replace_group))
+    .route("/Groups/{id}", web::patch().to(handlers::patch_group))
     .route("/Groups/{id}", web::delete().to(handlers::delete_group));
 }

@@ -8,7 +8,6 @@
 //! - 分页 + 计数
 //! - 引用解析（当 E: HasReferenceJoins 时可用 `fetch_refs` / `get_refs`）
 
-use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use sqlx::{AssertSqlSafe, PgPool, Postgres, Row};
@@ -36,7 +35,38 @@ pub struct QueryBuilder<'a, E: AliothDbEntity> {
     authorized_columns: Option<Vec<String>>,
     /// COORDINATE_FILTER code 子查询预解析的 dk 三元组 id（参数化，避免每查询子查询开销）
     dk_binds: Vec<i64>,
+    /// COORDINATE_FILTER 三码 → dk 三元组 id 的解析结果（每实例一次；items 与 count
+    /// 复用同一解析，消除同请求内的重复往返）。`None` = 尚未解析；`Some(None)` = 解析
+    /// 失败（维度缺失，走原样子查询 fallback）。
+    dk_resolved: Option<Option<(i64, i64, i64)>>,
     _phantom: PhantomData<E>,
+}
+
+/// 预解析 COORDINATE_FILTER 的三元组 code → 维度表 id（scene/factor/function）。
+///
+/// 形态不符（任意自定义 SQL）或维度缺失（任一 id 为空）→ `None`，调用方回退原样子查询。
+async fn resolve_dk_ids(pool: &PgPool, coordinate_filter: &str) -> Option<(i64, i64, i64)> {
+    let (s, f, fn_) = extract_dk_codes(coordinate_filter)?;
+    // code → id 内联解析（Coords 为 &'static str，不适用运行时 String——直接查维度表）
+    let row = sqlx::query(
+        r#"SELECT
+            (SELECT id FROM "isahl"."zc_id_scene" WHERE code = $1 AND deleted_at IS NULL LIMIT 1),
+            (SELECT id FROM "isahl"."zc_id_factor" WHERE code = $2 AND deleted_at IS NULL LIMIT 1),
+            (SELECT id FROM "isahl"."zc_id_function" WHERE code = $3 AND deleted_at IS NULL LIMIT 1)"#,
+    )
+    .bind(&s)
+    .bind(&f)
+    .bind(&fn_)
+    .fetch_one(pool)
+    .await
+    .ok()?;
+    let si: Option<i64> = row.try_get(0).ok().flatten();
+    let fi: Option<i64> = row.try_get(1).ok().flatten();
+    let ki: Option<i64> = row.try_get(2).ok().flatten();
+    match (si, fi, ki) {
+        (Some(si), Some(fi), Some(ki)) => Some((si, fi, ki)),
+        _ => None,
+    }
 }
 
 /// 从 COORDINATE_FILTER 提取 code 子查询形态的三元组 code（scene/factor/function）。
@@ -64,11 +94,8 @@ fn extract_dk_codes(filter: &str) -> Option<(String, String, String)> {
 
 impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
     /// 构建 WHERE 子句（SOFT_DELETE + COORDINATE_FILTER + filters + raw_filters + visible_ids）。
-    /// 递增 `param_idx`；返回 (以 " WHERE " 开头的 SQL 片段, 列类型映射)。
-    async fn build_where_sql(
-        &mut self,
-        param_idx: &mut usize,
-    ) -> (String, std::collections::HashMap<String, String>) {
+    /// 递增 `param_idx`；返回以 " WHERE " 开头的 SQL 片段。
+    async fn build_where_sql(&mut self, param_idx: &mut usize) -> String {
         let mut sql = if E::SOFT_DELETE {
             String::from(" WHERE deleted_at IS NULL")
         } else {
@@ -80,54 +107,49 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         // `dk_scene = (SELECT id FROM isahl."zc_id_scene" WHERE code = 'X' ...)`）：
         // 预解析 code → 参数化 bind（避免每查询 3 次子查询的 NFR 退化，NFR-001 实测
         // 983ms vs 阈值 500ms）；解析失败（维度缺失）→ fallback 原样子查询（行为一致）。
+        // 解析结果在本实例内缓存——items/count 两次构建同源复用，不再重复查维度表。
         if !E::COORDINATE_FILTER.is_empty() {
-            let codes = extract_dk_codes(E::COORDINATE_FILTER);
-            if let Some((s, f, fn_)) = codes {
-                // code → id 内联解析（Coords 为 &'static str，不适用运行时 String——直接查维度表）
-                let resolved = sqlx::query(
-                    r#"SELECT
-                        (SELECT id FROM "isahl"."zc_id_scene" WHERE code = $1 AND deleted_at IS NULL LIMIT 1),
-                        (SELECT id FROM "isahl"."zc_id_factor" WHERE code = $2 AND deleted_at IS NULL LIMIT 1),
-                        (SELECT id FROM "isahl"."zc_id_function" WHERE code = $3 AND deleted_at IS NULL LIMIT 1)"#,
-                )
-                .bind(&s)
-                .bind(&f)
-                .bind(&fn_)
-                .fetch_one(self.pool)
-                .await;
-                if let Ok(row) = resolved {
-                    let si: Option<i64> = row.try_get(0).ok().flatten();
-                    let fi: Option<i64> = row.try_get(1).ok().flatten();
-                    let ki: Option<i64> = row.try_get(2).ok().flatten();
-                    if let (Some(si), Some(fi), Some(ki)) = (si, fi, ki) {
-                        sql.push_str(&format!(
-                            " AND dk_scene = ${} AND dk_factor = ${} AND dk_function = ${}",
-                            *param_idx,
-                            *param_idx + 1,
-                            *param_idx + 2
-                        ));
-                        self.dk_binds.extend([si, fi, ki]);
-                        *param_idx += 3;
-                    } else {
-                        sql.push_str(" AND ");
-                        sql.push_str(E::COORDINATE_FILTER);
-                    }
-                } else {
+            let resolved = match self.dk_resolved {
+                Some(resolved) => resolved,
+                None => {
+                    let resolved = resolve_dk_ids(self.pool, E::COORDINATE_FILTER).await;
+                    self.dk_resolved = Some(resolved);
+                    resolved
+                }
+            };
+            match resolved {
+                Some((si, fi, ki)) => {
+                    sql.push_str(&format!(
+                        " AND dk_scene = ${} AND dk_factor = ${} AND dk_function = ${}",
+                        *param_idx,
+                        *param_idx + 1,
+                        *param_idx + 2
+                    ));
+                    self.dk_binds.extend([si, fi, ki]);
+                    *param_idx += 3;
+                }
+                None => {
                     sql.push_str(" AND ");
                     sql.push_str(E::COORDINATE_FILTER);
                 }
-            } else {
-                sql.push_str(" AND ");
-                sql.push_str(E::COORDINATE_FILTER);
             }
         }
 
-        let col_types = self.column_types().await;
+        // 列类型映射仅在存在过滤条件时参与 SQL 生成（无过滤时跳过进程级缓存锁）
+        let col_types = if self.filters.is_empty() {
+            None
+        } else {
+            Some(self.column_types().await)
+        };
         for filter in &self.filters {
             if let Ok(()) = filter.validate() {
-                if let Some(condition) = filter
-                    .to_sql_with_type(*param_idx, col_types.get(&filter.field).map(String::as_str))
-                {
+                if let Some(condition) = filter.to_sql_with_type(
+                    *param_idx,
+                    col_types
+                        .as_ref()
+                        .and_then(|m| m.get(&filter.field))
+                        .map(String::as_str),
+                ) {
                     sql.push_str(" AND ");
                     sql.push_str(&condition);
                     *param_idx += 1;
@@ -143,7 +165,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         // RLS: visible_ids 行级安全过滤
         // Some(空集) = 显式无授权（`none` header）→ 恒假谓词（fail-closed 零行）；
         // Some(非空) = 仅返回授权 id 行；None = 无 RLS 约束（兼容非 RLS 调用方）。
-        if let Some(ref ids) = self.visible_ids {
+        if let Some(ids) = &self.visible_ids {
             if ids.is_empty() {
                 sql.push_str(" AND false");
             } else {
@@ -152,7 +174,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
             }
         }
 
-        (sql, col_types)
+        sql
     }
 
     /// 构建 ORDER BY 子句（无排序时按 id DESC）。
@@ -182,7 +204,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
     /// 解析实体表列 → data_type 映射（共享 column_types 模块的进程级缓存）。
     ///
     /// 失败时返回空表，过滤逻辑退化为列 `::text`（历史行为，不报错）。
-    async fn column_types(&self) -> HashMap<String, String> {
+    async fn column_types(&self) -> std::sync::Arc<column_types::ColumnTypeMap> {
         column_types::resolve(self.pool, E::table_name()).await
     }
 
@@ -195,6 +217,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
             visible_ids: None,
             authorized_columns: None,
             dk_binds: Vec::new(),
+            dk_resolved: None,
             _phantom: PhantomData,
         }
     }
@@ -268,7 +291,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         ));
         let mut sql = format!("SELECT {} FROM {} AS e", fields, E::table_name());
         let mut param_idx = 1usize;
-        let (where_sql, _) = self.build_where_sql(&mut param_idx).await;
+        let where_sql = self.build_where_sql(&mut param_idx).await;
         sql.push_str(&where_sql);
         sql.push_str(&self.build_order_sql());
         sql.push_str(&format!(" LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));
@@ -297,7 +320,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         self.dk_binds.clear();
         let mut sql = format!("SELECT COUNT(*) FROM {}", E::table_name());
         let mut param_idx = 1usize;
-        let (where_sql, _) = self.build_where_sql(&mut param_idx).await;
+        let where_sql = self.build_where_sql(&mut param_idx).await;
         sql.push_str(&where_sql);
 
         let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
@@ -583,7 +606,7 @@ impl<'a, E: AliothDbEntity + HasReferenceJoins> QueryBuilder<'a, E> {
 
         let mut sql = format!("SELECT {} FROM {} AS e", fields, E::table_name());
         let mut param_idx = 1usize;
-        let (where_sql, _) = self.build_where_sql(&mut param_idx).await;
+        let where_sql = self.build_where_sql(&mut param_idx).await;
         sql.push_str(&where_sql);
         sql.push_str(&self.build_order_sql());
         sql.push_str(&format!(" LIMIT ${} OFFSET ${}", param_idx, param_idx + 1));

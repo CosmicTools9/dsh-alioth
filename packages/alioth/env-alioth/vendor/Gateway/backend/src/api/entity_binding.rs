@@ -312,6 +312,17 @@ pub async fn bind_personal(
         }
     };
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
+    // 本事务 empl-natural 仅一处 INSERT，就地解析。
+    let (dk_scene, dk_factor, dk_function) =
+        match ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG")).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::warn!("bind_personal 坐标解析失败: {e}");
+                return bad_request("INTERNAL", "坐标解析失败");
+            }
+        };
+
     // 幂等门（行锁）：m2o 语义——个人绑定只拒同类型（已绑个人实体）重复绑定；
     // 已绑组织实体不阻塞个人绑定（fix-ngac-entity-binding-m2o，类型分组判定）；
     // 占位绑定（fix-seed-user-subject-binding）视为未绑定，允许替换。
@@ -357,12 +368,16 @@ pub async fn bind_personal(
 
     // 1. 自然人
     let empl_id: i64 = match sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_empl-natural"
+               (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
     )
     .bind(b.real_name.trim())
     .bind(format!("emp-{}", user_id))
     .bind(user_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&mut *tx)
     .await
     {
@@ -373,29 +388,33 @@ pub async fn bind_personal(
         }
     };
 
-    // 2/3. 任职关系（雇佣主体 + 岗位）
-    for (sql, left) in [
-        (
-            r#"INSERT INTO isahl."zc_id_subj-org_rr_employee" (id, ref_left, ref_right, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
-            b.employer_org_id,
-        ),
-        (
-            r#"INSERT INTO isahl."zc_id_subj-post_rr_employee" (id, ref_left, ref_right, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
-            b.position_id,
-        ),
-    ] {
-        if let Err(e) = sqlx::query(sql)
-            .bind(left)
-            .bind(empl_id)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await
-        {
-            common::telemetry::warn!("bind_personal 建任职关系失败: {e}");
-            return bad_request("INTERNAL", "创建任职关系失败");
-        }
+    // 2. 任职关系（雇佣主体桥）
+    if let Err(e) = sqlx::query(
+        r#"INSERT INTO isahl."zc_id_subj-org_rr_employee" (id, ref_left, ref_right, created_by_id)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+    )
+    .bind(b.employer_org_id)
+    .bind(empl_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    {
+        common::telemetry::warn!("bind_personal 建任职关系失败: {e}");
+        return bad_request("INTERNAL", "创建任职关系失败");
+    }
+
+    // 3. 岗位任职桥（M226/ADR A-3：org_write service 入口复用——
+    //    attach_employee_bridge 幂等守卫同 add_position_employee：活行 EXISTS 短路/复活软删行）
+    if let Err(e) = identity_org::service::org_write::attach_employee_bridge(
+        &mut *tx,
+        b.position_id,
+        empl_id,
+        user_id,
+    )
+    .await
+    {
+        common::telemetry::warn!("bind_personal 建岗位任职关系失败: {e}");
+        return bad_request("INTERNAL", "创建任职关系失败");
     }
 
     // 4. entity 绑定（清占位标记——fix-seed-user-subject-binding：替换占位防复发）
@@ -417,6 +436,11 @@ pub async fn bind_personal(
         common::telemetry::warn!("bind_personal 提交失败: {e}");
         return bad_request("INTERNAL", "提交失败");
     }
+    // ngac heal（提交后幂等，失败仅 warn）：任职绑定后闭合岗位行 OA/在任闭包。
+    // 岗位桥走 org_write 事务内入口（attach_employee_bridge）不内建 heal——事务外
+    // heal 归口不变：pool 级独立入口 add_position_employee 已内建 heal，此处
+    // 保留覆盖 tx 内嵌路径（M226/ADR A-3）。
+    common::ngac_org::heal_position_scope(pool.get_ref(), b.position_id).await;
     // system 同步（增强投递，失败不阻断）
     let system_synced =
         sync_system_subject_binding(pool.get_ref(), user_id, "zc_id_empl-natural", empl_id).await;
@@ -619,33 +643,69 @@ pub async fn bind_enterprise(
                     .unwrap_or(None);
                     match existing {
                         Some(id) => Some(id),
-                        None => sqlx::query_scalar(
-                            r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, created_by_id)
-                               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#,
-                        )
-                        .bind(name)
-                        .bind(format!("rep-{}", user_id))
-                        .bind(user_id)
-                        .fetch_optional(&mut *tx)
-                        .await
-                        .ok()
-                        .flatten(),
+                        None => {
+                            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析
+                            // code→ZUID，禁硬编码 ZUID
+                            let (dk_scene, dk_factor, dk_function) =
+                                match ontology_binding::resolve_conn(
+                                    &mut *tx,
+                                    ("TX", "FJA", "↓_GG"),
+                                )
+                                .await
+                                {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        common::telemetry::warn!(
+                                            "bind_enterprise 坐标解析失败: {e}"
+                                        );
+                                        return bad_request("INTERNAL", "坐标解析失败");
+                                    }
+                                };
+                            sqlx::query_scalar(
+                                r#"INSERT INTO isahl."zc_id_empl-natural"
+                                       (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+                                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+                            )
+                            .bind(name)
+                            .bind(format!("rep-{}", user_id))
+                            .bind(user_id)
+                            .bind(dk_scene)
+                            .bind(dk_factor)
+                            .bind(dk_function)
+                            .fetch_optional(&mut *tx)
+                            .await
+                            .ok()
+                            .flatten()
+                        }
                     }
                 }
             };
             let comments =
                 rep_name.map(|n| serde_json::json!({"representative_name": n}).to_string());
+            // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+            let (dk_scene, dk_factor, dk_function) =
+                match ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG")).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        common::telemetry::warn!("bind_enterprise 坐标解析失败: {e}");
+                        return bad_request("INTERNAL", "坐标解析失败");
+                    }
+                };
             // 2. 非银行法人（法人代表 fk_representative 实列化 + comments 文本快照）
             let org_id: i64 = match sqlx::query_scalar(
                 r#"INSERT INTO isahl."zc_id_orga-non-banking-legal"
-                   (id, notice, code, comments, fk_representative, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5) RETURNING id"#,
+                   (id, notice, code, comments, fk_representative, created_by_id,
+                    dk_scene, dk_factor, dk_function)
+                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8) RETURNING id"#,
             )
             .bind(b.company_name.trim())
             .bind(format!("org-{}", user_id))
             .bind(comments)
             .bind(rep_id)
             .bind(user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
             .fetch_one(&mut *tx)
             .await
             {
@@ -759,7 +819,9 @@ pub struct SubjectBindingBody {
     pub notice: String,
     /// 主体编码（法人类必填 = 统一社会信用代码）
     pub code: Option<String>,
-    /// 选择已有主体（提供时跳过创建，须与 subject_type 类型一致）
+    /// 选择已有主体（提供时跳过创建，须与 subject_type 类型一致；ZUID 字符串容差
+    /// ——ID_JSON_PRECISION，serde_zuid::opt 双向兼容字符串/数字）
+    #[serde(with = "common::serde_zuid::opt")]
     pub entity_id: Option<i64>,
     /// 显式改绑（add-subject-rebind-management）：true 时已绑真实主体也放行替换
     /// （m2o 非破坏——旧实体行/关系保留，仅 entity_table/entity_id 锚点切换）；
@@ -769,6 +831,9 @@ pub struct SubjectBindingBody {
 
 /// 白名单叶表内创建主体行（固定 SQL 模板枚举分发，表名不拼接——防注入）。
 /// 调用方 MUST 先经白名单校验。
+///
+/// 坐标三元组（§6.12 声明即必须）：已声明实体经 ontology_binding 解析 code→ZUID
+/// 随行写入（禁硬编码 ZUID）。
 async fn insert_subject_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     table: &str,
@@ -776,39 +841,55 @@ async fn insert_subject_row(
     code: &str,
     user_id: i64,
 ) -> Result<i64, sqlx::Error> {
-    let sql = match table {
-        "zc_id_orga-non-banking-legal" => {
-            r#"INSERT INTO isahl."zc_id_orga-non-banking-legal" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#
-        }
-        "zc_id_bank-commercial" => {
-            r#"INSERT INTO isahl."zc_id_bank-commercial" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#
-        }
-        "zc_id_empl-natural" => {
-            r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#
-        }
-        "zc_id_empl-agent" => {
-            r#"INSERT INTO isahl."zc_id_empl-agent" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#
-        }
-        "zc_id_orga-department" => {
-            r#"INSERT INTO isahl."zc_id_orga-department" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#
-        }
-        "zc_id_subj-group" => {
-            r#"INSERT INTO isahl."zc_id_subj-group" (id, notice, code, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3) RETURNING id"#
-        }
+    let (sql, coords): (&str, Option<ontology_binding::Coords>) = match table {
+        "zc_id_orga-non-banking-legal" => (
+            r#"INSERT INTO isahl."zc_id_orga-non-banking-legal"
+                   (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+            Some(("TX", "FJA", "↓_GG")),
+        ),
+        "zc_id_bank-commercial" => (
+            r#"INSERT INTO isahl."zc_id_bank-commercial"
+                   (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+            Some(("ZH", "LNK", "↓_DA")),
+        ),
+        "zc_id_empl-natural" => (
+            r#"INSERT INTO isahl."zc_id_empl-natural"
+                   (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+            Some(("TX", "FJA", "↓_GG")),
+        ),
+        "zc_id_empl-agent" => (
+            r#"INSERT INTO isahl."zc_id_empl-agent"
+                   (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+            Some(("ZJ", "LNC", "↓_EH")),
+        ),
+        "zc_id_orga-department" => (
+            r#"INSERT INTO isahl."zc_id_orga-department"
+                   (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+            Some(("TX", "FJA", "↓_GG")),
+        ),
+        "zc_id_subj-group" => (
+            r#"INSERT INTO isahl."zc_id_subj-group"
+                   (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6) RETURNING id"#,
+            Some(("ZB", "LNC", "↓_DA")),
+        ),
         _ => return Err(sqlx::Error::Protocol("invalid subject_type".into())),
     };
-    sqlx::query_scalar(sql)
+    let mut query = sqlx::query_scalar::<_, i64>(sql)
         .bind(notice)
         .bind(code)
-        .bind(user_id)
-        .fetch_one(&mut **tx)
-        .await
+        .bind(user_id);
+    if let Some(c) = coords {
+        let (dk_scene, dk_factor, dk_function) =
+            ontology_binding::resolve_conn(&mut **tx, c).await?;
+        query = query.bind(dk_scene).bind(dk_factor).bind(dk_function);
+    }
+    query.fetch_one(&mut **tx).await
 }
 
 /// POST /api/auth/entity-binding/subject
@@ -928,6 +1009,79 @@ pub async fn bind_subject(
     ))
 }
 
+/// POST /api/auth/entity-binding/unbind
+///
+/// 自助解绑（fix-register-binding-flow-gaps）：仅清 entity_table/entity_id 主锚点
+/// 并随清占位标记（settings - 'subject_binding'）——非破坏，主体行、任职桥
+/// （org_rr_employee/post_rr_employee）与组织归属桥全保留（与「主锚点切换不删除
+/// 旧身份」同一语义族的逆向操作）。未绑定 → 400 NOT_BOUND；system 哨兵（id=1）
+/// → 400 SYSTEM_IMMUTABLE（auth_seed 启动自检要求 system 绑定组织主体）；
+/// 解绑后 bound=false 回流首登绑定引导（MainLayout 阻留契约）。
+pub async fn unbind(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
+    let user_id = match current_user(&req) {
+        Ok(u) => u,
+        Err(resp) => return resp,
+    };
+    // system 哨兵（id=1，auth_seed 契约）不可解绑
+    if user_id == 1 {
+        return bad_request("SYSTEM_IMMUTABLE", "system 哨兵用户不可解绑");
+    }
+
+    let mut tx = match pool.get_ref().begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            common::telemetry::warn!("unbind 开启事务失败: {e}");
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "INTERNAL"}));
+        }
+    };
+
+    // 行锁取锚点（与 bind_* 幂等门同模式——并发解绑/改绑串行化）
+    let row: Option<(Option<String>, Option<i64>)> = match sqlx::query_as(
+        "SELECT entity_table, entity_id FROM isahl_auth.auth_users WHERE id = $1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            common::telemetry::warn!("unbind 查询绑定状态失败: {e}");
+            return bad_request("INTERNAL", "查询绑定状态失败");
+        }
+    };
+    let Some((table, id)) = row else {
+        return bad_request("USER_NOT_FOUND", "用户不存在");
+    };
+    if table.as_deref().map(str::is_empty).unwrap_or(true) || id.is_none() {
+        return bad_request("NOT_BOUND", "未绑定主体");
+    }
+
+    // 清锚点 + 占位标记随清（其余 settings 键保留；占位绑定解绑后不再判占位）
+    if let Err(e) = sqlx::query(
+        "UPDATE isahl_auth.auth_users SET entity_table = NULL, entity_id = NULL, \
+         settings = COALESCE(settings, '{}'::jsonb) - 'subject_binding', updated_at = NOW() \
+         WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await
+    {
+        common::telemetry::warn!("unbind 清锚点失败: {e}");
+        return bad_request("INTERNAL", "解除绑定失败");
+    }
+    if let Err(e) = tx.commit().await {
+        common::telemetry::warn!("unbind 提交事务失败: {e}");
+        return bad_request("INTERNAL", "解除绑定失败");
+    }
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "success": true,
+        "unbound_entity_table": table,
+        "unbound_entity_id": id.map(|v| v.to_string()),
+    }))
+}
+
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/entity-binding")
@@ -936,6 +1090,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             .route("/personal", web::post().to(bind_personal))
             .route("/enterprise", web::post().to(bind_enterprise))
             .route("/subject-types", web::get().to(subject_types))
-            .route("/subject", web::post().to(bind_subject)),
+            .route("/subject", web::post().to(bind_subject))
+            .route("/unbind", web::post().to(unbind)),
     );
 }

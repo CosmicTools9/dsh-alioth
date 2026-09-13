@@ -674,7 +674,7 @@ impl ScalarService {
 ///
 /// 返回 `(date, time)`：`date` 为当天 00:00:00 UTC 的 `timestamptz`（对应 `date` 列）；
 /// `time` 为可选的时间部分（对应 `zc_id_scal-date."time"` / `zc_id_segm-date.time_*` 列）。
-fn parse_date_time(text: &str) -> Result<(DateTime<Utc>, Option<NaiveTime>), AliothError> {
+pub fn parse_date_time(text: &str) -> Result<(DateTime<Utc>, Option<NaiveTime>), AliothError> {
     let text = text.trim();
     let (date_part, time_part) = match text.split_once(' ') {
         Some((d, t)) => (d, Some(t)),

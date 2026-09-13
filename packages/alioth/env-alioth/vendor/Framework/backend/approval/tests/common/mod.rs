@@ -383,16 +383,22 @@ pub async fn wire_approval_node(
     let _ = template_id;
 
     // 4. 岗位行（唯一 code，fk_user=审批人）+ 操作 ↔ 岗位桥
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG")).await?;
     for (idx, user) in assignees.iter().enumerate() {
         let pos_code = format!("{op_code}-POS-{idx}");
         let pos_id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_user)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3)
+            r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_user, dk_scene, dk_factor, dk_function)
+               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6)
                RETURNING id"#,
         )
         .bind(format!("测试岗位-{idx}"))
         .bind(&pos_code)
         .bind(user)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(pool)
         .await?;
         sqlx::query(

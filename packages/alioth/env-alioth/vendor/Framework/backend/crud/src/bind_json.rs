@@ -324,9 +324,10 @@ mod tests {
             ),
             BoundValue::OptText(None)
         ));
-        // 数值/布尔 → NULL
+        // 数值/布尔 → NULL（用非常量形字面量：3.14 触发 clippy::approx_constant，
+        // 该 crate 将其视为 error，会阻断 cargo clippy --workspace）
         assert!(matches!(
-            coerce(&json!(3.14), Some("geometry")),
+            coerce(&json!(2.5), Some("geometry")),
             BoundValue::OptText(None)
         ));
     }

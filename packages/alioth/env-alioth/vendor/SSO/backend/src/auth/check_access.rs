@@ -40,21 +40,14 @@ pub async fn check_access(
     state: web::Data<super::AuthState>,
     body: web::Json<CheckAccessRequest>,
 ) -> HttpResponse {
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
-        None => match req
-            .headers()
-            .get(actix_web::http::header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|auth| auth.strip_prefix("Bearer "))
-        {
-            Some(token) => token.to_string(),
-            None => {
-                return HttpResponse::Unauthorized().json(AuthError {
-                    error: "No authentication token".to_string(),
-                })
-            }
-        },
+    // 令牌提取走共享实现（scoped cookie → Bearer → 环境 cookie；见 jwt::extract_token）
+    let access_token = match crate::auth::jwt::extract_token(&req) {
+        Some(t) => t,
+        None => {
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "No authentication token".to_string(),
+            })
+        }
     };
 
     let claims: Claims = match decode_token_any(&access_token, &state.verification_keys()) {
@@ -104,6 +97,54 @@ pub async fn check_access(
             redirect: None,
             reason: None,
         });
+    }
+
+    // App 路径判定（add-app-visibility-ngac-isolation D4）：
+    // /apps/{code}/... → App OA association decide；无 OA/无关联 → 拒绝（fail-closed）。
+    // admin 豁免与 PDP list §6.2 同语义；判定通过后置 fall-through 至既有策略。
+    if let Some(code) = path
+        .strip_prefix("/apps/")
+        .and_then(|rest| rest.split('/').next())
+        .filter(|c| !c.is_empty())
+    {
+        if !attrs.iter().any(|a| a == "admin") {
+            let oa_id: Option<i64> = sqlx::query_scalar(
+                r#"SELECT fk_resource FROM isahl_auth.ngac_object_attribute
+                   WHERE resource_type = 'app' AND resource_identifier = $1 AND deleted_at IS NULL
+                   LIMIT 1"#,
+            )
+            .bind(code)
+            .fetch_optional(pool.get_ref())
+            .await
+            .unwrap_or(None);
+            let permitted = match oa_id {
+                Some(oa) => {
+                    crate::ngac::pdp::decide_access(
+                        pool.get_ref(),
+                        user_id,
+                        &format!("app:{oa}"),
+                        "read",
+                    )
+                    .await
+                        == crate::ngac::pdp::Decision::Permit
+                }
+                None => false, // App OA 未配置 → fail-closed
+            };
+            if !permitted {
+                return HttpResponse::Ok().json(CheckAccessResponse {
+                    allowed: false,
+                    redirect: Some("/".to_string()),
+                    reason: Some("APP_NOT_VISIBLE".to_string()),
+                });
+            }
+            // App 关联判定通过即放行（不再落 shop 时代 storefront 二元策略——
+            // 外部角色的门户 App 路径会被策略 1 误杀）
+            return HttpResponse::Ok().json(CheckAccessResponse {
+                allowed: true,
+                redirect: None,
+                reason: None,
+            });
+        }
     }
 
     // 策略 1：storefront-only 用户 → 仅允许 storefront 路径

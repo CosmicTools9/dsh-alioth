@@ -16,14 +16,6 @@ pub struct PdpCheckResponse {
     pub reason: String,
 }
 
-/// NGAC 策略版本探针响应（fix-ngac-decision-consistency D4）。
-///
-/// Gateway PEP 以此版本为 per-worker 决策/列缓存的失效信号。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicyVersionResponse {
-    pub version: i64,
-}
-
 /// NGAC access decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Decision {

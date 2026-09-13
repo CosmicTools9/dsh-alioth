@@ -378,7 +378,7 @@ async fn test_register_with_username_password_only() {
 }
 
 #[tokio::test]
-async fn test_register_with_unverified_email_succeeds() {
+async fn test_register_with_unverified_email_rejected() {
     let pool = setup_pool().await;
     common::setup_schema(&pool)
         .await
@@ -397,43 +397,54 @@ async fn test_register_with_unverified_email_succeeds() {
     )
     .await;
 
-    let test_email = "reg-verify@alioth.test";
+    let test_email = format!("reg-verify-{}@alioth.test", uuid::Uuid::new_v4().simple());
+    let test_username = format!("reg_verify_{}", uuid::Uuid::new_v4().simple());
 
-    // 未验证邮箱直接注册 → 201（邮箱验证不再作为注册门禁；访问由审批门禁控制）
+    // 未验证邮箱直接注册 → 400 EMAIL_NOT_VERIFIED（fix-sso-auth-gaps P1：
+    // 邮箱所有权验证恢复为注册门禁；验证记录经 send-code + verify-code 前置取得）
     let register_req = test::TestRequest::post()
         .uri("/auth/register")
         .set_json(json!({
             "email": test_email,
             "password": "TestPass123!",
-            "username": "reg_verify_user"
+            "username": test_username
         }))
         .to_request();
     let register_resp = test::call_service(&app, register_req).await;
     assert_eq!(
         register_resp.status().as_u16(),
-        201,
-        "register with unverified email should succeed (no 403 gate)"
+        400,
+        "register with unverified email must be rejected with 400"
+    );
+    let body: serde_json::Value = test::read_body_json(register_resp).await;
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("EMAIL_NOT_VERIFIED"),
+        "expected EMAIL_NOT_VERIFIED, got {:?}",
+        body
     );
 
-    // email 写入 auth_user_emails（主邮箱）+ 镜像 auth_users.email
-    let uid: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE username = 'reg_verify_user'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let email_cnt: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM isahl_auth.auth_user_emails WHERE fk_user = $1 AND email = $2 AND deleted_at IS NULL",
-    )
-    .bind(uid)
-    .bind(test_email)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(email_cnt, 1, "email should be written to auth_user_emails");
+    // 无用户行写入
+    let leftover: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM isahl_auth.auth_users WHERE username = $1")
+            .bind(&test_username)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        leftover, 0,
+        "no user row may be created for unverified email"
+    );
 
     // 清理
-    common::cleanup_user_by_email(&pool, test_email).await.ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1")
+        .bind(&test_email)
+        .execute(&pool)
+        .await
+        .ok();
+    common::cleanup_user_by_email(&pool, &test_email).await.ok();
 }
 
 #[tokio::test]

@@ -54,7 +54,7 @@ case "$NS" in
     BINARY_SRC="$PROJECT_ROOT/Meta/backend/target/$TARGET_DIR_SUFFIX/meta-backend"
     cargo build $CARGO_FLAGS -p meta-backend
     ;;
-  Alioth|WZ|AVIC-CAASEC)
+  Alioth|WZ|AVIC-CAASEC|SE)
     TARGET_DIR="$PROJECT_ROOT/Deploy/$NS/bin"
     BINARY_NAME="${NS_LOWER}-server"
     echo "→ Building Gateway (features=$NS, target=Deploy/$NS/target/)..."

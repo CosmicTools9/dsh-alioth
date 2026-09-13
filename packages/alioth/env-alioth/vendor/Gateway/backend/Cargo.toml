@@ -85,6 +85,8 @@ rust_decimal = { workspace = true }
 
 # Framework modules (local paths)
 common = { path = "../../Framework/backend/common" }
+# NGAC 主体/组织/身份共享内核（岗位任职桥写归口，M226/ADR A-3）
+identity-org = { path = "../../Framework/backend/identity-org" }
 outbound-client = { path = "../../Framework/backend/outbound-client" }
 i18n = { path = "../../Framework/backend/i18n" }
 llm = { path = "../../Framework/backend/llm" }
@@ -103,6 +105,7 @@ framework-presence = { path = "../../Framework/backend/presence" }
 framework-workspace-approval = { path = "../../Framework/backend/workspace-approval" }
 framework-file-manager = { path = "../../Framework/backend/file-manager", features = ["s3"] }
 approval = { path = "../../Framework/backend/approval" }
+ontology-binding = { path = "../../Framework/backend/ontology-binding" }
 framework-scheduler = { path = "../../Framework/backend/scheduler" }
 gateway-sso = { path = "../../SSO/backend", optional = true }
 
@@ -144,6 +147,12 @@ wz-service-contract = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/contract
 wz-service-approval = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/approval/backend", optional = true }
 # Cosmic-Tools factors
 cosmic-tools-service-ct-git = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/ct-git/backend", optional = true }
+# SE factors
+se-service-rd-project = { path = "../../Pre-Proc/SE/Sources/Apps/Services/rd-project/backend", optional = true }
+se-service-budget-core = { path = "../../Pre-Proc/SE/Sources/Apps/Services/budget-core/backend", optional = true }
+se-service-sap-execution = { path = "../../Pre-Proc/SE/Sources/Apps/Services/sap-execution/backend", optional = true }
+se-service-budget-analysis = { path = "../../Pre-Proc/SE/Sources/Apps/Services/budget-analysis/backend", optional = true }
+se-service-rd-milestone = { path = "../../Pre-Proc/SE/Sources/Apps/Services/rd-milestone/backend", optional = true }
 # AVIC-CAASEC factors
 avic-caasec-service-isahl-db = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/isahl-db/backend", optional = true }
 avic-caasec-service-authority = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/authority/backend", optional = true }
@@ -155,10 +164,12 @@ avic-caasec-service-valuation = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/App
 avic-caasec-service-orchestration = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend", optional = true }
 avic-caasec-service-commitment = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/commitment/backend", optional = true }
 avic-caasec-service-airworthiness = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/airworthiness/backend", optional = true }
+avic-caasec-service-knowledge = { path = "../../Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/knowledge/backend", optional = true }
 wz-service-wz-yy-wms-service = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/wz-yy-wms-service/backend", optional = true }
 cosmic-tools-service-zc-id-plan-material-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/zc-id-plan-material-service/backend", optional = true }
 cosmic-tools-service-inventory_balance = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/inventory_balance/backend", package = "cosmic-tools-service-inventory-balance", optional = true }
 cosmic-tools-service-inventory_document = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/inventory_document/backend", package = "cosmic-tools-service-inventory-document", optional = true }
+cosmic-tools-service-production-order = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/production-order/backend", optional = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
@@ -174,7 +185,6 @@ alioth = ["alioth-service-isahl-db", "alioth-service-measurement", "alioth-servi
 # 生产构建（scripts/build-ns.sh --no-default-features）不含 → 生产二进制无此路由（404）。
 default = ["alioth", "sso", "preproc-proxy"]
 # Cosmic-Tools：ai-erp 走 Alioth service 组（别名）+ 自有 ct-git service
-cosmic-tools = ["alioth", "cosmic-tools-service-ct-git", "cosmic-tools-service-zc-id-plan-material-service", "cosmic-tools-service-inventory_balance", "cosmic-tools-service-inventory_document"]
 wz = [
     "wz-service-isahl-db",
     "wz-service-status",
@@ -204,6 +214,15 @@ avic-caasec = [
     "avic-caasec-service-orchestration",
     "avic-caasec-service-commitment",
     "avic-caasec-service-airworthiness",
+    "avic-caasec-service-knowledge",
+]
+# SE namespace（研发预算管理）：5 个服务 crate（build.rs 按 service.json 自动注册路由）
+se = [
+    "se-service-rd-project",
+    "se-service-budget-core",
+    "se-service-sap-execution",
+    "se-service-budget-analysis",
+    "se-service-rd-milestone",
 ]
 
 # Individual factor crate features
@@ -240,6 +259,12 @@ wz-service-invoice-sync = ["dep:wz-service-invoice-sync"]
 wz-service-receipt-sync = ["dep:wz-service-receipt-sync"]
 wz-service-contract = ["dep:wz-service-contract"]
 wz-service-approval = ["dep:wz-service-approval"]
+# SE factor features
+se-service-rd-project = ["dep:se-service-rd-project"]
+se-service-budget-core = ["dep:se-service-budget-core"]
+se-service-sap-execution = ["dep:se-service-sap-execution"]
+se-service-budget-analysis = ["dep:se-service-budget-analysis"]
+se-service-rd-milestone = ["dep:se-service-rd-milestone"]
 # AVIC-CAASEC factor features
 avic-caasec-service-isahl-db = ["dep:avic-caasec-service-isahl-db"]
 avic-caasec-service-authority = ["dep:avic-caasec-service-authority"]
@@ -251,6 +276,7 @@ avic-caasec-service-valuation = ["dep:avic-caasec-service-valuation"]
 avic-caasec-service-orchestration = ["dep:avic-caasec-service-orchestration"]
 avic-caasec-service-commitment = ["dep:avic-caasec-service-commitment"]
 avic-caasec-service-airworthiness = ["dep:avic-caasec-service-airworthiness"]
+avic-caasec-service-knowledge = ["dep:avic-caasec-service-knowledge"]
 sso = ["gateway-sso"]
 # E2E 测试专用：启用 PEP 的 E2E_TEST_MODE 认证绕过分支（仅测试环境构建）。
 # 生产/常规 release 构建不启用此 feature → 认证绕过代码不被编译。
@@ -267,3 +293,4 @@ wz-service-wz-yy-wms-service = ["dep:wz-service-wz-yy-wms-service"]
 cosmic-tools-service-zc-id-plan-material-service = ["dep:cosmic-tools-service-zc-id-plan-material-service"]
 cosmic-tools-service-inventory_balance = ["dep:cosmic-tools-service-inventory_balance"]
 cosmic-tools-service-inventory_document = ["dep:cosmic-tools-service-inventory_document"]
+cosmic-tools-service-production-order = ["dep:cosmic-tools-service-production-order"]

@@ -132,16 +132,22 @@ async fn insert_opinion(
     user_id: i64,
 ) -> Result<(), ApiError> {
     let date_anchor = today_date_anchor(pool).await?;
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
+    let (dk_scene, dk_factor, dk_function) =
+        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJcFtaNc).await?;
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_deta-opinion"
-           (id, notice, opinion, fk_list, fk_biller, qk_date, created_at)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW())"#,
+           (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW(), $6, $7, $8)"#,
     )
     .bind(notice)
     .bind(opinion)
     .bind(instance_id)
     .bind(user_id)
     .bind(Some(date_anchor))
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .execute(pool)
     .await?;
     Ok(())

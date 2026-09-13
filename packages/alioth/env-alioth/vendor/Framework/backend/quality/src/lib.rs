@@ -374,7 +374,7 @@ async fn create_quality_rule(
     };
 
     match repo.create(&rule).await {
-        Ok(id) => Ok(HttpResponse::Created().json(serde_json::json!({ "id": id }))),
+        Ok(id) => Ok(HttpResponse::Created().json(serde_json::json!({ "id": id.to_string() }))),
         Err(e) => {
             log::error!("Failed to create quality rule: {}", e);
             Ok(HttpResponse::BadRequest().json(serde_json::json!({

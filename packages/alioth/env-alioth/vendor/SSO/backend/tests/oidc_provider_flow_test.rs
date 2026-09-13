@@ -52,6 +52,8 @@ fn test_config() -> Config {
         identity_external_verify_url: None,
         email_mode: "smtp".into(),
         sso_jwt_public_key_prev: None,
+        db_pool_max: 30,
+        workers: None,
     }
 }
 

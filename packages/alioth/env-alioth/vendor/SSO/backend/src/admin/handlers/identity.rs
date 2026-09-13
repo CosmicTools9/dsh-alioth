@@ -124,7 +124,7 @@ pub async fn approve_identity_verification(
 
     match result {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
-            .json(serde_json::json!({"status": "approved", "id": verification_id})),
+            .json(serde_json::json!({"status": "approved", "id": verification_id.to_string()})),
         Ok(_) => HttpResponse::NotFound()
             .json(serde_json::json!({"error": "Verification not found or already processed"})),
         Err(e) => {
@@ -167,7 +167,7 @@ pub async fn reject_identity_verification(
 
     match result {
         Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
-            .json(serde_json::json!({"status": "rejected", "id": verification_id})),
+            .json(serde_json::json!({"status": "rejected", "id": verification_id.to_string()})),
         Ok(_) => HttpResponse::NotFound()
             .json(serde_json::json!({"error": "Verification not found or already processed"})),
         Err(e) => {

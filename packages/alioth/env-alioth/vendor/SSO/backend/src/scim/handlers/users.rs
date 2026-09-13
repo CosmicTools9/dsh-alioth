@@ -200,7 +200,7 @@ pub async fn create_user(
     let active = body.active.unwrap_or(true);
     let status_str = if active { "active" } else { "disabled" };
     let settings = match &body.external_id {
-        Some(ext) => serde_json::json!({ "scim_external_id": ext }),
+        Some(ext) => serde_json::json!({ "scim_external_id": ext.to_string() }),
         None => serde_json::json!({}),
     };
 

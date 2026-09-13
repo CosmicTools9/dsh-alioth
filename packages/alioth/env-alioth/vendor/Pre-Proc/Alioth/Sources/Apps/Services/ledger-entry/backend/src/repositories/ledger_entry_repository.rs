@@ -43,10 +43,16 @@ impl AliothRepository<LedgerEntry, CreateLedgerEntryRequest, UpdateLedgerEntryRe
         req: CreateLedgerEntryRequest,
         user_id: i64,
     ) -> Result<LedgerEntry, ApiError> {
+        // 坐标三元组（§6.12 声明即必须）：会计凭证归档坐标（GH/FHA/↓_GA，同表既有写入
+        // seed-wms-transaction-data.sql），经 code 子查询解析 ZUID（禁硬编码 ZUID）
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_docu-accounting"
-               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                       (SELECT id FROM isahl.zc_id_scene    WHERE code = 'GH'   AND deleted_at IS NULL),
+                       (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FHA'  AND deleted_at IS NULL),
+                       (SELECT id FROM isahl.zc_id_function WHERE code = '↓_GA' AND deleted_at IS NULL))
                RETURNING id"#,
         )
         .bind(&req.notice)

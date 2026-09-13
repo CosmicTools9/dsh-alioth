@@ -3,7 +3,6 @@
 //! Provides HTTP handlers for user registration
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -13,32 +12,6 @@ use super::{
     session::{CreateSessionRequest, SessionManager},
     AuthState,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-// Snowflake ID 生成器
-static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
-pub fn generate_snowflake_id() -> i64 {
-    // 时间戳部分 (41 bits) - 毫秒级 Unix 时间戳
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-
-    // 机器 ID (10 bits) - 这里使用 0
-    let machine_id: u64 = 0;
-
-    // 序列号 (12 bits)
-    let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst) & 0xFFF;
-
-    // 组合成 64 bit ID
-    // | 1 bit unused | 41 bits timestamp | 10 bits machine | 12 bits sequence |
-    let id = ((timestamp & 0x1FFFFFFFFFF) << 22) | (machine_id << 12) | sequence;
-
-    id as i64
-}
-
 /// Registration request body
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -236,6 +209,37 @@ async fn register_core(
         }));
     }
 
+    // P1 邮箱所有权验证（fix-sso-auth-gaps）：请求提供 email 时，注册前置要求该邮箱
+    // 已完成 send-code + verify-code（purpose='register' 且 verified=TRUE 且未过期）。
+    // 置于格式/唯一/密码策略校验之后（先报告低级输入错误）；通过后验证记录在注册
+    // 事务内被置过期——单次注册有效，防重放。
+    let email_verification_id: Option<i64> = if let Some(e) = &email {
+        let vid: Option<i64> = sqlx::query_scalar(
+            r#"SELECT id FROM isahl_auth.auth_email_verifications
+               WHERE email = $1 AND purpose = 'register' AND verified = TRUE AND expires_at > NOW()
+               ORDER BY created_at DESC
+               LIMIT 1"#,
+        )
+        .bind(e)
+        .fetch_optional(pool.get_ref())
+        .await
+        .map_err(|err| {
+            log::error!("Database error checking email verification: {}", err);
+            actix_web::error::ErrorInternalServerError("Database error")
+        })?;
+        match vid {
+            Some(v) => Some(v),
+            None => {
+                return Ok(HttpResponse::BadRequest().json(AuthError {
+                    error: "EMAIL_NOT_VERIFIED: this email must be verified via email code before registration"
+                        .to_string(),
+                }));
+            }
+        }
+    } else {
+        None
+    };
+
     // Hash password (offload CPU-intensive Argon2 to blocking pool)
     let password_hash = hash_password_async(password.to_string())
         .await
@@ -248,23 +252,28 @@ async fn register_core(
     // 注册成功即自动触发审批（even-approve 事件 + oper-approve 实例，fk_operator=首个 admin），
     // 状态置 pending_approval——登录门禁拒绝，PDP 无 UA 拒绝所有资源；审批通过/驳回见
     // Gateway approvals.rs 激活/禁用（经 even-approve.comments.applicant_id 关联）。
-    let now = Utc::now();
-
-    // Generate snowflake ID（新用户）；复用场景沿用旧 id
-    let user_id = match reuse_user_id {
-        Some(id) => id,
-        None => generate_snowflake_id(),
-    };
-
     let mut tx = pool.begin().await.map_err(|e| {
         log::error!("Database error starting registration tx: {}", e);
         actix_web::error::ErrorInternalServerError("Failed to create user")
     })?;
 
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
+    // 本函数两处 zc_id_oper-approve INSERT 共用一次解析（循环/多处 → 循环外一次求得）。
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(pool.get_ref(), ("JE", "FTA", "↓_EZ"))
+            .await
+            .map_err(|e| {
+                log::error!("Failed to resolve dk coords: {}", e);
+                actix_web::error::ErrorInternalServerError("Failed to resolve dk coords")
+            })?;
+
     // 新用户 INSERT 或复用用户重置（add-register-approval-closure）：
     // 复用 = 被驳回/禁用用户重新注册——重置密码/邮箱/状态为 pending_approval，
     // 旧审批实例保留审计；其余字段（entity 绑定等）不动。
-    let result = if let Some(old_id) = reuse_user_id {
+    // 新用户 id 不再由进程内 snowflake 显式生成（G5，fix-sso-auth-gaps）——
+    // 由表默认 isahl.gen_next_zuid() 生成（ensure 自愈保证 default 在位），
+    // 消除多实例同毫秒碰撞与时钟回拨风险。
+    let user_id: i64 = if let Some(old_id) = reuse_user_id {
         sqlx::query_as::<_, (i64,)>(
             r#"
             UPDATE isahl_auth.auth_users
@@ -283,20 +292,18 @@ async fn register_core(
             log::error!("Database error resetting reused user: {}", e);
             actix_web::error::ErrorInternalServerError("Failed to create user")
         })?
+        .0
     } else {
-        sqlx::query_as::<_, (i64,)>(
+        sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO isahl_auth.auth_users (id, name, username, email, password_hash, status, created_at, updated_at, user_type)
-            VALUES ($1, $2, $2, $3, $4, 'pending_approval', $5, $6, $7)
+            INSERT INTO isahl_auth.auth_users (name, username, email, password_hash, status, created_at, updated_at, user_type)
+            VALUES ($1, $1, $2, $3, 'pending_approval', NOW(), NOW(), $4)
             RETURNING id
             "#,
         )
-        .bind(user_id)
         .bind(&username)
         .bind(email.as_deref())
         .bind(&password_hash)
-        .bind(now)
-        .bind(now)
         .bind(channel.kind)
         .fetch_one(&mut *tx)
         .await
@@ -305,6 +312,21 @@ async fn register_core(
             actix_web::error::ErrorInternalServerError("Failed to create user")
         })?
     };
+
+    // P1 邮箱验证记录消耗（fix-sso-auth-gaps）：注册行落库成功后同事务置过期，
+    // 验证记录单次有效；失败回滚则不消耗（用户可重试注册）。
+    if let Some(vid) = email_verification_id {
+        sqlx::query(
+            "UPDATE isahl_auth.auth_email_verifications SET expires_at = NOW(), updated_at = NOW() WHERE id = $1",
+        )
+        .bind(vid)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            log::error!("Database error consuming email verification: {}", e);
+            actix_web::error::ErrorInternalServerError("Failed to create user")
+        })?;
+    }
 
     // 审批事件（zc_id_even-approve/authorization 叶表）：comments 仅人类可读文本摘要
     // （comments-text-semantics 规约：写侧 MUST NOT JSON）；申请人归属经
@@ -386,12 +408,21 @@ async fn register_core(
         }
     };
     let event_id: i64 = if leaf_table_exists {
+        // 坐标三元组（§6.12 声明即必须）：审批叶表继承 even-approve 坐标 JC/FTA/↑_NA
+        let (leaf_dk_scene, leaf_dk_factor, leaf_dk_function) =
+            ontology_binding::resolve(pool.get_ref(), ("JC", "FTA", "↑_NA"))
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to resolve appr-authorization dk coords: {}", e);
+                    actix_web::error::ErrorInternalServerError("Failed to resolve dk coords")
+                })?;
         sqlx::query_scalar(
             r#"
             INSERT INTO isahl."zc_id_appr-authorization" (
                 created_by_id, updated_by_id, notice, code, comments,
-                tpl_id, qk_sla, created_at, updated_at
-            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW())
+                tpl_id, qk_sla, created_at, updated_at,
+                dk_scene, dk_factor, dk_function
+            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
             RETURNING id
             "#,
         )
@@ -401,6 +432,9 @@ async fn register_core(
         .bind(&approval_comments)
         .bind(flow_binding.as_ref().and_then(|(_, tpl)| *tpl))
         .bind(sla_duration_id)
+        .bind(leaf_dk_scene)
+        .bind(leaf_dk_factor)
+        .bind(leaf_dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
@@ -408,12 +442,22 @@ async fn register_core(
             actix_web::error::ErrorInternalServerError("Failed to create approval")
         })?
     } else {
+        // 坐标三元组（§6.12 声明即必须）：审批叶表族坐标 = JC/FTA/↑_NA
+        // （落点与上方同表——register 行语义 = 访问授权审批，叶表 appr-authorization）
+        let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
+            ontology_binding::resolve(pool.get_ref(), ("JC", "FTA", "↑_NA"))
+                .await
+                .map_err(|e| {
+                    log::error!("Failed to resolve appr-authorization dk coords: {}", e);
+                    actix_web::error::ErrorInternalServerError("Failed to resolve dk coords")
+                })?;
         sqlx::query_scalar(
             r#"
-            INSERT INTO isahl."zc_id_even-approve" (
+            INSERT INTO isahl."zc_id_appr-authorization" (
                 created_by_id, updated_by_id, notice, code, comments,
-                tpl_id, qk_sla, created_at, updated_at
-            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW())
+                tpl_id, qk_sla, created_at, updated_at,
+                dk_scene, dk_factor, dk_function
+            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
             RETURNING id
             "#,
         )
@@ -423,6 +467,9 @@ async fn register_core(
         .bind(&approval_comments)
         .bind(flow_binding.as_ref().and_then(|(_, tpl)| *tpl))
         .bind(sla_duration_id)
+        .bind(ev_dk_scene)
+        .bind(ev_dk_factor)
+        .bind(ev_dk_function)
         .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
@@ -452,10 +499,14 @@ async fn register_core(
             Some(v) => v,
             None => {
                 let new_id: i64 = sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_oper-approve" (notice, created_by_id)
-                       VALUES ('register-context', $1) RETURNING id"#,
+                    r#"INSERT INTO isahl."zc_id_oper-approve"
+                           (notice, created_by_id, dk_scene, dk_factor, dk_function)
+                       VALUES ('register-context', $1, $2, $3, $4) RETURNING id"#,
                 )
                 .bind(user_id)
+                .bind(dk_scene)
+                .bind(dk_factor)
+                .bind(dk_function)
                 .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| {
@@ -515,8 +566,9 @@ async fn register_core(
     let instance_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO isahl."zc_id_oper-approve" (
-            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $3, NOW(), NOW())
+            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at,
+            dk_scene, dk_factor, dk_function
+        ) VALUES ($1, $2, $3, $4, $3, NOW(), NOW(), $5, $6, $7)
         RETURNING id
         "#,
     )
@@ -524,6 +576,9 @@ async fn register_core(
     .bind(channel.event_code)
     .bind(user_id)
     .bind(admin_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
@@ -552,7 +607,7 @@ async fn register_core(
     })?;
 
     // Generate temporary JWT for identity-only access (24h)
-    let user_id_str = result.0.to_string();
+    let user_id_str = user_id.to_string();
     let temp_claims = Claims::temp(&user_id_str, &email_str);
 
     let temp_token =
@@ -585,7 +640,7 @@ async fn register_core(
         .map(|s| s.to_string());
     let _session = session_manager
         .create_session(CreateSessionRequest {
-            user_id: result.0,
+            user_id,
             idp_provider_id: None,
             idp_session_id: None,
             ip_address,
@@ -606,7 +661,7 @@ async fn register_core(
             "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, verified, created_at, updated_at) \
              VALUES ($1, $2, TRUE, FALSE, NOW(), NOW()) ON CONFLICT DO NOTHING",
         )
-        .bind(result.0)
+        .bind(user_id)
         .bind(e)
         .execute(pool.get_ref())
         .await;
@@ -631,11 +686,17 @@ async fn register_core(
         approval_instance_id: Some(instance_id.to_string()),
     });
 
-    let response = set_refresh_cookie(response, &refresh_token, auth_state.jwt_refresh_expiry_secs);
+    let response = set_refresh_cookie(
+        response,
+        &refresh_token,
+        auth_state.jwt_refresh_expiry_secs,
+        None,
+    );
     Ok(jwt::set_access_cookie(
         response,
         &temp_token,
         // temp token 固定 24h（identity 流程），cookie 跟随 token 实际寿命
         24 * 3600,
+        None,
     ))
 }

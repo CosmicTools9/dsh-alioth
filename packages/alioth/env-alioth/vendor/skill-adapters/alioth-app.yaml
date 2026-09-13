@@ -9,7 +9,7 @@ tracks:
   - name: App 原型集成
     steps:
       - id: "1.1"
-        instruction: "preflight — 确认 App 上下文：读取 Pre-Proc/{ns}/Apps/{app}/app.json（若已生成，config.modules 即模块列表）；否则用 search_files 扫描 Pre-Proc/{ns}/Sources/Modules/*/module.json 发现模块 id。App 骨架目录由 AppCreation 创建，本步骤只确认模块清单，不写文件。"
+        instruction: "preflight — 确认 App 上下文：读取 Pre-Proc/{ns}/Apps/{app}/app.json（若已生成，config.modules 即模块列表）；否则用 search_files 扫描 Pre-Proc/{ns}/Sources/Apps/Modules/*/module.json 发现模块 id。App 骨架目录由 AppCreation 创建，本步骤只确认模块清单，不写文件。"
         tools: [read_file, search_files]
         schema: {type: object, required: [ns, app, modules]}
         gates:

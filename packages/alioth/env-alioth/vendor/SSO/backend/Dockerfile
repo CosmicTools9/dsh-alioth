@@ -4,7 +4,7 @@
 # SAML 2.0 已移除（remove-saml-sso）：xmlsec1 源码构建不再需要。
 # builder 仅保留 openssl 系构建依赖（webauthn-rs → openssl-sys 需要 pkg-config/libssl-dev）。
 
-FROM rust:1.96-slim AS builder
+FROM rust:1.98-slim AS builder
 
 WORKDIR /usr/src/app
 

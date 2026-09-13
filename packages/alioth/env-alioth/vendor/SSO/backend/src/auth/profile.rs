@@ -26,21 +26,14 @@ pub async fn update_profile(
     state: web::Data<super::AuthState>,
     body: web::Json<UpdateProfileRequest>,
 ) -> HttpResponse {
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
-        None => match req
-            .headers()
-            .get(actix_web::http::header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|auth| auth.strip_prefix("Bearer "))
-        {
-            Some(token) => token.to_string(),
-            None => {
-                return HttpResponse::Unauthorized().json(AuthError {
-                    error: "No authentication token".to_string(),
-                })
-            }
-        },
+    // 令牌提取走共享实现（scoped cookie → Bearer → 环境 cookie；见 jwt::extract_token）
+    let access_token = match crate::auth::jwt::extract_token(&req) {
+        Some(t) => t,
+        None => {
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "No authentication token".to_string(),
+            })
+        }
     };
 
     let claims: Claims = match decode_token_any(&access_token, &state.verification_keys()) {

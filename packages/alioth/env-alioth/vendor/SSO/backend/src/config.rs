@@ -64,7 +64,9 @@ pub struct Config {
     /// OIDC OP issuer URL（discovery 的 `issuer` 与 id_token `iss` 声明）
     pub oidc_issuer: String,
 
-    /// OIDC client_id（单租户简化：授权端点接受此 client_id；多客户端注册待扩展）
+    /// OIDC client_id（默认客户端兼容入口——单客户端部署零配置时授权端点接受此值；
+    /// 多客户端经 admin `/api/admin/oidc-clients` 注册，授权/兑换按 DB `oidc_clients`
+    /// 表校验 client_id + per-client redirect_uris + client_secret_hash）
     pub oidc_client_id: Option<String>,
 
     /// OIDC 允许的 redirect_uri 白名单（逗号分隔；授权端点强制校验，防开放重定向）
@@ -89,6 +91,13 @@ pub struct Config {
     /// - "log"：dev 专用——邮件内容（含验证码）打印到日志，不实际投递。
     ///   未设置/非法值 → smtp（fail-closed，生产不允许隐式降级）。
     pub email_mode: String,
+
+    /// DB 连接池上限（fix-sso-auth-gaps G6）：env `SSO_DB_POOL_MAX`，默认 30。
+    pub db_pool_max: u32,
+
+    /// HTTP worker 线程数（fix-sso-auth-gaps G6）：env `SSO_WORKERS`，
+    /// 未设置 = actix 默认（逻辑 CPU 数）。仅独立 SSO 进程生效。
+    pub workers: Option<usize>,
 }
 
 /// 加载 SSO JWT 轮换窗口内的历史 ES256 公钥（可选）
@@ -166,6 +175,13 @@ impl Config {
             identity_external_verify_url: env::var("IDENTITY_EXTERNAL_VERIFY_URL").ok(),
             email_mode: env::var("SSO_EMAIL_MODE").unwrap_or_else(|_| "smtp".to_string()),
             sso_jwt_public_key_prev: load_sso_jwt_public_key_prev()?,
+            db_pool_max: env::var("SSO_DB_POOL_MAX")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse()?,
+            workers: env::var("SSO_WORKERS")
+                .ok()
+                .map(|v| v.parse::<usize>())
+                .transpose()?,
         })
     }
 }

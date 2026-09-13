@@ -55,8 +55,12 @@ impl
     ) -> Result<StockCountDetail, ApiError> {
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_deta-counting"
-               (notice, code, comments, ak_source, qk_date, ck_category, fk_list, fk_biller, fk_production, fk_storage, qk_qty, qk_w_qty, qk_v_qty, fk_voucher, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+               (notice, code, comments, ak_source, qk_date, ck_category, fk_list, fk_biller, fk_production, fk_storage, qk_qty, qk_w_qty, qk_v_qty, fk_voucher, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                       (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JC'   AND deleted_at IS NULL),
+                       (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FTA'  AND deleted_at IS NULL),
+                       (SELECT id FROM isahl.zc_id_function WHERE code = '↓_NC' AND deleted_at IS NULL))
                RETURNING id"#,
         )
         .bind(&req.notice)

@@ -195,7 +195,17 @@ async fn cleanup(pool: &PgPool, user_ids: &[i64]) {
 }
 
 async fn call_decide(pool: &PgPool, user_id: i64, resource: &str, action: &str) -> bool {
-    let req = test::TestRequest::default().to_http_request();
+    use actix_web::HttpMessage;
+    // 模拟 RequireAuth：Bearer 头 + claims 注入（tighten-pdp-decision-surface A）
+    let req = test::TestRequest::default()
+        .insert_header(("Authorization", "Bearer test-token"))
+        .to_http_request();
+    req.extensions_mut()
+        .insert(gateway_sso::auth::jwt::Claims::new(
+            &user_id.to_string(),
+            "",
+            false,
+        ));
     let resp = gateway_sso::ngac::pdp::ngac_decide(
         req,
         web::Data::new(pool.clone()),
@@ -415,7 +425,19 @@ async fn rls_visible_ids_subtracts_prohibition() {
     .unwrap();
 
     async fn call_list(pool: &PgPool, user_id: i64, resource_type: &str) -> serde_json::Value {
+        use actix_web::HttpMessage;
+        // 模拟 RequireAuth：Bearer 头 + claims 注入（tighten-pdp-decision-surface A）
+        let req = actix_web::test::TestRequest::get()
+            .insert_header(("Authorization", "Bearer test-token"))
+            .to_http_request();
+        req.extensions_mut()
+            .insert(gateway_sso::auth::jwt::Claims::new(
+                &user_id.to_string(),
+                "",
+                false,
+            ));
         let resp = list_resource_access(
+            req,
             web::Data::new(pool.clone()),
             web::Json(ngac_contract::PdpListRequest {
                 user_id,

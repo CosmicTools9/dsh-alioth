@@ -117,7 +117,7 @@ async fn insert_row(pool: &PgPool, table: &str, notice: &str) -> i64 {
 /// 插入 r_status 桥接行（ref_left → lifecycle，ref_right → status）
 async fn insert_relation_row(pool: &PgPool, notice: &str, ref_left: i64, ref_right: i64) -> i64 {
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_lifecycle_r_status" (notice, ref_left, ref_right)
+        r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (notice, ref_left, ref_right)
            VALUES ($1, $2, $3) RETURNING id"#,
     )
     .bind(notice)
@@ -131,12 +131,19 @@ async fn insert_relation_row(pool: &PgPool, notice: &str, ref_left: i64, ref_rig
 
 /// 插入 deta-trade-order 业务引用行（fk_list → lifecycle）
 async fn insert_biz_ref_row(pool: &PgPool, notice: &str, fk_item: i64) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_EV"))
+        .await
+        .expect("resolve zc_id_deta-tsp coords");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_deta-tsp" (notice, fk_item)
-           VALUES ($1, $2) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_deta-tsp" (notice, fk_item, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
     )
     .bind(notice)
     .bind(fk_item)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .expect("insert biz ref row")
@@ -145,13 +152,21 @@ async fn insert_biz_ref_row(pool: &PgPool, notice: &str, fk_item: i64) -> i64 {
 
 /// 插入 version 层级行（可选 fk_previous 指向父行）
 async fn insert_manu_row(pool: &PgPool, notice: &str, fk_previous: Option<i64>) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("JE", "GEB", "↑_DA"))
+        .await
+        .expect("resolve dk coords");
     match fk_previous {
         Some(parent) => sqlx::query(
-            r#"INSERT INTO isahl."zc_id_version" (notice, fk_previous)
-               VALUES ($1, $2) RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_version"
+               (notice, fk_previous, dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
         )
         .bind(notice)
         .bind(parent)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(pool)
         .await
         .expect("insert manu row")
@@ -294,12 +309,20 @@ async fn non_detail_business_ref_not_cascaded_by_default() {
     let notice = tag();
     // 非明细业务引用：zc_id_appr-payment.fk_subject → zc_id_subjects
     let subject_id = insert_row(&pool, "zc_id_subjects", &notice).await;
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool, ("JC", "FTA", "↑_NA"))
+            .await
+            .expect("resolve zc_id_appr-payment coords");
     let payment_id: i64 = sqlx::query(
-        r#"INSERT INTO isahl."zc_id_appr-payment" (notice, fk_subject)
-           VALUES ($1, $2) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_appr-payment" (notice, fk_subject, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
     )
     .bind(notice)
     .bind(subject_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert appr-payment row")

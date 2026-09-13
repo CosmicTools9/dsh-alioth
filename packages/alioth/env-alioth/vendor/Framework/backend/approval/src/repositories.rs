@@ -53,17 +53,25 @@ impl
 
     async fn get(&self, id: i64) -> Result<Option<ApprovalFlow>, AliothError> {
         sqlx::query_as::<_, ApprovalFlow>(
-            "SELECT id, notice AS name, code, t_color_, comments, meta, mermaid, fk_context, \
-             tableoid::regclass::text AS branch, \
+            "SELECT id, notice AS name, code, t_color_, comments, meta, mermaid, \
+             (SELECT rc.ref_right FROM isahl.\"zc_id_process_rr_context\" rc \
+              WHERE rc.ref_left = e.id AND rc.deleted_at IS NULL \
+              ORDER BY rc.id LIMIT 1) AS fk_context, \
+             e.tableoid::regclass::text AS branch, \
              (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
-              WHERE c.id = zc_id_process.fk_context AND c.deleted_at IS NULL) AS context_concept, \
+              JOIN isahl.\"zc_id_process_rr_context\" rc2 ON rc2.ref_right = c.id AND rc2.deleted_at IS NULL \
+              WHERE rc2.ref_left = e.id AND rc2.deleted_at IS NULL AND c.deleted_at IS NULL \
+              ORDER BY rc2.id LIMIT 1) AS context_concept, \
              (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
-              WHERE c.id = zc_id_process.fk_context AND c.deleted_at IS NULL) AS context_leaf, \
+              JOIN isahl.\"zc_id_process_rr_context\" rc3 ON rc3.ref_right = c.id AND rc3.deleted_at IS NULL \
+              WHERE rc3.ref_left = e.id AND rc3.deleted_at IS NULL AND c.deleted_at IS NULL \
+              ORDER BY rc3.id LIMIT 1) AS context_leaf, \
              (SELECT s.code FROM isahl.\"zc_id_lifecycle_r_primary-status\" ls \
               JOIN isahl.\"zc_id_stus-process\" s ON s.id = ls.ref_right \
-              WHERE ls.ref_left = zc_id_process.id AND ls.deleted_at IS NULL) AS status, \
+              WHERE ls.ref_left = e.id AND ls.deleted_at IS NULL) AS status, \
+             e.meta->>'managed' AS managed_by, \
              created_at, updated_at, deleted_at \
-             FROM isahl.zc_id_process WHERE id = $1 AND deleted_at IS NULL",
+             FROM isahl.zc_id_process e WHERE e.id = $1 AND e.deleted_at IS NULL",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -76,10 +84,11 @@ impl
         req: CreateApprovalFlowRequest,
         user_id: i64,
     ) -> Result<ApprovalFlow, AliothError> {
-        // fk_context 归属（refactor-flow-node-operation-model 阶段 3）：
-        // - context_table（新契约）：域叶表 → 域父表创建流程专属上下文范例行
-        //   （_t_='flow-context'），fk_context → 范例行——模板链
-        //   even-approve(范例) ↔ operation(范例) ↔ process(范例).fk_context
+        // 流程↔输入范畴归属（桥契约；物理列 fk_context 已由模型中心移除）：
+        // - context_table（新契约）：声明的域内**叶表**创建流程专属上下文范例行
+        //   （_t_='flow-context'，落点即声明叶——禁域父表），绑定经
+        //   zc_id_process_rr_context 桥落行——模板链
+        //   even-approve(范例) ↔ operation(范例) ↔ process(范例) → rr_context → 上下文行
         // - context_id（旧契约兼容）：proc-context 族在册 scope-definition 行
         let mut resolved_context: Option<i64> = req.context_id;
         if let Some(table) = &req.context_table {
@@ -89,17 +98,28 @@ impl
                     message: format!("context_table '{table}' 不在三域上下文叶表内"),
                 }
             })?;
-            let insert_sql =
-                crate::context_domain::flow_context_insert_sql(domain).ok_or_else(|| {
-                    AliothError::Validation {
-                        field: "context_table".to_string(),
-                        message: format!("域 '{domain}' 无范例落表"),
-                    }
+            let insert_sql = crate::context_domain::flow_context_insert_sql(domain, table)
+                .ok_or_else(|| AliothError::Validation {
+                    field: "context_table".to_string(),
+                    message: format!(
+                        "context_table '{table}' 非域 '{domain}' 声明叶表——范例行 MUST 落叶表（禁域父表）"
+                    ),
                 })?;
+            // 叶表坐标（§6.12 声明即必须）：静态叶表→code 三元组解析；未声明叶表按
+            // §7.3.3 绑 NULL（与 context_meta::leaf_coords 同源，禁硬编码 ZUID）
+            let (dk_scene, dk_factor, dk_function) = match crate::context_meta::leaf_coords(table) {
+                Some((s, f, fx)) => ontology_binding::resolve(&self.pool, (s, f, fx))
+                    .await
+                    .map_err(|e| AliothError::Database(e.to_string()))?,
+                None => (None, None, None),
+            };
             resolved_context = Some(
                 sqlx::query_scalar::<_, i64>(insert_sql)
                     .bind(req.name.trim())
                     .bind(user_id)
+                    .bind(dk_scene)
+                    .bind(dk_factor)
+                    .bind(dk_function)
                     .fetch_one(&self.pool)
                     .await
                     .map_err(AliothError::from)?,
@@ -131,14 +151,6 @@ impl
         // 缺省 proc-approve 向后兼容既有调用方。
         // dk 三元组经 dk.rs（JC/FTA/↑_NA 坐标码）解析；失败 warn + NULL，
         // 不写悬空 ZUID（对齐 crud::handler::resolve_dk_ctx 范式）。
-        const RETURNING: &str =
-            "RETURNING id, notice AS name, code, t_color_, comments, meta, mermaid, fk_context, \
-             tableoid::regclass::text AS branch, \
-             (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
-              WHERE c.id = fk_context AND c.deleted_at IS NULL) AS context_concept, \
-             (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
-              WHERE c.id = fk_context AND c.deleted_at IS NULL) AS context_leaf, \
-             created_at, updated_at, deleted_at";
         let branch = req.branch.as_deref().unwrap_or("zc_id_proc-approve");
         let table = match branch {
             "zc_id_proc-approve" => "isahl.\"zc_id_proc-approve\"",
@@ -158,15 +170,8 @@ impl
                 });
             }
         };
-        let insert_sql = format!(
-            r#"INSERT INTO {table}
-               (notice, code, comments, meta, mermaid, fk_context, created_by_id,
-                dk_scene, dk_factor, dk_function, _f_, _t_)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, '设计', '实例') {RETURNING}"#
-        );
         // 设计图 → mermaid 整体结构（保存时引擎自动生成，幂等重写）
         let mermaid = req.meta.as_ref().map(crate::mermaid::graph_to_mermaid);
-        // context_table 新契约的范例行校验已在上方完成（resolved_context）
         let (dk_scene, dk_factor, dk_function) =
             crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::DkJcFtaNa)
                 .await
@@ -177,21 +182,51 @@ impl
                     );
                     (None, None, None)
                 });
+        // 流程↔输入范畴绑定经 zc_id_process_rr_context 桥（code='bind-context'）落行：
+        // 流程行不再写 fk_context 物理列（模型中心已移除）；桥与流程行同事务提交，
+        // 提交后回读派生字段返回（RETURNING 不派生 ctx——同语句桥行尚不可见）。
         // 静态 match 产出的固定 SQL（表名为编译期常量），AssertSqlSafe 声明已审计
-        sqlx::query_as::<_, ApprovalFlow>(sqlx::AssertSqlSafe(insert_sql.as_str()))
+        let insert_sql = format!(
+            r#"INSERT INTO {table}
+               (notice, code, comments, meta, mermaid, created_by_id,
+                dk_scene, dk_factor, dk_function, _f_, _t_)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '设计', '实例')
+               RETURNING id"#
+        );
+        let mut tx = self.pool.begin().await.map_err(AliothError::from)?;
+        let created_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql.as_str()))
             .bind(&req.name)
             .bind(&req.code)
             .bind(&req.comments)
             .bind(&req.meta)
             .bind(&mermaid)
-            .bind(resolved_context)
             .bind(user_id)
             .bind(dk_scene)
             .bind(dk_factor)
             .bind(dk_function)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *tx)
             .await
-            .map_err(AliothError::from)
+            .map_err(AliothError::from)?;
+        if let Some(ctx) = resolved_context {
+            sqlx::query(
+                r#"INSERT INTO isahl."zc_id_process_rr_context"
+                   (ref_left, ref_right, code, notice, created_by_id)
+                   VALUES ($1, $2, 'bind-context', '流程上下文绑定', $3)"#,
+            )
+            .bind(created_id)
+            .bind(ctx)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(AliothError::from)?;
+        }
+        tx.commit().await.map_err(AliothError::from)?;
+        match self.get(created_id).await? {
+            Some(flow) => Ok(flow),
+            None => Err(AliothError::Database(
+                "created approval flow not readable".to_string(),
+            )),
+        }
     }
 
     async fn update(
@@ -205,84 +240,146 @@ impl
             return Ok(None);
         }
         let current = current.unwrap();
+
+        // 模型级种子流程守卫（add-model-seed-flow-guard）：meta.managed='model-seed'
+        // 的行由模型种子通道持有（Framework/seed/seed-auth-approval-flows.sql）——
+        // 通用 CRUD 不得改图/改名，否则注册/实名/入驻审批链静默断链
+        if current.managed_by.as_deref() == Some("model-seed") {
+            return Err(AliothError::Validation {
+                field: "managed".to_string(),
+                message: "模型级种子流程不可修改——由模型种子通道持有".to_string(),
+            });
+        }
+
+        // 乐观锁（fix-flow-designer-editing-gaps E2）：期望值与库中失配 → 409
+        //（并发编辑不得静默覆盖他人修改）
+        if let Some(expected) = req.expected_updated_at {
+            if current.updated_at != Some(expected) {
+                return Err(AliothError::Conflict(
+                    "流程已被他人修改（并发编辑冲突）——请刷新后重试".to_string(),
+                ));
+            }
+        }
         let name = req.name.unwrap_or(current.name);
         // code 为引擎发布位/业务码（publish/unpublish 独占），update 不写
         let comments = req.comments.or(current.comments);
         // 设计图 JSON 信封（meta jsonb）+ mermaid 整体结构（保存时引擎自动生成）
         let meta = req.meta.or(current.meta);
         let mermaid = meta.as_ref().map(crate::mermaid::graph_to_mermaid);
-        // fk_context 重绑（refactor-flow-node-operation-model 阶段 3）：
-        // context_table（新契约）→ 域父表建新范例行；context_id（旧契约）兼容
-        let fk_context =
-            if let Some(table) = &req.context_table {
-                let domain = crate::context_domain::domain_of_leaf(table).ok_or_else(|| {
-                    AliothError::Validation {
-                        field: "context_table".to_string(),
-                        message: format!("context_table '{table}' 不在三域上下文叶表内"),
-                    }
-                })?;
-                let insert_sql = crate::context_domain::flow_context_insert_sql(domain)
+        // 上下文重绑经 zc_id_process_rr_context 桥维护（流程行不再写 fk_context 列）：
+        // context_table（新契约）→ 声明域内叶表建 flow-context 范例行；context_id（旧契约）兼容；
+        // 两者皆无 → 保留现有绑定（桥不动）。退役旧桥 + 插新桥 = 单绑语义（bind-flow 同款）。
+        let rebind: Option<i64> = if let Some(table) = &req.context_table {
+            let domain = crate::context_domain::domain_of_leaf(table).ok_or_else(|| {
+                AliothError::Validation {
+                    field: "context_table".to_string(),
+                    message: format!("context_table '{table}' 不在三域上下文叶表内"),
+                }
+            })?;
+            let insert_sql = crate::context_domain::flow_context_insert_sql(domain, table)
                     .ok_or_else(|| AliothError::Validation {
                         field: "context_table".to_string(),
-                        message: format!("域 '{domain}' 无范例落表"),
+                        message: format!(
+                            "context_table '{table}' 非域 '{domain}' 声明叶表——范例行 MUST 落叶表（禁域父表）"
+                        ),
                     })?;
-                Some(
-                    sqlx::query_scalar::<_, i64>(insert_sql)
-                        .bind(name.trim())
-                        .bind(user_id)
-                        .fetch_one(&self.pool)
-                        .await
-                        .map_err(AliothError::from)?,
-                )
-            } else {
-                match req.context_id {
-                    Some(ctx) => {
-                        let valid: bool = sqlx::query_scalar(
-                            r#"SELECT EXISTS(
-                             SELECT 1 FROM isahl."zc_id_proc-context"
-                             WHERE id = $1 AND _t_ = 'scope-definition' AND deleted_at IS NULL
-                           )"#,
-                        )
-                        .bind(ctx)
-                        .fetch_one(&self.pool)
-                        .await?;
-                        if !valid {
-                            return Err(AliothError::Validation {
-                                field: "context_id".to_string(),
-                                message: format!(
-                                    "非法流程输入范畴 context_id={ctx}——须为 proc-context 族 \
-                                 _t_='scope-definition' 范畴定义行"
-                                ),
-                            });
-                        }
-                        Some(ctx)
-                    }
-                    None => current.fk_context,
-                }
+            // 叶表坐标（§6.12 声明即必须）：静态叶表→code 三元组解析；未声明叶表绑 NULL
+            let (dk_scene, dk_factor, dk_function) = match crate::context_meta::leaf_coords(table) {
+                Some((s, f, fx)) => ontology_binding::resolve(&self.pool, (s, f, fx))
+                    .await
+                    .map_err(|e| AliothError::Database(e.to_string()))?,
+                None => (None, None, None),
             };
-        sqlx::query_as::<_, ApprovalFlow>(
+            Some(
+                sqlx::query_scalar::<_, i64>(insert_sql)
+                    .bind(name.trim())
+                    .bind(user_id)
+                    .bind(dk_scene)
+                    .bind(dk_factor)
+                    .bind(dk_function)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(AliothError::from)?,
+            )
+        } else {
+            match req.context_id {
+                Some(ctx) => {
+                    let valid: bool = sqlx::query_scalar(
+                        r#"SELECT EXISTS(
+                         SELECT 1 FROM isahl."zc_id_proc-context"
+                         WHERE id = $1 AND _t_ = 'scope-definition' AND deleted_at IS NULL
+                       )"#,
+                    )
+                    .bind(ctx)
+                    .fetch_one(&self.pool)
+                    .await?;
+                    if !valid {
+                        return Err(AliothError::Validation {
+                            field: "context_id".to_string(),
+                            message: format!(
+                                "非法流程输入范畴 context_id={ctx}——须为 proc-context 族 \
+                             _t_='scope-definition' 范畴定义行"
+                            ),
+                        });
+                    }
+                    Some(ctx)
+                }
+                None => None,
+            }
+        };
+        let mut tx = self.pool.begin().await.map_err(AliothError::from)?;
+        let res = sqlx::query(
             r#"UPDATE isahl.zc_id_process
                SET notice = $1, comments = $2, meta = $3, mermaid = $4,
-                   fk_context = $5, updated_by_id = $6
-               WHERE id = $7 AND deleted_at IS NULL
-               RETURNING id, notice AS name, code, t_color_, comments, meta, mermaid, fk_context,
-                         tableoid::regclass::text AS branch,
-                         (SELECT c.notice FROM isahl."zc_id_proc-context" c
-                          WHERE c.id = fk_context AND c.deleted_at IS NULL) AS context_concept,
-                         (SELECT replace(c.tableoid::regclass::text, '"', '') FROM isahl."zc_id_proc-context" c
-                          WHERE c.id = fk_context AND c.deleted_at IS NULL) AS context_leaf,
-                         created_at, updated_at, deleted_at"#,
+                   updated_by_id = $5, updated_at = NOW()
+               WHERE id = $6 AND deleted_at IS NULL
+                 AND ($7::timestamptz IS NULL OR updated_at IS NOT DISTINCT FROM $7::timestamptz)"#,
         )
         .bind(&name)
         .bind(&comments)
         .bind(&meta)
         .bind(&mermaid)
-        .bind(fk_context)
         .bind(user_id)
         .bind(id)
-        .fetch_optional(&self.pool)
+        .bind(req.expected_updated_at)
+        .execute(&mut *tx)
         .await
-        .map_err(AliothError::from)
+        .map_err(AliothError::from)?;
+        // 表无 updated_at 触发器——SET NOW() 由本语句维护；乐观锁二次防线：
+        // 预检 SELECT 与 UPDATE 之间的竞态写入（0 行更新且带期望值 → 409 冲突）
+        if res.rows_affected() == 0 && req.expected_updated_at.is_some() {
+            return Err(AliothError::Conflict(
+                "流程已被他人修改（并发编辑冲突）——请刷新后重试".to_string(),
+            ));
+        }
+        // 绑定变化：退役旧桥 + 插新桥（同一事务，原子）
+        if let Some(ctx) = rebind {
+            sqlx::query(
+                r#"UPDATE isahl."zc_id_process_rr_context"
+                   SET deleted_at = NOW(), deleted_by_id = $1, updated_at = NOW()
+                   WHERE ref_left = $2 AND deleted_at IS NULL"#,
+            )
+            .bind(user_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(AliothError::from)?;
+            sqlx::query(
+                r#"INSERT INTO isahl."zc_id_process_rr_context"
+                   (ref_left, ref_right, code, notice, created_by_id)
+                   VALUES ($1, $2, 'bind-context', '流程上下文绑定', $3)"#,
+            )
+            .bind(id)
+            .bind(ctx)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(AliothError::from)?;
+        }
+        tx.commit().await.map_err(AliothError::from)?;
+        // 回读（含桥派生字段）；并发删除/行缺失 → None
+        let row = self.get(id).await?;
+        Ok(row)
     }
 
     /// 删除流程 = 事务内级联软删（fix-flow-designer-chain-breaks §D2；
@@ -293,6 +390,24 @@ impl
     /// → oper-approve 实例（经 rr_event 桥）→ deta-opinion 意见（fk_list）；
     /// 关系行仅当 ref 端命中删除集才软删。共享值对象不删。
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
+        // 模型级种子流程守卫（add-model-seed-flow-guard）：种子行由模型种子通道持有，
+        // 且种子幂等键 NOT EXISTS by code 删除后重放不自愈——级联软删必须拒绝
+        let managed: Option<String> = sqlx::query_scalar(
+            r#"SELECT meta->>'managed' FROM isahl.zc_id_process
+               WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AliothError::from)?
+        .flatten();
+        if managed.as_deref() == Some("model-seed") {
+            return Err(AliothError::Validation {
+                field: "managed".to_string(),
+                message: "模型级种子流程不可删除——由模型种子通道持有".to_string(),
+            });
+        }
+
         let mut tx = self.pool.begin().await.map_err(AliothError::from)?;
 
         // 模板 op 行集（本流程在册 DAG 节点主体，全叶表经基表 UPDATE 级联）
@@ -499,7 +614,7 @@ impl
 }
 
 // ── FlowNodeRepository ────────────────────────────────────────
-// 保持不变（同表 zc_id_even-approve，非本次校对范围）
+// 写路径落叶表 zc_id_appr-process（even-approve 为域父表，禁直写）；读/改经父表继承并集可见
 
 #[derive(Clone)]
 pub struct FlowNodeRepository {
@@ -509,6 +624,27 @@ pub struct FlowNodeRepository {
 impl FlowNodeRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// 归属守护（add-model-seed-flow-guard）：even-approve 节点行经三跳桥反查归属流程
+    /// （节点 ← rr_event 桥 ← 节点操作 ← rr_operation 桥 ← 流程）；归属
+    /// meta.managed='model-seed' 的模型级种子流程 → true（写面拒绝）。
+    async fn belongs_to_model_seed_flow(&self, id: i64) -> Result<bool, AliothError> {
+        sqlx::query_scalar(
+            r#"SELECT EXISTS(
+                 SELECT 1 FROM isahl.zc_id_operation_rr_event oe
+                 JOIN isahl.zc_id_process_rr_operation rro
+                   ON rro.ref_right = oe.ref_left AND rro.deleted_at IS NULL
+                 JOIN isahl.zc_id_process p
+                   ON p.id = rro.ref_left AND p.deleted_at IS NULL
+                 WHERE oe.ref_right = $1 AND oe.deleted_at IS NULL
+                   AND p.meta->>'managed' = 'model-seed'
+               )"#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(AliothError::from)
     }
 }
 
@@ -544,17 +680,23 @@ impl AliothRepository<FlowNode, CreateFlowNodeRequest, UpdateFlowNodeRequest, Al
         req: CreateFlowNodeRequest,
         user_id: i64,
     ) -> Result<FlowNode, AliothError> {
+        // 节点落叶表 zc_id_appr-process（even-approve 为域父表，禁直写；读/改经父表继承并集可见）；
+        // dk 三元组经 dk.rs 静态声明（JC/FTA/↑_NA）解析 code→ZUID；解析失败即中止，不写悬空值
+        let (dk_scene, dk_factor, dk_function) =
+            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::DkJcFtaNa)
+                .await
+                .map_err(AliothError::from)?;
         sqlx::query_as::<_, FlowNode>(
-            r#"INSERT INTO isahl."zc_id_even-approve" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
+            r#"INSERT INTO isahl."zc_id_appr-process" (notice, code, created_by_id, dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, $6)
                RETURNING id, notice AS label, code, t_color_, comments, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.label)
         .bind(&req.code)
         .bind(user_id)
-        .bind(515i64)
-        .bind(522i64)
-        .bind(526i64)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
         .fetch_one(&self.pool)
         .await
         .map_err(AliothError::from)
@@ -571,6 +713,14 @@ impl AliothRepository<FlowNode, CreateFlowNodeRequest, UpdateFlowNodeRequest, Al
             return Ok(None);
         }
         let current = current.unwrap();
+        // 模型级种子流程归属守卫（add-model-seed-flow-guard）：
+        // 种子流程的节点事件载体行是审批链骨架，不可经节点写面改动
+        if self.belongs_to_model_seed_flow(id).await? {
+            return Err(AliothError::Validation {
+                field: "managed".to_string(),
+                message: "该节点归属模型级种子流程，不可修改——由模型种子通道持有".to_string(),
+            });
+        }
         let label = req.label.unwrap_or(current.label);
         let code = req.code.or(current.code);
         sqlx::query_as::<_, FlowNode>(
@@ -589,6 +739,13 @@ impl AliothRepository<FlowNode, CreateFlowNodeRequest, UpdateFlowNodeRequest, Al
     }
 
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
+        // 模型级种子流程归属守卫（add-model-seed-flow-guard）：同 update
+        if self.belongs_to_model_seed_flow(id).await? {
+            return Err(AliothError::Validation {
+                field: "managed".to_string(),
+                message: "该节点归属模型级种子流程，不可删除——由模型种子通道持有".to_string(),
+            });
+        }
         sqlx::query(
             "UPDATE isahl.\"zc_id_even-approve\" SET deleted_at = NOW(), deleted_by_id = $1 WHERE id = $2 AND deleted_at IS NULL",
         )
@@ -1039,7 +1196,7 @@ impl
                     (None, None, None)
                 });
         sqlx::query_as::<_, DelegationRule>(
-            r#"INSERT INTO isahl.zc_id_operation
+            r#"INSERT INTO isahl."zc_id_oper-approve"
                (notice, code, fk_subject, fk_operator, comments, qk_period, _t_, created_by_id, dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, $6, 'delegation-rule', $7, $8, $9, $10)
                RETURNING id, notice AS name, code, fk_subject, fk_operator, comments, qk_period, created_at, updated_at, deleted_at"#,

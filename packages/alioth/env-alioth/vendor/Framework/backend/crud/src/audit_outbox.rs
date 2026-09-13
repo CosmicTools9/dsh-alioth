@@ -27,6 +27,10 @@ use std::future::Future;
 
 tokio::task_local! {
     static AUDIT_TX_ID: String;
+    /// 操作者标识（username 优先，回落 `user:{id}`）——宿主（Gateway PEP）在调用内层
+    /// handler 前开启；`enqueue(_tx)` 在事件未显式给定时取之，写入操作者列
+    /// （`SECURITY_SPEC §10.1` 口径；规则唯一实现 `common::audit::resolve_subject`）。
+    static AUDIT_ACTOR: String;
 }
 
 /// 审计事务作用域：`begin` 生成一次 zuid 作为 transaction_id，
@@ -54,6 +58,21 @@ impl AuditScope {
     /// 当前作用域 transaction_id（未在 scope 内 → None，enqueue 时惰性生成）。
     pub fn current() -> Option<String> {
         AUDIT_TX_ID.try_with(|s| s.clone()).ok()
+    }
+
+    /// 在「操作者标识」作用域内执行闭包（宿主在调用内层 handler 前开启）。
+    /// 已知边界：task-local 不跨 `tokio::spawn`——异步子任务内的写入回落为空标识
+    /// （审计行仍写入，不因标识缺失丢事件）。
+    pub async fn actor_scope<F, T>(actor: String, f: F) -> T
+    where
+        F: Future<Output = T>,
+    {
+        AUDIT_ACTOR.scope(actor, f).await
+    }
+
+    /// 当前作用域操作者标识（未在 scope 内 → None）。
+    pub fn current_actor() -> Option<String> {
+        AUDIT_ACTOR.try_with(|s| s.clone()).ok()
     }
 }
 
@@ -142,6 +161,42 @@ impl OutboxEvent {
 
 // ── enqueue ──────────────────────────────────────────────────────────────
 
+/// 从 `old_values`/`new_values` 快照派生变更字段**名集合**（唯一实现）。
+///
+/// 调用点只传前后快照；diff 口径由本函数统一，禁止各 Service 自造第二套约定。
+/// 显式给定的 `changed_fields` 优先（保留调用方语义）。
+fn derive_changed_fields(
+    changed: &Option<JsonValue>,
+    old: &Option<JsonValue>,
+    new: &Option<JsonValue>,
+) -> Option<JsonValue> {
+    if changed.is_some() {
+        return changed.clone();
+    }
+    let mut names: Vec<String> = Vec::new();
+    match (
+        old.as_ref().and_then(|v| v.as_object()),
+        new.as_ref().and_then(|v| v.as_object()),
+    ) {
+        (Some(o), Some(n)) => {
+            let mut keys: Vec<&String> = o.keys().chain(n.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            for k in keys {
+                if o.get(k) != n.get(k) {
+                    names.push(k.clone());
+                }
+            }
+        }
+        (None, Some(n)) => names.extend(n.keys().cloned()),
+        (Some(o), None) => names.extend(o.keys().cloned()),
+        (None, None) => return None,
+    }
+    Some(JsonValue::Array(
+        names.into_iter().map(JsonValue::String).collect(),
+    ))
+}
+
 const ENQUEUE_SQL: &str = r#"
     INSERT INTO isahl_audit.audit_outbox
         (table_schema, table_name, record_id, action,
@@ -157,16 +212,23 @@ const ENQUEUE_SQL: &str = r#"
 /// pool 直插（逐语句事务）——轻量路径；严格同事务用 [`enqueue_tx`]。
 pub async fn enqueue(pool: &PgPool, event: &OutboxEvent) -> Result<i64, AliothError> {
     let tx_id = event.transaction_id.clone().or_else(AuditScope::current);
+    // 操作者标识：显式给定优先，否则取请求作用域（Gateway PEP 开启）
+    let subject = event
+        .performed_by_email
+        .clone()
+        .or_else(AuditScope::current_actor);
+    let changed =
+        derive_changed_fields(&event.changed_fields, &event.old_values, &event.new_values);
     sqlx::query_scalar::<_, i64>(ENQUEUE_SQL)
         .bind(event.table_schema.as_deref())
         .bind(&event.table_name)
         .bind(event.record_id)
         .bind(event.action.map(|a| a.as_str()))
-        .bind(&event.changed_fields)
+        .bind(&changed)
         .bind(&event.old_values)
         .bind(&event.new_values)
         .bind(event.performed_by_id)
-        .bind(event.performed_by_email.as_deref())
+        .bind(subject.as_deref())
         .bind(tx_id)
         .bind(event.session_id.as_deref())
         .bind(event.request_path.as_deref())
@@ -177,22 +239,63 @@ pub async fn enqueue(pool: &PgPool, event: &OutboxEvent) -> Result<i64, AliothEr
         .map_err(|e| AliothError::Database(e.to_string()))
 }
 
+/// 业务行留痕便捷入口（非阻断：入队失败仅 `warn!`，绝不影响业务响应）。
+///
+/// **唯一实现**（REUSE_FIRST）：平台 `transport-dispatch/repositories/procure.rs` 与
+/// 门户 `OpenActivity/backend/src/handlers/portal_write.rs` 曾各持一份同构副本，已收敛至此。
+pub async fn audit_row(
+    pool: &PgPool,
+    table: &str,
+    record_id: i64,
+    action: AuditAction,
+    actor_id: i64,
+) {
+    if let Err(e) = enqueue(
+        pool,
+        &OutboxEvent::for_table(table, record_id, action).with_user(actor_id),
+    )
+    .await
+    {
+        common::telemetry::warn!("audit enqueue failed ({table} {record_id}): {e}");
+    }
+}
+
+/// 同表多行留痕批量变体（逐条独立 outbox 行；失败仅告警不阻断）。
+pub async fn audit_row_batch(
+    pool: &PgPool,
+    table: &str,
+    ids: &[i64],
+    action: AuditAction,
+    actor_id: i64,
+) {
+    for &record_id in ids {
+        audit_row(pool, table, record_id, action, actor_id).await;
+    }
+}
+
 /// 业务事务内插入（严格零丢失：与源数据写入同生共死）。
 pub async fn enqueue_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     event: &OutboxEvent,
 ) -> Result<i64, sqlx::Error> {
     let tx_id = event.transaction_id.clone().or_else(AuditScope::current);
+    // 操作者标识：显式给定优先，否则取请求作用域（Gateway PEP 开启）
+    let subject = event
+        .performed_by_email
+        .clone()
+        .or_else(AuditScope::current_actor);
+    let changed =
+        derive_changed_fields(&event.changed_fields, &event.old_values, &event.new_values);
     sqlx::query_scalar::<_, i64>(ENQUEUE_SQL)
         .bind(event.table_schema.as_deref())
         .bind(&event.table_name)
         .bind(event.record_id)
         .bind(event.action.map(|a| a.as_str()))
-        .bind(&event.changed_fields)
+        .bind(&changed)
         .bind(&event.old_values)
         .bind(&event.new_values)
         .bind(event.performed_by_id)
-        .bind(event.performed_by_email.as_deref())
+        .bind(subject.as_deref())
         .bind(tx_id)
         .bind(event.session_id.as_deref())
         .bind(event.request_path.as_deref())
@@ -583,8 +686,8 @@ fn primary_status_event(
         AuditAction::Insert
     };
     let mut ev = OutboxEvent::for_table(PRIMARY_STATUS_TABLE, entity_id, action);
-    ev.old_values = old.map(|s| serde_json::json!({ "ref_right": s }));
-    ev.new_values = Some(serde_json::json!({ "ref_right": new }));
+    ev.old_values = old.map(|s| serde_json::json!({ "ref_right": s.to_string() }));
+    ev.new_values = Some(serde_json::json!({ "ref_right": new.to_string() }));
     ev.performed_by_id = user_id;
     ev
 }
@@ -621,7 +724,7 @@ pub async fn audit_primary_status_delete(
     user_id: Option<i64>,
 ) -> Result<i64, AliothError> {
     let mut ev = OutboxEvent::for_table(PRIMARY_STATUS_TABLE, entity_id, AuditAction::Delete);
-    ev.old_values = Some(serde_json::json!({ "ref_right": old }));
+    ev.old_values = Some(serde_json::json!({ "ref_right": old.to_string() }));
     ev.performed_by_id = user_id;
     enqueue(pool, &ev).await
 }
@@ -657,4 +760,51 @@ pub async fn lag_stats(pool: &PgPool) -> Result<(i64, Option<f64>), AliothError>
 #[allow(dead_code)]
 fn backoff_hint(attempts: i32) -> Duration {
     Duration::seconds((2i64.pow(attempts.max(0) as u32) * 5).min(3600))
+}
+
+#[cfg(test)]
+mod changed_fields_tests {
+    use super::derive_changed_fields;
+    use serde_json::json;
+
+    #[test]
+    fn explicit_changed_fields_wins() {
+        let explicit = Some(json!(["notice"]));
+        let old = Some(json!({ "notice": "a" }));
+        let new = Some(json!({ "notice": "b", "code": "c" }));
+        assert_eq!(derive_changed_fields(&explicit, &old, &new), explicit);
+    }
+
+    #[test]
+    fn both_snapshots_yield_only_differing_keys() {
+        let old = Some(json!({ "notice": "a", "code": "X", "t_color_": null }));
+        let new = Some(json!({ "notice": "b", "code": "X", "t_color_": null }));
+        assert_eq!(
+            derive_changed_fields(&None, &old, &new),
+            Some(json!(["notice"]))
+        );
+    }
+
+    #[test]
+    fn insert_yields_all_new_keys() {
+        let new = Some(json!({ "notice": "a", "code": "X" }));
+        assert_eq!(
+            derive_changed_fields(&None, &None, &new),
+            Some(json!(["code", "notice"]))
+        );
+    }
+
+    #[test]
+    fn delete_yields_all_old_keys() {
+        let old = Some(json!({ "notice": "a" }));
+        assert_eq!(
+            derive_changed_fields(&None, &old, &None),
+            Some(json!(["notice"]))
+        );
+    }
+
+    #[test]
+    fn no_snapshots_yield_none() {
+        assert_eq!(derive_changed_fields(&None, &None, &None), None);
+    }
 }

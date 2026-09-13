@@ -36,6 +36,7 @@
 //! }
 //! ```
 
+pub mod activity;
 pub mod audit_outbox;
 pub mod batch;
 pub mod bind_json;

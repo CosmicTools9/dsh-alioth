@@ -19,6 +19,7 @@ use sqlx::FromRow;
 /// 对接配置 DTO
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OpenApiConfig {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub name: String, // notice AS name
     pub code: Option<String>,
@@ -73,18 +74,26 @@ pub struct UpdateOpenApiConfigRequest {
 /// 销售侧数据服务产品 DTO
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OpenApiSales {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub name: String, // notice AS name
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -118,13 +127,20 @@ pub struct CreateOpenApiSalesRequest {
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
 }
 
@@ -135,13 +151,20 @@ pub struct UpdateOpenApiSalesRequest {
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
 }
 
@@ -150,18 +173,26 @@ pub struct UpdateOpenApiSalesRequest {
 /// 采购侧数据服务产品 DTO
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OpenApiPurchase {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub name: String, // notice AS name
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -195,13 +226,20 @@ pub struct CreateOpenApiPurchaseRequest {
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
 }
 
@@ -212,13 +250,20 @@ pub struct UpdateOpenApiPurchaseRequest {
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
 }
 
@@ -227,18 +272,26 @@ pub struct UpdateOpenApiPurchaseRequest {
 /// 制造侧数据服务产品 DTO
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct OpenApiMade {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub name: String, // notice AS name
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
@@ -272,13 +325,20 @@ pub struct CreateOpenApiMadeRequest {
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
 }
 
@@ -289,12 +349,19 @@ pub struct UpdateOpenApiMadeRequest {
     pub code: Option<String>,
     pub comments: Option<String>,
     pub projection: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub p_number: Option<String>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_demand: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_subj_provider: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_price: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub fk_process: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub qk_size: Option<i64>,
 }

@@ -1,0 +1,14 @@
+[package]
+name = "damage-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "损管/异常事件写链共享事务（zc_id_even-accident 主行 + 事件↔车辆桥）——Gateway WZ 平台损管 create_damage 与 OpenActivity 门户异常上报共用单份实现，主体语义（fk_subject）经 DamageWriteContext 参数化"
+
+[dependencies]
+sqlx = { workspace = true }
+ontology-binding = { path = "../ontology-binding" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

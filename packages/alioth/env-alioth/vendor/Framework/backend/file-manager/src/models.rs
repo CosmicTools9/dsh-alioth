@@ -102,14 +102,20 @@ pub struct FileRecord {
     /// 文件大小（解析 `qk_size → zc_id_scal-data.mark`，字节数）
     pub size: Option<i64>,
     /// 本体维度（dk_scene/dk_factor/dk_function）
+    #[serde(with = "common::serde_zuid::opt")]
     pub dk_scene: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub dk_factor: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub dk_function: Option<i64>,
     /// 文件分类（ck_category，可选）
     pub ck_category: Option<i64>,
     /// 行级授权列（bigint[]）
+    #[serde(with = "common::serde_zuid::opt_seq")]
     pub ak_benefit_user: Option<Vec<i64>>,
+    #[serde(with = "common::serde_zuid::opt_seq")]
     pub ak_permit_user: Option<Vec<i64>>,
+    #[serde(with = "common::serde_zuid::opt_seq")]
     pub ak_access_user: Option<Vec<i64>>,
     /// 存储后端 scheme（经 URL 链解析 `zc_id_info-url.scheme`）
     pub scheme: Option<String>,

@@ -27,9 +27,12 @@ pub enum RefKind {
 /// - `unit`：单位（标量引用 ID）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InventoryBalanceSummary {
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(with = "common::serde_zuid")]
     pub production_id: i64,
     pub production_name: Option<String>,
+    #[serde(with = "common::serde_zuid")]
     pub storage_id: i64,
     pub storage_name: Option<String>,
     pub qty: Decimal,

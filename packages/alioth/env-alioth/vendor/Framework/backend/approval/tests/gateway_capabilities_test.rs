@@ -47,13 +47,21 @@ async fn test_user(pool: &sqlx::PgPool) {
 
 /// 建流程行（meta 设计图）
 async fn create_flow(pool: &sqlx::PgPool, name: &str, code: &str, graph: &Value) -> i64 {
+    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let (dk_scene, dk_factor, dk_function) =
+        ontology_binding::resolve(&pool.clone(), ("JC", "FTA", "↑_NA"))
+            .await
+            .unwrap();
     sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, _f_, _t_)
-           VALUES ($1, $2::jsonb, $3, 1, '实现', '范例') RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_proc-approve" (notice, meta, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2::jsonb, $3, 1, '实现', '范例', $4, $5, $6) RETURNING id"#,
     )
     .bind(name)
     .bind(graph.to_string())
     .bind(code)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(pool)
     .await
     .unwrap()

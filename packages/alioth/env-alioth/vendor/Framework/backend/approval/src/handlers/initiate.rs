@@ -36,18 +36,22 @@ pub struct InitiateResponse {
     pub execution_id: i64,
 }
 
-/// 流程绑定上下文（fk_context 行）：
+/// 流程绑定上下文（zc_id_process_rr_context 桥 ref_right → proc-context 族行）：
 /// - 旧形态（scope-definition 落业务叶表）：叶表直接匹配 entity_table
-/// - 新形态（flow-context 范例行，落域父表）：entity_table 同域判定
+/// - 新形态（flow-context 范例行，落域内叶表）：entity_table 同域判定
+/// 单绑语义：取最早活跃桥行（ORDER BY rc.id LIMIT 1）。
 async fn bound_leaf_table(
     pool: &PgPool,
     flow_id: i64,
 ) -> Result<Option<(String, String)>, AliothError> {
     let row: Option<(String, Option<String>)> = sqlx::query_as(
-        r#"SELECT tableoid::regclass::text, _t_
-           FROM isahl."zc_id_proc-context"
-           WHERE id = (SELECT fk_context FROM isahl.zc_id_process WHERE id = $1)
-             AND deleted_at IS NULL"#,
+        r#"SELECT replace(c.tableoid::regclass::text, '"', ''), c._t_
+           FROM isahl."zc_id_proc-context" c
+           JOIN isahl."zc_id_process_rr_context" rc
+             ON rc.ref_right = c.id AND rc.deleted_at IS NULL
+           WHERE rc.ref_left = $1 AND rc.deleted_at IS NULL
+             AND c.deleted_at IS NULL
+           ORDER BY rc.id LIMIT 1"#,
     )
     .bind(flow_id)
     .fetch_optional(pool)
@@ -96,7 +100,7 @@ pub async fn initiate(
     let Some((bound_leaf, bound_domain)) = bound else {
         return Err(AliothError::Validation {
             field: "entity_table".into(),
-            message: format!("flow {flow_id} 未绑定输入范畴（fk_context），不可携带实体发起"),
+            message: format!("flow {flow_id} 未绑定输入范畴（rr_context 桥），不可携带实体发起"),
         });
     };
     let req_domain = crate::context_domain::domain_of_leaf(&req.entity_table).unwrap_or("");
@@ -112,7 +116,7 @@ pub async fn initiate(
             });
         }
     } else if req_domain != bound_domain {
-        // 新形态（flow-context 范例行落域父表）：entity_table 必须同域（后代叶表）
+        // 新形态（flow-context 范例行落域内叶表）：entity_table 必须同域（同域叶表）
         return Err(AliothError::Validation {
             field: "entity_table".into(),
             message: format!(
