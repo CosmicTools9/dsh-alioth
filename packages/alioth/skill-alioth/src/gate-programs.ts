@@ -16,6 +16,30 @@ const SCRIPT_PATH_EXTENSION: Record<string, true> = {
   '.ts': true, '.mts': true, '.js': true, '.mjs': true, '.cjs': true, '.sh': true,
 }
 
+/**
+ * Gate programs the runtime always permits — the code-truth floor upstream
+ * keeps in `tool_registry`. The vendored `_runtime.yaml` mirrors it and may
+ * append operator entries (codegraph/git/node); a runtime mirror that does not
+ * cover this list is a governance defect, asserted by test.
+ */
+export const GATE_PROGRAM_WHITELIST: readonly string[] = [
+  'target/debug/ontology-mapping',
+  'bun',
+  'npx',
+  'cargo',
+  'bash',
+]
+
+/**
+ * Whether a gate program is permitted: an exact entry, or a path inside an
+ * entry's directory (upstream matches `program == entry || program.startsWith(entry + '/')`).
+ * @param program - Program the gate declared.
+ * @param allowed - Permitted entries; empty means the caller opted out.
+ */
+export function isAllowedGateProgram(program: string, allowed: readonly string[]): boolean {
+  return allowed.some(entry => program === entry || program.startsWith(`${entry}/`))
+}
+
 /** One adapter gate script that the vendor tree cannot spawn. */
 export interface UnreachableGateProgram {
   /** Adapter file the gate belongs to. */

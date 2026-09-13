@@ -14,13 +14,17 @@ import { readFile } from 'node:fs/promises'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
+  ADAPTER_TOOL_TO_DSH,
   checkStepGates,
   completeCurrentStep,
   createProgramRunner,
   currentStep,
+  GATE_PROGRAM_WHITELIST,
   isLlmFixable,
   loadAdapter,
   loadRun,
+  manualToolSurface,
+  missingToolSurface,
   parseRuntimeAllowedPrograms,
   saveRun,
   type Adapter,
@@ -95,6 +99,19 @@ export function apply(ctx: Context, config: Config): void {
     const adapter = await loadAdapter(info.modelDir, adapterName)
     adapterCache.set(adapterName, adapter)
     return adapter
+  }
+
+  /**
+   * Gate-program whitelist for the runner: the vendored `_runtime.yaml` mirror,
+   * falling back to the code-truth floor when the mirror is absent or empty
+   * (upstream RunCommandTool behavior — a missing mirror must never widen the
+   * surface to "anything").
+   */
+  async function allowedGatePrograms(): Promise<readonly string[]> {
+    const info = await ctx.aliothEnv.ready()
+    const source = await readFile(path.join(info.modelDir, 'skill-adapters', '_runtime.yaml'), 'utf8').catch(() => '')
+    const mirrored = parseRuntimeAllowedPrograms(source)
+    return mirrored.length > 0 ? mirrored : GATE_PROGRAM_WHITELIST
   }
 
   async function stateFor(namespace: string, app: string): Promise<RunState> {
@@ -206,8 +223,6 @@ export function apply(ctx: Context, config: Config): void {
     },
     async execute() {
       const adapter = await adapterFor()
-      const info = await ctx.aliothEnv.ready()
-      const runtimeSource = await readFile(path.join(info.modelDir, 'skill-adapters', '_runtime.yaml'), 'utf8').catch(() => '')
       return {
         adapter: adapterName,
         tracks: adapter.tracks.map(track => ({
@@ -220,7 +235,7 @@ export function apply(ctx: Context, config: Config): void {
             gates: formatGates(step.gates),
           })),
         })),
-        runtime: { allowedPrograms: parseRuntimeAllowedPrograms(runtimeSource) },
+        runtime: { allowedPrograms: [...await allowedGatePrograms()] },
       }
     },
     presentCall: () => ({
@@ -262,6 +277,19 @@ export function apply(ctx: Context, config: Config): void {
           stepId: { type: 'string', required: true },
           instruction: { type: 'string', required: true },
           tools: { type: 'array', required: true, items: { type: 'string' } },
+          harnessTools: { type: 'array', required: true, items: { type: 'string' } },
+          manualTools: {
+            type: 'array', required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                adapterTool: { type: 'string', required: true },
+                reason: { type: 'string', required: true },
+              },
+            },
+          },
+          missingTools: { type: 'array', required: true, items: { type: 'string' } },
           gates: { type: 'array', required: true, items: { type: 'string' } },
           referencePaths: { type: 'array', required: true, items: { type: 'string' } },
           inputs: {
@@ -289,14 +317,30 @@ export function apply(ctx: Context, config: Config): void {
       const state = await stateFor(args.namespace, args.app)
       const current = currentStep(state)
       if (current === undefined) {
-        return { finished: true, track: '', stepId: '', instruction: '', tools: [], gates: [], referencePaths: [], inputs: [] }
+        return { finished: true, track: '', stepId: '', instruction: '', tools: [], harnessTools: [], manualTools: [], missingTools: [], gates: [], referencePaths: [], inputs: [] }
       }
+      // The step's declared tools are an execution contract, not a suggestion
+      // (upstream rejects calls outside `default_tools ∪ step.tools`). The
+      // harness executes tools itself, so the deployment cannot refuse a call —
+      // instead the payload names the concrete harness tools that satisfy the
+      // step, the ones only a human/skill path can satisfy, and the declared
+      // ones nothing satisfies.
+      const adapter = await adapterFor()
+      const registered = new Set(ctx.tools.schemas().map(schema => schema.name))
+      const declared = current.step.tools
+      const manual = manualToolSurface(adapter).filter(entry => declared.includes(entry.adapterTool))
+      const missing = missingToolSurface(adapter, registered).filter(entry => declared.includes(entry.adapterTool))
       return {
         finished: false,
         track: current.track.name,
         stepId: current.step.id,
         instruction: current.step.instruction,
-        tools: [...current.step.tools],
+        tools: [...declared],
+        harnessTools: declared
+          .flatMap(tool => ADAPTER_TOOL_TO_DSH[tool] ?? [])
+          .filter(name => registered.has(name)),
+        manualTools: manual.map(entry => ({ adapterTool: entry.adapterTool, reason: entry.reason })),
+        missingTools: missing.map(entry => entry.adapterTool),
         gates: formatGates(current.step.gates),
         referencePaths: [...current.step.referencePaths],
         inputs: await readStepInputs(current.step, gateContext(args.namespace, args.app)),
@@ -369,6 +413,7 @@ export function apply(ctx: Context, config: Config): void {
       const { contentRoot: gateCwd } = ensureContentRoot()
       const runner = createProgramRunner({
         cwd: gateCwd,
+        allowedPrograms: await allowedGatePrograms(),
         env: {
           PROTOTYPE_TOOL_ROOT: gateCwd,
           // Service/DTO gates run against the namespace workspace

@@ -1,14 +1,18 @@
 import { describe, expect, it, beforeAll } from 'vitest'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { parseAdapterDocument, loadAdapter, parseRuntimeAllowedPrograms, type Adapter } from '../src/adapter.ts'
 import { completeCurrentStep, currentStep, initialRunState, type RunState } from '../src/state.ts'
-import { checkStepGates } from '../src/gates.ts'
+import { checkStepGates, classifyGateError, isLlmFixable } from '../src/gates.ts'
 import { loadRun, saveRun } from '../src/workspace.ts'
-import { ADAPTER_TOOL_TO_DSH, missingToolSurface } from '../src/mapping.ts'
+import { ADAPTER_TOOL_TO_DSH, manualToolSurface, missingToolSurface } from '../src/mapping.ts'
 import { bunAvailable, createProgramRunner } from '../src/bun.ts'
+import { GATE_PROGRAM_WHITELIST } from '../src/gate-programs.ts'
 import { validateCoordinates } from '../src/entity-validate.ts'
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
 
 /** The real `alioth-app.yaml` shape: tracks with steps carrying tools/schema/gates. */
 const APP_ADAPTER = `
@@ -232,6 +236,36 @@ describe('skill-alioth tool-surface mapping', () => {
     expect(missing.find(item => item.adapterTool === 'write_file')).toBeUndefined()
     expect(ADAPTER_TOOL_TO_DSH.write_file).toEqual(['write', 'tool:write'])
   })
+
+  it('classifies the upstream vocabulary: mapped, manual, or missing', () => {
+    // alioth-block/alioth-gui declare tools beyond the file trio: run_command
+    // and code_intel have harness equivalents, visual_verify does not (upstream
+    // ships its own tool), and an unknown name must stay visible as missing
+    // rather than being silently dropped.
+    const upstream = parseAdapterDocument(`
+name: probe
+description: "vocabulary probe"
+version: "2.0"
+tracks:
+  - name: probe
+    steps:
+      - id: "1.1"
+        instruction: "probe"
+        tools: [run_command, code_intel, visual_verify, teleport]
+        gates: []
+`, 'probe.yaml')
+    const registered = new Set(['bash', 'lsp'])
+    const missing = missingToolSurface(upstream, registered)
+    expect(missing.map(item => item.adapterTool)).toEqual(['teleport'])
+    expect(missing[0]?.required).toEqual([])
+    expect(manualToolSurface(upstream)).toEqual([
+      expect.objectContaining({ adapterTool: 'visual_verify', usedBy: ['1.1'] }),
+    ])
+    // A deployment without bash/lsp reports those as missing too — the surface
+    // is checked against what is actually registered, never assumed.
+    expect(missingToolSurface(upstream, new Set()).map(item => item.adapterTool))
+      .toEqual(['run_command', 'code_intel', 'teleport'])
+  })
 })
 
 describe('skill-alioth program runner', () => {
@@ -263,6 +297,41 @@ describe('skill-alioth program runner', () => {
     expect(result.ok).toBe(false)
     expect(result.exitCode).toBe(null)
     expect(result.detail).toContain('spawn')
+  })
+
+  it('refuses a program outside the whitelist before spawning it', async () => {
+    const whitelisted = createProgramRunner({ timeoutMs: 15_000, allowedPrograms: ['bun'] })
+    const result = await whitelisted('node', ['-e', 'process.exit(0)'], {
+      kind: 'program', program: 'node', args: [], expectedExitCode: 0, timeoutSec: 15,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.exitCode).toBe(null)
+    // The refusal text classifies as an environment refusal, never an
+    // LLM-fixable contract failure — the model must not be told to retry.
+    expect(isLlmFixable(classifyGateError(result.detail))).toBe(false)
+    expect(classifyGateError(result.detail)).toBe('tool-whitelist')
+    expect(result.detail).not.toContain('exited')
+  })
+
+  it('permits a program nested under a whitelisted entry', async () => {
+    const whitelisted = createProgramRunner({ timeoutMs: 15_000, allowedPrograms: GATE_PROGRAM_WHITELIST })
+    const result = await whitelisted('target/debug/ontology-mapping', ['prototype-check'], {
+      kind: 'program', program: 'target/debug/ontology-mapping', args: [], expectedExitCode: 0, timeoutSec: 15,
+    })
+    // It passes the whitelist and reaches spawn (the binary is absent here).
+    expect(result.detail).not.toContain('whitelist')
+    expect(result.detail).toContain('spawn')
+  })
+
+  it('keeps the runtime mirror covering the code-truth gate whitelist', async () => {
+    const mirror = parseRuntimeAllowedPrograms(await readFile(
+      path.join(REPO_ROOT, 'packages/alioth/env-alioth/vendor/skill-adapters/_runtime.yaml'), 'utf8',
+    ))
+    // Upstream asserts mirror ⊇ code list (tool_face_consistency): an operator
+    // may append entries, never drop one the runtime always permits.
+    for (const entry of GATE_PROGRAM_WHITELIST) {
+      expect(mirror).toContain(entry)
+    }
   })
 
   it('probes bun availability (the distribution gate toolchain)', async () => {

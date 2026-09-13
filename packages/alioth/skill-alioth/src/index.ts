@@ -35,9 +35,21 @@ export {
   type ProgramResult,
   type ProgramRunner,
 } from './gates.ts'
-export { unreachableGatePrograms, type UnreachableGateProgram } from './gate-programs.ts'
+export {
+  unreachableGatePrograms,
+  GATE_PROGRAM_WHITELIST,
+  isAllowedGateProgram,
+  type UnreachableGateProgram,
+} from './gate-programs.ts'
 export { loadRun, saveRun, type RunMeta } from './workspace.ts'
-export { ADAPTER_TOOL_TO_DSH, missingToolSurface, type MissingTool } from './mapping.ts'
+export {
+  ADAPTER_TOOL_TO_DSH,
+  MANUAL_ADAPTER_TOOLS,
+  manualToolSurface,
+  missingToolSurface,
+  type ManualTool,
+  type MissingTool,
+} from './mapping.ts'
 export { createProgramRunner, bunAvailable, type ProgramRunnerOptions } from './bun.ts'
 export {
   validateCoordinates,

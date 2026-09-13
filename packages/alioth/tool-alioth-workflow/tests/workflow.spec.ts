@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as workflow from '../src/index.ts'
@@ -84,6 +84,19 @@ beforeAll(async () => {
   disposers.push(() => env.dispose())
   const wf = await ctx.plugin(workflow, { preProcRoot, contentRoot })
   disposers.push(() => wf.dispose())
+  // A composed deployment registers the harness file tools; stand in for the
+  // one the fixture adapter declares so the step payload's harness surface is
+  // computed against a realistic registered set rather than an empty one.
+  ctx.tools.register(defineTool({
+    name: 'write',
+    description: 'fixture stub for the harness write tool',
+    parameters: {},
+    output: {
+      schema: { type: 'object', additionalProperties: true, properties: {} },
+      render: () => [],
+    },
+    execute: async () => ({}),
+  }))
 }, 120_000)
 
 afterAll(async () => {
@@ -111,6 +124,11 @@ describe('alioth workflow bridge', () => {
       tools: ['write_file'],
     })
     expect(String(value.instruction)).toContain('preflight')
+    // The declared adapter vocabulary is translated into the concrete harness
+    // tools the deployment registers — the model calls those, not the aliases.
+    expect(value.harnessTools).toEqual(['write'])
+    expect(value.missingTools).toEqual([])
+    expect(value.manualTools).toEqual([])
   })
 
   it('fails the gate when the artifact is missing and does not advance', async () => {

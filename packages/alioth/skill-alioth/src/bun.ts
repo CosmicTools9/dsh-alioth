@@ -10,6 +10,7 @@
 
 import { spawn } from 'node:child_process'
 import type { ProgramResult, ProgramRunner } from './gates.ts'
+import { isAllowedGateProgram } from './gate-programs.ts'
 
 export interface ProgramRunnerOptions {
   /** Working directory for spawned programs (adapter scripts resolve relative to it). */
@@ -18,6 +19,14 @@ export interface ProgramRunnerOptions {
   readonly timeoutMs?: number
   /** Extra environment for spawned programs (merged over process.env). */
   readonly env?: Readonly<Record<string, string>>
+  /**
+   * Permitted gate programs (upstream `_runtime.yaml` allowed_programs). When
+   * set, anything else is refused before spawn — the upstream runtime rejects
+   * calls outside the whitelist instead of relying on the adapter's honesty.
+   * The refusal text carries "not allowed", which classifies as
+   * `tool-whitelist` (fast-fail, never LLM-fixable). Omitted = no enforcement.
+   */
+  readonly allowedPrograms?: readonly string[]
 }
 
 const DEFAULT_TIMEOUT_MS = 300_000
@@ -29,6 +38,14 @@ const DEFAULT_TIMEOUT_MS = 300_000
  */
 export function createProgramRunner(options: ProgramRunnerOptions = {}): ProgramRunner {
   return (program, args, gate) => {
+    const allowed = options.allowedPrograms
+    if (allowed !== undefined && allowed.length > 0 && !isAllowedGateProgram(program, allowed)) {
+      return Promise.resolve({
+        ok: false,
+        exitCode: null,
+        detail: `gate program not allowed by the gate-program whitelist: ${program} (allowed: ${allowed.join(', ')})`,
+      })
+    }
     const timeoutMs = gate.kind === 'program' && gate.timeoutSec > 0
       ? gate.timeoutSec * 1000
       : options.timeoutMs ?? DEFAULT_TIMEOUT_MS
