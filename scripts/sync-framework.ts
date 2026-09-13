@@ -64,6 +64,19 @@ const SYNC_SET: readonly { readonly source: string; readonly dest: string }[] = 
 /** Directories never synced (build output / dependency trees inside a source dir). */
 const EXCLUDED_SOURCE_DIRS = new Set(['target', 'node_modules', 'vendor'])
 
+/**
+ * Files never synced: editor/runtime artifacts the repository gitignores
+ * (.DS_Store, .env and friends, logs). Syncing one puts an entry in
+ * PROVENANCE.json that no clone can satisfy, and the vendor provenance gate
+ * reports "manifest entry without file" in CI.
+ */
+function isExcludedSourceFile(name: string): boolean {
+  return name === '.DS_Store'
+    || name === '.env'
+    || name.startsWith('.env.')
+    || name.endsWith('.log')
+}
+
 function* walkFiles(root: string): Generator<string> {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const full = path.join(root, entry.name)
@@ -71,6 +84,7 @@ function* walkFiles(root: string): Generator<string> {
       if (EXCLUDED_SOURCE_DIRS.has(entry.name)) continue
       yield* walkFiles(full)
     } else if (entry.isFile()) {
+      if (isExcludedSourceFile(entry.name)) continue
       yield full
     }
   }

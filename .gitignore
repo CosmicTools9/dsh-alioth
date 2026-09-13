@@ -1,5 +1,9 @@
 node_modules/
 lib/
+
+# The vendored framework ships its own scripts/lib (prototype gates import it);
+# build output elsewhere stays ignored.
+!packages/alioth/env-alioth/vendor/**/lib/
 # Exception: auth-web-alioth's browser half is a HAND-AUTHORED closure-factory
 # artifact (no build step exists for it) — it must ship with the source.
 !packages/alioth/auth-web-alioth/lib/
