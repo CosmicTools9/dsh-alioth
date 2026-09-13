@@ -77,6 +77,28 @@ describe('AppDirectoryPicker listing (AppCreator tree)', () => {
     await cleanup(f.root)
   })
 
+  it('states the namespace lock on every listing, so the browser drops its path editor', async () => {
+    // The picker refuses paths outside the namespace; a browser that still
+    // offered a path editor over that refusal would make a refused path look
+    // like a field that cannot be edited.
+    const f = await fixture('U-test')
+    const root = await browse(f.picker)()
+    expect(root.lockedRoot).toEqual({
+      path: f.nsTest,
+      note: expect.stringContaining('U-test'),
+    })
+    const leaf = await browse(f.picker)(f.appA1)
+    expect(leaf.lockedRoot).toEqual(root.lockedRoot)
+    await cleanup(f.root)
+  })
+
+  it('carries no lock when nothing constrains navigation (anonymous root)', async () => {
+    const f = await fixture()
+    const listing = await browse(f.picker)()
+    expect(listing.lockedRoot).toBeUndefined()
+    await cleanup(f.root)
+  })
+
   it('refuses paths outside the Pre-Proc root', async () => {
     const f = await fixture()
     await expect(browse(f.picker)(join(f.root, '..', 'escape'))).rejects.toBeInstanceOf(DirectoryPickerError)

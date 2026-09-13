@@ -32,7 +32,7 @@ runs:
         # globs, so it must NOT live at dsh-alioth/deepseek-harness. Verified
         # locally in this exact layout: `pnpm install --frozen-lockfile` passes.
         repository: William-d-zk/deepseek-harness
-        ref: 16c764a3486192b17db8ead1a2b5be796d47fc69
+        ref: 031e0bedcfe01df0bed52c3128f2e19a67e4c1f2
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'

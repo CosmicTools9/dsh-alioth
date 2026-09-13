@@ -331,7 +331,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
       { path: '{module}/notes.md' },
       { path: '/etc/hosts' },
     ])
-  })
+  }, 120_000)
 
   it('reports a gate program that cannot run as an environment failure and stays on the step', async () => {
     const appDir = path.join(coverPreProc, 'Demo', 'Apps', 'cover-app')

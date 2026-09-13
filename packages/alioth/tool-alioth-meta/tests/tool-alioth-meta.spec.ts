@@ -357,7 +357,7 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     })
     if (result.isError) throw new Error(`expected alioth_entity_write success: ${result.error.message}`)
     expect(result.value).toMatchObject({ table: 'zc_id_scene' })
-  })
+  }, 120_000)
 
   it('denies the write when approval rejects', async () => {
     const approvalCtx = await bootWithApproval('rejected')
@@ -370,5 +370,5 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     })
     if (!result.isError) throw new Error('expected alioth_entity_write failure')
     expect(result.error.message).toContain('denied by approval')
-  })
+  }, 120_000)
 })

@@ -193,6 +193,7 @@ export class AppDirectoryPicker extends DirectoryPicker {
       ],
       entries,
       truncated: false,
+      ...this.lock(namespace),
     }
   }
 
@@ -208,7 +209,22 @@ export class AppDirectoryPicker extends DirectoryPicker {
       { name: namespace, path: nsDir, hidden: false },
     ]
     if (app !== undefined && app !== '') crumbs.push({ name: app, path: join(nsDir, 'Apps', app), hidden: false })
-    return { path: target, home: this.root, crumbs, entries: [], truncated: false }
+    return { path: target, home: this.root, crumbs, entries: [], truncated: false, ...this.lock(namespace) }
+  }
+
+  /**
+   * The navigation lock carried by every listing while a namespace applies
+   * (signed-in account or the static fallback). It tells the browser to keep
+   * the path read-only and state why: this picker refuses every path outside
+   * the namespace, and an editor over that refusal reads as a broken field.
+   */
+  private lock(namespace: string): Pick<DirectoryListing, 'lockedRoot'> {
+    return {
+      lockedRoot: {
+        path: join(this.root, namespace),
+        note: `已锁定到 ${namespace}：仅能选择该命名空间下的应用`,
+      },
+    }
   }
 
   /**
