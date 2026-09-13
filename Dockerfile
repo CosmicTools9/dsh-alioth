@@ -104,7 +104,7 @@ ENV DSH_WEB_PORT=3100 \
 # volume, then drop to the non-root node user — Postgres refuses root, and
 # embedded-postgres chmods its PG binary at startup (needs write access to
 # node_modules; chown is metadata-only, no data copy).
-COPY scripts/docker-entry.sh scripts/docker-check.sh /app/scripts/
+COPY dsh-alioth/scripts/docker-entry.sh dsh-alioth/scripts/docker-check.sh /app/scripts/
 RUN chmod +x /app/scripts/docker-entry.sh /app/scripts/docker-check.sh \
   && chown -R node:node /app \
   && mkdir -p /data && chown node:node /data
