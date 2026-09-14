@@ -23,9 +23,21 @@ import type { Bill, Invoice, PendingInvoice, Subscription } from '@dsh-alioth/bi
 export const name = 'billing-web-alioth'
 export const inject = ['aliothBilling', 'aliothAuth']
 
-export interface Config {}
+export interface Config {
+  /** Mainland-China ICP filing number rendered in the user-center footer
+   * (env `ALIOTH_ICP` wins). Empty — the default — renders nothing. */
+  readonly icp?: string
+}
 
-export const Config: z<Config> = z.object({})
+export const Config: z<Config> = z.object({ icp: z.string().default('') })
+
+/** 备案 footer for the user-center pages, or '' when nothing is filed. */
+function icpFooter(icp: string | undefined): string {
+  const value = (icp ?? '').trim()
+  if (value === '') return ''
+  const escaped = value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  return `<footer class="icp"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">${escaped}</a></footer>`
+}
 
 interface AuthedUser {
   readonly id: string
@@ -116,10 +128,15 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 
 // ── page chrome (visual kin of the auth pages / landing) ─────────────────
 
-function page(response: ServerResponse, status: number, title: string, body: string): void {
+function page(response: ServerResponse, status: number, title: string, body: string, icp = ''): void {
   response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#0a0e14">
 <title>${title} — 用户中心 · Alioth AppCreator</title>
 <style>
 :root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
@@ -164,6 +181,7 @@ input:focus,select:focus{border-color:var(--accent)}
 .banner.error{border:1px solid var(--warn);color:var(--warn);background:rgba(242,113,138,.08)}
 .banner.ok{border:1px solid var(--accent);color:var(--accent);background:rgba(62,230,168,.08)}
 .note{color:var(--dim);font-size:.8rem;margin-top:.6rem}
+footer.icp{text-align:center;font-size:.8rem;color:var(--dim);padding:0 1.5rem 2.5rem}
 .tiers{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem}
 @media (max-width:640px){.tiers{grid-template-columns:1fr}}
 .tier{border:1px solid var(--line);border-radius:10px;padding:1rem;background:var(--panel)}
@@ -174,6 +192,7 @@ input:focus,select:focus{border-color:var(--accent)}
 </style></head><body>
 <nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a><a href="/" style="font-size:.85rem;color:var(--dim)">← 返回首页</a></nav>
 <div class="wrap">${body}</div>
+${icpFooter(icp)}
 </body></html>`)
 }
 
@@ -306,8 +325,10 @@ ${user.role === 'admin'
 
 // ── plugin ───────────────────────────────────────────────────────────────
 
-export function apply(ctx: Context, _config: Config): void {
-  void _config
+export function apply(ctx: Context, config: Config): void {
+  /** 备案 number carried by every user-center page footer. Config-only: the
+   * bundle patch decides whether this carrier is one of the showing surfaces. */
+  const icp = config.icp
 
   /** Resolve the cookie/bearer user, or null. */
   const authedUser = async (request: IncomingMessage): Promise<AuthedUser | null> => {
@@ -349,7 +370,7 @@ export function apply(ctx: Context, _config: Config): void {
         return
       }
       const view = pages[url.pathname]!
-      page(response, 200, view.title, view.body(await viewData(user, url.searchParams.get('notice') ?? '', url.searchParams.get('error') ?? '')))
+      page(response, 200, view.title, view.body(await viewData(user, url.searchParams.get('notice') ?? '', url.searchParams.get('error') ?? '')), icp)
       return
     }
 

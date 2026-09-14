@@ -139,7 +139,7 @@ beforeAll(async () => {
   disposers.push(() => authWeb.dispose())
   const billing = await ctx.plugin(billingAlioth, {})
   disposers.push(() => billing.dispose())
-  const carrier = await ctx.plugin(billingWeb, {})
+  const carrier = await ctx.plugin(billingWeb, { icp: '浙ICP备2023013865号-2' })
   disposers.push(() => carrier.dispose())
 
   // Equal users (no super-admin); keep the session cookie for the
@@ -176,6 +176,10 @@ describe('user center (web carrier)', () => {
     expect(html).toContain('ada')
     expect(html).toContain('U-ada')
     expect(html).toContain('L0 社区版')
+    expect(html).toContain('浙ICP备2023013865号-2') // filing footer
+    expect(html).toContain('href="https://beian.miit.gov.cn/"')
+    expect(html).toContain('href="/favicon.svg"') // brand mark in the tab
+    expect(html).toContain('name="theme-color"')
   })
 
   it('full loop over the JSON API: subscribe → pay → invoice (issued on request)', async () => {
