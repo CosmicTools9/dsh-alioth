@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Alioth AppCreator">
+  <!-- Alioth AppCreator mark: a geometric "A" (Alioth) in the product's mint on
+       its dark tile. Chosen over the ubiquitous AI-sparkle: a letter survives a
+       16px tab and names *this* product instead of a genre.
+
+       Two contours, evenodd: the outer one carves the gap between the legs, the
+       inner one is the counter. Leg thickness is 3.4 horizontal = 3.19
+       perpendicular, matched by the 3.2 crossbar so the optical weight is even;
+       flat apex and mitred joints keep it crisp when rasterized to 16px. -->
+  <rect width="32" height="32" rx="7" fill="#0a0e14"/>
+  <rect x="0.5" y="0.5" width="31" height="31" rx="6.5" fill="none" stroke="#1e2a3a"/>
+  <path fill-rule="evenodd" fill="#3ee6a8"
+        d="M14.2 6.5 H17.8 L24.8 25.5 H21.4 L19.853 21.3 H12.147 L10.6 25.5 H7.2 Z
+           M16 10.839 L18.674 18.1 H13.326 Z"/>
+</svg>

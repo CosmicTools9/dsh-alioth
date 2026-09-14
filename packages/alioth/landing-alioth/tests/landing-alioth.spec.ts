@@ -19,6 +19,80 @@ describe('landing-alioth (no webServer — service only)', () => {
     expect(service.html).toContain('e2e-verification')
     expect(service.html).toContain('Scene 场景') // ontology coordinates (BP narrative)
     expect(service.html).toContain('2026108466144') // patent filing signal
+    // Console entry: signed-in visitors land in the console, anonymous ones at
+    // /login (the auth carrier's portal route decides per session).
+    expect(service.html).toContain('href="/api/auth/portal"')
+    // The document asks for the brand mark rather than falling back to the
+    // browser's default tab glyph.
+    expect(service.html).toContain('href="/favicon.svg"')
+    expect(service.html).toContain('href="/site.webmanifest"')
+    expect(service.html).toContain('name="theme-color"')
     await p2.dispose()
+  })
+
+  it('renders the filing number from config only — a bare env var must not reach the page', async () => {
+    const saved = process.env.ALIOTH_ICP
+    try {
+      // The composition decides which surfaces show the number; a global env
+      // value read inside the plugin would defeat that scoping.
+      process.env.ALIOTH_ICP = '沪ICP备0000000号-1'
+      const unfiled = new Context()
+      const plain = await unfiled.plugin(landing, {})
+      const plainHtml = (unfiled.get('aliothLanding') as { html: string }).html
+      expect(plainHtml).not.toContain('beian.miit.gov.cn')
+      expect(plainHtml).not.toContain('<!--icp-->') // marker is always consumed
+      await plain.dispose()
+
+      const filed = new Context()
+      const plugin = await filed.plugin(landing, { icp: '浙ICP备2023013865号-2' })
+      const html = (filed.get('aliothLanding') as { html: string }).html
+      expect(html).toContain('浙ICP备2023013865号-2')
+      expect(html).toContain('href="https://beian.miit.gov.cn/"')
+      await plugin.dispose()
+    } finally {
+      if (saved === undefined) delete process.env.ALIOTH_ICP
+      else process.env.ALIOTH_ICP = saved
+    }
+  })
+})
+
+describe('landing-alioth (webServer mounted)', () => {
+  it('serves the brand asset set the address bar and installers ask for', async () => {
+    const ctx = new Context()
+    const routes: Array<{ kind: string; path: string; handler: (req: unknown, res: never) => void }> = []
+    ctx.provide('webServer')
+    ctx.set('webServer', { register: (route: (typeof routes)[number]) => { routes.push(route); return () => {} } } as never)
+    const plugin = await ctx.plugin(landing, {})
+
+    const served: Record<string, { status: number; type: string; body: string }> = {}
+    for (const route of routes) {
+      let status = 0
+      let headers: Record<string, string> = {}
+      let body = ''
+      const res = {
+        writeHead: (code: number, next: Record<string, string>) => { status = code; headers = next },
+        end: (payload: unknown) => { body = Buffer.isBuffer(payload) ? payload.toString('utf8') : String(payload) },
+      }
+      route.handler({}, res as never)
+      served[route.path] = { status, type: headers['content-type'] ?? '', body }
+    }
+    await plugin.dispose()
+
+    expect(Object.keys(served).sort()).toEqual(['/apple-touch-icon.png', '/favicon.ico', '/favicon.svg', '/landing', '/site.webmanifest'])
+    expect(served['/landing']).toMatchObject({ status: 200, type: 'text/html; charset=utf-8' })
+    expect(served['/favicon.svg']).toMatchObject({ status: 200, type: 'image/svg+xml' })
+    expect(served['/favicon.ico']!.type).toBe('image/x-icon')
+    expect(served['/apple-touch-icon.png']!.type).toBe('image/png')
+    // The mark is a real vector document, not a placeholder.
+    expect(served['/favicon.svg']!.body).toContain('<svg')
+    expect(served['/favicon.ico']!.body.length).toBeGreaterThan(300)
+    // The manifest is the installer contract: name, colors and both icons.
+    expect(served['/site.webmanifest']!.type).toBe('application/manifest+json')
+    expect(JSON.parse(served['/site.webmanifest']!.body)).toMatchObject({
+      name: 'Alioth AppCreator',
+      theme_color: '#0a0e14',
+    })
+    const manifest = JSON.parse(served['/site.webmanifest']!.body) as { icons: Array<{ src: string }> }
+    expect(manifest.icons.map(icon => icon.src)).toEqual(['/favicon.svg', '/apple-touch-icon.png'])
   })
 })

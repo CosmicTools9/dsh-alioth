@@ -3,6 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#0a0e14">
 <title>Alioth AppCreator — 对话即企业应用</title>
 <style>
 :root {
@@ -161,6 +166,7 @@ footer {
   flex-wrap: wrap; gap: .5rem;
 }
 footer .patent { font-family: var(--mono); font-size: .78rem }
+footer .icp { font-size: .78rem }
 @media (prefers-reduced-motion: reduce) {
   .pipeline li.active .dot { animation: none }
 }
@@ -335,7 +341,8 @@ footer .patent { font-family: var(--mono); font-size: .78rem }
 
   <footer>
     <span>Alioth 模型 v10.0.0 · Apache-2.0 · 由 DeepSeek Harness 驱动</span>
-    <span class="patent">发明专利申请已受理 2026108466144 · <a href="/login">登录</a> · <a href="/register">注册</a></span>
+    <span class="patent">发明专利申请已受理 2026108466144 · <a href="/api/auth/portal">进入工作台</a> · <a href="/login">登录</a> · <a href="/register">注册</a></span>
+    <span class="icp"><!--icp--></span>
   </footer>
 </div>
 <script>
