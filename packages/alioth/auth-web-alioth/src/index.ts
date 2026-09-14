@@ -449,6 +449,7 @@ async function handlePreview(
 function sendWorkspacePage(
   response: ServerResponse,
   mode: 'standard' | 'unlimited',
+  viewerNamespace: string,
   list: ReadonlyArray<{
     namespace: string
     preProcPath: string
@@ -459,6 +460,19 @@ function sendWorkspacePage(
   prototypes: ReadonlyArray<{ namespace: string; app: string; href: string; file: string; size: number }> = [],
 ): void {
   const title = mode === 'unlimited' ? '工作区' : '应用'
+  // A workspace is an app (`Pre-Proc/{ns}/Apps/{name}`), so the create/rename
+  // controls act on that single level only: the name is one path segment and
+  // the parent is fixed. Renaming is therefore always in place — there is no
+  // level to move to. Controls stay on the viewer's own namespace.
+  // The name always shows; only the rename control is scoped to the viewer's
+  // own namespace (an app in someone else's namespace is read-only here).
+  const appControl = (app: { code: string; name: string }): string => `
+  <form method="post" action="/api/alioth/apps/rename" class="rename">
+    <input type="hidden" name="from" value="${esc(app.code)}">
+    <input name="to" value="${esc(app.code)}" pattern="[a-zA-Z0-9][a-zA-Z0-9-]*" required
+      aria-label="应用名（工作区名）" title="单段名称：字母/数字/连字符">
+    <button>改名</button>
+  </form>`
   const rows = list.map(ws => `
 <article class="ws">
   <header><h2>${esc(ws.namespace)}</h2>${mode === 'unlimited'
@@ -466,8 +480,10 @@ function sendWorkspacePage(
   ${mode === 'unlimited' ? `
   <p class="paths"><code>Pre-Proc/${esc(ws.namespace)}/</code></p>
   <p class="paths"><code>Deploy/${esc(ws.namespace)}/</code></p>` : ''}
-  ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在对话中让 Alioth 助手创建</p>' : `
-  <ul class="apps">${ws.apps.map(app => `<li><span class="code">${esc(app.code)}</span>${app.name === '' ? '' : ` — ${esc(app.name)}`}</li>`).join('')}</ul>`}
+  ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在下方新建，或直接在对话中让 Alioth 助手创建</p>' : `
+  <ul class="apps">${ws.apps.map(app => `<li><span class="code">${esc(app.code)}</span>${
+    app.name === '' ? '' : `<span class="appname">${esc(app.name)}</span>`}${
+    ws.namespace === viewerNamespace ? appControl(app) : ''}</li>`).join('')}</ul>`}
   ${(() => {
     const builds = prototypes.filter(p => p.namespace === ws.namespace)
     if (builds.length === 0) return ''
@@ -480,7 +496,12 @@ function sendWorkspacePage(
 ${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
 <label>新建自定义工作区（namespace）<input name="namespace" pattern="[A-Z][a-zA-Z0-9-]*" placeholder="如 ProjectA" required></label>
 <button>创建</button>
-</form>` : ''
+</form>` : `
+<form method="post" action="/api/alioth/apps" class="create">
+${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
+<label>新建应用（= 新建工作区）<input name="name" pattern="[a-zA-Z0-9][a-zA-Z0-9-]*" placeholder="如 inventory" required></label>
+<button>创建</button>
+</form>`
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -517,8 +538,16 @@ padding:1.1rem 1.25rem;margin-bottom:1rem}
 .paths code{color:var(--accent-2)}
 .dim{color:var(--dim);font-size:.88rem;margin-top:.5rem}
 .apps{list-style:none;margin-top:.6rem;display:grid;gap:.3rem}
-.apps li{font-size:.92rem}
+.apps li{font-size:.92rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
 .apps .code{font-family:var(--mono);color:var(--text)}
+.apps .appname{font-size:.85rem;color:var(--dim)}
+.rename{display:flex;align-items:center;gap:.4rem;margin-left:auto}
+.rename input{background:#070b11;border:1px solid var(--line);border-radius:6px;
+color:var(--text);padding:.28rem .5rem;font-size:.85rem;font-family:var(--mono);width:11rem}
+.rename input:focus{border-color:var(--accent);outline:none}
+.rename button{background:transparent;border:1px solid var(--line);border-radius:6px;
+color:var(--accent-2);padding:.28rem .7rem;font-size:.82rem;cursor:pointer}
+.rename button:hover{border-color:var(--accent-2)}
 .back{margin-top:1.25rem;font-size:.85rem;color:var(--dim)}
 .create{background:var(--panel);border:1px solid var(--line);border-radius:10px;
 padding:1rem 1.25rem;margin-bottom:1rem;display:grid;gap:.7rem;max-width:30rem}
@@ -804,6 +833,47 @@ export function apply(ctx: Context, config: Config): void {
       }
       return
     }
+    // App workspaces (应用) inside the caller's own namespace: create one, or
+    // rename one in place. The namespace comes from the session — never from
+    // the request body — and the service accepts a single path segment, so no
+    // caller can address, create, or move a workspace outside its own Apps/
+    // level (工作区可改名，但不能层级移动). Distinct from `/api/workspace/*`,
+    // which is the harness client-connection RPC namespace on this origin.
+    if (request.method === 'POST'
+      && (url.pathname === '/api/alioth/apps' || url.pathname === '/api/alioth/apps/rename')) {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const body = await readBody(request)
+      const renaming = url.pathname.endsWith('/rename')
+      const from = typeof body.from === 'string' ? body.from : ''
+      const name = renaming
+        ? (typeof body.to === 'string' ? body.to : '')
+        : (typeof body.name === 'string' ? body.name : '')
+      const mutate = async (): Promise<{ code: string; name: string }> => renaming
+        ? await auth().renameApp(user.namespace, from, name)
+        : await auth().createApp(user.namespace, name)
+      if (isFormPost(request)) {
+        try {
+          await mutate()
+          response.writeHead(302, { location: '/workspace' })
+        } catch (error) {
+          response.writeHead(302, {
+            location: `/workspace?error=${encodeURIComponent(error instanceof Error ? error.message : String(error))}`,
+          })
+        }
+        response.end()
+        return
+      }
+      try {
+        sendJson(response, renaming ? 200 : 201, await mutate())
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
     // Cross-origin SSO handoff: the standalone (:3900) success page
     // auto-POSTs the fresh token here so the GUI origin gets its own
     // cookies — cookies are per-origin, a bare cross-origin link would
@@ -893,10 +963,11 @@ async function listVisiblePrototypes(
         }
         const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
         const prototypes = await listVisiblePrototypes(list.workspaces.map(ws => ws.namespace))
-        sendWorkspacePage(response, list.mode, list.workspaces, url.searchParams.get('error') ?? '', prototypes)
+        sendWorkspacePage(response, list.mode, user.namespace, list.workspaces, url.searchParams.get('error') ?? '', prototypes)
         return
       }
       if (url.pathname === '/api/auth' || url.pathname.startsWith('/api/auth/')
+        || url.pathname === '/api/alioth' || url.pathname.startsWith('/api/alioth/')
         || url.pathname === '/api/workspace' || url.pathname.startsWith('/api/workspace/')) {
         await handleAuthApi(request, response)
         return
@@ -996,7 +1067,7 @@ async function listVisiblePrototypes(
           const list = await auth().workspaces({ namespace: user.namespace, role: user.role })
           const error = new URL(req.url ?? '/', 'http://localhost').searchParams.get('error') ?? ''
           const prototypes = await listVisiblePrototypes(list.workspaces.map(ws => ws.namespace))
-          sendWorkspacePage(res, list.mode, list.workspaces, error, prototypes)
+          sendWorkspacePage(res, list.mode, user.namespace, list.workspaces, error, prototypes)
         },
       }))
       webCtx.effect(() => web.register({
@@ -1015,6 +1086,17 @@ async function listVisiblePrototypes(
       webCtx.effect(() => web.register({
         kind: 'exact',
         path: '/api/workspace',
+        handler: async (req, res) => {
+          await handleAuthApi(req, res)
+        },
+      }))
+      // Our own app-workspace API (create / rename). A distinct prefix on
+      // purpose: `/api/workspace/*` is the harness client-connection RPC
+      // namespace on this origin, and longest-prefix-wins would otherwise
+      // trade one for the other.
+      webCtx.effect(() => web.register({
+        kind: 'prefix',
+        path: '/api/alioth',
         handler: async (req, res) => {
           await handleAuthApi(req, res)
         },

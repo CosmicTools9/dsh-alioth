@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -891,8 +891,14 @@ describe('workspace page with apps and 成品预览 (standard view)', () => {
     expect(response.status).toBe(200)
     const html = await response.text()
     expect(html).toContain('<h1>应用</h1>')
-    expect(html).toContain('<span class="code">APPX</span> — 示例应用')
-    expect(html).toContain('<span class="code">app-y</span></li>') // no name → no suffix
+    expect(html).toContain('<span class="code">APPX</span>')
+    expect(html).toContain('<span class="appname">示例应用</span>')
+    // dana's own namespace: rows carry the in-place rename control, prefilled.
+    expect(html).toContain('action="/api/alioth/apps/rename"')
+    expect(html).toContain('name="to" value="APPX"')
+    expect(html).toContain('name="to" value="app-y"')
+    // The unnamed app shows no name suffix (exactly one appname span here).
+    expect(html.match(/class="appname"/g) ?? []).toHaveLength(1)
     expect(html).toContain('成品预览')
     expect(html).toContain('demo · a-v10.html')
     expect(html).toContain('（1 KB）')
@@ -905,18 +911,70 @@ describe('workspace page with apps and 成品预览 (standard view)', () => {
     expect(await build.text()).toContain('v10')
   })
 
-  it('has no custom-workspace chrome in standard mode (error param included)', async () => {
+  it('offers the app form, never the custom-workspace form, in standard mode', async () => {
     const clean = await fetch(`${base()}/workspace`, { headers: { cookie } })
     const cleanHtml = await clean.text()
-    expect(cleanHtml).not.toContain('class="banner error"')
+    // 工作区 = 应用: the 应用 view creates apps (one Apps/ level), and the
+    // custom-namespace form belongs to the unlimited tier only.
+    expect(cleanHtml).toContain('action="/api/alioth/apps"')
+    expect(cleanHtml).toContain('新建应用')
     expect(cleanHtml).not.toContain('新建自定义工作区')
+    expect(cleanHtml).not.toContain('action="/api/workspace"')
+    expect(cleanHtml).not.toContain('class="banner error"')
 
-    // `?error=` feeds the custom-workspace form banner — absent in 应用 view.
-    const withError = await fetch(`${base()}/workspace?error=${encodeURIComponent('boom')}`, { headers: { cookie } })
+    // `?error=` feeds that form's banner, escaped.
+    const withError = await fetch(`${base()}/workspace?error=${encodeURIComponent('<b>boom</b>')}`, { headers: { cookie } })
     const errorHtml = await withError.text()
     expect(withError.status).toBe(200)
-    expect(errorHtml).not.toContain('class="banner error"')
-    expect(errorHtml).not.toContain('boom')
+    expect(errorHtml).toContain('class="banner error"')
+    expect(errorHtml).toContain('&lt;b&gt;boom&lt;/b&gt;')
+  })
+
+  it('creates an app workspace, renames it in place, and refuses level moves', async () => {
+    const { cookie: wanda } = await registerUser('wanda')
+    const appsDir = path.join(previewPreProcRoot, 'U-wanda', 'Apps')
+    const post = async (path_: string, fields: Record<string, string>) => {
+      const form = new URLSearchParams(fields).toString()
+      return await fetch(`${base()}${path_}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: wanda },
+        body: form,
+        redirect: 'manual',
+      })
+    }
+    const reason = (response: Response): string => decodeURIComponent(String(response.headers.get('location')))
+
+    // Registration provisions the default workspace, so the picker is usable.
+    expect(await readdir(appsDir)).toEqual(['default'])
+
+    const created = await post('/api/alioth/apps', { name: 'inventory' })
+    expect(created.status).toBe(302)
+    expect(created.headers.get('location')).toBe('/workspace')
+    expect(await readdir(appsDir)).toEqual(['default', 'inventory'])
+
+    const renamed = await post('/api/alioth/apps/rename', { from: 'inventory', to: 'stock' })
+    expect(renamed.status).toBe(302)
+    expect(await readdir(appsDir)).toEqual(['default', 'stock'])
+
+    // Same level, one segment: an existing name and a path-y name both fail
+    // back onto the page with the reason.
+    expect(reason(await post('/api/alioth/apps', { name: 'stock' }))).toContain('already exists')
+    expect(reason(await post('/api/alioth/apps/rename', { from: 'stock', to: 'a/b' }))).toContain('invalid app name')
+    expect(reason(await post('/api/alioth/apps/rename', { from: 'stock', to: '../escape' }))).toContain('invalid app name')
+
+    // The namespace is the session's: a forged one in the body changes nothing.
+    await post('/api/alioth/apps', { name: 'forged', namespace: 'U-someone' })
+    expect(await readdir(appsDir)).toEqual(['default', 'forged', 'stock'])
+    expect(await readdir(path.join(previewPreProcRoot, 'U-someone', 'Apps')).catch(() => [])).toEqual([])
+  })
+
+  it('rejects the app API without a session', async () => {
+    const response = await fetch(`${base()}/api/alioth/apps`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: 'nope' }).toString(),
+    })
+    expect(response.status).toBe(401)
   })
 
   it('lists a build that exists only under the Pre-Proc root', async () => {

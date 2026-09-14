@@ -35,7 +35,11 @@ interface AuthStandIn {
     /** Thrown verbatim when set — the carrier must survive non-Error failures. */
     registerFailure: unknown
     createFailure: unknown
+    /** Thrown verbatim when set — the app API must survive non-Error failures. */
+    appFailure: unknown
     created: string[]
+    /** App-workspace calls the carrier made, in order. */
+    appCalls: Array<{ op: 'create' | 'rename'; namespace: string; from?: string; name: string }>
   }
 }
 
@@ -57,7 +61,9 @@ function authStandIn(): AuthStandIn {
     /** Thrown verbatim when set — the carrier must survive non-Error failures. */
     registerFailure: null as unknown,
     createFailure: null as unknown,
+    appFailure: null as unknown,
     created: [] as string[],
+    appCalls: [] as Array<{ op: 'create' | 'rename'; namespace: string; from?: string; name: string }>,
   }
   const service: Record<string, unknown> = {
     async register(username: string, password: string) {
@@ -103,6 +109,16 @@ function authStandIn(): AuthStandIn {
         deployPath: `/deploy/${namespace}`,
         apps: [],
       }
+    },
+    async createApp(namespace: string, name: string) {
+      if (state.appFailure !== null) throw state.appFailure
+      state.appCalls.push({ op: 'create', namespace, name })
+      return { code: name, name: '' }
+    },
+    async renameApp(namespace: string, from: string, to: string) {
+      if (state.appFailure !== null) throw state.appFailure
+      state.appCalls.push({ op: 'rename', namespace, from, name: to })
+      return { code: to, name: '' }
     },
   }
   return { service, state }
@@ -275,9 +291,14 @@ describe('unlimited workspace browser (工作区)', () => {
     expect(html).toContain('2 个应用')
     expect(html).toContain('<code>Pre-Proc/Acme/</code>')
     expect(html).toContain('<code>Deploy/Acme/</code>')
-    expect(html).toContain('<span class="code">CRM</span> — 客户管理')
-    expect(html).toContain('<span class="code">anon-app</span></li>') // no name → no suffix
-    expect(html).toContain('暂无应用 — 在对话中让 Alioth 助手创建') // Empty has no apps
+    expect(html).toContain('<span class="code">CRM</span>')
+    expect(html).toContain('<span class="appname">客户管理</span>')
+    expect(html).toContain('<span class="code">anon-app</span>') // no name → no suffix
+    expect(html.match(/class="appname"/g) ?? []).toHaveLength(1)
+    expect(html).toContain('暂无应用 — 在下方新建，或直接在对话中让 Alioth 助手创建') // Empty has no apps
+    // The viewer (boss → U-boss) owns neither Acme nor Empty: read-only rows,
+    // and the namespace form is the only create affordance here.
+    expect(html).not.toContain('action="/api/alioth/apps/rename"')
     expect(html).toContain('新建自定义工作区')
     expect(html).not.toContain('class="banner error"')
   })
@@ -335,6 +356,76 @@ describe('unlimited workspace browser (工作区)', () => {
     } finally {
       auth.state.createFailure = null
     }
+  })
+
+  it('creates and renames app workspaces for the session namespace (工作区 = 应用)', async () => {
+    const json = async (path: string, body: unknown): Promise<{ status: number; payload: unknown }> => {
+      const response = await fetch(`${base()}${path}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify(body),
+      })
+      return { status: response.status, payload: await response.json() }
+    }
+
+    const created = await json('/api/alioth/apps', { name: 'inventory' })
+    expect(created.status).toBe(201)
+    expect(created.payload).toEqual({ code: 'inventory', name: '' })
+    // The namespace comes from the session cookie, never from the body.
+    expect(auth.state.appCalls.at(-1)).toEqual({ op: 'create', namespace: 'U-boss', name: 'inventory' })
+
+    const renamed = await json('/api/alioth/apps/rename', { from: 'inventory', to: 'stock' })
+    expect(renamed.status).toBe(200)
+    expect(renamed.payload).toEqual({ code: 'stock', name: '' })
+    expect(auth.state.appCalls.at(-1)).toEqual({ op: 'rename', namespace: 'U-boss', from: 'inventory', name: 'stock' })
+
+    // A caller-supplied namespace is ignored outright.
+    await json('/api/alioth/apps', { name: 'forged', namespace: 'U-someone' })
+    expect(auth.state.appCalls.at(-1)).toEqual({ op: 'create', namespace: 'U-boss', name: 'forged' })
+
+    // A service failure is reported without killing the carrier.
+    auth.state.appFailure = 'aliothAuth.createApp: U-boss/Apps/stock already exists'
+    try {
+      const failed = await json('/api/alioth/apps', { name: 'stock' })
+      expect(failed.status).toBe(400)
+      expect(failed.payload).toEqual({ error: 'aliothAuth.createApp: U-boss/Apps/stock already exists' })
+    } finally {
+      auth.state.appFailure = null
+    }
+  })
+
+  it('app form posts land back on /workspace with the reason on failure', async () => {
+    const form = formBody({ name: 'form-app' })
+    const ok = await fetch(`${base()}/api/alioth/apps`, {
+      method: 'POST',
+      headers: { ...form.headers, cookie },
+      body: form.body,
+      redirect: 'manual',
+    })
+    expect(ok.status).toBe(302)
+    expect(ok.headers.get('location')).toBe('/workspace')
+
+    auth.state.appFailure = 'aliothAuth.createApp: raw boom'
+    try {
+      const bad = formBody({ name: 'form-app' })
+      const failed = await fetch(`${base()}/api/alioth/apps`, {
+        method: 'POST',
+        headers: { ...bad.headers, cookie },
+        body: bad.body,
+        redirect: 'manual',
+      })
+      expect(failed.status).toBe(302)
+      expect(String(failed.headers.get('location'))).toContain(`error=${encodeURIComponent('aliothAuth.createApp: raw boom')}`)
+    } finally {
+      auth.state.appFailure = null
+    }
+  })
+
+  it('rejects app creation and rename without a session', async () => {
+    const create = formBody({ name: 'nope' })
+    expect((await fetch(`${base()}/api/alioth/apps`, { method: 'POST', ...create })).status).toBe(401)
+    const rename = formBody({ from: 'a', to: 'b' })
+    expect((await fetch(`${base()}/api/alioth/apps/rename`, { method: 'POST', ...rename })).status).toBe(401)
   })
 
   it('creates custom workspaces over JSON (201) and reports failures as JSON', async () => {
@@ -426,6 +517,7 @@ describe('web gate mounting contract (fake webServer)', () => {
       { kind: 'exact', path: '/workspace' },
       { kind: 'prefix', path: '/api/auth' },
       { kind: 'exact', path: '/api/workspace' },
+      { kind: 'prefix', path: '/api/alioth' },
       { kind: 'prefix', path: '/preview' },
     ])
   })

@@ -30,7 +30,8 @@
  */
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, readdir, rename } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -128,6 +129,31 @@ export interface WorkspaceList {
 /** Alioth namespace contract — also the workspace dir-name safety boundary. */
 const NAMESPACE_PATTERN_RE = /^[A-Z][a-zA-Z0-9-]*$/
 
+/**
+ * App-workspace dir-name rule, identical to the app.json `code` pattern, so a
+ * workspace name is always a legal app code. One path segment by construction:
+ * a workspace can be renamed inside its level and has no level to move to.
+ */
+const APP_NAME_PATTERN_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/
+
+/**
+ * The app workspace every account starts with. Without it a brand-new account's
+ * namespace holds no apps, so the console picker — which offers exactly the
+ * namespace's apps — would have nothing to select and the composer would stay
+ * unusable until the user created something elsewhere.
+ */
+export const DEFAULT_APP_WORKSPACE = 'default'
+
+/** One Apps/ entry: the app.json code/name when readable, the dir name otherwise. */
+async function readAppEntry(appsRoot: string, dir: string): Promise<WorkspaceApp> {
+  try {
+    const parsed = JSON.parse(await readFile(path.join(appsRoot, dir, 'app.json'), 'utf8')) as Record<string, unknown>
+    return { code: typeof parsed.code === 'string' ? parsed.code : dir, name: typeof parsed.name === 'string' ? parsed.name : '' }
+  } catch {
+    return { code: dir, name: '' }
+  }
+}
+
 /** App entries under one namespace's Apps/ dir (tolerant: broken app.json → code only). */
 async function listWorkspaceApps(preProcRoot: string, namespace: string): Promise<WorkspaceApp[]> {
   const appsRoot = path.join(preProcRoot, namespace, 'Apps')
@@ -135,12 +161,7 @@ async function listWorkspaceApps(preProcRoot: string, namespace: string): Promis
     entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
   const apps: WorkspaceApp[] = []
   for (const dir of dirs) {
-    try {
-      const parsed = JSON.parse(await readFile(path.join(appsRoot, dir, 'app.json'), 'utf8')) as Record<string, unknown>
-      apps.push({ code: typeof parsed.code === 'string' ? parsed.code : dir, name: typeof parsed.name === 'string' ? parsed.name : '' })
-    } catch {
-      apps.push({ code: dir, name: '' })
-    }
+    apps.push(await readAppEntry(appsRoot, dir))
   }
   apps.sort((a, b) => a.code.localeCompare(b.code))
   return apps
@@ -176,7 +197,7 @@ export interface AliothAuthService {
   userForSessionId(sessionId: string): Promise<{ namespace: string; role: 'admin' | 'user' } | null>
   /** Resolved workspace mode ('standard' | 'unlimited'). */
   workspaceMode(): 'standard' | 'unlimited'
-  /** Create the user's namespace workspace dirs (Pre-Proc/{ns}, Deploy/{ns}). Idempotent. */
+  /** Create the user's namespace workspace dirs (Pre-Proc/{ns}, Deploy/{ns}, Apps/default). Idempotent. */
   ensureWorkspace(namespace: string): Promise<void>
   /**
    * Create a custom workspace (unlimited mode only): validates the namespace
@@ -184,6 +205,16 @@ export interface AliothAuthService {
    * AliothStudio path structure, returns the workspace view.
    */
   createWorkspace(namespace: string): Promise<WorkspaceView>
+  /**
+   * Create one app workspace at `Pre-Proc/{ns}/Apps/{name}` (工作区 = 应用).
+   * Single-segment names only; refuses an existing name.
+   */
+  createApp(namespace: string, name: string): Promise<WorkspaceApp>
+  /**
+   * Rename an app workspace in place (`Apps/{from}` → `Apps/{to}`). Same level,
+   * single-segment names — a workspace is renamed, never moved between levels.
+   */
+  renameApp(namespace: string, from: string, to: string): Promise<WorkspaceApp>
   /** Workspaces visible to an identity: unlimited shows every namespace, standard is role-scoped. */
   workspaces(identity: { namespace: string; role: 'admin' | 'user' }): Promise<WorkspaceList>
 }
@@ -213,9 +244,10 @@ export function apply(ctx: Context, config: Config): void {
   /**
    * Create the namespace's workspace dirs — the AliothStudio layout the
    * B/S surface promises: Pre-Proc/{namespace}/ (app artifacts) and
-   * Deploy/{namespace}/ (deployment artifacts). Idempotent; the namespace
-   * pattern is the path-traversal safety boundary. Shared by registration,
-   * admin bootstrap, and the service surface.
+   * Deploy/{namespace}/ (deployment artifacts), plus the default app
+   * workspace so a fresh account can start working immediately. Idempotent;
+   * the namespace pattern is the path-traversal safety boundary. Shared by
+   * registration, login, admin bootstrap, and the service surface.
    */
   async function ensureWorkspace(namespace: string): Promise<void> {
     if (!NAMESPACE_PATTERN_RE.test(namespace)) {
@@ -224,7 +256,29 @@ export function apply(ctx: Context, config: Config): void {
     await Promise.all([
       mkdir(path.join(preProcRoot, namespace), { recursive: true }),
       mkdir(path.join(deployRoot, namespace), { recursive: true }),
+      mkdir(path.join(preProcRoot, namespace, 'Apps', DEFAULT_APP_WORKSPACE), { recursive: true }),
     ])
+  }
+
+  /**
+   * Absolute dir of one app workspace: exactly one name segment under the
+   * namespace's single Apps/ level. Both the namespace and the name are
+   * pattern-checked, so no input can escape the level (工作区不能层级移动).
+   * @param namespace - The owning `U-<username>` namespace.
+   * @param name - The app workspace name (app.json code shape).
+   * @returns The absolute app dir.
+   */
+  function appDir(namespace: string, name: string): string {
+    if (!NAMESPACE_PATTERN_RE.test(namespace)) {
+      throw new Error(`aliothAuth: invalid namespace ${JSON.stringify(namespace)}`)
+    }
+    if (!APP_NAME_PATTERN_RE.test(name)) {
+      throw new Error(
+        `aliothAuth: invalid app name ${JSON.stringify(name)} (expected ^[a-zA-Z0-9][a-zA-Z0-9-]*$`
+        + ' — one path segment; a workspace can be renamed but never moved between levels)',
+      )
+    }
+    return path.join(preProcRoot, namespace, 'Apps', name)
   }
 
   // ── service: ctx.aliothAuth ────────────────────────────────────────────
@@ -379,6 +433,70 @@ export function apply(ctx: Context, config: Config): void {
         deployPath: path.join(deployRoot, namespace),
         apps: await listWorkspaceApps(preProcRoot, namespace),
       }
+    },
+
+    /**
+     * Create one app workspace — 添加工作区就是创建新应用. The new directory
+     * sits at `Pre-Proc/{ns}/Apps/{name}`, the level the console's picker
+     * lists and a session roots at; its app contract artifacts are generated
+     * later by the pipeline (this only provisions the workspace). Refuses an
+     * existing name: a workspace is created, never silently adopted.
+     * @param namespace - The owning `U-<username>` namespace.
+     * @param name - New app workspace name (app.json `code` shape).
+     * @returns The created entry.
+     */
+    async createApp(namespace: string, name: string): Promise<WorkspaceApp> {
+      const dir = appDir(namespace, name)
+      const appsRoot = path.join(preProcRoot, namespace, 'Apps')
+      await mkdir(appsRoot, { recursive: true })
+      try {
+        await mkdir(dir)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+          throw new Error(`aliothAuth.createApp: ${namespace}/Apps/${name} already exists`)
+        }
+        throw error
+      }
+      return await readAppEntry(appsRoot, name)
+    },
+
+    /**
+     * Rename one app workspace in place: `Apps/{from}` → `Apps/{to}`. Both
+     * names are single segments of the same level, so the rename cannot move
+     * the workspace in the hierarchy (工作区可以改名，但不能进行层级移动). The
+     * app's `Prototypes/Apps/` dir follows when it exists, so the tree keeps
+     * one app under one name.
+     * @param namespace - The owning `U-<username>` namespace.
+     * @param from - Current app workspace name.
+     * @param to - New app workspace name.
+     * @returns The renamed entry (under its new code).
+     */
+    async renameApp(namespace: string, from: string, to: string): Promise<WorkspaceApp> {
+      const appsRoot = path.join(preProcRoot, namespace, 'Apps')
+      if (from === to) {
+        return await readAppEntry(appsRoot, from)
+      }
+      const target = appDir(namespace, to)
+      // POSIX rename replaces an existing EMPTY target directory, so an
+      // existing name has to be refused up front instead of relying on EEXIST.
+      if (existsSync(target)) {
+        throw new Error(`aliothAuth.renameApp: ${namespace}/Apps/${to} already exists`)
+      }
+      try {
+        await rename(appDir(namespace, from), target)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (code === 'ENOENT') {
+          throw new Error(`aliothAuth.renameApp: ${namespace}/Apps/${from} does not exist`)
+        }
+        if (code === 'EEXIST' || code === 'ENOTEMPTY') {
+          throw new Error(`aliothAuth.renameApp: ${namespace}/Apps/${to} already exists`)
+        }
+        throw error
+      }
+      const prototypesRoot = path.join(preProcRoot, namespace, 'Prototypes', 'Apps')
+      await rename(path.join(prototypesRoot, from), path.join(prototypesRoot, to)).catch(() => undefined)
+      return await readAppEntry(appsRoot, to)
     },
 
     /**

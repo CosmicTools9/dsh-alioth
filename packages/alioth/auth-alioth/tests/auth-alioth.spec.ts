@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -246,10 +246,41 @@ describe('workspace (namespace = user workspace)', () => {
     expect(deployStat.isDirectory()).toBe(true)
   })
 
-  it('ensureWorkspace is idempotent and rejects unsafe namespaces', async () => {
+  it('ensureWorkspace provisions the namespace, its deploy root and the default app workspace', async () => {
     await expect(ctx.aliothAuth.ensureWorkspace('U-carol')).resolves.toBeUndefined()
+    expect(await readdir(path.join(preProcRoot, 'U-carol', 'Apps'))).toEqual(['default'])
     await expect(ctx.aliothAuth.ensureWorkspace('../evil')).rejects.toThrow(/invalid namespace/)
     await expect(ctx.aliothAuth.ensureWorkspace('lower')).rejects.toThrow(/invalid namespace/)
+  })
+
+  it('createApp makes one app workspace and refuses duplicates and multi-segment names', async () => {
+    await ctx.aliothAuth.ensureWorkspace('U-frank')
+    await expect(ctx.aliothAuth.createApp('U-frank', 'inventory')).resolves.toEqual({ code: 'inventory', name: '' })
+    expect(await readdir(path.join(preProcRoot, 'U-frank', 'Apps'))).toEqual(['default', 'inventory'])
+    // A workspace is created, never silently adopted.
+    await expect(ctx.aliothAuth.createApp('U-frank', 'inventory')).rejects.toThrow(/already exists/)
+    // One path segment only — which is exactly why a workspace cannot be
+    // placed at another level.
+    await expect(ctx.aliothAuth.createApp('U-frank', 'a/b')).rejects.toThrow(/invalid app name/)
+    await expect(ctx.aliothAuth.createApp('U-frank', '../escape')).rejects.toThrow(/invalid app name/)
+    await expect(ctx.aliothAuth.createApp('U-frank', '')).rejects.toThrow(/invalid app name/)
+    await expect(ctx.aliothAuth.createApp('../../etc', 'x')).rejects.toThrow(/invalid namespace/)
+  })
+
+  it('renameApp renames in place (with its Prototypes level) and never moves across levels', async () => {
+    await ctx.aliothAuth.ensureWorkspace('U-grace')
+    await ctx.aliothAuth.createApp('U-grace', 'ledger')
+    await mkdir(path.join(preProcRoot, 'U-grace', 'Prototypes', 'Apps', 'ledger'), { recursive: true })
+    await expect(ctx.aliothAuth.renameApp('U-grace', 'ledger', 'books')).resolves.toEqual({ code: 'books', name: '' })
+    expect(await readdir(path.join(preProcRoot, 'U-grace', 'Apps'))).toEqual(['books', 'default'])
+    expect(await readdir(path.join(preProcRoot, 'U-grace', 'Prototypes', 'Apps'))).toEqual(['books'])
+    // Same level, one segment: no rename can place the workspace elsewhere.
+    await expect(ctx.aliothAuth.renameApp('U-grace', 'books', 'a/b')).rejects.toThrow(/invalid app name/)
+    await expect(ctx.aliothAuth.renameApp('U-grace', 'books', 'default')).rejects.toThrow(/already exists/)
+    await expect(ctx.aliothAuth.renameApp('U-grace', 'missing', 'other')).rejects.toThrow(/does not exist/)
+    // Renaming to the same name is a no-op that keeps the entry.
+    await expect(ctx.aliothAuth.renameApp('U-grace', 'books', 'books')).resolves.toEqual({ code: 'books', name: '' })
+    expect(await readdir(path.join(preProcRoot, 'U-grace', 'Apps'))).toEqual(['books', 'default'])
   })
 
   it('derives session identity from the workspace path when no binding row exists', async () => {
@@ -354,7 +385,7 @@ describe('workspace (namespace = user workspace)', () => {
     expect(own.workspaces[0]).toMatchObject({
       preProcPath: path.join(preProcRoot, 'U-erin'),
       deployPath: path.join(deployRoot, 'U-erin'),
-      apps: [{ code: 'demo-app', name: 'Demo 应用' }],
+      apps: [{ code: 'default', name: '' }, { code: 'demo-app', name: 'Demo 应用' }],
     })
 
     // No super-admin: an equal user (role field kept for compatibility) also

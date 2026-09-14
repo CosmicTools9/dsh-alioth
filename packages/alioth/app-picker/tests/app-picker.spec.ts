@@ -16,7 +16,7 @@ function browse(picker: AppDirectoryPicker): Browse {
 }
 
 /** One picker over a temp Pre-Proc tree with two namespaces and apps. */
-async function fixture(namespace?: string): Promise<{ picker: AppDirectoryPicker; root: string; nsTest: string; appA1: string }> {
+async function fixture(namespace?: string): Promise<{ picker: AppDirectoryPicker; ctx: Context; root: string; nsTest: string; appA1: string }> {
   const ctx = new Context()
   const root = await mkdtemp(join(tmpdir(), 'app-picker-'))
   const nsTest = join(root, 'U-test')
@@ -30,7 +30,7 @@ async function fixture(namespace?: string): Promise<{ picker: AppDirectoryPicker
   await mkdir(join(root, '.hidden'))
   const appA1 = join(nsTest, 'Apps', 'a1')
   const picker = new AppDirectoryPicker(ctx, { preProcRoot: root, ...namespace === undefined ? {} : { namespace } })
-  return { picker, root, nsTest, appA1 }
+  return { picker, ctx, root, nsTest, appA1 }
 }
 
 /** Cleanup helper for one fixture. */
@@ -105,11 +105,42 @@ describe('AppDirectoryPicker listing (AppCreator tree)', () => {
     await cleanup(f.root)
   })
 
-  it('refuses folder creation (apps are contract artifacts)', async () => {
-    const f = await fixture()
+  it('creates an app workspace through the auth service (添加工作区 = 新建应用)', async () => {
+    const f = await fixture('U-test')
+    const calls: Array<[string, string]> = []
+    f.ctx.provide('aliothAuth', {
+      createApp: async (ns: string, name: string) => {
+        calls.push([ns, name])
+        await mkdir(join(f.root, ns, 'Apps', name), { recursive: true })
+        return { code: name, name: '' }
+      },
+    } as never)
     const capability = f.picker.capability()
     if (capability.kind !== 'browse') throw new Error('expected browse capability')
-    await expect(capability.createDirectory(f.nsTest, 'scratch')).rejects.toBeInstanceOf(DirectoryPickerError)
+    // The level comes from the namespace in effect, never from the path the
+    // flow happens to show: a created workspace always lands under Apps/.
+    await expect(capability.createDirectory(f.nsTest, 'new-app'))
+      .resolves.toBe(join(f.root, 'U-test', 'Apps', 'new-app'))
+    expect(calls).toEqual([['U-test', 'new-app']])
+    await cleanup(f.root)
+  })
+
+  it('surfaces a creation failure as a picker error', async () => {
+    const f = await fixture('U-test')
+    f.ctx.provide('aliothAuth', {
+      createApp: () => Promise.reject(new Error('aliothAuth.createApp: U-test/Apps/new-app already exists')),
+    } as never)
+    const capability = f.picker.capability()
+    if (capability.kind !== 'browse') throw new Error('expected browse capability')
+    await expect(capability.createDirectory(f.nsTest, 'new-app')).rejects.toThrow(/already exists/)
+    await cleanup(f.root)
+  })
+
+  it('refuses creation when no auth service is mounted', async () => {
+    const f = await fixture('U-test')
+    const capability = f.picker.capability()
+    if (capability.kind !== 'browse') throw new Error('expected browse capability')
+    await expect(capability.createDirectory(f.nsTest, 'new-app')).rejects.toBeInstanceOf(DirectoryPickerError)
     await cleanup(f.root)
   })
 })
@@ -127,6 +158,26 @@ describe('AppDirectoryPicker per-account isolation (connection account)', () => 
       const listing = await browse(f.picker)()
       expect(listing.entries.map(e => e.name)).toEqual(['a1', 'b2'])
     })
+    await cleanup(f.root)
+  })
+
+  it('backfills the account defaults before listing (lazy provisioning)', async () => {
+    const f = await fixture()
+    const ensured: string[] = []
+    f.ctx.provide('aliothAuth', {
+      ensureWorkspace: async (ns: string) => {
+        ensured.push(ns)
+        await mkdir(join(f.root, ns, 'Apps', 'default'), { recursive: true })
+      },
+    } as never)
+    await asAccount('U-fresh', async () => {
+      const listing = await browse(f.picker)()
+      expect(listing.entries.map(e => e.name)).toEqual(['default'])
+    })
+    expect(ensured).toEqual(['U-fresh'])
+    // A static-lock (no account) listing never writes to that namespace.
+    await browse(f.picker)()
+    expect(ensured).toEqual(['U-fresh'])
     await cleanup(f.root)
   })
 
@@ -166,6 +217,25 @@ describe('AppDirectoryPicker per-account isolation (connection account)', () => 
       expect(listing.entries).toEqual([])
       expect(listing.path).toBe(join(f.root, 'U-fresh'))
     })
+    await cleanup(f.root)
+  })
+
+  it('creates inside the account namespace even when the static lock names another', async () => {
+    const f = await fixture('U-other')
+    const calls: Array<[string, string]> = []
+    f.ctx.provide('aliothAuth', {
+      createApp: async (ns: string, name: string) => {
+        calls.push([ns, name])
+        return { code: name, name: '' }
+      },
+    } as never)
+    const capability = f.picker.capability()
+    if (capability.kind !== 'browse') throw new Error('expected browse capability')
+    await asAccount('U-test', async () => {
+      await expect(capability.createDirectory(f.root, 'fresh'))
+        .resolves.toBe(join(f.root, 'U-test', 'Apps', 'fresh'))
+    })
+    expect(calls).toEqual([['U-test', 'fresh']])
     await cleanup(f.root)
   })
 

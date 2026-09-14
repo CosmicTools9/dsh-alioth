@@ -143,6 +143,14 @@ export class AppDirectoryPicker extends DirectoryPicker {
     }
     const account = await currentConnectionAccount()
     const ns = account ?? this.namespace
+    // Lazy backfill (the same rule auth-alioth applies on a workspaces() read):
+    // an account that predates the default-workspace provisioning still gets a
+    // selectable root the first time its level is listed. Only the signed-in
+    // account's own namespace is touched — a deployment-configured static
+    // namespace (AppAgent tier) is never written to from a listing.
+    if (account !== null) {
+      await this.ctx.get('aliothAuth')?.ensureWorkspace(account)
+    }
     if (path === undefined) {
       // Root: the current namespace's apps directly (account or configured
       // lock), or every namespace as the first browse level (anonymous,
@@ -228,16 +236,44 @@ export class AppDirectoryPicker extends DirectoryPicker {
   }
 
   /**
-   * The browse flow offers a create-directory action; apps are contract
-   * artifacts (app.json + extensions) that must be generated programmatically
-   * (alioth_app_write), never scaffolded as bare folders — refuse.
+   * Create one app workspace — 添加工作区就是创建新应用. The browse flow's
+   * create action makes an app workspace: one directory at
+   * `Pre-Proc/{ns}/Apps/{name}` inside the namespace in effect (the signed-in
+   * account, else the configured lock).
+   *
+   * Creation goes through the Alioth auth service, so the namespace, the
+   * single-segment name rule and the level pinning live in exactly one place:
+   * a workspace is created (or renamed) inside its level and can never move to
+   * another. The app's contract artifacts (app.json + extensions) stay
+   * pipeline-generated (`alioth_app_write`) — this only provisions the
+   * workspace the user picked.
+   * @param path - The level the flow is showing; the created workspace always
+   *   lands under the namespace's Apps level regardless of it.
+   * @param name - The new workspace name.
+   * @returns The created app directory.
    */
   private async createDirectory(path: string, name: string): Promise<string> {
-    throw new DirectoryPickerError(
-      'directory-create-failed',
-      join(path, name),
-      'AppCreator apps are contract artifacts — create them in the agent dialogue, not as folders',
-    )
+    const ns = (await currentConnectionAccount()) ?? this.namespace
+    const auth = this.ctx.get('aliothAuth')
+    if (ns === undefined || auth === undefined) {
+      throw new DirectoryPickerError(
+        'directory-create-failed',
+        join(path, name),
+        ns === undefined
+          ? 'cannot create an app: no namespace is in effect for this picker'
+          : 'cannot create an app: the Alioth auth service is not mounted',
+      )
+    }
+    try {
+      await auth.createApp(ns, name)
+    } catch (error) {
+      throw new DirectoryPickerError(
+        'directory-create-failed',
+        join(path, name),
+        error instanceof Error ? error.message : String(error),
+      )
+    }
+    return join(this.root, ns, 'Apps', name)
   }
 }
 
