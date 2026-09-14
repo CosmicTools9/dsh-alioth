@@ -42,6 +42,19 @@ export interface Config {
    * (`/preview/…`, served from its parent content root). Defaults to
    * ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (the workspace convention). */
   readonly preProcRoot?: string
+  /**
+   * Public origin of a reverse-proxied deployment (`https://cosmic-tools.shop`),
+   * env override `ALIOTH_PUBLIC_ORIGIN` wins. Set it whenever a gateway
+   * terminates on a different port/authority than the harness bind address:
+   * the console handoff URL and the workspace links must name the address the
+   * browser actually reached, and the bind address (127.0.0.1:3100 here) is
+   * neither public nor port-accurate behind the proxy. Absent, the origin is
+   * derived from the request Host plus the bound port (direct LAN shape).
+   */
+  readonly publicOrigin?: string
+  /** Mainland-China ICP filing number rendered in the auth-page footer
+   * (env `ALIOTH_ICP` wins). Empty — the default — renders nothing. */
+  readonly icp?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -49,7 +62,40 @@ export const Config: z<Config> = z.object({
   sessionTtlSeconds: z.number().default(7 * 24 * 3600),
   webGate: z.boolean().default(true),
   preProcRoot: z.string(),
+  publicOrigin: z.string().default(''),
+  icp: z.string().default(''),
 })
+
+/** 备案 footer for the styled pages, or '' when no filing number is configured.
+ * Links to the MIIT filing system, which is what the filing rules expect. */
+function icpFooter(icp: string | undefined): string {
+  const value = (icp ?? '').trim()
+  if (value === '') return ''
+  return `<footer class="icp"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">${esc(value)}</a></footer>`
+}
+
+/**
+ * Resolve the deployment's public origin: env override, then config. Absent
+ * everywhere the carrier keeps deriving it per request. A malformed value is a
+ * deployment mistake and fails loudly at mount instead of emitting dead links.
+ */
+export function resolvePublicOrigin(envValue: string | undefined, configured: string | undefined): string | undefined {
+  const raw = envValue !== undefined && envValue !== '' ? envValue : configured
+  if (raw === undefined || raw === '') return undefined
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    throw new Error(`auth-web-alioth: publicOrigin is not a URL: ${JSON.stringify(raw)}`)
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`auth-web-alioth: publicOrigin must be http(s): ${JSON.stringify(raw)}`)
+  }
+  if (url.pathname !== '/' || url.search !== '' || url.hash !== '') {
+    throw new Error(`auth-web-alioth: publicOrigin must be an origin without path/query: ${JSON.stringify(raw)}`)
+  }
+  return url.origin
+}
 
 /** The landing capability face (structural — landing-alioth provides it). */
 interface LandingLike {
@@ -179,10 +225,15 @@ function isFormPost(request: IncomingMessage): boolean {
 
 /** Shared dark-tech chrome for the B/S auth pages — same palette, zero
  * external assets. */
-function sendAuthPage(response: ServerResponse, status: number, title: string, body: string, headers: Record<string, string | string[]> = {}): void {
+function sendAuthPage(response: ServerResponse, status: number, title: string, body: string, headers: Record<string, string | string[]> = {}, icp = ''): void {
   response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache', ...headers })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#0a0e14">
 <title>${title} — Alioth AppCreator</title>
 <style>
 :root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
@@ -214,6 +265,7 @@ button:hover{filter:brightness(1.1)}
 .banner.error{border:1px solid var(--error);color:var(--error);background:rgba(242,113,138,.08)}
 .banner.ok{border:1px solid var(--accent);color:var(--accent);background:rgba(62,230,168,.08)}
 .alt{margin-top:1.1rem;font-size:.85rem;color:var(--dim)}
+footer.icp{text-align:center;font-size:.8rem;color:var(--dim);padding:1.5rem 0 2rem}
 .pv-h{font-size:.85rem;color:var(--dim);margin:1rem 0 .4rem;text-transform:uppercase;letter-spacing:.06em}
 .pv{list-style:none;padding:0;display:grid;gap:.35rem}
 .pv a{font-family:var(--mono);font-size:.85rem}
@@ -224,6 +276,7 @@ code{font-family:var(--mono);color:var(--accent)}
 </style></head><body>
 <nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a></nav>
 <main><div class="card"><h1>${title}</h1>${body}</div></main>
+${icpFooter(icp)}
 </body></html>`)
 }
 
@@ -431,6 +484,11 @@ ${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta name="theme-color" content="#0a0e14">
 <title>${title} — Alioth AppCreator</title>
 <style>
 :root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
@@ -550,12 +608,27 @@ function gateScript(landingPath: string): string {
 export function apply(ctx: Context, config: Config): void {
   const ttlSeconds = config.sessionTtlSeconds ?? 7 * 24 * 3600
   const auth = () => ctx.aliothAuth
+  /** Deployment's public origin (reverse-proxied installs); absent for the
+   * direct LAN shape, where the per-request Host plus the bound port stands in. */
+  const publicOrigin = resolvePublicOrigin(process.env.ALIOTH_PUBLIC_ORIGIN, config.publicOrigin)
+  /** 备案 number carried by every styled page footer. Config-only: the bundle
+   * patch decides whether this carrier is one of the surfaces that shows it. */
+  const icp = config.icp
+  /** `sendAuthPage` bound to this deployment's filing number — the eight page
+   * responses must all carry it, so they go through one binding. */
+  const sendPage = (
+    response: ServerResponse,
+    status: number,
+    title: string,
+    body: string,
+    headers?: Record<string, string | string[]>,
+  ): void => sendAuthPage(response, status, title, body, headers, icp)
   /** GUI origin once the webServer carrier mounts (set by the inject callback
    * below); the standalone success page links across origins with it —
    * cookies are per-origin, so a same-origin "/" link would silently keep
    * the visitor unauthenticated on the GUI. */
   let guiOrigin: string | undefined
-  const workspaceHref = (): string => guiOrigin ?? '/'
+  const workspaceHref = (): string => publicOrigin ?? guiOrigin ?? '/'
   /**
    * The agent-console (SPA) URL for one request's origin: the harness
    * connection service appends its process launch token, admitting the
@@ -563,10 +636,17 @@ export function apply(ctx: Context, config: Config): void {
    * caller falls back to the Alioth workspace page.
    */
   const portalUrl = (request: IncomingMessage): string | undefined => {
-    const host = request.headers.host
-    if (typeof host !== 'string' || host === '') return undefined
     const connection = asConnection((ctx.get as (name: string) => unknown).call(ctx, 'connection'))
     if (connection === undefined) return undefined
+    if (publicOrigin !== undefined) {
+      try {
+        return connection.authenticatedUrl(publicOrigin)
+      } catch {
+        return undefined
+      }
+    }
+    const host = request.headers.host
+    if (typeof host !== 'string' || host === '') return undefined
     try {
       // Reverse proxies may strip the port from Host ($host); the browser
       // must land on the real origin, so re-attach the bound port unless the
@@ -614,11 +694,11 @@ export function apply(ctx: Context, config: Config): void {
             })
             response.end()
           } else {
-            sendAuthPage(response, 201, '注册', successBody('注册', result.token, result.namespace, workspaceHref()),
+            sendPage(response, 201, '注册', successBody('注册', result.token, result.namespace, workspaceHref()),
               { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
           }
         } catch (error) {
-          sendAuthPage(response, 400, '注册', registerForm(friendlyError(error, 'register')))
+          sendPage(response, 400, '注册', registerForm(friendlyError(error, 'register')))
         }
         return
       }
@@ -640,11 +720,11 @@ export function apply(ctx: Context, config: Config): void {
             })
             response.end()
           } else {
-            sendAuthPage(response, 200, '登录', successBody('登录', result.token, result.namespace, workspaceHref()),
+            sendPage(response, 200, '登录', successBody('登录', result.token, result.namespace, workspaceHref()),
               { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
           }
         } catch (error) {
-          sendAuthPage(response, 401, '登录', loginForm(friendlyError(error, 'login')))
+          sendPage(response, 401, '登录', loginForm(friendlyError(error, 'login')))
         }
         return
       }
@@ -797,11 +877,11 @@ async function listVisiblePrototypes(
         return
       }
       if (request.method === 'GET' && url.pathname === '/login') {
-        sendAuthPage(response, 200, '登录', loginForm(''))
+        sendPage(response, 200, '登录', loginForm(''))
         return
       }
       if (request.method === 'GET' && url.pathname === '/register') {
-        sendAuthPage(response, 200, '注册', registerForm(''))
+        sendPage(response, 200, '注册', registerForm(''))
         return
       }
       if (request.method === 'GET' && url.pathname === '/workspace') {
@@ -893,14 +973,14 @@ async function listVisiblePrototypes(
         kind: 'exact',
         path: '/login',
         handler: (_request, res) => {
-          sendAuthPage(res, 200, '登录', loginForm(''))
+          sendPage(res, 200, '登录', loginForm(''))
         },
       }))
       webCtx.effect(() => web.register({
         kind: 'exact',
         path: '/register',
         handler: (_request, res) => {
-          sendAuthPage(res, 200, '注册', registerForm(''))
+          sendPage(res, 200, '注册', registerForm(''))
         },
       }))
       webCtx.effect(() => web.register({

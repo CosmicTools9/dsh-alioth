@@ -219,7 +219,7 @@ beforeAll(async () => {
       return () => { accountResolver = undefined }
     },
   }
-  const carrier = await ctx.plugin(authWeb, { port, preProcRoot: previewPreProcRoot })
+  const carrier = await ctx.plugin(authWeb, { port, preProcRoot: previewPreProcRoot, icp: '浙ICP备2023013865号-2' })
   disposers.push(() => carrier.dispose())
 }, 120_000)
 
@@ -247,6 +247,15 @@ describe('B/S HTTP surface (real server)', () => {
     const html = await response.text()
     expect(html).toContain('<form')
     expect(html).toContain('/api/auth/login')
+    // The page asks for the brand mark: no default tab glyph on the auth pages.
+    expect(html).toContain('href="/favicon.svg"')
+    expect(html).toContain('name="theme-color"')
+  })
+
+  it('carries the configured filing number in the page footer', async () => {
+    const html = await (await fetch(`${base()}/login`)).text()
+    expect(html).toContain('浙ICP备2023013865号-2')
+    expect(html).toContain('href="https://beian.miit.gov.cn/"')
   })
 
   it('links register page back to /login', async () => {
@@ -1114,5 +1123,116 @@ describe('client face artifact', () => {
     expect(injectedKey).toBe('shell.overlay')
     expect(captured?.options).toEqual({ name: 'shell.overlay', id: 'alioth-user-chip' })
     expect(typeof captured?.component).toBe('function')
+  })
+
+  it('keeps login/logout reachable when the session is gone (chip must not vanish)', async () => {
+    // The console cookie outlives the Alioth session, so a returning visitor
+    // reaches the SPA unauthenticated. The chip then used to render nothing —
+    // no identity, no 退出 — leaving the browser stuck in the console. This
+    // harness runs the real render logic over a minimal React stand-in.
+    const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+    let registration: { id: string; factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
+    new Function('window', source)({
+      __ModuleLoader__: { load: (r: typeof registration) => { registration = r } },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })
+
+    let hooks: unknown[] = []
+    let cursor = 0
+    const effects: Array<() => void> = []
+    const react = {
+      createElement: (...args: unknown[]) => args,
+      useState(initial: unknown) {
+        const at = cursor++
+        if (!(at in hooks)) hooks[at] = initial
+        return [hooks[at], (next: unknown) => { hooks[at] = next }]
+      },
+      useEffect(fn: () => unknown) {
+        const at = cursor++
+        if (!(at in hooks)) effects.push(fn as () => void)
+      },
+    }
+    const exports = registration!.factory((name: string) => {
+      if (name !== 'react') throw new Error(`unexpected require: ${name}`)
+      return react
+    })
+    const Chip = (() => {
+      let component: ((props: unknown) => unknown) | undefined
+      const ctxStub = {
+        effect: (fn: () => unknown) => { fn() },
+        slots: {
+          inject: (_key: string, callback: () => unknown) => { callback(); return () => {} },
+          register: (_options: unknown, registered: unknown) => { component = registered as typeof component; return () => {} },
+        },
+      }
+      ;(exports.apply as (c: unknown) => void)(ctxStub)
+      return component!
+    })()
+
+    const cookies: string[] = []
+    const globals = globalThis as unknown as { fetch: unknown; document: unknown; location: unknown }
+    const savedFetch = globals.fetch
+    const savedDocument = globals.document
+    const savedLocation = globals.location
+    const texts = (tree: unknown): string[] => {
+      if (typeof tree === 'string') return [tree]
+      if (Array.isArray(tree)) return tree.flatMap(texts)
+      if (typeof tree === 'object' && tree !== null) {
+        const props = (tree as { props?: Record<string, unknown> }).props ?? {}
+        return [...Object.values(props).flatMap(value => (typeof value === 'string' ? [value] : [])),
+          ...texts(props.children)]
+      }
+      return []
+    }
+    const render = (): string[] => {
+      cursor = 0
+      return texts(Chip({}))
+    }
+
+    try {
+      // Signed out: 401 must yield the signed-out chip, never `null`.
+      globals.fetch = () => Promise.resolve({ ok: false, status: 401 })
+      const jar = { value: 'alioth_user=ghost' }
+      globals.document = {
+        get cookie() { return jar.value },
+        set cookie(next: string) { jar.value = next; cookies.push(next) },
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      }
+      globals.location = { replace: () => {} }
+      expect(render()).toEqual([]) // still loading → invisible
+      effects.forEach(fn => fn())
+      await Promise.resolve()
+      await Promise.resolve()
+      const signedOut = render()
+      expect(signedOut).toContain('未登录')
+      expect(signedOut).toContain('登录')
+      expect(signedOut).toContain('首页')
+      expect(cookies.some(value => value.startsWith('alioth_user=;') && value.includes('Max-Age=0'))).toBe(true)
+
+      // Signed in: identity + logout stay as before.
+      globals.fetch = () => Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ username: 'ada', namespace: 'U-ada', workspaceMode: 'standard' }),
+      })
+      hooks = []
+      cursor = 0
+      effects.length = 0
+      Chip({})
+      effects.forEach(fn => fn())
+      await Promise.resolve()
+      await Promise.resolve()
+      const signedIn = render()
+      expect(signedIn).toContain('ada')
+      expect(signedIn).toContain('U-ada')
+      expect(signedIn).toContain('应用')
+      expect(signedIn).toContain('退出')
+    } finally {
+      globals.fetch = savedFetch
+      globals.document = savedDocument
+      globals.location = savedLocation
+    }
   })
 })

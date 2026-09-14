@@ -172,6 +172,7 @@ const disposers: Array<() => Promise<void>> = []
 let ctx: Context
 let port: number
 let gatePort: number
+let publicPort: number
 let auth: AuthStandIn
 let web: FakeWebServer
 
@@ -203,6 +204,11 @@ beforeAll(async () => {
   // Carrier #2: webGate off, preProcRoot explicitly empty (same default path).
   const second = await ctx.plugin(authWeb, { port: gatePort, webGate: false, preProcRoot: '' })
   disposers.push(() => second.dispose())
+  // Carrier #3: reverse-proxied install — the deployment names the public
+  // origin, so nothing is derived from the loopback bind address.
+  publicPort = await freePort()
+  const proxied = await ctx.plugin(authWeb, { port: publicPort, webGate: false, publicOrigin: 'https://apps.example.com' })
+  disposers.push(() => proxied.dispose())
 }, 60_000)
 
 afterAll(async () => {
@@ -520,4 +526,88 @@ describe('standalone server failure paths', () => {
     blocker.close(() => onClosed())
     await closed
   }, 30_000)
+})
+
+describe('reverse-proxied deployment names its public origin', () => {
+  const base = (): string => `http://127.0.0.1:${publicPort}`
+  let cookie: string
+
+  beforeAll(async () => {
+    const registered = await fetch(`${base()}/api/auth/register`, {
+      method: 'POST',
+      ...formBody({ username: 'proxy', password: 'password-123' }),
+    })
+    expect(registered.status).toBe(201)
+    cookie = registered.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+  })
+
+  it('mints the console handoff on the public origin, not the bind authority', async () => {
+    // The harness binds loopback: deriving the handoff from the bind address
+    // (or from a port-less Host plus that port) would send the browser to an
+    // address it cannot reach.
+    const response = await rawRequest(publicPort, '/api/auth/portal', { cookie, host: 'apps.example.com' })
+    expect(response.status).toBe(302)
+    expect(response.headers.location).toBe('https://apps.example.com/?launch=stub-token')
+  })
+
+  it('points the cross-origin login handoff at the public origin', async () => {
+    const response = await fetch(`${base()}/api/auth/login`, {
+      method: 'POST',
+      ...formBody({ username: 'proxy', password: 'password-123' }),
+    })
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('action="https://apps.example.com/api/auth/accept"')
+    expect(html).not.toContain('<a href="/">进入工作台</a>')
+  })
+
+  it('rejects a malformed public origin at mount time', async () => {
+    const mounted = ctx.plugin(authWeb, { port: await freePort(), publicOrigin: 'apps.example.com' })
+    await expect(mounted).rejects.toThrow(/publicOrigin/)
+    await Promise.resolve(mounted).catch(() => {})
+  })
+
+  it('falls back to the workspace page when the connection rejects the public origin', async () => {
+    // A connection that refuses the named origin must not produce a dead link.
+    const original = ctx.get('connection')
+    ctx.set('connection', {
+      authenticatedUrl: (base: string) => { throw new Error(`unreachable ${base}`) },
+      registerAccountResolver: () => () => {},
+    } as never)
+    try {
+      const unreachablePort = await freePort()
+      const carrier = await ctx.plugin(authWeb, { port: unreachablePort, webGate: false, publicOrigin: 'https://throw.test' })
+      disposers.push(() => carrier.dispose())
+      const response = await rawRequest(unreachablePort, '/api/auth/portal', { cookie, host: 'throw.test' })
+      expect(response.status).toBe(302)
+      expect(response.headers.location).toBe('/workspace')
+    } finally {
+      ctx.set('connection', original as never)
+    }
+  })
+})
+
+describe('public origin resolution', () => {
+  it('prefers the env override and normalizes the origin', () => {
+    expect(authWeb.resolvePublicOrigin('https://a.example/', 'https://b.example')).toBe('https://a.example')
+    expect(authWeb.resolvePublicOrigin(undefined, 'http://b.example')).toBe('http://b.example')
+    expect(authWeb.resolvePublicOrigin('', '')).toBeUndefined()
+  })
+
+  it('rejects anything that is not a bare http(s) origin', () => {
+    expect(() => authWeb.resolvePublicOrigin('apps.example.com', undefined)).toThrow(/publicOrigin/)
+    expect(() => authWeb.resolvePublicOrigin('ftp://x.example', undefined)).toThrow(/publicOrigin/)
+    expect(() => authWeb.resolvePublicOrigin('https://x.example/portal', undefined)).toThrow(/publicOrigin/)
+  })
+})
+
+describe('filing footer is opt-in', () => {
+  it('serves no filing footer when no ICP number is configured', async () => {
+    const barePort = await freePort()
+    const carrier = await ctx.plugin(authWeb, { port: barePort, webGate: false })
+    disposers.push(() => carrier.dispose())
+    const html = await (await fetch(`http://127.0.0.1:${barePort}/login`)).text()
+    expect(html).toContain('<h1>登录</h1>')
+    expect(html).not.toContain('beian.miit.gov.cn')
+  })
 })
