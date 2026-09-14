@@ -50,7 +50,9 @@
 
     - id: landing-alioth
       name: '@dsh-alioth/landing-alioth'
-      config: {}
+      config:
+        # 备案号只上首页页脚（auth/用户中心三载体都支持 icp，按需在此装配）
+        icp: !!js "process.env.ALIOTH_ICP"
     - id: auth-alioth
       name: '@dsh-alioth/auth-alioth'
       config:
@@ -59,6 +61,9 @@
       name: '@dsh-alioth/auth-web-alioth'
       config:
         port: 3900
+        # Reverse-proxied deployments name the public origin here (the harness
+        # binds loopback, so the bind address is not the browser's origin).
+        publicOrigin: !!js "process.env.ALIOTH_PUBLIC_ORIGIN"
     - id: env-alioth
       name: '@dsh-alioth/env-alioth'
       config:
