@@ -18,3 +18,7 @@ dist/
 
 # Coverage reports (pnpm run test:coverage and per-package report dirs)
 coverage*/
+
+# Deployment TLS material (CA-issued certificates and private keys).
+# Keys must never enter the repository — ship them to the host out of band.
+ca/
