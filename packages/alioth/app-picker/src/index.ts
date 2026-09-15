@@ -236,8 +236,10 @@ export class AppDirectoryPicker extends DirectoryPicker {
   }
 
   /**
-   * Create one app workspace — 添加工作区就是创建新应用. The browse flow's
-   * create action makes an app workspace: one directory at
+   * Create one app workspace — the gesture the app management page and the
+   * browse dialog's create affordance both reach (the console's workspace
+   * entry itself only names the choice). The create action makes an app
+   * workspace: one directory at
    * `Pre-Proc/{ns}/Apps/{name}` inside the namespace in effect (the signed-in
    * account, else the configured lock).
    *

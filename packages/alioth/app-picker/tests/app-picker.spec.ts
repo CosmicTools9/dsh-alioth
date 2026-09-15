@@ -105,7 +105,7 @@ describe('AppDirectoryPicker listing (AppCreator tree)', () => {
     await cleanup(f.root)
   })
 
-  it('creates an app workspace through the auth service (添加工作区 = 新建应用)', async () => {
+  it('creates an app workspace through the auth service (the console entry picks, creation is the same call)', async () => {
     const f = await fixture('U-test')
     const calls: Array<[string, string]> = []
     f.ctx.provide('aliothAuth', {

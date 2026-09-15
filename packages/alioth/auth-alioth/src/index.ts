@@ -436,7 +436,9 @@ export function apply(ctx: Context, config: Config): void {
     },
 
     /**
-     * Create one app workspace — 添加工作区就是创建新应用. The new directory
+     * Create one app workspace — the app management page (and the directory
+     * flow's create affordance) is the calling gesture; the console's
+     * workspace entry itself only names the choice. The new directory
      * sits at `Pre-Proc/{ns}/Apps/{name}`, the level the console's picker
      * lists and a session roots at; its app contract artifacts are generated
      * later by the pipeline (this only provisions the workspace). Refuses an
