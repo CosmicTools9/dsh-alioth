@@ -48,6 +48,11 @@ allowBuilds:
   '@embedded-postgres/darwin-x64': true
   '@embedded-postgres/linux-arm64': true
   '@embedded-postgres/linux-x64': true
+  # Platform variants nothing here installs: the meta package declares them as
+  # optional dependencies, and strictDepBuilds reports each unlisted script.
+  '@embedded-postgres/linux-arm': false
+  '@embedded-postgres/linux-ppc64': false
+  '@embedded-postgres/windows-x64': false
   '@google/genai': true
   electron-winstaller: false
   esbuild: true
