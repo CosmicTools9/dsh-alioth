@@ -39,6 +39,8 @@ export const GUARD_RULE_IDS = {
   repairWall: 'repair-wall',
   /** 单 turn 墙钟或步数超限。 */
   turnBudget: 'turn-budget-exceeded',
+  /** 单 turn 估算成本超限（需配价表）。 */
+  turnCost: 'turn-cost-exceeded',
   /** 闭环证据追问。 */
   closureNudge: 'closure-evidence-nudge',
   /** 无 ns 可解析：显式降级而非猜测。 */

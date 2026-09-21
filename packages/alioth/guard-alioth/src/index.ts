@@ -24,13 +24,14 @@
  */
 
 import path from 'node:path'
+import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { RetryBudget, type RetryDecision } from '@dsh-alioth/skill-alioth'
-import type { UsageSummary } from '@dsh-alioth/verify-alioth'
+import type { PriceTable, UsageSummary } from '@dsh-alioth/verify-alioth'
 import { SessionLedger, type TurnViolation } from './ledger.ts'
 import { decideClosureNudge, type NudgeDecision } from './nudge.ts'
 import { GUARD_RULE_IDS, guardFeedback, type GuardRuleId } from './rules.ts'
@@ -71,6 +72,10 @@ export interface Config {
   readonly maxStepsPerTurn?: number
   /** 单 turn 墙钟上限（秒）；缺省不限（部署选择）。 */
   readonly turnTimeoutSec?: number
+  /** 模型单价表：JSON 文件路径（`{ "<model>": { centsPerInK, centsPerOutK } }`）；缺省 → 成本口径 `unavailable`。 */
+  readonly priceTable?: string
+  /** 单 turn 估算成本上限（分）；与 `priceTable` 同时给出才生效。 */
+  readonly maxTurnCostCents?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -83,6 +88,8 @@ export const Config: z<Config> = z.object({
   maxRepeatError: z.number(),
   maxStepsPerTurn: z.number(),
   turnTimeoutSec: z.number(),
+  priceTable: z.string(),
+  maxTurnCostCents: z.number(),
 })
 
 /** 一条显式降级证据（`unknown-scope` / 步骤不可读等）。 */
@@ -155,10 +162,47 @@ export function apply(ctx: Context, config: Config): void {
   const degradedKeys = new Set<string>()
   const budgets = new Map<string, RetryBudget>()
 
+  const prices = loadPrices()
   const ledger = new SessionLedger({
     ...config.maxStepsPerTurn === undefined ? {} : { maxStepsPerTurn: config.maxStepsPerTurn },
     ...config.turnTimeoutSec === undefined ? {} : { turnTimeoutSec: config.turnTimeoutSec },
+    ...config.maxTurnCostCents === undefined ? {} : { maxTurnCostCents: config.maxTurnCostCents },
+    ...prices === undefined ? {} : { prices },
   })
+
+  /**
+   * 价表（可选部署选择）：挂载期同步读一次小 JSON——成本上限必须从第一轮起生效，
+   * 若等异步 IO 回来再装配，窗口期内结束的 turn 会漏判。不可读/结构非法 → 降级留痕并置
+   * `undefined`：成本口径如实 `unavailable` 且**不判**上限（MUST NOT 以 0 冒充，也不静默吞掉配置错误）。
+   */
+  function loadPrices(): PriceTable | undefined {
+    const file = config.priceTable
+    if (file === undefined) {
+      return undefined
+    }
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path.resolve(file), 'utf8'))
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('价表须为对象：{ "<model>": { centsPerInK, centsPerOutK } }')
+      }
+      const table: Record<string, { centsPerInK: number; centsPerOutK: number }> = {}
+      for (const [model, entry] of Object.entries(parsed as Record<string, unknown>)) {
+        const record = entry as { centsPerInK?: unknown; centsPerOutK?: unknown } | null
+        if (typeof record?.centsPerInK !== 'number' || typeof record?.centsPerOutK !== 'number') {
+          throw new Error(`价表条目 ${model} 须含数字 centsPerInK/centsPerOutK`)
+        }
+        table[model] = { centsPerInK: record.centsPerInK, centsPerOutK: record.centsPerOutK }
+      }
+      return table
+    } catch (error) {
+      noteDegradation(
+        null,
+        GUARD_RULE_IDS.turnCost,
+        `价表不可用（${file}）：${error instanceof Error ? error.message : String(error)}`,
+      )
+      return undefined
+    }
+  }
 
   /** 降级留痕：日志 + 有界证据表，按（会话, 规则码）去重，避免每次调用重复告警。 */
   function noteDegradation(sessionId: string | null, ruleId: GuardRuleId, reason: string): void {

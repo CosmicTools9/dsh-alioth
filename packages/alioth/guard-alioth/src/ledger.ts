@@ -8,14 +8,14 @@
  * - turn 预算：`turn/end` 时按 `turnTimeoutSec`（墙钟）与 `maxStepsPerTurn`（步数）判定超限，
  *   记一条待消费的违规，由下一次 `agent/pre-step` 拒绝并写清原因。
  *
- * 成本上限不在守卫面判定：守卫没有价表部署选择（`usage()` 如实报 `unavailable`），
- * 成本可见性由 T5 的 `alioth_usage` 负责。每次判定的时间口径取自事件自带的
- * `time`（epoch ms），因此台账完全可重放、测试无需假时钟。
+ * 成本上限（可选）：配了价表（`prices`）与 `maxTurnCostCents` 时，`turn/end` 按本 turn 的用量
+ * 估算成本，超限即记违规；未配价表时成本口径如实 `unavailable`，**不判**上限（MUST NOT 以 0 冒充）。
+ * 每次判定的时间口径取自事件自带的 `time`（epoch ms），因此台账完全可重放、测试无需假时钟。
  * @module @dsh-alioth/guard-alioth/ledger
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { aggregateUsage, type UsageEvent, type UsageSummary } from '@dsh-alioth/verify-alioth'
+import { aggregateUsage, estimateCost, type PriceTable, type UsageEvent, type UsageSummary } from '@dsh-alioth/verify-alioth'
 import { GUARD_RULE_IDS, guardFeedback } from './rules.ts'
 import {
   ARTIFACT_TOOLS,
@@ -47,6 +47,10 @@ export interface TurnViolation {
 export interface SessionLedgerOptions {
   readonly maxStepsPerTurn?: number
   readonly turnTimeoutSec?: number
+  /** 单 turn 估算成本上限（分）；与 `prices` 同时给出才生效。 */
+  readonly maxTurnCostCents?: number
+  /** 模型单价表（元/千 token 由调用方换算为分）；缺省 → 成本口径 `unavailable`。 */
+  readonly prices?: PriceTable
 }
 
 interface MutableTurn {
@@ -227,6 +231,25 @@ export class SessionLedger {
         }),
       }
     }
+    const maxCost = this.options.maxTurnCostCents
+    if (maxCost !== undefined) {
+      const cents = this.turnCost(sessionId, record.turn)
+      if (cents !== null && cents > maxCost) {
+        return {
+          sessionId,
+          turn: record.turn,
+          wallMs: record.wallMs,
+          steps: record.steps,
+          reason: guardFeedback({
+            ruleId: GUARD_RULE_IDS.turnCost,
+            repairClass: 'not-fixable',
+            message: `turn ${record.turn} 估算成本 ${cents} 分超过 maxTurnCostCents=${maxCost} 分`,
+            action: '缩小本轮范围后重来；需要更大预算时调高部署配置 maxTurnCostCents（或去掉价表以关闭上限）',
+            evidence: `wallMs=${record.wallMs} steps=${record.steps} calls=${record.calls}`,
+          }),
+        }
+      }
+    }
     return null
   }
 
@@ -246,7 +269,14 @@ export class SessionLedger {
 
   /** 会话用量汇总（无事件 → 全 0；成本口径不可得时显式 `unavailable`）。 */
   usage(sessionId: string): UsageSummary {
-    return aggregateUsage(this.sessions.get(sessionId)?.usage ?? [])
+    return aggregateUsage(this.sessions.get(sessionId)?.usage ?? [], this.options.prices)
+  }
+
+  /** 本 turn 的估算成本（分）；价表缺省/模型无价 → `null`（不判上限，不以 0 冒充）。 */
+  private turnCost(sessionId: string, turn: number): number | null {
+    const events = (this.sessions.get(sessionId)?.usage ?? []).filter(event => event.turn === turn)
+    const cost = estimateCost(aggregateUsage(events, this.options.prices), this.options.prices)
+    return cost.kind === 'estimated' ? cost.totalCents : null
   }
 
   /** 消费一次待处理的预算违规（阻断下一步后即清，不反复卡死会话）。 */

@@ -262,6 +262,39 @@ describe('ledger: 用量与 turn 预算', () => {
     ledger.observe('s2', event('turn/end', 10, { turn: 1, reason: { kind: 'completed' } }))
     expect(ledger.takeViolation('s2')).toBeNull()
   })
+
+  it('配了价表与成本上限时，超限的 turn 记违规；未配价表则不判', () => {
+    const prices = { 'deepseek-chat': { centsPerInK: 100, centsPerOutK: 200 } }
+    const capped = new SessionLedger({ maxTurnCostCents: 5, prices })
+    capped.observe('s1', event('turn/start', 0, { turn: 1 }))
+    capped.observe('s1', event('step/start', 0, { turn: 1, step: 1 }))
+    capped.observe('s1', event('assistant/message', 10, {
+      turn: 1,
+      step: 1,
+      message: { source: { kind: 'model', provider: 'p', model: 'deepseek-chat' } } as never,
+      stream: [],
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    }))
+    capped.observe('s1', event('turn/end', 20, { turn: 1, reason: { kind: 'completed' } }))
+    const violation = capped.takeViolation('s1')
+    // 100/1000*100 + 100/1000*200 = 10 + 20 = 30 分 > 5 分上限
+    expect(violation?.reason).toContain('30 分超过 maxTurnCostCents=5 分')
+    expect(ruleIdFromError(violation?.reason ?? '')).toBe(GUARD_RULE_IDS.turnCost)
+
+    // 同一份事件流，未配价表 → 成本口径不可得，上限不判（不得以 0 冒充成本）。
+    const uncapped = new SessionLedger({ maxTurnCostCents: 5 })
+    uncapped.observe('s1', event('turn/start', 0, { turn: 1 }))
+    uncapped.observe('s1', event('assistant/message', 10, {
+      turn: 1,
+      step: 1,
+      message: { source: { kind: 'model', provider: 'p', model: 'deepseek-chat' } } as never,
+      stream: [],
+      usage: { inputTokens: 100, outputTokens: 100, totalTokens: 200 },
+    }))
+    uncapped.observe('s1', event('turn/end', 20, { turn: 1, reason: { kind: 'completed' } }))
+    expect(uncapped.takeViolation('s1')).toBeNull()
+    expect(uncapped.usage('s1').cost.kind).toBe('unavailable')
+  })
 })
 
 describe('whitelist: 生效来源可区分', () => {
