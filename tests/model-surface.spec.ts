@@ -22,6 +22,8 @@ import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as workflow from '@dsh-alioth/tool-alioth-workflow'
 import * as orchestrator from '@dsh-alioth/tool-alioth-orchestrator'
+import * as guardAlioth from '@dsh-alioth/guard-alioth'
+import * as toolVerify from '@dsh-alioth/tool-alioth-verify'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
 import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as toolFeedback from '@dsh-alioth/tool-feedback-alioth'
@@ -43,6 +45,8 @@ describe('model-visible surface snapshot', () => {
       await ctx.plugin(toolMeta, {}),
       await ctx.plugin(workflow, { preProcRoot }),
       await ctx.plugin(orchestrator, {}),
+      await ctx.plugin(guardAlioth, { preProcRoot, dataRoot }),
+      await ctx.plugin(toolVerify, { preProcRoot }),
       await ctx.plugin(authAlioth, { mode: 'open' }),
       await ctx.plugin(pageFeedback, {}),
       await ctx.plugin(toolFeedback, {}),
@@ -78,7 +82,7 @@ describe('model-visible surface snapshot', () => {
     expect(current, 'model-visible tool surface changed — review, then refresh with UPDATE_SNAPSHOTS=1').toBe(golden)
   })
 
-  it('registers exactly the eighteen Alioth tools', () => {
+  it('registers exactly the twenty-five Alioth tools', () => {
     const names = new Set(ctx.tools.schemas().map(s => s.name))
     for (const expected of [
       'alioth_app_list', 'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure', 'alioth_app_delete',
@@ -86,10 +90,12 @@ describe('model-visible surface snapshot', () => {
       'alioth_sources_scaffold',
       'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_workflow_info', 'alioth_app_create',
       'alioth_workspace_current',
+      'alioth_verify', 'alioth_closure', 'alioth_version', 'alioth_patch_assets',
+      'alioth_capabilities', 'alioth_deferred', 'alioth_usage',
       'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
     ]) {
       expect(names, `tool ${expected} must be registered`).toContain(expected)
     }
-    expect([...names].filter(n => n.startsWith('alioth_'))).toHaveLength(18)
+    expect([...names].filter(n => n.startsWith('alioth_'))).toHaveLength(25)
   })
 })

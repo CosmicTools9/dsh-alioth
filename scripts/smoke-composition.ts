@@ -1,7 +1,7 @@
 /**
  * Composition smoke test: mounts the full Alioth plugin group (bundle) on a
  * real Context and verifies, in order:
- *   1. all five plugins register (the 8 model-facing tools are present)
+ *   1. every mounted plugin registers its model-facing tools (asserted by name)
  *   2. env-alioth ready() boots the builtin frozen model (zero network)
  *   3. one real tool call round-trips (schema_info entities)
  *   4. doctor reports the expected health state
@@ -20,6 +20,8 @@ import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as workflow from '@dsh-alioth/tool-alioth-workflow'
 import * as orchestrator from '@dsh-alioth/tool-alioth-orchestrator'
+import * as guardAlioth from '@dsh-alioth/guard-alioth'
+import * as toolVerify from '@dsh-alioth/tool-alioth-verify'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
 import * as authWebAlioth from '@dsh-alioth/auth-web-alioth'
 import * as landingAlioth from '@dsh-alioth/landing-alioth'
@@ -37,6 +39,8 @@ const EXPECTED_TOOLS = [
   'alioth_schema_info', 'alioth_schema_semantic_search', 'alioth_entity_write', 'alioth_sources_scaffold',
   'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_workflow_info', 'alioth_app_create',
   'alioth_workspace_current',
+  'alioth_verify', 'alioth_closure', 'alioth_version', 'alioth_patch_assets',
+  'alioth_capabilities', 'alioth_deferred', 'alioth_usage',
   'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
 ]
 
@@ -64,6 +68,10 @@ try {
   disposers.push(() => wf.dispose())
   const orch = await ctx.plugin(orchestrator, {})
   disposers.push(() => orch.dispose())
+  const guard = await ctx.plugin(guardAlioth, { preProcRoot, dataRoot })
+  disposers.push(() => guard.dispose())
+  const verify = await ctx.plugin(toolVerify, { preProcRoot })
+  disposers.push(() => verify.dispose())
   const landingPlugin = await ctx.plugin(landingAlioth, {})
   disposers.push(() => landingPlugin.dispose())
   const authPlugin = await ctx.plugin(authAlioth, { mode: 'open' })

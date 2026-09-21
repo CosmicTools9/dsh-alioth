@@ -30,7 +30,7 @@ fi
 
 # <scope>/<name>=<target dir>，先收集完整集合，缺包即整个组合无法启动，直接失败。
 TARGETS=()
-for p in env-alioth tool-alioth tool-alioth-meta tool-alioth-workflow tool-alioth-orchestrator gen-alioth skill-alioth bundle-alioth auth-alioth auth-web-alioth landing-alioth billing-alioth billing-web-alioth feedback-web-alioth tool-feedback-alioth app-picker; do
+for p in env-alioth tool-alioth tool-alioth-meta tool-alioth-workflow tool-alioth-orchestrator tool-alioth-verify gen-alioth skill-alioth verify-alioth guard-alioth bundle-alioth auth-alioth auth-web-alioth landing-alioth billing-alioth billing-web-alioth feedback-web-alioth tool-feedback-alioth app-picker; do
   TARGETS+=("@dsh-alioth/$p=$REPO/packages/alioth/$p")
 done
 # harness 包：bundle 以 loader entry 名挂载、但没有任何 harness 包依赖它（见文件头）。

@@ -108,3 +108,20 @@
     - id: tool-alioth-orchestrator
       name: '@dsh-alioth/tool-alioth-orchestrator'
       config: {}
+
+    # Execution-surface guard: declared tool surface, write sandbox (namespace
+    # scope + plan write narrowing), repair wall, turn budget, closure-evidence
+    # nudge. Mounted after the tool plugins it polices.
+    - id: guard-alioth
+      name: '@dsh-alioth/guard-alioth'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"
+        dataRoot: !!js "process.env.ALIOTH_DATA_ROOT ?? process.env.HOME + '/.dsh-alioth'"
+
+    # Verification/closure tools: eval report + extension verification (declared-but-unwired),
+    # closure audit, artifact versioning/rollback, two-stage asset patches, capability
+    # advertisement, deferred blockers, session usage.
+    - id: tool-alioth-verify
+      name: '@dsh-alioth/tool-alioth-verify'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"

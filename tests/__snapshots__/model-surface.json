@@ -464,6 +464,96 @@
     }
   },
   {
+    "name": "alioth_capabilities",
+    "description": "Deployment capability advertisement (six read-only groups: tools / skills / gates / autonomy / llm / budget). Every group is ALWAYS present as either {kind:\"value\", value} or {kind:\"unknown\", reason} — an unavailable fact is never omitted, never guessed and never a default (a group whose source is missing reports why). Skills report `drifted` against the model snapshot PROVENANCE.json bytes; gates carry the execution guard's degradation evidence, open deferred blockers and pending plan steps. The extra `guard` field carries the gate-program whitelist provenance (file vs code_default). Read-only: nothing is written.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "alioth_closure",
+    "description": "Independent closure audit (generation and acceptance are separate: this tool never generates the artifact it judges). Actions: \"verdict\" — append an audit verdict for the App's CURRENT artifact fingerprint (`AppAgentTraces/closure-audit/{seq}.json`, append-only); three consecutive rejections escalate to a human; \"status\" — read the audit trail and report whether a verdict matches the current fingerprint (a fingerprint change after the audit voids the old verdict, so publish preconditions must re-check). The fingerprint covers app.json bytes + sorted extensions/*.yaml bytes.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "One of: verdict, status."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Workspace namespace (Pre-Proc/{namespace}); required."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code; required."
+        },
+        "verdict": {
+          "type": "string",
+          "description": "verdict only: \"approved\" or \"rejected\"."
+        },
+        "findings": {
+          "type": "array",
+          "description": "verdict only: findings as [{ dimension, verdict: \"pass\"|\"fail\"|\"unknown\", detail }].",
+          "items": {}
+        },
+        "evidence": {
+          "type": "array",
+          "description": "verdict only: evidence pointers (paths, trace ids).",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "alioth_deferred",
+    "description": "Register blockers as \"deferred but adjudicated\" instead of silently dropping them. Actions: \"register\" — record one blocker WITH an adjudication (why deferring is legitimate; empty is rejected) and a disk-decidable trigger (`{kind:\"artifact-exists\", path}` / `{kind:\"artifact-fingerprint\", path, sha256}` / `{kind:\"artifact-json-pointer\", path, pointer, equals}` = RFC 6901 value comparison); \"list\" — open blockers for this session PLUS every per-App human gate (extension verification degradation gates are App-scoped, so they are visible regardless of which session asks); \"unlock\" — release and return the blockers whose trigger is now satisfied (session blockers + App gates). Records are session/App-scoped on disk; a trigger is never an arbitrary expression.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "One of: register, list, unlock."
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Session scope; defaults to this call's agent id, and is required when the call has no agent."
+        },
+        "id": {
+          "type": "string",
+          "description": "register only: unique blocker id within the session."
+        },
+        "reason": {
+          "type": "string",
+          "description": "register only: what is blocked."
+        },
+        "adjudication": {
+          "type": "string",
+          "description": "register only: why deferring is legitimate (must not be empty)."
+        },
+        "trigger": {
+          "description": "register only: {kind, path, sha256?} disk-decidable trigger."
+        },
+        "successors": {
+          "type": "array",
+          "description": "register only: follow-up ids that depend on this blocker.",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
     "name": "alioth_entity_write",
     "description": "Register a new business entity on an existing isahl physical table (isahl forbids CREATE TABLE): INSERTs meta_collections + meta_fields rows. Every definition passes the write-path validators first — physical table existence, naming, conflicts, inheritance (exists/acyclic/depth), reference integrity (local_key vs the FK index), and real coordinate-dictionary codes; any violation fails the whole write with all issues listed. Requires approval when the deployment sets approvalMode=required. Query the registry with alioth_schema_info / alioth_schema_semantic_search before defining; pick an unregistered physical table (list: schema_info entities) for the new entity. NOTE: registration is a consumption-side extension of the bootstrapped registry — this plugin cannot advance the Alioth model (no new physical tables, no version changes); the registry is rebuilt from the published baseline on model refresh.",
     "parameters": {
@@ -626,6 +716,46 @@
     }
   },
   {
+    "name": "alioth_patch_assets",
+    "description": "Two-phase partial edit of an existing App artifact file. \"propose\" — read the file as it is now and return a unified diff + base fingerprint + proposalId; NOTHING is written and the proposal is registered in-process only. \"apply\" — apply a registered proposal and REQUIRES `confirmed: true` (the second phase); without it nothing is written, and a target that changed since the proposal is refused instead of overwriting concurrent edits. `target` is relative to the App directory (Pre-Proc/{ns}/Apps/{app}) and must resolve inside it.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "One of: propose, apply."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Workspace namespace (Pre-Proc/{namespace}); required."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code; required."
+        },
+        "target": {
+          "type": "string",
+          "description": "propose only: file path relative to the App directory, e.g. \"extensions/rules.yaml\"."
+        },
+        "after": {
+          "type": "string",
+          "description": "propose only: the FULL new file content (not a fragment)."
+        },
+        "proposalId": {
+          "type": "string",
+          "description": "apply only: proposalId returned by action \"propose\"."
+        },
+        "confirmed": {
+          "type": "boolean",
+          "description": "apply only: must be exactly true — the second phase of the two-phase flow."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
     "name": "alioth_schema_info",
     "description": "Query the Alioth entity registry (isahl_meta). Actions: \"entities\" — list collections (optional substring `query` on table/name, exact `category`); \"entity\" — one collection's fields (`collection` = table_name); \"search-fields\" — fields by substring on name/title (`query`). Use before defining or referencing any entity/field; the registry is the structural truth. Dev-seed test entities (names ending -testing/-test) are hidden by default (`filteredTesting` reports how many); pass `includeTesting` to see them. Returns at most `limit` rows (default 20, max 100).",
     "parameters": {
@@ -773,6 +903,90 @@
       "required": [
         "namespace",
         "services"
+      ]
+    }
+  },
+  {
+    "name": "alioth_usage",
+    "description": "Session usage and cost (aggregated by the execution guard from real model-call events — never estimated by hand). Reports per-model and total token counts, per-turn wall time and call counts. Cost is ESTIMATED from the deployment price table when one is configured; with no price table, or any model missing a price, cost is explicitly `unavailable` with a reason instead of being reported as 0. When the guard is not mounted the whole report is `available:false` with the reason — no fabricated numbers.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "Session scope; defaults to this call's agent id, and is required when the call has no agent."
+        }
+      }
+    }
+  },
+  {
+    "name": "alioth_verify",
+    "description": "Programmatic verification over an App's artifacts (no LLM; never narrate a verdict from memory). Actions: \"artifacts\" — build the eval report (rule dimensions: app.json schema validity + prototype standalone-ness) and persist `eval-report.json` (quality stage artifact); \"extensions\" — check every `extensions/*.yaml` declaration against the Gateway loader contract (unknown filename / wrong top-level shape / missing required keys = uncovered = `degraded`, which is NOT a pass); a degraded result REGISTERS a per-App human gate (deferred, cleared only when the canonical `extension-verify.json` says status=passed), so a stale canonical pass cannot wave a degraded run through; \"stage\" — evaluate one of the 7 pipeline stages against its declared artifacts; a missing artifact fails with a `[rule:<id>]` repair contract instead of passing silently. `write=false` skips persistence (dry read); defaults to writing the canonical evidence file.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "One of: artifacts, extensions, stage."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Workspace namespace (Pre-Proc/{namespace}); required for every action."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code (Apps/{app} under the namespace); required for every action."
+        },
+        "stage": {
+          "type": "string",
+          "description": "stage only: one of appagent-ready, module-design, block-extract, block-refinement, ontology-mapping, factor-dev, quality."
+        },
+        "modules": {
+          "type": "array",
+          "description": "stage only (module-design): module ids that must each have module.json.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "write": {
+          "type": "boolean",
+          "description": "artifacts/extensions: persist the canonical evidence file (default true)."
+        }
+      },
+      "required": [
+        "action"
+      ]
+    }
+  },
+  {
+    "name": "alioth_version",
+    "description": "Artifact version snapshots and rollback (`{appDir}/versions/{seq:04}-{hash8}/`, newest 3 kept). Actions: \"snapshot\" — snapshot the App's json/yaml/md artifacts (excludes plans/ and versions/); \"list\" — list existing snapshot sequence numbers; \"rollback\" — restore one snapshot and REQUIRES `confirmed: true` (two-phase: this is the second phase; without it nothing is written). Rollback is all-or-nothing: any manifest mismatch refuses the whole restore.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "One of: snapshot, list, rollback."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Workspace namespace (Pre-Proc/{namespace}); required."
+        },
+        "app": {
+          "type": "string",
+          "description": "App code; required."
+        },
+        "seq": {
+          "type": "number",
+          "description": "rollback only: snapshot sequence number from action \"list\"."
+        },
+        "confirmed": {
+          "type": "boolean",
+          "description": "rollback only: must be exactly true — the second phase of the two-phase flow."
+        }
+      },
+      "required": [
+        "action"
       ]
     }
   },

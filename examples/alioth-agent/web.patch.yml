@@ -26,3 +26,14 @@
     - id: tool-alioth-orchestrator
       name: '@dsh-alioth/tool-alioth-orchestrator'
       config: {}
+
+    - id: guard-alioth
+      name: '@dsh-alioth/guard-alioth'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"
+        dataRoot: !!js "process.env.ALIOTH_DATA_ROOT ?? process.env.HOME + '/.dsh-alioth'"
+
+    - id: tool-alioth-verify
+      name: '@dsh-alioth/tool-alioth-verify'
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"

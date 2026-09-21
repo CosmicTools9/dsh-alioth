@@ -47,6 +47,8 @@ const ALIOTH_PLUGINS = [
   'tool-alioth-meta',
   'tool-alioth-workflow',
   'tool-alioth-orchestrator',
+  'guard-alioth',
+  'tool-alioth-verify',
 ] as const
 
 const COMPOSITIONS: readonly Composition[] = [
