@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::entity::AliothDbEntity;
 use crate::pagination::ListQuery;
+use crate::reference;
 use crate::repository::AliothRepository;
 use common::{AliothError, ApiResponse};
 use runtime_engine::{AppContext, AppExtensionRegistry, ExtensionRuntimeError};
@@ -516,7 +517,7 @@ where
         cfg.service(
             web::scope(&refs_path)
                 .route("", web::get().to(crud_list_refs::<E>))
-                .route("/{id}", web::get().to(crud_get_refs::<E>)),
+                .route("/{id:\\d+}", web::get().to(crud_get_refs::<E>)),
         );
     }
 }
@@ -787,6 +788,206 @@ where
 ///     >("/inventory/products"));
 /// }
 /// ```
+// ===================================================================
+// 引用解析感知路由：写入/单条读响应携带 `_refs`
+// ===================================================================
+/// 把行级引用解析结果补进响应 JSON（仅当 `_refs` 缺失时；best-effort，失败不影响主响应）。
+///
+/// 背景：页面「新建/编辑后把响应直接入本地列表镜像」，镜像行缺 `_refs` 时引用列瞬时渲染为空
+/// （刷新后由列表读径补齐）。手写 repository 的 `get`/`create`/`update` 返回体不带引用后缀，
+/// 故由本包装补一次；模板与 `/refs`、列表读径同源（`reference::build_refs_select_suffix`）。
+async fn fill_refs<E>(pool: &sqlx::PgPool, id: i64, body: &mut serde_json::Value)
+where
+    E: AliothDbEntity + reference::HasReferenceJoins,
+{
+    if !body.get("_refs").map(|v| v.is_null()).unwrap_or(false) {
+        return;
+    }
+    if let Ok(Some(refs)) = reference::fetch_refs_json::<E>(pool, id).await {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("_refs".to_string(), refs);
+        }
+    }
+}
+
+/// 单条获取（响应携带 `_refs`）
+pub async fn crud_get_with_refs<E, C, U, R, Err>(
+    pool: web::Data<sqlx::PgPool>,
+    req: HttpRequest,
+    path: web::Path<i64>,
+) -> Result<HttpResponse, Err>
+where
+    E: AliothDbEntity + reference::HasReferenceJoins + Serialize,
+    C: Send + Sync + 'static,
+    U: Send + Sync + 'static,
+    R: AliothRepository<E, C, U, Err> + From<sqlx::PgPool>,
+    Err: ResponseError
+        + std::error::Error
+        + From<sqlx::Error>
+        + From<AliothError>
+        + Send
+        + Sync
+        + 'static,
+{
+    let repo = R::from(pool.get_ref().clone());
+    let id = path.into_inner();
+    let visible_ids = parse_visible_ids(&req);
+    let authorized_columns = parse_authorized_columns(&req);
+    match repo
+        .get_with_rls(id, visible_ids.as_deref(), authorized_columns.as_deref())
+        .await?
+    {
+        Some(item) => {
+            let mut body = serde_json::to_value(&item).unwrap_or(serde_json::Value::Null);
+            fill_refs::<E>(pool.get_ref(), id, &mut body).await;
+            Ok(HttpResponse::Ok().json(ApiResponse::success(body)))
+        }
+        None => Err(AliothError::NotFound(format!("Entity {} not found", id)).into()),
+    }
+}
+
+/// 标准创建（响应携带 `_refs`；其余语义与 `crud_create` 一致：NGAC 注册 + EntityCreated 事件）
+pub async fn crud_create_with_refs<E, C, U, R, Err>(
+    pool: web::Data<sqlx::PgPool>,
+    req: HttpRequest,
+    body: web::Json<C>,
+    bus: Option<web::Data<Arc<dyn common::event_bus::DomainEventBus>>>,
+) -> Result<HttpResponse, Err>
+where
+    E: AliothDbEntity + reference::HasReferenceJoins + Serialize,
+    C: DeserializeOwned + Send + Sync + 'static,
+    U: Send + Sync + 'static,
+    R: AliothRepository<E, C, U, Err> + From<sqlx::PgPool>,
+    Err: ResponseError
+        + std::error::Error
+        + From<sqlx::Error>
+        + From<AliothError>
+        + Send
+        + Sync
+        + 'static,
+{
+    let user_id = extract_user_id(&req)
+        .ok_or_else(|| AliothError::Unauthorized("Authentication required".to_string()))?;
+    let repo = R::from(pool.get_ref().clone());
+    let dk_ctx = resolve_dk_ctx::<E>(pool.get_ref(), &req).await;
+    let item = repo
+        .create_with_rls(body.into_inner(), user_id, dk_ctx.as_ref())
+        .await?;
+    let item_id = item.id();
+    register_created_resource_ngac::<E>(pool.get_ref(), item_id, user_id).await;
+    publish_entity_created(
+        bus.as_ref().map(|b| b.get_ref()),
+        E::table_name(),
+        item_id,
+        user_id,
+    )
+    .await;
+    let mut payload = serde_json::to_value(&item).unwrap_or(serde_json::Value::Null);
+    fill_refs::<E>(pool.get_ref(), item_id, &mut payload).await;
+    Ok(HttpResponse::Created().json(payload))
+}
+
+/// 标准更新（响应携带 `_refs`；其余语义与 `crud_update` 一致）
+pub async fn crud_update_with_refs<E, C, U, R, Err>(
+    pool: web::Data<sqlx::PgPool>,
+    req: HttpRequest,
+    path: web::Path<i64>,
+    body: web::Json<U>,
+) -> Result<HttpResponse, Err>
+where
+    E: AliothDbEntity + reference::HasReferenceJoins + Serialize,
+    C: Send + Sync + 'static,
+    U: DeserializeOwned + Send + Sync + 'static,
+    R: AliothRepository<E, C, U, Err> + From<sqlx::PgPool>,
+    Err: ResponseError
+        + std::error::Error
+        + From<sqlx::Error>
+        + From<AliothError>
+        + Send
+        + Sync
+        + 'static,
+{
+    let user_id = extract_user_id(&req)
+        .ok_or_else(|| AliothError::Unauthorized("Authentication required".to_string()))?;
+    let repo = R::from(pool.get_ref().clone());
+    let id = path.into_inner();
+    common::permissions::require_resource_access(
+        pool.get_ref(),
+        user_id,
+        &ngac_resource_name::<E>(),
+        id,
+        "update",
+    )
+    .await?;
+    if let Some(visible_ids) = parse_visible_ids(&req) {
+        let existing = repo.get_with_rls(id, Some(&visible_ids), None).await?;
+        if existing.is_none() {
+            return Err(AliothError::NotFound(format!("Entity {} not found", id)).into());
+        }
+    }
+    let dk_ctx = resolve_dk_ctx::<E>(pool.get_ref(), &req).await;
+    match repo
+        .update_with_rls(id, body.into_inner(), user_id, dk_ctx.as_ref())
+        .await?
+    {
+        Some(item) => {
+            let mut payload = serde_json::to_value(&item).unwrap_or(serde_json::Value::Null);
+            fill_refs::<E>(pool.get_ref(), id, &mut payload).await;
+            Ok(HttpResponse::Ok().json(ApiResponse::success(payload)))
+        }
+        None => Err(AliothError::NotFound(format!("Entity {} not found", id)).into()),
+    }
+}
+
+/// 为 actix-web 生成「引用解析感知」CRUD 路由配置
+///
+/// 与 `crud_routes` 的唯一区别：**单条 GET / create / update 的响应体在 `_refs` 缺失时会补一次
+/// 引用解析**（模板与 `/refs`、列表读径同源）。用于「写入响应直接入前端本地列表镜像」的页面——
+/// 镜像行缺 `_refs` 会导致引用列（如「变更日期」「健康状态」）新建后瞬时为空、刷新才恢复。
+///
+/// 仅对实现了 `HasReferenceJoins` 的实体可用（该 bound 无法加到 `crud_create`/`crud_update` 上：
+/// 全库仍有未声明引用的实体，加 bound 会破坏其编译）。
+pub fn crud_routes_with_refs<E, C, U, R, Err>(
+    path: &str,
+) -> impl FnOnce(&mut web::ServiceConfig) + '_
+where
+    E: AliothDbEntity + reference::HasReferenceJoins + Serialize + 'static,
+    C: DeserializeOwned + Send + Sync + 'static,
+    U: DeserializeOwned + Send + Sync + 'static,
+    R: AliothRepository<E, C, U, Err> + From<sqlx::PgPool> + 'static,
+    Err: ResponseError
+        + std::error::Error
+        + From<sqlx::Error>
+        + From<AliothError>
+        + Send
+        + Sync
+        + 'static,
+{
+    move |cfg| {
+        cfg.service(
+            web::scope(path)
+                .route("", web::get().to(crud_list::<E, C, U, R, Err>))
+                .route("", web::post().to(crud_create_with_refs::<E, C, U, R, Err>))
+                .route(
+                    "/{id:\\d+}",
+                    web::get().to(crud_get_with_refs::<E, C, U, R, Err>),
+                )
+                .route(
+                    "/{id:\\d+}",
+                    web::put().to(crud_update_with_refs::<E, C, U, R, Err>),
+                )
+                .route(
+                    "/{id:\\d+}",
+                    web::delete().to(crud_delete::<E, C, U, R, Err>),
+                )
+                .route(
+                    "/batch",
+                    web::delete().to(crud_batch_delete::<E, C, U, R, Err>),
+                ),
+        );
+    }
+}
+
 pub fn crud_routes<E, C, U, R, Err>(path: &str) -> impl FnOnce(&mut web::ServiceConfig) + '_
 where
     E: AliothDbEntity + Serialize + 'static,
@@ -806,9 +1007,12 @@ where
             web::scope(path)
                 .route("", web::get().to(crud_list::<E, C, U, R, Err>))
                 .route("", web::post().to(crud_create::<E, C, U, R, Err>))
-                .route("/{id}", web::get().to(crud_get::<E, C, U, R, Err>))
-                .route("/{id}", web::put().to(crud_update::<E, C, U, R, Err>))
-                .route("/{id}", web::delete().to(crud_delete::<E, C, U, R, Err>))
+                .route("/{id:\\d+}", web::get().to(crud_get::<E, C, U, R, Err>))
+                .route("/{id:\\d+}", web::put().to(crud_update::<E, C, U, R, Err>))
+                .route(
+                    "/{id:\\d+}",
+                    web::delete().to(crud_delete::<E, C, U, R, Err>),
+                )
                 .route(
                     "/batch",
                     web::delete().to(crud_batch_delete::<E, C, U, R, Err>),
@@ -865,13 +1069,13 @@ where
                     "",
                     web::post().to(crud_create_with_extensions::<E, C, U, R, Err>),
                 )
-                .route("/{id}", web::get().to(crud_get::<E, C, U, R, Err>))
+                .route("/{id:\\d+}", web::get().to(crud_get::<E, C, U, R, Err>))
                 .route(
-                    "/{id}",
+                    "/{id:\\d+}",
                     web::put().to(crud_update_with_extensions::<E, C, U, R, Err>),
                 )
                 .route(
-                    "/{id}",
+                    "/{id:\\d+}",
                     web::delete().to(crud_delete_with_extensions::<E, C, U, R, Err>),
                 )
                 .route(

@@ -25,8 +25,10 @@ pub struct Subject {
     pub updated_at: DateTime<Utc>,
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub created_by_id: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub updated_by_id: Option<i64>,
     #[sqlx(rename = "notice")]
@@ -37,6 +39,7 @@ pub struct Subject {
     pub public: Option<bool>,
     #[sqlx(rename = "comments")]
     pub description: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub d_count: Option<i64>,
     pub ak_dimensions: Option<Vec<String>>,
@@ -44,27 +47,38 @@ pub struct Subject {
     pub _f_: Option<String>,
     #[sqlx(rename = "_t_")]
     pub _t_: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_scene: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_factor: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_function: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub ck_category: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_unit: Option<i64>,
     pub paths: Option<serde_json::Value>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub lk_structure: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_country: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub deleted_by_id: Option<i64>,
 }
@@ -93,17 +107,23 @@ pub struct CreateSubjectRequest {
     pub code: Option<String>,
     pub public: Option<bool>,
     pub description: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_country: Option<i64>,
     pub paths: Option<serde_json::Value>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub lk_structure: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub ck_category: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_unit: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
     /// 本体坐标，由 handler 层从 code 查表转换后注入
@@ -124,17 +144,23 @@ pub struct UpdateSubjectRequest {
     pub code: Option<String>,
     pub public: Option<bool>,
     pub description: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_country: Option<i64>,
     pub paths: Option<serde_json::Value>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub lk_structure: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub ck_category: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_unit: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
 }

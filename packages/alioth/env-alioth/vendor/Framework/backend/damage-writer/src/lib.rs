@@ -60,6 +60,15 @@ pub async fn insert_event_accident_tx(
     ctx: &DamageWriteContext,
     row: &EventAccidentRow<'_>,
 ) -> Result<i64, sqlx::Error> {
+    // 写件侧兜底校验（用户 2026-09-16 要求：空载荷不得建单）——平台与门户两处调用方共享本写件，
+    // 在入口拒绝「无编号 / 无标题且无描述」的行，避免各字段皆空的垃圾事件行落库。
+    if row.code.trim().is_empty()
+        || (row.notice.map(str::trim).unwrap_or("").is_empty() && row.comments.trim().is_empty())
+    {
+        return Err(sqlx::Error::Protocol(
+            "insert_event_accident_tx: code 与 (notice|comments) 均不得为空".into(),
+        ));
+    }
     // 叶表坐标（§6.12）：事故行 dk 经静态绑定解析（事务内 resolve_conn；坐标 JE/FRA/↓_EZ
     // 与迁移前平台内联实现一致，门户与平台两处调用方共享）。
     let (dk_scene, dk_factor, dk_function) =

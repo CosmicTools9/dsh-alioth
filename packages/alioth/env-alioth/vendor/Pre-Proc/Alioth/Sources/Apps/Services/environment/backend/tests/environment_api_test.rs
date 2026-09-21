@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 async fn insert_protocol_status(pool: &PgPool, notice: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_stus-protocol" (notice, created_by_id) VALUES ($1, 1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_stus-protocol" (notice, created_by_id, flag) VALUES ($1, 1, 'doing') RETURNING id"#,
     )
     .bind(notice)
     .fetch_one(pool)
@@ -98,6 +98,9 @@ async fn environment_seed_and_stats() {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
 
+    alioth_service_environment::seed::reset_seed_environments(&pool)
+        .await
+        .unwrap();
     let inserted = alioth_service_environment::seed::seed_environments(&pool)
         .await
         .unwrap();
@@ -116,8 +119,22 @@ async fn environment_seed_and_stats() {
         .await
         .unwrap();
 
-    assert_eq!(list.items.len(), 5);
-    for item in &list.items {
+    // 只断言本种子 5 行（共享库他源行的状态词表不在本契约内）；
+    // 状态词 = 种子 status_map 的 notice 键（healthy/warning/unknown）
+    let seed_hosts = [
+        "localhost:3000",
+        "ci.alioth.dev",
+        "staging.alioth.dev",
+        "prod.alioth.dev",
+        "dr.alioth.dev",
+    ];
+    let seed_rows: Vec<_> = list
+        .items
+        .iter()
+        .filter(|e| seed_hosts.contains(&e.host.as_deref().unwrap_or("")))
+        .collect();
+    assert_eq!(seed_rows.len(), 5, "种子 5 行应在列表中");
+    for item in seed_rows {
         assert!(
             item._refs.is_some(),
             "seeded environments should have _refs"
@@ -134,10 +151,11 @@ async fn environment_seed_and_stats() {
 
     // Stats endpoint reads zc_id_even-log; verify it does not error.
     let stats: serde_json::Value = sqlx::query_as(
-        r#"SELECT level::text AS level, COUNT(*)::bigint AS cnt
-           FROM isahl."zc_id_even-log"
-           WHERE deleted_at IS NULL
-           GROUP BY level"#,
+        r#"SELECT COALESCE(cc.code, 'uncategorized')::text AS level, COUNT(*)::bigint AS cnt
+           FROM isahl."zc_id_even-log" e
+           LEFT JOIN isahl."zc_id_cate-log" cc ON cc.id = e.ck_category AND cc.deleted_at IS NULL
+           WHERE e.deleted_at IS NULL
+           GROUP BY 1"#,
     )
     .fetch_all(&pool)
     .await
@@ -155,6 +173,9 @@ async fn environment_list_filters_out_language_records() {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
 
+    alioth_service_environment::seed::reset_seed_environments(&pool)
+        .await
+        .expect("reset seed environments");
     let seeded = alioth_service_environment::seed::seed_environments(&pool)
         .await
         .expect("seed environments");
@@ -193,11 +214,28 @@ async fn environment_list_filters_out_language_records() {
         })
         .await
         .unwrap();
-    assert_eq!(
-        list.total, 5,
-        "list should only return environment records, not lang records"
+    // 共享测试库他源行会使 total > 5——契约断言：lang 行不出现 + 种子 5 行齐
+    let items = list.items;
+    assert!(
+        items
+            .iter()
+            .all(|e| !e.host.as_deref().unwrap_or("").starts_with("lang:")),
+        "lang 记录不应出现在环境列表: {:?}",
+        items.iter().map(|e| &e.host).collect::<Vec<_>>()
     );
-    assert_eq!(list.items.len(), 5);
+    let seeded_hosts = [
+        "localhost:3000",
+        "ci.alioth.dev",
+        "staging.alioth.dev",
+        "prod.alioth.dev",
+        "dr.alioth.dev",
+    ];
+    for h in seeded_hosts {
+        assert!(
+            items.iter().any(|e| e.host.as_deref() == Some(h)),
+            "种子环境 {h} 应在列表中"
+        );
+    }
 
     let fetched = repo.get(lang_id).await.unwrap();
     assert!(

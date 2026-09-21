@@ -53,12 +53,15 @@ pub struct TestRun {
     pub status: TestRunStatus,
     pub started_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sample_size: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub total_rows: Option<i64>,
     pub execution_results: serde_json::Value,
     pub error_message: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub triggered_by: Option<i64>,
     pub sampling_strategy: SamplingStrategy,

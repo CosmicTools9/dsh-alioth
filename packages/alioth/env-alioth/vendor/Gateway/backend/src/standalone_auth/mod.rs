@@ -97,11 +97,21 @@ fn load_keys() -> (DecodingKey, EncodingKey, Vec<u8>) {
         if !pem.is_empty() && !pem.starts_with("enc:") {
             let encoding_key = EncodingKey::from_ec_pem(pem.as_bytes())
                 .expect("GATEWAY_JWT_PRIVATE_KEY is not a valid EC P-256 private key PEM");
-            let decoding_key = DecodingKey::from_ec_pem(pem.as_bytes())
-                .expect("GATEWAY_JWT_PRIVATE_KEY cannot derive public key");
+            // jsonwebtoken 的 DecodingKey::from_ec_pem 只接受**公钥** PEM——
+            // 从私钥派生（与 DEV_PUBLIC_KEY 的生成路径一致：p256 SecretKey → public_key → SPKI PEM）
+            let public_pem = {
+                use p256::elliptic_curve::pkcs8::DecodePrivateKey;
+                use p256::elliptic_curve::pkcs8::EncodePublicKey;
+                p256::SecretKey::from_pkcs8_pem(&pem)
+                    .expect("GATEWAY_JWT_PRIVATE_KEY is not valid PKCS#8 EC P-256")
+                    .public_key()
+                    .to_public_key_pem(p256::elliptic_curve::pkcs8::LineEnding::LF)
+                    .expect("GATEWAY_JWT_PRIVATE_KEY public key PEM encode failed")
+            };
+            let decoding_key = DecodingKey::from_ec_pem(public_pem.as_bytes())
+                .expect("GATEWAY_JWT_PRIVATE_KEY derived public key invalid");
             log::info!("Loaded standalone ES256 key from GATEWAY_JWT_PRIVATE_KEY");
-            // Private key PEM can also serve as the public key for verification
-            return (decoding_key, encoding_key, pem.into_bytes());
+            return (decoding_key, encoding_key, public_pem.into_bytes());
         }
     }
 
@@ -184,7 +194,11 @@ struct LoginRequest {
 ///
 /// Returns `201` (new user) or `200` (existing user).
 /// Returns `409` on namespace conflict (unique constraint violation).
-async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpResponse {
+async fn login(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    body: web::Json<LoginRequest>,
+) -> HttpResponse {
     let raw = body.username.trim();
     if raw.is_empty() {
         return HttpResponse::BadRequest().json(serde_json::json!({
@@ -263,7 +277,25 @@ async fn login(pool: web::Data<PgPool>, body: web::Json<LoginRequest>) -> HttpRe
         }
     };
     let status = if is_new { 201 } else { 200 };
+    // 前端认证完全依赖 httpOnly cookie（SSO 同构；PEP 经 `access_token` cookie 取 token）——
+    // 除 JSON token 外同步下发 cookie，standalone 模式前端方可携带认证。
+    let secure = req
+        .headers()
+        .get("X-Forwarded-Proto")
+        .and_then(|v| v.to_str().ok())
+        == Some("https")
+        || req.connection_info().scheme() == "https";
+    let mut cookie = actix_web::cookie::Cookie::build("access_token", token.clone())
+        .path("/")
+        .http_only(true)
+        .same_site(actix_web::cookie::SameSite::Lax)
+        .max_age(actix_web::cookie::time::Duration::minutes(30))
+        .finish();
+    if secure {
+        cookie.set_secure(true);
+    }
     HttpResponse::build(actix_web::http::StatusCode::from_u16(status).unwrap())
+        .cookie(cookie)
         .json(serde_json::json!({
             "token": token,
             "user": { "id": user_id, "username": username, "namespace": namespace, "is_new": is_new }
@@ -286,7 +318,16 @@ async fn logout(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
         .execute(pool.get_ref())
         .await;
     }
-    HttpResponse::Ok().json(serde_json::json!({ "message": "Logged out" }))
+    // 同步清除 httpOnly 登录 cookie（与 login 下发面对称）
+    let mut removal = actix_web::cookie::Cookie::build("access_token", "")
+        .path("/")
+        .http_only(true)
+        .same_site(actix_web::cookie::SameSite::Lax)
+        .finish();
+    removal.make_removal();
+    HttpResponse::Ok()
+        .cookie(removal)
+        .json(serde_json::json!({ "message": "Logged out" }))
 }
 
 /// POST /auth/refresh — re-issue JWT with fresh expiry
@@ -340,7 +381,25 @@ async fn refresh(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
         }
     };
 
-    HttpResponse::Ok().json(serde_json::json!({ "token": token }))
+    // 静默刷新链同样依赖 cookie——重发新 token 的 httpOnly cookie（属性与 login 一致）
+    let secure = req
+        .headers()
+        .get("X-Forwarded-Proto")
+        .and_then(|v| v.to_str().ok())
+        == Some("https")
+        || req.connection_info().scheme() == "https";
+    let mut cookie = actix_web::cookie::Cookie::build("access_token", token.clone())
+        .path("/")
+        .http_only(true)
+        .same_site(actix_web::cookie::SameSite::Lax)
+        .max_age(actix_web::cookie::time::Duration::minutes(30))
+        .finish();
+    if secure {
+        cookie.set_secure(true);
+    }
+    HttpResponse::Ok()
+        .cookie(cookie)
+        .json(serde_json::json!({ "token": token }))
 }
 
 /// GET /auth/me — user info + accessible modules + employee profile
@@ -387,7 +446,7 @@ async fn me(
             u.email AS email,
             u.user_type AS role
         FROM isahl_auth.auth_users u
-        LEFT JOIN "isahl.zc_id_subj-employee" e ON e.id = u.entity_id AND e.deleted_at IS NULL
+        LEFT JOIN isahl."zc_id_subj-employee" e ON e.id = u.entity_id AND e.deleted_at IS NULL
         WHERE u.id = $1
         "#,
     )
@@ -455,7 +514,7 @@ async fn me(
     };
 
     // positions + perspectives：fk_user → empl-natural/empl-agent → post_rr_employee → 岗位；
-    // 岗位 → relation-post_view_r_tags → tags-post_view（按岗位聚合）。失败降级空数组。
+    // 岗位 → 视角关联行 post_rr_view → relation-post_view_r_tags → tags-post_view（按岗位聚合）。失败降级空数组。
     let position_rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
         r#"SELECT p.id, p.code, p.notice
            FROM isahl."zc_id_subj-post_rr_employee" spre
@@ -486,9 +545,11 @@ async fn me(
     for (pos_id, pos_code, pos_notice) in &position_rows {
         let tags: Vec<(String, Option<String>)> = sqlx::query_as(
             r#"SELECT vt.code, vt.notice
-               FROM isahl."zc_id_relation-post_view_r_tags" rt
+               FROM isahl."zc_id_subj-post_rr_view" v
+               JOIN isahl."zc_id_relation-post_view_r_tags" rt ON rt.ref_left = v.id AND rt.deleted_at IS NULL
                JOIN isahl."zc_id_tags-post_view" vt ON vt.id = rt.ref_right AND vt.deleted_at IS NULL
-               WHERE rt.ref_left = $1 AND rt.deleted_at IS NULL
+               WHERE v.ref_left = $1 AND v.deleted_at IS NULL
+               GROUP BY vt.code, vt.notice, vt.o_number, vt.id
                ORDER BY vt.o_number, vt.id"#,
         )
         .bind(pos_id)
@@ -602,15 +663,20 @@ fn extract_and_verify_token(req: &HttpRequest) -> Result<StandaloneClaims, HttpR
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let token = match auth_header.strip_prefix("Bearer ") {
-        Some(t) => t,
-        None => {
-            return Err(HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "unauthorized",
-                "message": "Missing or invalid Authorization header"
-            })));
-        }
+    // Bearer 优先；缺 Bearer 时回退 httpOnly `access_token` cookie（浏览器前端同构 SSO 认证面）
+    let token: String = match auth_header.strip_prefix("Bearer ") {
+        Some(t) => t.to_string(),
+        None => match req.cookie("access_token") {
+            Some(c) => c.value().to_string(),
+            None => {
+                return Err(HttpResponse::Unauthorized().json(serde_json::json!({
+                    "error": "unauthorized",
+                    "message": "Missing or invalid Authorization header"
+                })));
+            }
+        },
     };
+    let token: &str = &token;
 
     let mut validation = Validation::new(jsonwebtoken::Algorithm::ES256);
     validation.set_required_spec_claims(&["sub", "exp", "iat"]);

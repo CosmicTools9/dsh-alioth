@@ -4,9 +4,32 @@ use ::common::testing::connect_test_db;
 use actix_web::dev::Service;
 use actix_web::{test, web, App, HttpMessage};
 use crud::ontology_handler::ontology_routes;
-use sqlx::AssertSqlSafe;
 
-const TEST_BIZ_LEAF: &str = "zc_id_agre-pricing";
+/// 夹具：被端点当参数使用的表名 + 三条夹具语句同源（表名以 `$table:literal` 出现一次，
+/// `concat!` 编译期固化；运行期无表名插值）。
+macro_rules! biz_leaf_fixture {
+    ($table:literal) => {
+        /// 叶表名（HTTP path 参数用值）。
+        const TEST_BIZ_LEAF: &str = $table;
+        /// 清场（按 notice）。
+        const CLEAN_FIXTURE_ROWS_SQL: &str =
+            concat!(r#"DELETE FROM isahl.""#, $table, r#"" WHERE notice = $1"#);
+        /// 断言坐标三元组已写入。
+        const LEAF_BINDING_SQL: &str = concat!(
+            r#"SELECT dk_scene, dk_factor, dk_function FROM isahl.""#,
+            $table,
+            r#"" WHERE id = $1"#
+        );
+        /// 断言软删已置位。
+        const LEAF_DELETED_AT_SQL: &str = concat!(
+            r#"SELECT deleted_at FROM isahl.""#,
+            $table,
+            r#"" WHERE id = $1"#
+        );
+    };
+}
+
+biz_leaf_fixture!("zc_id_agre-pricing");
 
 fn lookup_fn(table: &str) -> (Option<i64>, Option<i64>, Option<i64>) {
     let h = table.len() as i64;
@@ -20,14 +43,11 @@ fn lookup_fn(table: &str) -> (Option<i64>, Option<i64>, Option<i64>) {
 #[actix_web::test]
 async fn full_lifecycle_create_list_get_delete() {
     let pool = connect_test_db().await;
-    sqlx::query(AssertSqlSafe(format!(
-        r#"DELETE FROM isahl."{}" WHERE notice = $1"#,
-        TEST_BIZ_LEAF
-    )))
-    .bind("__test_ontology_handler__")
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(CLEAN_FIXTURE_ROWS_SQL)
+        .bind("__test_ontology_handler__")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let ctx = common::context::RequestContext::with_username(1, "test@test", "tester");
     let app = test::init_service(
@@ -55,7 +75,8 @@ async fn full_lifecycle_create_list_get_delete() {
         .set_json(&body)
         .to_request();
     let resp: serde_json::Value = test::call_and_read_body_json(&app, req).await;
-    let new_id = match resp["data"]["id"].as_i64() {
+    // ID_JSON_PRECISION：id 以字符串下发（JS 精度安全）
+    let new_id: i64 = match resp["data"]["id"].as_str().and_then(|v| v.parse().ok()) {
         Some(v) => v,
         None => panic!("create failed: {}", resp),
     };
@@ -69,14 +90,11 @@ async fn full_lifecycle_create_list_get_delete() {
     assert_eq!(resp["data"]["code"].as_str(), Some("OH-001"));
 
     // Verify binding was written
-    let row: (Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(AssertSqlSafe(format!(
-        r#"SELECT dk_scene, dk_factor, dk_function FROM isahl."{}" WHERE id = $1"#,
-        TEST_BIZ_LEAF
-    )))
-    .bind(new_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(LEAF_BINDING_SQL)
+        .bind(new_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     let h = TEST_BIZ_LEAF.len() as i64;
     assert_eq!(row.0, Some(1_000_000_000_000_000 + h));
     assert_eq!(row.1, Some(2_000_000_000_000_000 + h));
@@ -101,14 +119,11 @@ async fn full_lifecycle_create_list_get_delete() {
     assert_eq!(resp["data"]["deleted"], serde_json::Value::Bool(true));
 
     // Verify soft delete
-    let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx::query_as(AssertSqlSafe(format!(
-        r#"SELECT deleted_at FROM isahl."{}" WHERE id = $1"#,
-        TEST_BIZ_LEAF
-    )))
-    .bind(new_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx::query_as(LEAF_DELETED_AT_SQL)
+        .bind(new_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(row.0.is_some(), "deleted_at should be set");
 }
 

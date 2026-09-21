@@ -362,9 +362,9 @@ async fn send_tencent(
     // 请求体
     let payload = serde_json::json!({
         "PhoneNumberSet": [phone],
-        "SmsSdkAppId": sms_sdk_app_id,
+        "SmsSdkAppId": sms_sdk_app_id.to_string(),
         "SignName": sign_name,
-        "TemplateId": template_code,
+        "TemplateId": template_code.to_string(),
         "TemplateParamSet": serde_json::from_str::<Value>(params).unwrap_or(Value::Null),
     });
     let payload_json = payload.to_string();

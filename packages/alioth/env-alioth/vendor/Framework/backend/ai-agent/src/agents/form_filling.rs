@@ -64,6 +64,9 @@ impl FormFillingAgent {
             user_selectable: true,
             sort_order: 10,
             requires_input_default: true,
+            // E6：填单 agent 授予表单校验工具（只读校验，无写动作）
+            available_tools: vec![crate::tools::executor::ValidateFormTool::definition()],
+            max_execution_steps: 3,
             suggested_actions: vec![
                 "确认并提交".to_string(),
                 "修改字段".to_string(),

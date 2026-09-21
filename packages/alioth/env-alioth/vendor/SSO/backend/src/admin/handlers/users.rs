@@ -58,8 +58,11 @@ use crate::auth::AuthState;
 // User CRUD
 // ============================================================================
 
-/// GET /api/admin/users?limit=50&offset=0&q=search
-/// List all users with optional pagination + free-text search (default limit 50, max 500).
+/// GET /api/admin/users?limit=50&offset=0&q=search&status=active|disabled&type=local|ldap
+///   &sort_by=id|name|email|created_at|status|type&order=asc|desc
+/// List users with pagination, free-text search, status/type filters and whitelisted
+/// server-side sorting (default limit 50, max 500; invalid filter/sort values fall back
+/// to no-filter / id ASC).
 pub async fn list_users(
     req: HttpRequest,
     query: web::Query<PaginationParams>,
@@ -76,53 +79,73 @@ pub async fn list_users(
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
     let q = search.q.as_deref().unwrap_or("").trim();
-
-    let users = if q.is_empty() {
-        sqlx::query_as::<_, UserResponse>(
-            r#"
-            SELECT id, name, username, email, display_name, status, is_active, is_ldap_user, created_at, updated_at
-            FROM isahl_auth.auth_users
-            ORDER BY id
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool.get_ref())
-        .await
-    } else {
-        let pattern = format!("%{}%", q);
-        sqlx::query_as::<_, UserResponse>(
-            r#"
-            SELECT id, name, username, email, display_name, status, is_active, is_ldap_user, created_at, updated_at
-            FROM isahl_auth.auth_users
-            WHERE name ILIKE $1 OR email ILIKE $1 OR username ILIKE $1 OR display_name ILIKE $1
-            ORDER BY id
-            LIMIT $2 OFFSET $3
-            "#,
-        )
-        .bind(&pattern)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool.get_ref())
-        .await
+    // 非法筛选值归一为空串（不过滤）——SQL 侧以 $='' 短路，避免整表被排除
+    let status = match search.status.as_deref() {
+        Some(s @ ("active" | "disabled")) => s,
+        _ => "",
+    };
+    let user_type = match search.user_type.as_deref() {
+        Some(t @ ("local" | "ldap")) => t,
+        _ => "",
+    };
+    let dir = match search.order.as_deref() {
+        Some("desc") => "DESC",
+        _ => "ASC",
     };
 
-    let total: i64 = if q.is_empty() {
-        sqlx::query_scalar("SELECT COUNT(*) FROM isahl_auth.auth_users")
-            .fetch_one(pool.get_ref())
-            .await
-            .unwrap_or(0)
-    } else {
-        let pattern = format!("%{}%", q);
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM isahl_auth.auth_users WHERE name ILIKE $1 OR email ILIKE $1 OR username ILIKE $1 OR display_name ILIKE $1",
-        )
-        .bind(&pattern)
-        .fetch_one(pool.get_ref())
-        .await
-        .unwrap_or(0)
+    // 排序列白名单映射（ORDER BY 不可参数化——列名/方向禁止拼接用户输入）
+    let sort_col = match search.sort_by.as_deref() {
+        Some("name") => "LOWER(COALESCE(display_name, name, username, ''))",
+        Some("email") => "LOWER(COALESCE(email, ''))",
+        Some("created_at") => "created_at",
+        // status 排序与前端启用判定一致（is_active + status 合成布尔）
+        Some("status") => "(is_active AND COALESCE(status, 'active') <> 'disabled')",
+        Some("type") => "COALESCE(is_ldap_user, false)",
+        _ => "id",
     };
+    let order_by = format!("{sort_col} {dir}, id {dir}");
+    // 搜索/筛选条件走 NULL 短路（$='' 不过滤），单条 SQL 覆盖全部组合。
+    // 注入审计（AssertSqlSafe 前置条件）：order_by 仅由 sort_col/dir 组成，
+    // 二者均为上方 match 白名单产出的 &'static str，用户输入不进 SQL 文本。
+    let users = sqlx::query_as::<_, UserResponse>(sqlx::AssertSqlSafe(format!(
+        r#"
+        SELECT id, name, username, email, display_name, status, is_active, is_ldap_user, created_at, updated_at
+        FROM isahl_auth.auth_users
+        WHERE ($1 = '' OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%'
+               OR username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
+          AND ($2 = '' OR ($2 = 'active' AND is_active AND COALESCE(status, 'active') <> 'disabled')
+               OR ($2 = 'disabled' AND NOT (is_active AND COALESCE(status, 'active') <> 'disabled')))
+          AND ($3 = '' OR ($3 = 'ldap' AND COALESCE(is_ldap_user, false))
+               OR ($3 = 'local' AND NOT COALESCE(is_ldap_user, false)))
+        ORDER BY {order_by}
+        LIMIT $4 OFFSET $5
+        "#,
+    )))
+    .bind(q)
+    .bind(status)
+    .bind(user_type)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool.get_ref())
+    .await;
+
+    let total: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*) FROM isahl_auth.auth_users
+        WHERE ($1 = '' OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%'
+               OR username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
+          AND ($2 = '' OR ($2 = 'active' AND is_active AND COALESCE(status, 'active') <> 'disabled')
+               OR ($2 = 'disabled' AND NOT (is_active AND COALESCE(status, 'active') <> 'disabled')))
+          AND ($3 = '' OR ($3 = 'ldap' AND COALESCE(is_ldap_user, false))
+               OR ($3 = 'local' AND NOT COALESCE(is_ldap_user, false)))
+        "#,
+    )
+    .bind(q)
+    .bind(status)
+    .bind(user_type)
+    .fetch_one(pool.get_ref())
+    .await
+    .unwrap_or(0);
 
     match users {
         Ok(rows) => HttpResponse::Ok().json(serde_json::json!({
@@ -137,11 +160,23 @@ pub async fn list_users(
     }
 }
 
-/// Query params for free-text search
+/// Query params for search / filter / sort（全部可选，缺省 = 不过滤、按 id ASC）
 #[derive(Debug, Deserialize, Default)]
 pub struct UserSearchParams {
     #[serde(default)]
     pub q: Option<String>,
+    /// 状态筛选：active | disabled（非法值视为不过滤）
+    #[serde(default)]
+    pub status: Option<String>,
+    /// 类型筛选：local | ldap（query 参数名 type；非法值视为不过滤）
+    #[serde(rename = "type", default)]
+    pub user_type: Option<String>,
+    /// 排序列：id | name | email | created_at | status | type（非法值回退 id）
+    #[serde(default)]
+    pub sort_by: Option<String>,
+    /// 排序方向：asc | desc（非法值回退 asc）
+    #[serde(default)]
+    pub order: Option<String>,
 }
 
 /// POST /api/admin/users

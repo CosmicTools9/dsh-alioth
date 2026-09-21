@@ -1,0 +1,41 @@
+{
+  "rule_reference": "docs/specs/NO_REGEX_FOR_PARSING.md §判定方法",
+  "note": "TS/JS regex-as-parser 存量归线（只减不增）；修复即删行，禁新增条目",
+  "entries": [
+    {
+      "file": "scripts/check/check-comments-jsonb.ts",
+      "line": 38,
+      "kind": "html-tag"
+    },
+    {
+      "file": "scripts/check/check-comments-jsonb.ts",
+      "line": 42,
+      "kind": "html-tag"
+    },
+    {
+      "file": "scripts/check/check-dark-mode-coverage.ts",
+      "line": 133,
+      "kind": "html-tag"
+    },
+    {
+      "file": "scripts/check/check-openspec-purpose.ts",
+      "line": 8,
+      "kind": "sql-keyword"
+    },
+    {
+      "file": "scripts/lib/psql-invocation.ts",
+      "line": 220,
+      "kind": "html-tag"
+    },
+    {
+      "file": "scripts/prototype-tool.js",
+      "line": 2743,
+      "kind": "html-tag"
+    },
+    {
+      "file": "scripts/seed/gen-model-dict-seed.ts",
+      "line": 93,
+      "kind": "sql-keyword"
+    }
+  ]
+}

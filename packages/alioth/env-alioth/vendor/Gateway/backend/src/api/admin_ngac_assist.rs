@@ -1,4 +1,4 @@
-//! POST /api/admin/ngac/nl-assist — 自然语言 → NGAC 策略操作提案
+//! POST /api/admin/ngac-assist/nl-assist — 自然语言 → NGAC 策略操作提案
 //! （refactor-ngac-admin-nl-graph D1/D2/D6）。
 //!
 //! **提案-确认（proposal-only）**：本端点 MUST NOT 执行任何策略写操作——
@@ -446,7 +446,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     );
 }
 
-/// POST /api/admin/ngac/nl-assist
+/// POST /api/admin/ngac-assist/nl-assist
 async fn nl_assist(
     req: HttpRequest,
     pool: web::Data<PgPool>,

@@ -3,33 +3,42 @@
 # 使用本机系统 Rust 1.98.0（通过 rustup）
 
 [tasks]
+# cargo 目标目录统一经映射取值（scripts/lib/cargo-target-dirs.sh 的用途 check =
+# root workspace 唯一构建缓存 /tmp/alioth-check），MUST NOT 依赖 cwd 默认推导（根 target/）。
 # 安装/验证依赖
 setup = { description = "下载依赖并验证编译", run = [
   "cargo fetch",
-  "cargo check --workspace",
+  "bash ../../scripts/cargo-check.sh --workspace",
 ] }
 
 # 构建 workspace（发布模式）
 build = { description = "构建整个 workspace", run = [
-  "cargo build --workspace --release",
+  "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo build --workspace --release",
 ] }
 
 # 运行 workspace 测试
-test = { description = "运行 workspace 所有测试", run = ["cargo test --workspace"] }
+test = { description = "运行 workspace 所有测试", run = ["bash ../../scripts/cargo-test.sh --workspace"] }
 
 # 代码检查和格式化验证
 lint = { description = "运行 clippy 和格式化检查", run = [
-  "cargo clippy --workspace -- -D warnings",
+  "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo clippy --workspace -- -D warnings",
   "cargo fmt --check",
 ] }
 
 # 自动格式化
 fmt = { description = "自动格式化代码", run = ["cargo fmt"] }
 
-# 清理构建产物
-clean = { description = "清理构建产物", run = ["cargo clean"] }
+# 清理 root workspace 的构建缓存（映射目录）。清空的是**整个** root workspace 缓存
+# （Framework/Gateway/SSO/OpenActivity 共用 /tmp/alioth-check）——只清单包用
+# `CARGO_TARGET_DIR=... cargo clean -p <pkg>`。
+clean = { description = "清理构建产物", run = [
+  "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo clean",
+] }
 
 [env]
+# cargo 目标目录兜底面：由 scripts/lib/cargo-target-dirs.sh 的 check 用途导出（无字面量重复）。
+# 覆盖任何未在 run 字符串显式取值的 cargo 调用（含临时命令），使根 target/ 不再是默认落点。
+_.source = "../../scripts/lib/cargo-target-env.sh"
 # _.path 继承自根 .mise.toml（无需重复声明）
 # Rust 日志级别
 RUST_LOG = "info"

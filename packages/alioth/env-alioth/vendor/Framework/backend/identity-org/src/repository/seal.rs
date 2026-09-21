@@ -17,6 +17,49 @@ use crate::models::{CreateSealBatchRequest, CreateSealRequest, Seal, UpdateSealR
 use super::ontology_binding;
 use super::resolve_seal_waybill_code;
 
+/// 铅封类型 code → 字典行 id（`isahl.zc_id_cate-seal`）。
+///
+/// `None`/空 → `None`（未指定类型，保持「不标注」语义）；非空但字典无活动行 → 400
+/// （类型是铅封的业务语义维度，未知 code MUST NOT 静默落 NULL）。
+async fn resolve_seal_category_id(
+    pool: &PgPool,
+    code: Option<&str>,
+) -> Result<Option<i64>, ApiError> {
+    let Some(code) = code.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Ok(None);
+    };
+    sqlx::query_scalar::<_, i64>(
+        r#"SELECT id FROM "isahl"."zc_id_cate-seal" WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::from)?
+    .map(Some)
+    .ok_or_else(|| ApiError::BadRequest(format!("无效的铅封类型: {code}")))
+}
+
+/// 批量创建的类型行：`(字典行 id, o_number)`——`o_number` 为合法正整数时 = 该类型批量规模。
+///
+/// 类型必填：缺/空 → 400（批量必须知道类型，否则既不能落 `ck_category` 也无从取规模）。
+async fn resolve_seal_batch_type(
+    pool: &PgPool,
+    code: Option<&str>,
+) -> Result<(i64, Option<String>), ApiError> {
+    let code = code
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .ok_or_else(|| ApiError::BadRequest("铅封类型必填".to_string()))?;
+    sqlx::query_as::<_, (i64, Option<String>)>(
+        r#"SELECT id, o_number FROM "isahl"."zc_id_cate-seal" WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::from)?
+    .ok_or_else(|| ApiError::BadRequest(format!("无效的铅封类型: {code}")))
+}
+
 // ═══════════════════════════════════════════════
 // Fence Repository
 // ═══════════════════════════════════════════════
@@ -40,27 +83,34 @@ impl SealRepository {
         self.generic.get_refs(id, None).await
     }
 
-    /// 批量创建铅封（add-wz-seal-batch-creation；refactor-dispatch-seal-code-generation 重构）
+    /// 批量创建铅封（add-wz-seal-batch-creation）
     ///
-    /// - `sealType` 类型 code（固定常量列表；即编号前缀，`ck_category` 置 NULL——字典空，类型由 code 承载）
-    /// - `count` 1..=100，缺省 1（1=单号、N=连号）
-    /// - `startCode` 缺省 → code 前缀自动续号：取该前缀现有最大尾部序号 +1 等宽 4 位起
-    /// - `startCode` 显式 → 起始号等宽递增（铅封管理页手输场景保留）
+    /// - `sealType` = 类型 code（字典 `zc_id_cate-seal`）→ 落 `ck_category`；字典 `o_number` 为合法
+    ///   正整数时声明该类型批量规模（缺省 `count` 取此值），否则该类型不属批量 → 400
+    /// - `count` 显式 1..=100（优先于字典）
+    /// - `codePrefix` → 前缀自动续号：取该前缀现有最大尾部序号 +1 等宽递增（前缀不经字典，仅字母数字）
+    /// - `startCode` → 起始号等宽递增（优先于 `codePrefix`；铅封管理页手输场景保留）
     /// - 事务内逐号查重，任一冲突整体回滚（400 + 冲突号清单）
     pub async fn batch_create(
         &self,
         req: CreateSealBatchRequest,
         user_id: i64,
     ) -> Result<Vec<Seal>, ApiError> {
-        let seal_type = req
-            .seal_type
-            .as_deref()
-            .ok_or_else(|| ApiError::BadRequest("铅封类型必填".to_string()))?;
-        // 前缀仅字母数字（防 LIKE 通配注入；固定常量或手输均受此约束）
-        if seal_type.is_empty() || !seal_type.chars().all(|c| c.is_ascii_alphanumeric()) {
-            return Err(ApiError::BadRequest(format!("无效的铅封类型: {seal_type}")));
-        }
-        let count = req.count.unwrap_or(1);
+        let (cate_id, o_number) =
+            resolve_seal_batch_type(&self.pool, req.seal_type.as_deref()).await?;
+        let count = match req.count {
+            Some(c) => c,
+            None => o_number
+                .as_deref()
+                .and_then(|s| s.trim().parse::<i64>().ok())
+                .filter(|n| *n >= 1)
+                .ok_or_else(|| {
+                    ApiError::BadRequest(format!(
+                        "该铅封类型不支持批量创建（字典 zc_id_cate-seal.{} 的 o_number 非正整数）",
+                        req.seal_type.as_deref().unwrap_or_default()
+                    ))
+                })?,
+        };
         if !(1..=100).contains(&count) {
             return Err(ApiError::BadRequest("批量数量须在 1-100 之间".to_string()));
         }
@@ -77,8 +127,19 @@ impl SealRepository {
         let codes = match req.start_code.as_deref() {
             Some(start_code) => Self::codes_from_start(start_code, count)?,
             None => {
-                self.next_codes_for_prefix(seal_type, count, &mut *tx)
-                    .await?
+                let prefix = req
+                    .code_prefix
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .ok_or_else(|| {
+                        ApiError::BadRequest("批量创建须给 startCode 或 codePrefix".to_string())
+                    })?;
+                // 前缀仅字母数字（防 LIKE 通配注入）
+                if !prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+                    return Err(ApiError::BadRequest(format!("无效的编号前缀: {prefix}")));
+                }
+                self.next_codes_for_prefix(prefix, count, &mut *tx).await?
             }
         };
 
@@ -117,7 +178,7 @@ impl SealRepository {
                 .bind(code)
                 .bind(&req.comments)
                 .bind(&waybill_code)
-                .bind(Option::<i64>::None)
+                .bind(cate_id)
                 .bind(user_id)
                 .bind(dk_scene)
                 .bind(dk_factor)
@@ -223,6 +284,8 @@ impl AliothRepository<Seal, CreateSealRequest, UpdateSealRequest, ApiError> for 
         self.generic.get_refs(id, None).await
     }
     async fn create(&self, req: CreateSealRequest, user_id: i64) -> Result<Seal, ApiError> {
+        // 类型 code → 字典 id（`zc_id_cate-seal`）：未传 = 不标注（NULL）；传了但字典无活动行 → 400
+        let cate_id = resolve_seal_category_id(&self.pool, req.seal_type.as_deref()).await?;
         // 关联运单编号落 projection（Seal 无运单列；comments 保持自由文本，不再承载 JSON）
         let waybill_code = match req.waybill_id {
             Some(wid) => Some(resolve_seal_waybill_code(&self.pool, wid).await?),
@@ -239,7 +302,7 @@ impl AliothRepository<Seal, CreateSealRequest, UpdateSealRequest, ApiError> for 
         .bind(&req.code)
         .bind(&req.comments)
         .bind(&waybill_code)
-        .bind(Option::<i64>::None)
+        .bind(cate_id)
         .bind(user_id)
         .bind(dk_scene)
         .bind(dk_factor)
@@ -266,6 +329,11 @@ impl AliothRepository<Seal, CreateSealRequest, UpdateSealRequest, ApiError> for 
         }
         if let Some(v) = req.comments {
             entity.comments = Some(v);
+        }
+        // 类型变更：code → 字典 id（None = 不改动既有类型；未知 code → 400）
+        if req.seal_type.is_some() {
+            entity.ck_category =
+                resolve_seal_category_id(&self.pool, req.seal_type.as_deref()).await?;
         }
         // 关联运单变更：运单 id → 编号落 projection；None = 不改动该列（comments 不承载 JSON）
         let waybill_code = match req.waybill_id {
@@ -324,19 +392,19 @@ impl FenceKind {
 /// 经继承根读子表专有列不可行（父表 SELECT 无子列），故逐叶表 SELECT 后 UNION。
 pub(crate) const FENCE_UNION_SELECT: &str = r#"SELECT 'circle' AS fence_type, id, notice, code, comments,
               sk_unit, t_color_, created_at, updated_at, deleted_at,
-              ST_AsGeoJSON(circle)::jsonb AS circle, ST_AsGeoJSON(circle)::jsonb AS geometry,
+              postgis.ST_AsGeoJSON(circle)::jsonb AS circle, postgis.ST_AsGeoJSON(circle)::jsonb AS geometry,
               (SELECT sd.mark::bigint FROM "isahl"."zc_id_scal-distance" sd
                WHERE sd.id = c.qk_radius AND sd.deleted_at IS NULL) AS qk_radius
             FROM "isahl"."zc_id_geog-circle" c WHERE c.deleted_at IS NULL
             UNION ALL
             SELECT 'area', id, notice, code, comments, sk_unit, t_color_,
                    created_at, updated_at, deleted_at,
-                   NULL::jsonb, ST_AsGeoJSON(box)::jsonb, NULL::bigint
+                   NULL::jsonb, postgis.ST_AsGeoJSON(box)::jsonb, NULL::bigint
             FROM "isahl"."zc_id_geog-area" WHERE deleted_at IS NULL
             UNION ALL
             SELECT 'polygon', id, notice, code, comments, sk_unit, t_color_,
                    created_at, updated_at, deleted_at,
-                   NULL::jsonb, ST_AsGeoJSON(polygon)::jsonb, NULL::bigint
+                   NULL::jsonb, postgis.ST_AsGeoJSON(polygon)::jsonb, NULL::bigint
             FROM "isahl"."zc_id_geog-polygon" WHERE deleted_at IS NULL"#;
 
 /// bounds JSON → 对角两点（sw_lng, sw_lat, ne_lng, ne_lat）；area 类型专用，缺失/非法 → 400。

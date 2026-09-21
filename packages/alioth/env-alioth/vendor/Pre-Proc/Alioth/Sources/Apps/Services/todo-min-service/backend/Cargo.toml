@@ -1,0 +1,19 @@
+[package]
+name = "alioth-service-todo-min-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+rust_decimal = { workspace = true }
+async-trait = { workspace = true }
+common = { path = "../../../../../../../Framework/backend/common" }
+crud = { path = "../../../../../../../Framework/backend/crud" }
+
+[lib]
+name = "alioth_service_todo_min_service"
+path = "src/lib.rs"

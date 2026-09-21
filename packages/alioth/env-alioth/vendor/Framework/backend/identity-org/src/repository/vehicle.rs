@@ -33,7 +33,31 @@ impl VehicleRepository {
         }
     }
 
-    /// 载重结构化落标量：capacity_ton → zc_id_scal-weight（模型设计 w_capacity 族），qk_w_capacity 引用
+    /// 载重结构化落标量：capacity_ton → **`zc_id_scal-weight`**（`zc_id_scale` 族**语义叶**）
+    /// 并挂 `qk_w_capacity`。模型正本（`crud/fk_index.rs`，容器族声明行）：
+    /// `("zc_id_stor-ctn-vehicle", &[… ("w_capacity", "zc_id_scal-weight", "qk_w_capacity") …])`；
+    /// 同族 `v_capacity` → `zc_id_scal-volume` / `qk_v_capacity`、`c_capacity` →
+    /// `zc_id_scal-amount` / `qk_c_capacity`；无物理种类的 `capacity` 才落
+    /// `zc_id_scale` / `qk_capacity`（用户 2026-09-21 裁决「统一落在各种对应的语义表，
+    /// 没有再到标量表」）。
+    ///
+    /// 全链同口径（载体均为语义叶 `zc_id_scal-weight`）：本函数（平台写径）、门户
+    /// [`insert_vehicle_measure`]（OpenActivity portal_write.rs）、种子
+    /// （`Pre-Proc/WZ/seed/seed-wz-vehicle-load.sql` `WZ-BIZ-VEH-CAP-*`）、平台读径
+    /// （transport-operations：`fleet_overview.rs` / `reassign.rs` / `waybill_detail.rs` /
+    /// `checkin.rs`）、门户读径（`supplier.rs` 车辆/委托列表）、超载判据
+    /// （`portal_write.rs::vehicle_capacity_ton`）。
+    ///
+    /// 第 10 轮批注 #2 的 `scal-common` 漂移按模型正本回退：那次修复只把**读列**从
+    /// `qk_w_capacity` 改成 `qk_capacity`（未纠正标量族叶位）⇒ 写径落通用叶、语义与模型
+    /// 冲突。读径既已同批改回 `qk_w_capacity` → `zc_id_scal-weight`，写径必须同叶。
+    ///
+    /// **既有行策略（本函数不迁数据）**：先探测既有标量行**实际所在叶**（`tableoid`）——
+    /// ① 已在 weight 叶 → 经族父表 `zc_id_scale` 按 id **原位**改写（`WHERE id` 命中该行；
+    ///    探测已确认落点，故不会误改他叶行，也不依赖叶表名字面量）；
+    /// ② 无行 / 既有行落在别的标量叶（历史 `scal-common` 漂移行）→ **重建**：在 weight 叶
+    ///    新建标量行并重指 `qk_w_capacity`；旧行不软删（成为未被引用的孤儿，清理属数据迁移，
+    ///    见迁移脚本草案——本函数不做，避免在写径里静默删数据）。
     async fn apply_vehicle_capacity(
         &self,
         vehicle_id: i64,
@@ -43,18 +67,23 @@ impl VehicleRepository {
         if capacity_ton <= 0.0 {
             return Ok(());
         }
-        let existing: Option<Option<i64>> = sqlx::query_scalar(
-            r#"SELECT qk_w_capacity FROM "isahl"."zc_id_stor-ctn-vehicle"
-                   WHERE id = $1 AND deleted_at IS NULL"#,
+        // 既有引用 + 该引用是否已在 weight 叶（`tableoid` 比对，避免把叶名写进 SQL 字面量）
+        let (existing_ref, in_weight_leaf): (Option<i64>, Option<bool>) = sqlx::query_as(
+            r#"SELECT v.qk_w_capacity,
+                      (SELECT s.tableoid = 'isahl."zc_id_scal-weight"'::regclass
+                         FROM "isahl"."zc_id_scale" s
+                        WHERE s.id = v.qk_w_capacity)
+                 FROM "isahl"."zc_id_stor-ctn-vehicle" v
+                WHERE v.id = $1 AND v.deleted_at IS NULL"#,
         )
         .bind(vehicle_id)
         .fetch_one(&self.pool)
         .await?;
         let scale_id: i64 =
-            match existing.flatten() {
-                Some(id) => {
+            match (existing_ref, in_weight_leaf) {
+                (Some(id), Some(true)) => {
                     sqlx::query(
-                        r#"UPDATE "isahl"."zc_id_scal-weight"
+                        r#"UPDATE "isahl"."zc_id_scale"
                            SET notice = $1, mark = $2, updated_by_id = $3, updated_at = NOW()
                            WHERE id = $4"#,
                     )
@@ -66,9 +95,9 @@ impl VehicleRepository {
                     .await?;
                     id
                 }
-                None => sqlx::query_scalar(
+                _ => sqlx::query_scalar(
                     r#"INSERT INTO "isahl"."zc_id_scal-weight" (code, notice, mark, created_by_id)
-                       VALUES ($1, $2, $3, $4) RETURNING id"#,
+                   VALUES ($1, $2, $3, $4) RETURNING id"#,
                 )
                 .bind(format!("VEH-CAP-{}", vehicle_id))
                 .bind(format!("{}吨", capacity_ton))
@@ -90,8 +119,9 @@ impl VehicleRepository {
         Ok(())
     }
 
-    /// 体积容量结构化落标量：capacity_m3 → zc_id_scal-volume（模型设计 v_capacity 族），qk_v_capacity 引用
-    ///（fix-vehicle-unit-binding-add-volume：模型升级后 qk_v_capacity 列已回归）
+    /// 体积容量结构化落标量：capacity_m3 → `zc_id_scal-volume`（`zc_id_scale` 族语义叶），
+    /// `qk_v_capacity` 引用（模型正本：`crud/fk_index.rs` `("v_capacity", "zc_id_scal-volume",
+    /// "qk_v_capacity")`）。叶位本就正确，既有行策略同 [`Self::apply_vehicle_capacity`]（原位改写）。
     async fn apply_vehicle_volume(
         &self,
         vehicle_id: i64,
@@ -174,7 +204,7 @@ impl VehicleRepository {
         sqlx::query(
                 r#"INSERT INTO "isahl"."zc_id_lifecycle_r_primary-status"
                    (id, ref_left, ref_right, status_date, created_by_id, updated_by_id, code)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, NOW(), $3, $3, $4)
+                   VALUES (isahl.gen_next_uid(260), $1, $2, NOW(), $3, $3, $4)
                    ON CONFLICT (ref_left) DO UPDATE
                    SET ref_right = $2, code = $4, status_date = NOW(), updated_at = NOW(), updated_by_id = $3"#,
             )
@@ -209,7 +239,7 @@ impl VehicleRepository {
             Some(pid) => {
                 sqlx::query(
                         r#"UPDATE "isahl"."zc_id_geog-point"
-                           SET point = ST_SetSRID(ST_MakePoint($1, $2), 4326), updated_by_id = $3, updated_at = NOW()
+                           SET point = postgis.ST_SetSRID(postgis.ST_MakePoint($1, $2), 4326), updated_by_id = $3, updated_at = NOW()
                            WHERE id = $4 AND deleted_at IS NULL"#,
                     )
                     .bind(lng)
@@ -222,7 +252,7 @@ impl VehicleRepository {
             None => {
                 let pid: i64 = sqlx::query_scalar(
                     r#"INSERT INTO "isahl"."zc_id_geog-point" (code, sk_unit, point, created_by_id)
-                           VALUES ($1, NULL, ST_SetSRID(ST_MakePoint($2, $3), 4326), $4)
+                           VALUES ($1, NULL, postgis.ST_SetSRID(postgis.ST_MakePoint($2, $3), 4326), $4)
                            RETURNING id"#,
                 )
                 .bind(format!("VEH-PT-{}", vehicle_id))

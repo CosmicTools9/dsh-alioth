@@ -637,7 +637,9 @@ mod tests {
             .await;
 
         let max = 3u32;
-        let window_secs = 1u64;
+        // 窗口 1s 在高负载机（多次认证轮实测）会跨窗翻转致假放行——放宽到 30s，
+        // 测试总耗 << 窗长即确定
+        let window_secs = 30u64;
         for _ in 0..max {
             assert!(
                 db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
@@ -661,14 +663,30 @@ mod tests {
             "different ip should be allowed"
         );
 
-        // 窗口翻转（1s 窗口）→ 恢复放行
-        tokio::time::sleep(Duration::from_millis(1200)).await;
+        // 窗口翻转语义（独立 scope 探针，免 sleep——高负载机跨窗翻转会假放行/假阻塞）：
+        // 新 scope 预置「两个窗口前已打满」的历史行；当前窗口计数独立 ⇒ 应放行
+        let scope_flip = format!("test-flip-{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(
+            "INSERT INTO isahl_auth.auth_rate_limits (scope, ip, window_start, count) \
+             VALUES ($1, $2, to_timestamp(floor(extract(epoch from now()) / $3)::bigint * $3 - $3 * 2), $4)",
+        )
+        .bind(&scope_flip)
+        .bind(&ip)
+        .bind(window_secs as i64)
+        .bind(max as i32)
+        .execute(&pool)
+        .await
+        .expect("seed expired window");
         assert!(
-            db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
+            db_rate_limit_check(&pool, &scope_flip, &ip, max, window_secs)
                 .await
                 .expect("check"),
             "new window should reset count"
         );
+        let _ = sqlx::query("DELETE FROM isahl_auth.auth_rate_limits WHERE scope = $1")
+            .bind(&scope_flip)
+            .execute(&pool)
+            .await;
 
         // 清理测试数据
         let _ = sqlx::query("DELETE FROM isahl_auth.auth_rate_limits WHERE scope = $1")

@@ -432,12 +432,15 @@ pub struct QualityRule {
     pub parameters: serde_json::Value,
 
     // 关联
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub collection_id: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub field_id: Option<i64>,
 
     // 元数据
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub created_by: Option<i64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -572,12 +575,15 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for RuleExecutionResult {
 /// 规则执行请求
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExecuteRulesRequest {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub collection_id: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub field_id: Option<i64>,
     #[serde(with = "common::serde_zuid::opt_seq")]
     pub rule_ids: Option<Vec<i64>>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sample_limit: Option<i64>,
 }

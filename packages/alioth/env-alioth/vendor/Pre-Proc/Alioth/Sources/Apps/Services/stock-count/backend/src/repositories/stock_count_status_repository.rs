@@ -55,8 +55,8 @@ impl
     ) -> Result<StockCountStatus, ApiError> {
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_stus-counting"
-               (notice, code, comments, enable, created_by_id)
-               VALUES ($1, $2, $3, $4, $5)
+               (notice, code, comments, enable, created_by_id, flag)
+               VALUES ($1, $2, $3, $4, $5, $6::isahl.status_flag)
                RETURNING id"#,
         )
         .bind(&req.notice)
@@ -64,6 +64,9 @@ impl
         .bind(&req.comments)
         .bind(req.enable)
         .bind(user_id)
+        .bind(common::status::flag_for_status_code(
+            req.code.as_deref().unwrap_or_default(),
+        ))
         .fetch_one(&self.pool)
         .await
         .map_err(ApiError::from)?;

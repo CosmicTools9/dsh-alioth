@@ -1,3 +1,5 @@
+#![allow(clippy::doc_lazy_continuation)]
+// 中文长文档的手工缩进约定与 markdown 列表规则不兼容（clippy 1.98 新增 lint，存量文档批量误报）
 //! identity-org — 主体/组织/身份共享内核（extract-identity-org-core）
 //!
 //! isahl 全局主体/组织/身份模型（跨 ns 一致，无 namespace 语义）：
@@ -12,6 +14,7 @@ pub mod ngac_org_ensure;
 pub mod org_scheme;
 pub mod repository;
 pub mod service;
+pub mod subject_status;
 
 pub use handlers::identities::configure_identities;
 pub use handlers::identity::register as register_identity;

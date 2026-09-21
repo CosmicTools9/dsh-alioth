@@ -198,6 +198,16 @@ pub fn backoff_delay_ms(attempt: u32) -> u64 {
     base + jitter
 }
 
+/// 出向原始应答（provider 需要原文面：应答验签依赖**原始字节**、`204 No Content`、
+/// 或非 JSON 载荷）。`body` 为未解析文本——签名验证 MUST 以此字节为准（`Value` 路径
+/// 重序列化后的字节与上游原文不一致，无法验签）。
+#[derive(Debug, Clone)]
+pub struct RawResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: String,
+}
+
 /// 出向 HTTP 客户端（provider 无关治理）。
 #[derive(Clone)]
 pub struct OutboundClient {
@@ -288,6 +298,111 @@ impl OutboundClient {
     ) -> Result<Value, ApiError> {
         self.send_governed("GET", url, headers, None, retryable, interface, provider)
             .await
+    }
+
+    /// 治理化**原始**出向：超时、重试（网络错误与 5xx，`retryable=true` 时）、计量
+    /// 与 [`OutboundClient::post_json`] 同套（每次调用恰一条 `outbound_call_log`）；
+    /// 差异有二（刻意）：
+    /// 1. **不做 JSON 解析**——返回原文文本（应答验签、`204` 无内容、非 JSON 载荷）；
+    /// 2. **非 2xx 不转 Err**——由调用方按 provider 契约解析错误体（HTTP 层已落计量 status）。
+    ///
+    /// 传输层错误（连接/超时）重试耗尽后仍返回 Err。
+    #[allow(clippy::too_many_arguments)] // 出向请求参数（通道/重试/计量归因）
+    pub async fn send_raw(
+        &self,
+        method: &str,
+        url: &str,
+        headers: &[(String, String)],
+        body: Option<Value>,
+        retryable: bool,
+        interface: &str,
+        provider: &str,
+    ) -> Result<RawResponse, ApiError> {
+        if self.config.mock {
+            return Err(ApiError::Internal(
+                "OutboundClient 处于 mock 模式，不能发起真实调用".into(),
+            ));
+        }
+        let request_id = format!(
+            "outbound-{}-{}",
+            interface.replace('/', "_"),
+            chrono::Utc::now().timestamp_millis()
+        );
+        let started = std::time::Instant::now();
+        let max_attempts = if retryable { 3 } else { 1 };
+        let mut last_err: Option<ApiError> = None;
+
+        for attempt in 0..max_attempts {
+            let mut req = match method {
+                "GET" => self.client.get(url),
+                _ => self.client.post(url),
+            };
+            for (k, v) in headers {
+                req = req.header(k, v);
+            }
+            if let Some(b) = &body {
+                req = req
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .json(b);
+            }
+            match req.send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let resp_headers: Vec<(String, String)> = resp
+                        .headers()
+                        .iter()
+                        .filter_map(|(k, v)| {
+                            v.to_str()
+                                .ok()
+                                .map(|s| (k.as_str().to_string(), s.to_string()))
+                        })
+                        .collect();
+                    let body_text = resp.text().await.unwrap_or_default();
+                    if status.is_server_error() && retryable && attempt + 1 < max_attempts {
+                        last_err = Some(ApiError::ServiceUnavailable(format!(
+                            "{} HTTP {}: {}",
+                            interface,
+                            status,
+                            body_text.chars().take(200).collect::<String>()
+                        )));
+                        let delay = backoff_delay_ms(attempt);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        continue;
+                    }
+                    self.log_call(
+                        provider,
+                        interface,
+                        method,
+                        if status.is_success() { "ok" } else { "error" },
+                        started,
+                        &request_id,
+                    )
+                    .await;
+                    return Ok(RawResponse {
+                        status: status.as_u16(),
+                        headers: resp_headers,
+                        body: body_text,
+                    });
+                }
+                Err(e) => {
+                    last_err = Some(ApiError::ServiceUnavailable(format!(
+                        "{} request failed: {}",
+                        interface, e
+                    )));
+                    if retryable && attempt + 1 < max_attempts {
+                        let delay = backoff_delay_ms(attempt);
+                        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+
+        self.log_call(provider, interface, method, "error", started, &request_id)
+            .await;
+        Err(last_err
+            .unwrap_or_else(|| ApiError::ServiceUnavailable(format!("{} failed", interface))))
     }
 
     async fn post_json_governed(

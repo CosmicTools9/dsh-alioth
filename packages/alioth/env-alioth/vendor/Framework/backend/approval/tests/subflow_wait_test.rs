@@ -172,6 +172,35 @@ async fn instance_total(pool: &PgPool, flow_id: i64) -> i64 {
     .unwrap()
 }
 
+async fn mark_published(pool: &sqlx::PgPool, flow_id: i64) {
+    let existing: Option<i64> = sqlx::query_scalar(
+        r#"SELECT id FROM isahl."zc_id_stus-process" WHERE code = 'published' AND deleted_at IS NULL LIMIT 1"#,
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap();
+    let status_id: i64 = match existing {
+        Some(id) => id,
+        None => sqlx::query_scalar(
+            r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice, flag)
+                   VALUES (isahl.gen_next_uid(105), 'published', '已发布', 'doing') RETURNING id"#,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+    };
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
+           VALUES (isahl.gen_next_uid(260), $1, $2)
+           ON CONFLICT DO NOTHING"#,
+    )
+    .bind(flow_id)
+    .bind(status_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn subflow_wait_publish_requires_end_in_target() {
     let pool = connect_test_db().await;
@@ -189,13 +218,21 @@ async fn subflow_wait_publish_requires_end_in_target() {
             {"id": "e", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });
+    // 负向图：wait 语义要求 target 含 end——本图**有意**无 end 且子审批无出边（勿补链）
     let child_no_end = json!({
         "version": 1,
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
-            {"id": "a", "type": "approval", "label": "子审批", "mode": "or_sign"}
+            {"id": "a", "type": "approval", "label": "子审批", "mode": "or_sign"},
         ]
     });
+    let code_bad = format!(
+        "SW-CHILD-NOEND-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
     let code_ok = format!(
         "SW-CHILD-OK-{}",
         std::time::SystemTime::now()
@@ -213,17 +250,14 @@ async fn subflow_wait_publish_requires_end_in_target() {
     let cf2 = create_flow(
         &pool,
         "子流程-NoEnd",
-        "SW-CHILD-NOEND",
+        &code_bad,
         Some(scope_id),
         &child_no_end,
     )
     .await;
-    let (s, _) = post_json!(
-        &app,
-        &format!("/test/approval-flows/{cf2}/publish"),
-        json!({})
-    );
-    assert_eq!(s, 200);
+    // 静态扫描后无 end 图走端点必 400——本测试的负向语义在父级 wait 校验，
+    // 故子流程发布态直写 DB（与 gateway_capabilities 的 mark_published 先例一致）
+    mark_published(&pool, cf2).await;
 
     // wait=true + 含 end target → 200 且物化 wait
     let parent = json!({
@@ -231,7 +265,8 @@ async fn subflow_wait_publish_requires_end_in_target() {
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "sub", "type": "subflow", "label": "子流程", "wait": true, "target": code_ok, "next": [{"to": 2}]},
-            {"id": "b", "type": "approval", "label": "父后续", "mode": "or_sign"}
+            {"id": "b", "type": "approval", "label": "父后续", "mode": "or_sign", "next": [{"to": 3}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let pf = create_flow(&pool, "父流程", "SW-PARENT", Some(scope_id), &parent).await;
@@ -260,13 +295,14 @@ async fn subflow_wait_publish_requires_end_in_target() {
         "version": 1,
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
-            {"id": "sub", "type": "subflow", "label": "子流程", "wait": true, "target": "SW-CHILD-NOEND"}
+            {"id": "sub", "type": "subflow", "label": "子流程", "wait": true, "target": code_bad.clone(), "next": [{"to": 2}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let pf2 = create_flow(
         &pool,
         "父流程-Bad",
-        "SW-PARENT-BAD",
+        &format!("SW-PARENT-BAD-{}", code_bad.rsplit('-').next().unwrap()),
         Some(scope_id),
         &parent2,
     )
@@ -318,7 +354,8 @@ async fn subflow_wait_resumes_parent_after_child_end() {
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "sub", "type": "subflow", "label": "子流程", "wait": true, "target": code_c, "next": [{"to": 2}]},
-            {"id": "b", "type": "approval", "label": "父后续", "mode": "or_sign"}
+            {"id": "b", "type": "approval", "label": "父后续", "mode": "or_sign", "next": [{"to": 3}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let pf = create_flow(&pool, "父流程", "SW-P", Some(scope_id), &parent).await;

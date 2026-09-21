@@ -16,8 +16,10 @@ pub enum AlertFrequency {
 pub struct AlertConfig {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub rule_id: Option<i64>, // 关联特定规则
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub collection_id: Option<i64>,
     pub name: String,

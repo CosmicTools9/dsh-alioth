@@ -37,10 +37,18 @@ async fn insert_storage_row(
     .fetch_one(pool)
     .await
     .expect("insert cap scalar");
+    // 固定 id 对跨轮残留占唯一键（含 COALESCE 表达式索引）——upsert 换代
+    // 载体迁移（用户裁决 2026-09-21，报缺产物 R6）：库存关系行原写读在声明语义
+    // 「关联-文件↔URL」的桥表上（挪用）；合法载体 = `zc_id_prod-payload_rr_stor-container`
+    // （关联-载荷↔容器，⊂ `zc_id_production_rr_storage`；mv_inventory 读父表故照常可见）。
     sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_file_rr_url"
+        r#"INSERT INTO isahl."zc_id_prod-payload_rr_stor-container"
            (ref_left, ref_right, qk_qty, qk_p_capacity, code)
-           VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (ref_left, ref_right, COALESCE(qk_period, '-1'::integer::bigint)) WHERE deleted_at IS NULL
+           DO UPDATE SET qk_qty = EXCLUDED.qk_qty, qk_p_capacity = EXCLUDED.qk_p_capacity,
+                         code = EXCLUDED.code
+           RETURNING id"#,
     )
     .bind(production)
     .bind(storage)
@@ -66,6 +74,15 @@ async fn list_with_qty_capacity() {
     setup_test_schema(&pool).await.expect("setup failed");
     let production = 8_000_000_001_i64;
     let storage = 8_000_000_002_i64;
+
+    // 固定 id 夹具：前轮中断残留行占唯一键（uq_zc_id_prod-payload_rr_stor-container(ref_left,ref_right,qk_period)）——
+    // 前置按 id 域清场（这两个 id 恒属本测试族）
+    sqlx::query(r#"DELETE FROM isahl."zc_id_prod-payload_rr_stor-container" WHERE ref_left = $1 AND ref_right = $2"#)
+        .bind(production)
+        .bind(storage)
+        .execute(&pool)
+        .await
+        .expect("cleanup stale rr_url");
 
     insert_storage_row(&pool, production, storage, 120, 200).await;
     refresh_view(&pool).await;

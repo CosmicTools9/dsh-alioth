@@ -18,7 +18,8 @@
 #   3. source guard-database-tier.sh
 #   4. 调用 guard_database_tier <mode> <Component> <env_file>
 #   5. 失败 exit 1（阻断 cargo run 启动）
-#   6. 成功 exec <command...> 替换当前进程
+#   6. 目标目录占用可见化：CARGO_TARGET_DIR 被别的 cargo 持有时打印持有者（PID + 命令行）
+#   7. 成功 exec <command...> 替换当前进程
 
 set -e
 
@@ -59,6 +60,17 @@ fi
 # ── Resolve helper script location ──
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# ── 目标目录占用可见化（fix-build-deploy-chain-portability §6）──
+# 组件任务的 cargo 目标目录（用途 meta 等）可能正被别的 cargo 占用（并发测试/构建/dev）：
+# 此时 cargo 会**静默排队**，表现为「任务卡住」。此处只做可见化——打印持有者 PID + 命令行 +
+# 隔离建议，不阻断（排队本身是对的，用户需要知道在等谁）。放在 DB 守卫之前：它是纯信息，与
+# tiers 校验正交。
+if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    # shellcheck source=cargo-run.sh
+    source "${SCRIPT_DIR}/cargo-run.sh"
+    cargo_target_conflict_report "${CARGO_TARGET_DIR}" "cargo 目标目录（${COMPONENT} 组件任务）" || true
+fi
 
 # ── Load tier guard ──
 # shellcheck source=guard-database-tier.sh

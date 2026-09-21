@@ -74,5 +74,6 @@ ontology-binding = { path = "../../Framework/backend/ontology-binding" }
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
+actix-http = { workspace = true }
 actix-rt = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json", "macros"] }

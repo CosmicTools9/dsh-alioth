@@ -10,7 +10,7 @@
 
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 #[derive(Debug, Deserialize)]
 pub struct StandardSearchReq {
@@ -38,34 +38,80 @@ pub struct StandardSearchResp {
     pub total: usize,
 }
 
-const ALL_LEAF_TABLES: [&str; 9] = [
-    "zc_id_stan-air-caac-article",
-    "zc_id_stan-air-faa-article",
-    "zc_id_stan-air-easa-article",
-    "zc_id_stan-air-icao-article",
-    "zc_id_stan-fin-cas-article",
-    "zc_id_stan-fin-ifrs-article",
-    "zc_id_stan-fin-gaap-article",
-    "zc_id_stan-operation",
-    "zc_id_stan-prod_quality",
+/// 叶表检索 SQL（编译期固化：表名内嵌为字面量；`$pred` 只承载 `_t_` 谓词文本，不是表名）。
+macro_rules! leaf_sql {
+    ($t:literal, $pred:literal) => {
+        concat!(
+            "SELECT id, code, notice, comments, _t_, _f_ FROM isahl.\"",
+            $t,
+            "\" \
+             WHERE deleted_at IS NULL \
+               AND (notice ILIKE '%' || $1 || '%' OR comments ILIKE '%' || $1 || '%') ",
+            $pred,
+            " \
+             LIMIT $2"
+        )
+    };
+}
+
+/// 叶表静态规格：表名与两种 `level` 形态的 SQL 全部编译期固化。
+/// `sql` 不绑 `$3`；`sql_with_level` 多一个 `_t_ = $3` 谓词（`$1` keyword、`$2` limit 序号不变）。
+struct LeafSql {
+    table: &'static str,
+    sql: &'static str,
+    sql_with_level: &'static str,
+}
+
+macro_rules! leaf {
+    ($t:literal) => {
+        LeafSql {
+            table: $t,
+            sql: leaf_sql!($t, ""),
+            sql_with_level: leaf_sql!($t, "AND _t_ = $3"),
+        }
+    };
+}
+
+static LEAF_AIR_CAAC: LeafSql = leaf!("zc_id_stan-air-caac-article");
+static LEAF_AIR_FAA: LeafSql = leaf!("zc_id_stan-air-faa-article");
+static LEAF_AIR_EASA: LeafSql = leaf!("zc_id_stan-air-easa-article");
+static LEAF_AIR_ICAO: LeafSql = leaf!("zc_id_stan-air-icao-article");
+static LEAF_FIN_CAS: LeafSql = leaf!("zc_id_stan-fin-cas-article");
+static LEAF_FIN_IFRS: LeafSql = leaf!("zc_id_stan-fin-ifrs-article");
+static LEAF_FIN_GAAP: LeafSql = leaf!("zc_id_stan-fin-gaap-article");
+static LEAF_OPERATION: LeafSql = leaf!("zc_id_stan-operation");
+static LEAF_QUALITY: LeafSql = leaf!("zc_id_stan-prod_quality");
+
+/// 全部叶表（空 scopes = 全检；顺序与原常量数组一致）。
+static ALL_LEAF_TABLES: [&LeafSql; 9] = [
+    &LEAF_AIR_CAAC,
+    &LEAF_AIR_FAA,
+    &LEAF_AIR_EASA,
+    &LEAF_AIR_ICAO,
+    &LEAF_FIN_CAS,
+    &LEAF_FIN_IFRS,
+    &LEAF_FIN_GAAP,
+    &LEAF_OPERATION,
+    &LEAF_QUALITY,
 ];
 
-fn resolve_tables(scopes: &[String]) -> Vec<&'static str> {
+/// scope → 叶表静态规格（未知 scope 忽略；空列表 = 全部登记叶表）。
+fn resolve_tables(scopes: &[String]) -> Vec<&'static LeafSql> {
     if scopes.is_empty() {
         return ALL_LEAF_TABLES.to_vec();
     }
     scopes
         .iter()
         .filter_map(|s| match s.as_str() {
-            "air" | "air-caac" => Some("zc_id_stan-air-caac-article"),
-            "air-faa" => Some("zc_id_stan-air-faa-article"),
-            "air-easa" => Some("zc_id_stan-air-easa-article"),
-            "air-icao" => Some("zc_id_stan-air-icao-article"),
-            "fin" | "fin-cas" => Some("zc_id_stan-fin-cas-article"),
-            "fin-ifrs" => Some("zc_id_stan-fin-ifrs-article"),
-            "fin-gaap" => Some("zc_id_stan-fin-gaap-article"),
-            "operation" => Some("zc_id_stan-operation"),
-            "quality" => Some("zc_id_stan-prod_quality"),
+            "air" | "air-caac" => Some(&LEAF_AIR_CAAC),
+            "air-faa" => Some(&LEAF_AIR_FAA),
+            "air-easa" => Some(&LEAF_AIR_EASA),
+            "air-icao" => Some(&LEAF_AIR_ICAO),
+            "fin" | "fin-cas" => Some(&LEAF_FIN_CAS),
+            "fin-ifrs" => Some(&LEAF_FIN_IFRS),
+            "fin-gaap" => Some(&LEAF_FIN_GAAP),
+            "operation" => Some(&LEAF_OPERATION),
+            "quality" => Some(&LEAF_QUALITY),
             _ => None,
         })
         .collect()
@@ -86,15 +132,13 @@ pub async fn standard_search(
     let level_filter = req.level.as_deref();
 
     let mut hits: Vec<StandardHit> = Vec::new();
-    'outer: for table in &tables {
-        let sql = format!(
-            "SELECT id, code, notice, comments, _t_, _f_ FROM isahl.\"{}\" \
-             WHERE deleted_at IS NULL AND (notice ILIKE '%' || $1 || '%' OR comments ILIKE '%' || $1 || '%') \
-             {} \
-             LIMIT $2",
-            table,
-            if level_filter.is_some() { "AND _t_ = $3" } else { "" },
-        );
+    'outer: for leaf in &tables {
+        // 表名与 SQL 均来自编译期静态注册表；keyword / level / limit 一律参数绑定。
+        let sql = if level_filter.is_some() {
+            leaf.sql_with_level
+        } else {
+            leaf.sql
+        };
         for kw in &req.keywords {
             let mut q = sqlx::query_as::<
                 _,
@@ -106,7 +150,7 @@ pub async fn standard_search(
                     Option<String>,
                     Option<String>,
                 ),
-            >(AssertSqlSafe(sql.as_str()))
+            >(sql)
             .bind(kw)
             .bind(max_results);
             if let Some(level) = level_filter {
@@ -125,7 +169,7 @@ pub async fn standard_search(
                     article_code: code,
                     article_title: notice,
                     article_body: comments,
-                    source_table: table.to_string(),
+                    source_table: leaf.table.to_string(),
                     level,
                     issuer,
                 });

@@ -4,8 +4,15 @@
   "domain": "量纲基础",
   "dtoDependencies": [],
   "dtoExposes": {
-    "queries": ["list_refs", "get_refs"],
-    "refs": ["scalar_price", "measurement_unit", "exchange_rate"]
+    "queries": [
+      "list_refs",
+      "get_refs"
+    ],
+    "refs": [
+      "scalar_price",
+      "measurement_unit",
+      "exchange_rate"
+    ]
   },
   "hasBackend": true,
   "hasFrontend": false,
@@ -15,11 +22,6 @@
   "ontology": {
     "entities": [
       {
-        "coordinates": {
-          "factor": "FGA",
-          "function": "↑_DA",
-          "scene": "JC"
-        },
         "field_mappings": [
           {
             "column": "notice",
@@ -146,11 +148,6 @@
         "table": "isahl.zc_id_rate"
       },
       {
-        "coordinates": {
-          "factor": "FGA",
-          "function": "↑_GA",
-          "scene": "JC"
-        },
         "field_mappings": [
           {
             "column": "notice",

@@ -15,9 +15,9 @@ use common::data::ApiResponse;
 use common::permissions::require_resource_access;
 use common::AliothError as ApiError;
 use serde::Deserialize;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
-use crate::handlers::subjects::ensure_subject_exists;
+use crate::handlers::subjects::{ensure_subject_exists, resolve_real_rights_id_opt};
 
 #[derive(Debug, Deserialize)]
 pub struct AddSubjectRefRequest {
@@ -27,32 +27,70 @@ pub struct AddSubjectRefRequest {
     /// 期间标量引用（qk_period，可空）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub period_id: Option<i64>,
+    /// 物权分类 code（`zc_id_cate-real_rights`，如 OWNERSHIP 所有权 / USUFRUCT 用益物权）；
+    /// 未传 = 不标注（模型侧非必填）
+    #[serde(default)]
+    pub real_rights: Option<String>,
 }
 
-/// 桥配置（白名单字面量，无注入面）
+/// 桥配置（白名单字面量，无注入面）；SQL 编译期固化（表名以宏字面量出现，正文单一来源）
 struct BridgeSpec {
-    table: &'static str,
     label: &'static str,
+    select_sql: &'static str,
+    exists_sql: &'static str,
+    insert_sql: &'static str,
+    soft_delete_sql: &'static str,
+}
+
+macro_rules! bridge_spec_sql {
+    ($table:literal) => {
+        BridgeSpec {
+            label: "",
+            select_sql: concat!(
+                "SELECT b.id, b.ref_right, b.qk_period, b.comments, b.ck_real_rights, \
+                 t.notice AS target_notice, t.code AS target_code, rr.notice AS real_rights_name \
+                 FROM \"isahl\".\"", $table, "\" b \
+                 LEFT JOIN \"isahl\".\"zc_id_lifecycle\" t ON t.id = b.ref_right AND t.deleted_at IS NULL \
+                 LEFT JOIN \"isahl\".\"zc_id_cate-real_rights\" rr ON rr.id = b.ck_real_rights AND rr.deleted_at IS NULL \
+                 WHERE b.ref_left = $1 AND b.deleted_at IS NULL ORDER BY b.id"
+            ),
+            exists_sql: concat!(
+                "SELECT id FROM \"isahl\".\"", $table,
+                "\" WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL LIMIT 1"
+            ),
+            insert_sql: concat!(
+                "INSERT INTO \"isahl\".\"", $table,
+                "\" (notice, ref_left, ref_right, qk_period, ck_real_rights, created_by_id, updated_by_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id"
+            ),
+            soft_delete_sql: concat!(
+                "UPDATE \"isahl\".\"", $table,
+                "\" SET deleted_at = NOW(), deleted_by_id = $3 WHERE id = $1 AND ref_left = $2 AND deleted_at IS NULL"
+            ),
+        }
+    };
 }
 
 fn bridge_spec(kind: &str) -> Option<BridgeSpec> {
     match kind {
         "places" => Some(BridgeSpec {
-            table: "zc_id_subjects_rr_place",
             label: "场所",
+            ..bridge_spec_sql!("zc_id_subjects_rr_place")
         }),
         "containers" => Some(BridgeSpec {
-            table: "zc_id_subjects_rr_container",
             label: "容器",
+            ..bridge_spec_sql!("zc_id_subjects_rr_container")
         }),
         _ => None,
     }
 }
 
-/// 桥表行（id/ref_right/qk_period/comments/target_notice/target_code）
+/// 桥表行（id/ref_right/qk_period/comments/ck_real_rights/target_notice/target_code/real_rights_name）
 type BridgeRow = (
     i64,
     i64,
+    Option<i64>,
+    Option<String>,
     Option<i64>,
     Option<String>,
     Option<String>,
@@ -64,31 +102,27 @@ async fn list_bridge(
     subject_id: i64,
     spec: &BridgeSpec,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
-    // 表名为白名单字面量（bridge_spec），AssertSqlSafe 仅放行这三张桥表
-    let sql = format!(
-        "SELECT b.id, b.ref_right, b.qk_period, b.comments, t.notice AS target_notice, t.code AS target_code \
-         FROM \"isahl\".\"{}\" b \
-         LEFT JOIN \"isahl\".\"zc_id_lifecycle\" t ON t.id = b.ref_right AND t.deleted_at IS NULL \
-         WHERE b.ref_left = $1 AND b.deleted_at IS NULL ORDER BY b.id",
-        spec.table
-    );
-    let rows: Vec<BridgeRow> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
+    let rows: Vec<BridgeRow> = sqlx::query_as(spec.select_sql)
         .bind(subject_id)
         .fetch_all(pool)
         .await
         .map_err(ApiError::from_sqlx)?;
     Ok(rows
         .into_iter()
-        .map(|(id, ref_right, qk_period, comments, tnotice, tcode)| {
-            serde_json::json!({
-                "id": id.to_string(),
-                "target_id": ref_right.to_string(),
-                "period_id": qk_period.map(|v| v.to_string()),
-                "comments": comments,
-                "target_notice": tnotice,
-                "target_code": tcode,
-            })
-        })
+        .map(
+            |(id, ref_right, qk_period, comments, real_rights, tnotice, tcode, rrnotice)| {
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "target_id": ref_right.to_string(),
+                    "period_id": qk_period.map(|v| v.to_string()),
+                    "comments": comments,
+                    "target_notice": tnotice,
+                    "target_code": tcode,
+                    "real_rights": real_rights.map(|v| v.to_string()),
+                    "real_rights_name": rrnotice,
+                })
+            },
+        )
         .collect())
 }
 
@@ -115,12 +149,10 @@ async fn add_bridge(
         )));
     }
 
-    // 幂等：已存在 → 返回现有关联
-    let check_sql = format!(
-        "SELECT id FROM \"isahl\".\"{}\" WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL LIMIT 1",
-        spec.table
-    );
-    let existing: Option<i64> = sqlx::query_scalar(AssertSqlSafe(check_sql.as_str()))
+    // 物权分类（可选）：code → 字典 id，fail-fast（未知 code 400；同父关系 accounts 族同语义）
+    let real_rights_id = resolve_real_rights_id_opt(pool, body.real_rights.as_deref()).await?;
+
+    let existing: Option<i64> = sqlx::query_scalar(spec.exists_sql)
         .bind(subject_id)
         .bind(body.target_id)
         .fetch_optional(pool)
@@ -134,16 +166,12 @@ async fn add_bridge(
         );
     }
 
-    let insert_sql = format!(
-        "INSERT INTO \"isahl\".\"{}\" (notice, ref_left, ref_right, qk_period, created_by_id, updated_by_id) \
-         VALUES ($1, $2, $3, $4, $5, $5) RETURNING id",
-        spec.table
-    );
-    let rel_id: i64 = sqlx::query_scalar(AssertSqlSafe(insert_sql.as_str()))
+    let rel_id: i64 = sqlx::query_scalar(spec.insert_sql)
         .bind(format!("subject-{} {}", subject_id, spec.label))
         .bind(subject_id)
         .bind(body.target_id)
         .bind(body.period_id)
+        .bind(real_rights_id)
         .bind(user_id)
         .fetch_one(pool)
         .await
@@ -163,12 +191,7 @@ async fn delete_bridge(
     rel_id: i64,
     spec: &BridgeSpec,
 ) -> Result<HttpResponse, ApiError> {
-    let sql = format!(
-        "UPDATE \"isahl\".\"{}\" SET deleted_at = NOW(), deleted_by_id = $3 \
-         WHERE id = $1 AND ref_left = $2 AND deleted_at IS NULL",
-        spec.table
-    );
-    let rows = sqlx::query(AssertSqlSafe(sql.as_str()))
+    let rows = sqlx::query(spec.soft_delete_sql)
         .bind(rel_id)
         .bind(subject_id)
         .bind(user_id)

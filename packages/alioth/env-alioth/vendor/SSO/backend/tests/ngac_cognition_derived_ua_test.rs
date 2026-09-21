@@ -41,13 +41,18 @@ struct Fixture {
     email: String,
     employee_id: i64,
     position_id: i64,
-    position_code: String,
+    /// 视角关联行 id（标签宿主：`zc_id_relation-post_view_r_tags.ref_left`）
+    pair_id: i64,
     tag_id: i64,
     tag_code: String,
 }
 
 /// 建「任职岗位 + 岗位视角标签」链路的用户（同 me_subject_perspective 同构；
 /// 主体绑定非本 change 测试面，不建 subject）。
+/// 类别字典基表行 code——`position:` 派生 UA 命名依据（NGAC_SPEC §2.2.3：取 `ck_category` 基表行 code，
+/// 岗位行 code 不参与派生命名）
+const COG_CAT_CODE: &str = "COG-TEST-CAT";
+
 async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     let email = format!("cog_derived_{}@alioth.test", suffix);
     sqlx::query(
@@ -77,9 +82,9 @@ async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     .await;
     let _ = sqlx::query(
         "UPDATE isahl.\"zc_id_relation-post_view_r_tags\" SET deleted_at = NOW() \
-         WHERE ref_left IN (SELECT id FROM isahl.\"zc_id_subj-position\" p \
-            JOIN isahl.\"zc_id_subj-post_rr_employee\" spre ON spre.ref_left = p.id \
-            WHERE spre.ref_right IN (SELECT id FROM isahl.\"zc_id_empl-natural\" WHERE fk_user = $1))",
+         WHERE ref_left IN (SELECT v.id FROM isahl.\"zc_id_subj-post_rr_view\" v \
+            WHERE v.ref_left IN (SELECT spre.ref_left FROM isahl.\"zc_id_subj-post_rr_employee\" spre \
+               WHERE spre.ref_right IN (SELECT id FROM isahl.\"zc_id_empl-natural\" WHERE fk_user = $1)))",
     )
     .bind(user_id)
     .execute(pool)
@@ -102,19 +107,43 @@ async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     .await
     .expect("insert employee");
 
+    // 类别字典基表行（`position:` 派生 UA 依据 = 岗位 ck_category → `zc_id_category` **基表行** code；
+    // 子族字典不派生——见 NGAC_SPEC §2.2.3）
+    sqlx::query(
+        "INSERT INTO isahl.zc_id_category (code, notice, created_by_id) \
+         SELECT $1, '认知测试类别', 1 \
+         WHERE NOT EXISTS (SELECT 1 FROM isahl.zc_id_category c \
+                           WHERE c.code = $1 \
+                             AND c.tableoid = 'isahl.zc_id_category'::regclass \
+                             AND c.deleted_at IS NULL)",
+    )
+    .bind(COG_CAT_CODE)
+    .execute(pool)
+    .await
+    .expect("ensure base category");
+    let category_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl.zc_id_category WHERE code = $1 \
+         AND tableoid = 'isahl.zc_id_category'::regclass AND deleted_at IS NULL LIMIT 1",
+    )
+    .bind(COG_CAT_CODE)
+    .fetch_one(pool)
+    .await
+    .expect("fetch base category");
+
     let position_code = format!("COG-POS-{}", suffix);
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
         .await
         .expect("resolve dk coords");
     let position_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
-         VALUES (isahl.gen_next_zuid(), '认知测试岗位', $1, 1, $2, $3, $4) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, ck_category, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '认知测试岗位', $1, $5, 1, $2, $3, $4) RETURNING id",
     )
     .bind(&position_code)
     .bind(dk_scene)
     .bind(dk_factor)
     .bind(dk_function)
+    .bind(category_id)
     .fetch_one(pool)
     .await
     .expect("insert position");
@@ -137,22 +166,31 @@ async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     .fetch_one(pool)
     .await
     .expect("insert view tag");
-    sqlx::query(
-        "INSERT INTO isahl.\"zc_id_relation-post_view_r_tags\" (id, notice, ref_left, ref_right, created_by_id)
-         VALUES (isahl.gen_next_uid(180), '岗位视角', $1, $2, 1)",
+    let pair_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl.\"zc_id_subj-post_rr_view\" (id, notice, ref_left, ref_right, created_by_id)
+         VALUES (isahl.gen_next_uid(320), '认知测试视角绑定', $1, $2, 1) RETURNING id",
     )
     .bind(position_id)
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("link view pair");
+    sqlx::query(
+        "INSERT INTO isahl.\"zc_id_relation-post_view_r_tags\" (id, notice, ref_left, ref_right, created_by_id)
+         VALUES (isahl.gen_next_uid(180), '视角关联行标签', $1, $2, 1)",
+    )
+    .bind(pair_id)
     .bind(tag_id)
     .execute(pool)
     .await
-    .expect("link position tag");
+    .expect("link view pair tag");
 
     Fixture {
         user_id,
         email,
         employee_id,
         position_id,
-        position_code,
+        pair_id,
         tag_id,
         tag_code,
     }
@@ -168,9 +206,13 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
     let _ = sqlx::query(
         "UPDATE isahl.\"zc_id_relation-post_view_r_tags\" SET deleted_at = NOW() WHERE ref_left = $1",
     )
-    .bind(f.position_id)
+    .bind(f.pair_id)
     .execute(pool)
     .await;
+    let _ = sqlx::query("DELETE FROM isahl.\"zc_id_subj-post_rr_view\" WHERE id = $1")
+        .bind(f.pair_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl.\"zc_id_tags-post_view\" WHERE id = $1")
         .bind(f.tag_id)
         .execute(pool)
@@ -210,7 +252,7 @@ async fn cleanup_cognition_uas(pool: &PgPool, names: &[String]) {
 async fn pip_effective_set_includes_derived_uas_and_ensure_is_idempotent() {
     let pool = connect().await;
     let f = seed_cognition_user(&pool, "t1").await;
-    let pos_name = format!("position:{}", f.position_code);
+    let pos_name = format!("position:{}", COG_CAT_CODE);
     let view_name = format!("view:{}", f.tag_code);
 
     let pip = PostgresPip::new(pool.clone());
@@ -321,36 +363,46 @@ async fn derived_view_ua_grants_decide_and_list_until_employment_ends() {
     .await
     .expect("association");
 
+    let ast = common::test_auth_state();
+    let token = mint_token(&ast, f.user_id, &f.email);
+    // 生产接线镜像：`/api/ngac` scope 内层 RequireAuth（claims 注入）+ pdp::configure_routes
+    // （服务决策端点在 `/pdp/*` 子 scope；SECURITY_SPEC §3.4 全保护，无 noauth 白名单）
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(common::test_auth_state()))
-            .route(
-                "/api/ngac/decide",
-                web::post().to(gateway_sso::ngac::pdp::ngac_decide),
+            .app_data(web::Data::new(ast.clone()))
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
             ),
     )
     .await;
 
     let decide = |uid: i64| {
         let app = &app;
+        let token = token.clone();
         async move {
             let resp = test::call_service(
                 app,
                 test::TestRequest::post()
-                    .uri("/api/ngac/decide")
+                    .uri("/api/ngac/pdp/decide")
+                    .insert_header(("Authorization", format!("Bearer {}", token)))
                     .set_json(
                         json!({"user_id": uid, "resource": "cogtest:424242", "action": "cog-read"}),
                     )
                     .to_request(),
             )
             .await;
-            let body: serde_json::Value = test::read_body_json(resp).await;
-            body["permitted"].as_bool().unwrap_or(false)
+            test::read_body_json::<serde_json::Value, _>(resp).await
         }
     };
 
-    assert!(decide(f.user_id).await, "持有 view: UA 的用户应被放行");
+    let d = decide(f.user_id).await;
+    assert!(
+        d["permitted"].as_bool().unwrap_or(false),
+        "持有 view: UA 的用户应被放行: {d}"
+    );
 
     // RLS 列表：get_accessible_resource_ids 应含资源行
     let ids = pip
@@ -371,7 +423,11 @@ async fn derived_view_ua_grants_decide_and_list_until_employment_ends() {
     .execute(&pool)
     .await
     .expect("soft-delete employment");
-    assert!(!decide(f.user_id).await, "任职终止后派生授权应撤销");
+    let d2 = decide(f.user_id).await;
+    assert!(
+        !d2["permitted"].as_bool().unwrap_or(false),
+        "任职终止后派生授权应撤销: {d2}"
+    );
 
     // 清理
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_association WHERE fk_object_attribute = $1")
@@ -498,7 +554,7 @@ async fn me_permissions_matrix_includes_derived_grant() {
 async fn assignment_expires_at_write_path() {
     let pool = connect().await;
     let f = seed_cognition_user(&pool, "t4").await;
-    let pos_name = format!("position:{}", f.position_code);
+    let pos_name = format!("position:{}", COG_CAT_CODE);
 
     let pip = PostgresPip::new(pool.clone());
     pip.get_all_user_attributes_with_inheritance(f.user_id)

@@ -19,6 +19,7 @@
  * ActivityWorkspaceDock / MobileSheet
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useT } from './shared-i18n';
 
 // 轻量 cn: 与生产代码的 tailwind-merge 行为等价,仅做过滤拼接
 function cn(...inputs: Array<string | false | null | undefined>): string {
@@ -54,6 +55,9 @@ export interface NavItemDef {
   badge?: string | number;
   children?: NavItemDef[];
   section?: string;
+  /** 禁用态：可见但不可点（原生 disabled + 灰化）；提示文案由宿主经 disabledHint 传入 */
+  disabled?: boolean;
+  disabledHint?: string;
 }
 
 export interface NavGroup {
@@ -76,7 +80,9 @@ export interface Breadcrumb {
 export interface WorkspaceTrigger {
   id: string;
   icon: string;
-  title: string;
+  title?: string;
+  /** 字典键：优先于 title（本模块 i18n 无 fallback，缺键会渲染键名） */
+  titleKey?: string;
   pendingCount?: number;
   unreadCount?: number;
 }
@@ -99,9 +105,9 @@ export interface LocaleOption {
  * （Gateway 完整版的 ai / approval / contacts 槽位在简化入口中移除。）
  */
 export const DEFAULT_ACTIVITY_TRIGGERS: WorkspaceTrigger[] = [
-  { id: 'search', icon: 'search', title: '全文搜索' },
-  { id: 'inbox', icon: 'mail', title: '站内信' },
-  { id: 'calendar', icon: 'calendar', title: '日历' },
+  { id: 'search', icon: 'search', titleKey: 'dock.search' },
+  { id: 'inbox', icon: 'mail', titleKey: 'dock.inbox' },
+  { id: 'calendar', icon: 'calendar', titleKey: 'dock.calendar' },
 ];
 
 // ── 子组件 ──
@@ -119,6 +125,7 @@ export function ActivityLogo({
   showAppName?: string;
   pageTitle?: string;
 }) {
+  const t = useT();
   const displayText = showAppName || pageTitle || brand;
   return (
     <a
@@ -127,7 +134,7 @@ export function ActivityLogo({
         'flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline shrink-0',
         showAppName && 'w-60',
       )}
-      title={homeTitle || '返回应用首页'}
+      title={homeTitle || t('shell.backHome')}
     >
       <svg className="w-7 h-7 text-primary shrink-0" viewBox="0 0 32 32" fill="none">
         <path
@@ -159,12 +166,13 @@ export function ModuleTabs({
   tabs: ModuleTab[];
   onTabClick?: (id: string) => void;
 }) {
+  const t = useT();
   if (!tabs || tabs.length === 0) return null;
   return (
     <div className="relative flex items-center min-w-0 flex-1" data-testid="scroll-tabs">
       <div
         role="tablist"
-        aria-label="模块导航"
+        aria-label={t('shell.navModule')}
         className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar min-w-0 flex-1 "
       >
         {tabs.map((t) => {
@@ -221,7 +229,8 @@ export function Breadcrumbs({ crumbs }: { crumbs: Breadcrumb[] }) {
 export function SearchSlot({ placeholder }: { placeholder?: string }) {
   const [expanded, setExpanded] = useState(false);
   const [value, setValue] = useState('');
-  const resolvedPlaceholder = placeholder || '全文搜索...';
+  const t = useT();
+  const resolvedPlaceholder = placeholder || t('dock.searchShortPlaceholder');
 
   if (expanded) {
     return (
@@ -239,7 +248,7 @@ export function SearchSlot({ placeholder }: { placeholder?: string }) {
             type="button"
             onClick={() => setExpanded(false)}
             className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-accent md:hidden"
-            aria-label="关闭搜索"
+            aria-label={t('shell.closeSearch')}
           >
             <span className="w-4 h-4">{icon('x', 16)}</span>
           </button>
@@ -263,8 +272,8 @@ export function SearchSlot({ placeholder }: { placeholder?: string }) {
         type="button"
         onClick={() => setExpanded(true)}
         className="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-        aria-label="搜索"
-        title="搜索"
+        aria-label={t('shell.search')}
+        title={t('shell.search')}
       >
         <span className="w-4 h-4">{icon('search', 16)}</span>
       </button>
@@ -290,6 +299,7 @@ export function LanguageSwitch({
           { code: 'en', label: 'English' },
         ];
   const [internal, setInternal] = useState(value || options[0].code);
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const current = value || internal;
@@ -321,8 +331,8 @@ export function LanguageSwitch({
           'hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent',
           open && 'bg-accent text-accent-foreground',
         )}
-        title={`语言：${currentLabel}`}
-        aria-label="语言切换"
+        title={`${t('shell.language')}{t('common.colon')}${currentLabel}`}
+        aria-label={t('shell.languageSwitch')}
         aria-expanded={open}
       >
         <span className="w-4 h-4">{icon('translate')}</span>
@@ -352,6 +362,7 @@ export function LanguageSwitch({
 
 /** 明暗主题切换 */
 export function ThemeToggle() {
+  const t = useT();
   const [isDark, setDark] = useState(
     typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
   );
@@ -366,7 +377,7 @@ export function ThemeToggle() {
       type="button"
       onClick={toggleTheme}
       className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
-      title={isDark ? '切换到浅色' : '切换到深色'}
+      title={isDark ? t('shell.themeLight') : t('shell.themeDark')}
     >
       <span className="w-4 h-4">{icon(isDark ? 'sun' : 'moon')}</span>
     </button>
@@ -390,22 +401,23 @@ export function ActionGroup({
   locale?: string;
   onLocaleChange?: (code: string) => void;
 }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-3">
       <LanguageSwitch locales={locales} value={locale} onChange={onLocaleChange} />
       <ThemeToggle />
-      {triggers.map((t) => (
+      {triggers.map((tr) => (
         <button
-          key={t.id}
+          key={tr.id}
           type="button"
-          onClick={() => onTrigger?.(t.id)}
+          onClick={() => onTrigger?.(tr.id)}
           className="relative w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
-          title={t.title}
+          title={tr.titleKey ? t(tr.titleKey) : tr.title}
         >
-          <span className="w-4 h-4">{icon(t.icon)}</span>
-          {t.pendingCount || t.unreadCount ? (
+          <span className="w-4 h-4">{icon(tr.icon)}</span>
+          {tr.pendingCount || tr.unreadCount ? (
             <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[8px] leading-none flex items-center justify-center font-bold px-1 border-2 border-card">
-              {t.unreadCount || t.pendingCount}
+              {tr.unreadCount || tr.pendingCount}
             </span>
           ) : null}
         </button>
@@ -428,6 +440,7 @@ export function UserMenu({
   /** 设置（缺省仅收起菜单） */
   onSettings?: () => void;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const initial = (user.name || 'U').charAt(0).toUpperCase();
@@ -450,7 +463,7 @@ export function UserMenu({
           'flex items-center gap-1.5 cursor-pointer border-none bg-transparent p-1 rounded-lg transition-colors hover:bg-accent',
           open && 'bg-accent',
         )}
-        aria-label="用户菜单"
+        aria-label={t('shell.userMenu')}
         aria-expanded={open}
       >
         <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
@@ -471,7 +484,7 @@ export function UserMenu({
           <div className="px-3 py-2 border-b border-border">
             <p className="text-sm font-medium truncate">{user.name}</p>
             {user.account && (
-              <p className="text-xs text-muted-foreground truncate">账号：{user.account}</p>
+              <p className="text-xs text-muted-foreground truncate">{t('shell.account')}{t('common.colon')}{user.account}</p>
             )}
             <p className="text-xs text-muted-foreground truncate">{user.email}</p>
           </div>
@@ -484,7 +497,7 @@ export function UserMenu({
               onProfile?.();
             }}
           >
-            <span className="w-4 h-4">{icon('user')}</span>个人资料
+            <span className="w-4 h-4">{icon('user')}</span>{t('scene.profile')}
           </a>
           <a
             href="#"
@@ -495,7 +508,7 @@ export function UserMenu({
               onSettings?.();
             }}
           >
-            <span className="w-4 h-4">{icon('settings')}</span>设置
+            <span className="w-4 h-4">{icon('settings')}</span>{t('scene.settings')}
           </a>
           <div className="border-t border-border mt-1 pt-1">
             <button
@@ -506,7 +519,7 @@ export function UserMenu({
                 onLogout?.();
               }}
             >
-              <span className="w-4 h-4">{icon('logOut')}</span>退出登录
+              <span className="w-4 h-4">{icon('logOut')}</span>{t('logout')}
             </button>
           </div>
         </div>
@@ -550,6 +563,7 @@ export function ActivityTopBar({
   onLocaleChange?: (code: string) => void;
   homeHref?: string;
 }) {
+  const t = useT();
   return (
     <header className="h-14 border-b flex items-center justify-between px-4 md:px-6 bg-background shrink-0">
       <div className="flex items-center gap-2 min-w-0 relative h-full">
@@ -558,7 +572,7 @@ export function ActivityTopBar({
             type="button"
             onClick={onMobileMenuToggle}
             className="md:hidden p-2 rounded-lg hover:bg-accent transition-colors"
-            aria-label="打开菜单"
+            aria-label={t('shell.openMenu')}
           >
             <span className="w-5 h-5">{icon('menu', 20)}</span>
           </button>
@@ -597,11 +611,12 @@ export function ActivityFooter({
   version: string;
   links?: { label: string; href?: string }[];
 }) {
+  const t = useT();
   const defaultLinks =
     links === undefined
       ? [
-          { label: '帮助', href: '#' },
-          { label: '隐私', href: '#' },
+          { label: t('shell.help'), href: '#' },
+          { label: t('shell.privacy'), href: '#' },
         ]
       : links;
   return (
@@ -636,7 +651,8 @@ export function ActivityWorkspaceDock({
   onClose: () => void;
   children?: React.ReactNode;
 }) {
-  return (
+
+  const t = useT();  return (
     <div
       className={cn(
         'hidden md:flex shrink-0 overflow-hidden transition-all duration-300 ease-in-out',
@@ -650,13 +666,13 @@ export function ActivityWorkspaceDock({
             type="button"
             onClick={onClose}
             className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
-            title="关闭"
+            title={t('docs.attachModal.close')}
           >
             <span className="w-4 h-4">{icon('panelRight', 16)}</span>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
-          {children || <div className="text-sm text-muted-foreground p-4">{title}内容区</div>}
+          {children || <div className="text-sm text-muted-foreground p-4">{title}{t('shell.contentArea')}</div>}
         </div>
       </div>
     </div>
@@ -744,20 +760,25 @@ export function NavItem({
   onClick: (id: string) => void;
 }) {
   const badge = item.badge;
+  const disabled = item.disabled === true;
   return (
     <button
       type="button"
+      disabled={disabled}
+      aria-disabled={disabled || undefined}
       onClick={() => onClick(item.id)}
       className={cn(
         'flex items-center rounded-md text-sm font-medium transition-colors',
         collapsed
           ? 'justify-center h-9 w-9 mx-auto my-0.5 px-2'
           : 'w-[calc(100%-1rem)] mx-2 gap-2.5 py-2 px-4',
-        active
-          ? 'bg-primary/10 text-primary font-semibold'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+        disabled
+          ? 'opacity-50 text-muted-foreground cursor-not-allowed'
+          : active
+            ? 'bg-primary/10 text-primary font-semibold'
+            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
       )}
-      title={item.label}
+      title={disabled ? item.disabledHint ?? item.label : item.label}
     >
       <span className="h-4 w-4 shrink-0">{icon(item.icon)}</span>
       {!collapsed && (
@@ -826,13 +847,14 @@ export function SidebarFoot({
   collapsed: boolean;
   onToggle: () => void;
 }) {
+  const t = useT();
   return (
     <div className="shrink-0 flex items-center border-t border-border px-3 h-10 gap-2">
       <button
         type="button"
         onClick={onToggle}
         className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer border-none bg-transparent"
-        title={collapsed ? '展开侧栏' : '折叠侧栏'}
+        title={collapsed ? t('shell.expandSidebar') : t('shell.collapseSidebar')}
       >
         <span className="w-3.5 h-3.5">{icon(collapsed ? 'panelRight' : 'panelLeft', 14)}</span>
       </button>
@@ -928,13 +950,14 @@ export function ActivityShell(props: ActivityShellProps) {
   const [internalCollapsed, setInternalCollapsed] = useState(collapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  const t = useT();
   const effectiveCollapsed = onToggle ? collapsed : internalCollapsed;
   const handleToggle = onToggle || (() => setInternalCollapsed((p) => !p));
 
   const activeTrigger = activeWorkspace
     ? resolvedTriggers.find((t) => t.id === activeWorkspace)
     : undefined;
-  const dockTitle = workspaceTitle || activeTrigger?.title || '工作区';
+  const dockTitle = workspaceTitle || (activeTrigger?.titleKey ? t(activeTrigger.titleKey) : activeTrigger?.title) || t('shell.workspace');
 
   return (
     <div className={cn('flex h-screen flex-col overflow-hidden bg-background', rootClass)}>

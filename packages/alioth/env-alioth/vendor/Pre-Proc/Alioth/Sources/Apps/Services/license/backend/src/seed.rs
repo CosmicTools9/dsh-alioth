@@ -255,6 +255,23 @@ mod tests {
             .expect("second seed should succeed");
 
         assert_eq!(second, 0, "re-seeding should be idempotent");
-        assert!(first >= 5, "should seed at least 5 licenses");
+        // 共享测试库可能已有前轮种子行（幂等 ⇒ first 可为 0）——按种子键核在册数
+        let seeded: i64 = sqlx::query_scalar(
+            r#"SELECT count(*) FROM isahl."zc_id_prod-license-purchase"
+               WHERE deleted_at IS NULL AND code = ANY($1)"#,
+        )
+        .bind(
+            all_seed_licenses()
+                .iter()
+                .map(|l| l.key.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count seeded licenses");
+        assert!(
+            seeded >= 5 || first >= 5,
+            "should seed at least 5 licenses (seeded={seeded}, new={first})"
+        );
     }
 }

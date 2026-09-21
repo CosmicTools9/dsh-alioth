@@ -1,7 +1,7 @@
 //! 版本 Handler — 自定义 CRUD（entity 共享内核 + Alioth 契约投影 + RLS/NGAC）
 //!
-//! Alioth 前端契约字段：tpl_id / version_number(=tk_version) / revision(=reversion) /
-//! previous_id(=fk_previous)。投影在壳层完成，entity 面为物理字段并集。
+//! Alioth 前端契约字段：tpl_id / version_number(=tk_version) / previous_id(=fk_previous)。
+//! 投影在壳层完成，entity 面为物理字段并集。
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
@@ -24,10 +24,11 @@ use version::entity::{
 pub struct VersionResp {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub version_number: Option<i64>,
-    pub revision: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub previous_id: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -40,7 +41,6 @@ pub struct VersionResp {
 pub struct CreateVersionReq {
     pub tpl_id: Option<i64>,
     pub version_number: Option<i64>,
-    pub revision: Option<i64>,
     pub previous_id: Option<i64>,
 }
 
@@ -49,7 +49,6 @@ pub struct CreateVersionReq {
 pub struct UpdateVersionReq {
     pub tpl_id: Option<i64>,
     pub version_number: Option<i64>,
-    pub revision: Option<i64>,
     pub previous_id: Option<i64>,
 }
 
@@ -58,7 +57,6 @@ fn to_resp(v: VersionRecord) -> VersionResp {
         id: v.id,
         tpl_id: v.tpl_id,
         version_number: v.tk_version,
-        revision: v.reversion,
         previous_id: v.fk_previous,
         created_at: v.created_at,
         updated_at: v.updated_at,
@@ -73,7 +71,6 @@ fn to_create(req: CreateVersionReq) -> CreateVersionRequest {
         comments: None,
         tk_version: req.version_number,
         tk_batch_no: None,
-        reversion: req.revision,
         fk_previous: req.previous_id,
         ck_branch: None,
         tpl_id: req.tpl_id,
@@ -87,7 +84,6 @@ fn to_update(req: UpdateVersionReq) -> UpdateVersionRequest {
         comments: None,
         tk_version: req.version_number,
         tk_batch_no: None,
-        reversion: req.revision,
         fk_previous: req.previous_id,
         ck_branch: None,
         tpl_id: req.tpl_id,

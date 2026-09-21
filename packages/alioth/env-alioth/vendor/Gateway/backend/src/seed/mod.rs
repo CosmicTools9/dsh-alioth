@@ -22,6 +22,7 @@
 pub mod app_visibility_seed;
 pub mod approval_seed;
 pub mod auth_seed;
+pub mod knowledge_graph_seed;
 pub mod ngac_seed;
 pub mod ns_seed;
 
@@ -64,6 +65,10 @@ pub async fn ensure_gateway_seed_self_check(pool: &PgPool) {
     approval.log("approval");
     ngac.log("ngac");
     app_vis.log("app-visibility");
+
+    // 知识图谱 AGE 投影自愈（链尾：对账 drift → 幂等重放 022 迁移；失败仅告警
+    // ——多跳读降级 SQL，检索端点不受影响）
+    knowledge_graph_seed::ensure_knowledge_graph_self_check(pool).await;
 
     common::telemetry::info!(
         "Gateway 通用种子自检完成：auth 新增 {}/修复 {}，approval 新增 {}/修复 {}，ngac 新增 {}/修复 {}，app-visibility 新增 {}/修复 {}",

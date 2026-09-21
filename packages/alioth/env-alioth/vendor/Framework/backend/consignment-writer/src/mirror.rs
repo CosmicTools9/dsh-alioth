@@ -29,6 +29,9 @@ pub struct OrderMirrorInput<'a> {
     pub object: Option<i64>,
     /// 日期标量引用（`qk_date`；委托链不写，派车运单链写）
     pub qk_date: Option<i64>,
+    /// 镜像合同（`fk_contract`；用户裁决 2026-09-14「镜像委托关联镜像合同」）——
+    /// 由调用方经 MIR 桥解析主单合同的镜像后给出；主单无合同或合同无镜像行 → `None`（不造值）
+    pub fk_contract: Option<i64>,
     /// 形态派生源（职能码：`↓_BE` 等六前缀之一）
     pub fn_code: &'a str,
     /// 单据标签（"订单" / "运单"）——仅用于桥行人类可读文案
@@ -55,9 +58,9 @@ pub async fn insert_order_mirror_tx(
 
     let mirror_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_orde-land"
-           (id, code, notice, comments, fk_subject, fk_object, qk_date, created_by_id, "_f_", "_t_",
-            dk_scene, dk_factor, dk_function, ak_permit_user)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, ARRAY[$7]::bigint[])
+           (id, code, notice, comments, fk_subject, fk_object, qk_date, fk_contract, created_by_id, "_f_", "_t_",
+            dk_scene, dk_factor, dk_function, ak_permit_user, ak_access_user)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, ARRAY[$8]::bigint[], ARRAY[$8]::bigint[])
            RETURNING id"#,
     )
     .bind(input.code)
@@ -66,6 +69,7 @@ pub async fn insert_order_mirror_tx(
     .bind(input.subject)
     .bind(input.object)
     .bind(input.qk_date)
+    .bind(input.fk_contract)
     .bind(input.user_id)
     .bind(form)
     .bind(tier)
@@ -79,7 +83,7 @@ pub async fn insert_order_mirror_tx(
     sqlx::query(
         r#"INSERT INTO "isahl"."zc_id_lifecycle_rr_form"
            (id, ref_left, ref_right, notice, code, comments, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, '一式两份', $3, $4, $5)"#,
+           VALUES (isahl.gen_next_uid(262), $1, $2, '一式两份', $3, $4, $5)"#,
     )
     .bind(main_order_id)
     .bind(mirror_id)
@@ -92,6 +96,30 @@ pub async fn insert_order_mirror_tx(
     .execute(&mut *conn)
     .await
     .map_err(AliothError::from_sqlx)?;
+
+    // 镜像合同 junction（fix-wz-contract-order-product-chain G5：写侧对称）——
+    // 主档侧合同挂接 = `fk_contract` 物理列 + `order_rr_contract` junction 双写；
+    // 镜像侧原仅物理列，junction 单径读者漏镜像委托。`fk_contract` 非空（= 镜像合同，
+    // 由调用方经 MIR 桥解析）时补写，NOT EXISTS 幂等（表上唯一索引为
+    // `(ref_left, ref_right, COALESCE(qk_period,-1))` 表达式索引，不用 ON CONFLICT）。
+    if let Some(mirror_contract_id) = input.fk_contract {
+        sqlx::query(
+            r#"INSERT INTO "isahl"."zc_id_order_rr_contract"
+               (id, code, notice, ref_left, ref_right, created_by_id)
+               SELECT isahl.gen_next_uid(470), $1, $2, $3, $4, $5
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM "isahl"."zc_id_order_rr_contract"
+                 WHERE ref_left = $3 AND ref_right = $4 AND deleted_at IS NULL)"#,
+        )
+        .bind(format!("ORC-{}", input.code))
+        .bind(format!("{} 镜像合同挂接", input.code))
+        .bind(mirror_id)
+        .bind(mirror_contract_id)
+        .bind(input.user_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(AliothError::from_sqlx)?;
+    }
 
     // 矩阵「镜像行与主行同等待遇：状态桥」：镜像行内即承载主行当前状态
     //（主行此刻无状态 → no-op，二者同为「新建」）。主行此后每次状态流转，

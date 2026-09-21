@@ -77,18 +77,12 @@ impl DataAnalysisAgent {
             }),
             user_selectable: true,
             sort_order: 20,
-            available_tools: vec![super::ToolDefinition {
-                name: "query_sql".to_string(),
-                description: "执行SQL查询以获取业务数据".to_string(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "SQL查询语句"}
-                    },
-                    "required": ["query"]
-                }),
-                execution_target: super::ExecutionTarget::Backend,
-            }],
+            // E6：工具定义复用 executor 单一源（原内联 JSON 与 registry 重复）；补
+            // query_schema——E2 删除 schema_catalog prompt 段后，表结构经工具按需获取。
+            available_tools: vec![
+                crate::tools::executor::QuerySqlTool::definition(),
+                crate::tools::executor::QuerySchemaTool::definition(),
+            ],
             db_access_level: super::DbAccessLevel::SchemaRestricted,
             allowed_schemas: vec!["isahl".to_string()],
             max_execution_steps: 5,

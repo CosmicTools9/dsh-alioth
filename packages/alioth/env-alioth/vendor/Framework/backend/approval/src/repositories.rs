@@ -33,6 +33,30 @@ impl From<PgPool> for ApprovalFlowRepository {
     }
 }
 
+/// 流程设计行 INSERT（7 张流程叶表各自静态固化）：表名 `$table:literal`、
+/// 正文编译期由 `concat!` 拼接——运行期零表名插值。多行字面量的缩进即 SQL 正文（勿重排）。
+macro_rules! design_insert_sql {
+    ($table:literal) => {
+        concat!(
+            "INSERT INTO isahl.\"",
+            $table,
+            "\"
+               (notice, code, comments, meta, mermaid, created_by_id,
+                dk_scene, dk_factor, dk_function, _f_, _t_)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '设计', '实例')
+               RETURNING id"
+        )
+    };
+}
+
+static DESIGN_INSERT_APPROVE: &str = design_insert_sql!("zc_id_proc-approve");
+static DESIGN_INSERT_CICD: &str = design_insert_sql!("zc_id_proc-cicd");
+static DESIGN_INSERT_LOADING: &str = design_insert_sql!("zc_id_proc-loading");
+static DESIGN_INSERT_MAKE: &str = design_insert_sql!("zc_id_proc-make");
+static DESIGN_INSERT_PROJECT: &str = design_insert_sql!("zc_id_proc-project");
+static DESIGN_INSERT_PURCHASE: &str = design_insert_sql!("zc_id_proc-purchase");
+static DESIGN_INSERT_SERVICE: &str = design_insert_sql!("zc_id_proc-service");
+
 #[async_trait]
 impl
     AliothRepository<
@@ -52,17 +76,20 @@ impl
     }
 
     async fn get(&self, id: i64) -> Result<Option<ApprovalFlow>, AliothError> {
-        sqlx::query_as::<_, ApprovalFlow>(
+        sqlx::query_as::<_, ApprovalFlow>(concat!(
             "SELECT id, notice AS name, code, t_color_, comments, meta, mermaid, \
              (SELECT rc.ref_right FROM isahl.\"zc_id_process_rr_context\" rc \
               WHERE rc.ref_left = e.id AND rc.deleted_at IS NULL \
-              ORDER BY rc.id LIMIT 1) AS fk_context, \
-             e.tableoid::regclass::text AS branch, \
+              ORDER BY rc.id LIMIT 1) AS fk_context, ",
+            common::leaf_relname!(e),
+            " AS branch, \
              (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
               JOIN isahl.\"zc_id_process_rr_context\" rc2 ON rc2.ref_right = c.id AND rc2.deleted_at IS NULL \
               WHERE rc2.ref_left = e.id AND rc2.deleted_at IS NULL AND c.deleted_at IS NULL \
               ORDER BY rc2.id LIMIT 1) AS context_concept, \
-             (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
+             (SELECT ",
+            common::leaf_relname!(c),
+            " FROM isahl.\"zc_id_proc-context\" c \
               JOIN isahl.\"zc_id_process_rr_context\" rc3 ON rc3.ref_right = c.id AND rc3.deleted_at IS NULL \
               WHERE rc3.ref_left = e.id AND rc3.deleted_at IS NULL AND c.deleted_at IS NULL \
               ORDER BY rc3.id LIMIT 1) AS context_leaf, \
@@ -71,8 +98,8 @@ impl
               WHERE ls.ref_left = e.id AND ls.deleted_at IS NULL) AS status, \
              e.meta->>'managed' AS managed_by, \
              created_at, updated_at, deleted_at \
-             FROM isahl.zc_id_process e WHERE e.id = $1 AND e.deleted_at IS NULL",
-        )
+             FROM isahl.zc_id_process e WHERE e.id = $1 AND e.deleted_at IS NULL"
+        ))
         .bind(id)
         .fetch_optional(&self.pool)
         .await
@@ -152,14 +179,14 @@ impl
         // dk 三元组经 dk.rs（JC/FTA/↑_NA 坐标码）解析；失败 warn + NULL，
         // 不写悬空 ZUID（对齐 crud::handler::resolve_dk_ctx 范式）。
         let branch = req.branch.as_deref().unwrap_or("zc_id_proc-approve");
-        let table = match branch {
-            "zc_id_proc-approve" => "isahl.\"zc_id_proc-approve\"",
-            "zc_id_proc-cicd" => "isahl.\"zc_id_proc-cicd\"",
-            "zc_id_proc-loading" => "isahl.\"zc_id_proc-loading\"",
-            "zc_id_proc-make" => "isahl.\"zc_id_proc-make\"",
-            "zc_id_proc-project" => "isahl.\"zc_id_proc-project\"",
-            "zc_id_proc-purchase" => "isahl.\"zc_id_proc-purchase\"",
-            "zc_id_proc-service" => "isahl.\"zc_id_proc-service\"",
+        let insert_sql: &'static str = match branch {
+            "zc_id_proc-approve" => DESIGN_INSERT_APPROVE,
+            "zc_id_proc-cicd" => DESIGN_INSERT_CICD,
+            "zc_id_proc-loading" => DESIGN_INSERT_LOADING,
+            "zc_id_proc-make" => DESIGN_INSERT_MAKE,
+            "zc_id_proc-project" => DESIGN_INSERT_PROJECT,
+            "zc_id_proc-purchase" => DESIGN_INSERT_PURCHASE,
+            "zc_id_proc-service" => DESIGN_INSERT_SERVICE,
             other => {
                 return Err(AliothError::Validation {
                     field: "branch".to_string(),
@@ -173,7 +200,7 @@ impl
         // 设计图 → mermaid 整体结构（保存时引擎自动生成，幂等重写）
         let mermaid = req.meta.as_ref().map(crate::mermaid::graph_to_mermaid);
         let (dk_scene, dk_factor, dk_function) =
-            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::DkJcFtaNa)
+            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::JcFtaNa)
                 .await
                 .unwrap_or_else(|e| {
                     common::telemetry::warn!(
@@ -186,15 +213,8 @@ impl
         // 流程行不再写 fk_context 物理列（模型中心已移除）；桥与流程行同事务提交，
         // 提交后回读派生字段返回（RETURNING 不派生 ctx——同语句桥行尚不可见）。
         // 静态 match 产出的固定 SQL（表名为编译期常量），AssertSqlSafe 声明已审计
-        let insert_sql = format!(
-            r#"INSERT INTO {table}
-               (notice, code, comments, meta, mermaid, created_by_id,
-                dk_scene, dk_factor, dk_function, _f_, _t_)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '设计', '实例')
-               RETURNING id"#
-        );
         let mut tx = self.pool.begin().await.map_err(AliothError::from)?;
-        let created_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql.as_str()))
+        let created_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
             .bind(&req.name)
             .bind(&req.code)
             .bind(&req.comments)
@@ -241,13 +261,13 @@ impl
         }
         let current = current.unwrap();
 
-        // 模型级种子流程守卫（add-model-seed-flow-guard）：meta.managed='model-seed'
-        // 的行由模型种子通道持有（Framework/seed/seed-auth-approval-flows.sql）——
-        // 通用 CRUD 不得改图/改名，否则注册/实名/入驻审批链静默断链
-        if current.managed_by.as_deref() == Some("model-seed") {
+        // 种子流程守卫（add-model-seed-flow-guard → extend-managed-guard-to-ns-seeds 泛化）：
+        // meta.managed 非空（model-seed 模型级 / ns-seed namespace 级）的行由种子通道持有——
+        // 通用 CRUD 不得改图/改名，否则审批链静默断链且种子幂等键删除后重放不自愈
+        if let Some(managed) = current.managed_by.as_deref() {
             return Err(AliothError::Validation {
                 field: "managed".to_string(),
-                message: "模型级种子流程不可修改——由模型种子通道持有".to_string(),
+                message: format!("种子流程（{managed}）不可修改——由种子通道持有"),
             });
         }
 
@@ -390,8 +410,9 @@ impl
     /// → oper-approve 实例（经 rr_event 桥）→ deta-opinion 意见（fk_list）；
     /// 关系行仅当 ref 端命中删除集才软删。共享值对象不删。
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
-        // 模型级种子流程守卫（add-model-seed-flow-guard）：种子行由模型种子通道持有，
-        // 且种子幂等键 NOT EXISTS by code 删除后重放不自愈——级联软删必须拒绝
+        // 种子流程守卫（add-model-seed-flow-guard → extend-managed-guard-to-ns-seeds 泛化）：
+        // managed 非空即由种子通道持有；种子幂等键 NOT EXISTS by code 删除后重放不自愈
+        // ——级联软删必须拒绝
         let managed: Option<String> = sqlx::query_scalar(
             r#"SELECT meta->>'managed' FROM isahl.zc_id_process
                WHERE id = $1 AND deleted_at IS NULL"#,
@@ -401,10 +422,10 @@ impl
         .await
         .map_err(AliothError::from)?
         .flatten();
-        if managed.as_deref() == Some("model-seed") {
+        if let Some(managed) = managed.as_deref() {
             return Err(AliothError::Validation {
                 field: "managed".to_string(),
-                message: "模型级种子流程不可删除——由模型种子通道持有".to_string(),
+                message: format!("种子流程（{managed}）不可删除——由种子通道持有"),
             });
         }
 
@@ -626,10 +647,10 @@ impl FlowNodeRepository {
         Self { pool }
     }
 
-    /// 归属守护（add-model-seed-flow-guard）：even-approve 节点行经三跳桥反查归属流程
-    /// （节点 ← rr_event 桥 ← 节点操作 ← rr_operation 桥 ← 流程）；归属
-    /// meta.managed='model-seed' 的模型级种子流程 → true（写面拒绝）。
-    async fn belongs_to_model_seed_flow(&self, id: i64) -> Result<bool, AliothError> {
+    /// 归属守护（add-model-seed-flow-guard → extend-managed-guard-to-ns-seeds 泛化）：
+    /// even-approve 节点行经三跳桥反查归属流程（节点 ← rr_event 桥 ← 节点操作 ←
+    /// rr_operation 桥 ← 流程）；归属 meta.managed 非空的种子流程 → true（写面拒绝）。
+    async fn belongs_to_managed_flow(&self, id: i64) -> Result<bool, AliothError> {
         sqlx::query_scalar(
             r#"SELECT EXISTS(
                  SELECT 1 FROM isahl.zc_id_operation_rr_event oe
@@ -638,7 +659,7 @@ impl FlowNodeRepository {
                  JOIN isahl.zc_id_process p
                    ON p.id = rro.ref_left AND p.deleted_at IS NULL
                  WHERE oe.ref_right = $1 AND oe.deleted_at IS NULL
-                   AND p.meta->>'managed' = 'model-seed'
+                   AND p.meta->>'managed' IS NOT NULL
                )"#,
         )
         .bind(id)
@@ -683,7 +704,7 @@ impl AliothRepository<FlowNode, CreateFlowNodeRequest, UpdateFlowNodeRequest, Al
         // 节点落叶表 zc_id_appr-process（even-approve 为域父表，禁直写；读/改经父表继承并集可见）；
         // dk 三元组经 dk.rs 静态声明（JC/FTA/↑_NA）解析 code→ZUID；解析失败即中止，不写悬空值
         let (dk_scene, dk_factor, dk_function) =
-            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::DkJcFtaNa)
+            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::JcFtaNa)
                 .await
                 .map_err(AliothError::from)?;
         sqlx::query_as::<_, FlowNode>(
@@ -713,12 +734,12 @@ impl AliothRepository<FlowNode, CreateFlowNodeRequest, UpdateFlowNodeRequest, Al
             return Ok(None);
         }
         let current = current.unwrap();
-        // 模型级种子流程归属守卫（add-model-seed-flow-guard）：
+        // 种子流程归属守卫（extend-managed-guard-to-ns-seeds 泛化为 managed 非空）：
         // 种子流程的节点事件载体行是审批链骨架，不可经节点写面改动
-        if self.belongs_to_model_seed_flow(id).await? {
+        if self.belongs_to_managed_flow(id).await? {
             return Err(AliothError::Validation {
                 field: "managed".to_string(),
-                message: "该节点归属模型级种子流程，不可修改——由模型种子通道持有".to_string(),
+                message: "该节点归属种子流程，不可修改——由种子通道持有".to_string(),
             });
         }
         let label = req.label.unwrap_or(current.label);
@@ -739,11 +760,11 @@ impl AliothRepository<FlowNode, CreateFlowNodeRequest, UpdateFlowNodeRequest, Al
     }
 
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
-        // 模型级种子流程归属守卫（add-model-seed-flow-guard）：同 update
-        if self.belongs_to_model_seed_flow(id).await? {
+        // 种子流程归属守卫（extend-managed-guard-to-ns-seeds 泛化）：同 update
+        if self.belongs_to_managed_flow(id).await? {
             return Err(AliothError::Validation {
                 field: "managed".to_string(),
-                message: "该节点归属模型级种子流程，不可删除——由模型种子通道持有".to_string(),
+                message: "该节点归属种子流程，不可删除——由种子通道持有".to_string(),
             });
         }
         sqlx::query(
@@ -881,7 +902,7 @@ impl
         if let Some(tpl) = effective_fk {
             sqlx::query(
                 r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                   VALUES (isahl.gen_next_uid(267), $1, $2, $3)"#,
             )
             .bind(instance.id)
             .bind(tpl)
@@ -1002,7 +1023,7 @@ impl
         // dk 解析失败 warn + NULL，不写悬空 ZUID（对齐 crud::handler::resolve_dk_ctx 范式）
         let date_anchor = crate::handlers::approve_reject::today_date_anchor(&self.pool).await?;
         let (dk_scene, dk_factor, dk_function) =
-            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::DkJcFtaNa)
+            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::JcFtaNa)
                 .await
                 .unwrap_or_else(|e| {
                     common::telemetry::warn!(
@@ -1115,7 +1136,7 @@ impl DelegationRuleRepository {
         }
         let id = sqlx::query_scalar::<_, i64>(
             r#"INSERT INTO isahl."zc_id_segm-date" (id, date_st, date_ed, notice, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1)
+               VALUES (isahl.gen_next_uid(437), $1, $2, $3, 1)
                RETURNING id"#,
         )
         .bind(st)
@@ -1186,7 +1207,7 @@ impl
         // dk 静态绑定：委托属审批内容域（JC/FTA/↑_NA）；解析失败 warn + NULL，不写悬空 ZUID
         let qk_period = self.resolve_period(req.date_st, req.date_ed).await?;
         let (dk_scene, dk_factor, dk_function) =
-            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::DkJcFtaNa)
+            crate::dk::resolve_ontology_coords_pool(&self.pool, crate::dk::DkEntity::JcFtaNa)
                 .await
                 .unwrap_or_else(|e| {
                     common::telemetry::warn!(

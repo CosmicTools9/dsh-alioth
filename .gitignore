@@ -4,6 +4,9 @@ lib/
 # The vendored framework ships its own scripts/lib (prototype gates import it);
 # build output elsewhere stays ignored.
 !packages/alioth/env-alioth/vendor/**/lib/
+# scripts/lib is hand-authored repo tooling (the framework-sync reachability
+# module), not build output — the bare `lib/` rule above would drop it.
+!scripts/lib/
 # Exception: auth-web-alioth's browser half is a HAND-AUTHORED closure-factory
 # artifact (no build step exists for it) — it must ship with the source.
 !packages/alioth/auth-web-alioth/lib/

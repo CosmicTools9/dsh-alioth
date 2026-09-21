@@ -391,7 +391,7 @@ pub async fn bind_personal(
     // 2. 任职关系（雇佣主体桥）
     if let Err(e) = sqlx::query(
         r#"INSERT INTO isahl."zc_id_subj-org_rr_employee" (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+           VALUES (isahl.gen_next_uid(315), $1, $2, $3)"#,
     )
     .bind(b.employer_org_id)
     .bind(empl_id)
@@ -720,7 +720,7 @@ pub async fn bind_enterprise(
             if let Some(pid) = b.parent_org_id {
                 if let Err(e) = sqlx::query(
                     r#"INSERT INTO isahl."zc_id_subj-org_rr_subordinate" (id, ref_left, ref_right, created_by_id)
-                       VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                       VALUES (isahl.gen_next_uid(449), $1, $2, $3)"#,
                 )
                 .bind(pid)
                 .bind(org_id)
@@ -776,6 +776,11 @@ pub async fn bind_enterprise(
 /// zc_id_bank-commercial（商业银行）或 zc_id_orga-non-banking-legal（非银行法人），
 /// 中间层 zc_id_orga-legal 禁写；组织同理，zc_id_subj-org 禁写
 /// （其子类型 zc_id_orga-department / 法人两叶表承接）。
+/// 账号可绑定主体类型（与 identity-org `social_category`/`leaf_table_for_category` 同源值集）
+///
+/// 值口径（2026-09-14 用户裁决「保持现状」）：本表是**主体类型选择值集**（前端选项消费），
+/// 非表名展示副本；与 `meta_collections.name` 的差异属同义异词（智体/智能体、群组/组），
+/// **不再按模型名改写**；表名展示面一致性由 `scripts/check/check-table-display-names.ts` 覆盖。
 const SUBJECT_TYPES: &[(&str, &str, bool, bool)] = &[
     ("zc_id_orga-non-banking-legal", "非银行法人", true, true),
     ("zc_id_bank-commercial", "商业银行", true, true),
@@ -821,6 +826,7 @@ pub struct SubjectBindingBody {
     pub code: Option<String>,
     /// 选择已有主体（提供时跳过创建，须与 subject_type 类型一致；ZUID 字符串容差
     /// ——ID_JSON_PRECISION，serde_zuid::opt 双向兼容字符串/数字）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub entity_id: Option<i64>,
     /// 显式改绑（add-subject-rebind-management）：true 时已绑真实主体也放行替换

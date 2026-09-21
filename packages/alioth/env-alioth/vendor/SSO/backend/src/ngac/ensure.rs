@@ -393,13 +393,28 @@ pub(crate) async fn ensure_ngac_core_constraints(pool: &PgPool) -> Result<(), sq
             WHERE deleted_at IS NULL;
         CREATE UNIQUE INDEX IF NOT EXISTS ngac_policy_class_o_name_key
             ON isahl_auth.ngac_policy_class (o_name);
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_ngac_oa_resource
-            ON isahl_auth.ngac_object_attribute (resource_type, fk_resource)
-            WHERE deleted_at IS NULL;
-        -- 非部分兜底（历史 ON CONFLICT (resource_type, fk_resource) 无谓词写法
-        -- 无法推理部分索引 → 42P10 被 .ok() 吞导致行不落；补全索引修复该模式）
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_ngac_oa_resource_full
-            ON isahl_auth.ngac_object_attribute (resource_type, fk_resource);
+        -- (resource_type, fk_resource) 的唯一性由**约束** `uq_ngac_oa_resource`（全列、无谓词）承载：
+        --   · 该名在 DB 中为 UNIQUE CONSTRAINT（SSO/backend/migrations 与集成测试同源），
+        --     其支撑索引占用同名关系 ⇒ 此前此处带 `WHERE deleted_at IS NULL` 的
+        --     `CREATE UNIQUE INDEX IF NOT EXISTS uq_ngac_oa_resource` 恒为 no-op（部分索引从未建成），
+        --     该无效语句已删除；约束缺失的库（只跑迁移子集）由下方 DO 块补建同定义索引。
+        --   · 全列唯一是 `ON CONFLICT (resource_type, fk_resource)` 的推理目标（无谓词才可推理）；
+        --     软删残留行会占用该唯一键，故上方「保留最小 id」的去重 DELETE 是必要前置。
+        DO $oa_uniq$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'isahl_auth.ngac_object_attribute'::regclass
+                  AND conname = 'uq_ngac_oa_resource'
+            ) THEN
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_ngac_oa_resource
+                    ON isahl_auth.ngac_object_attribute (resource_type, fk_resource);
+            END IF;
+        END
+        $oa_uniq$;
+        -- 冗余索引幂等清除：`uq_ngac_oa_resource_full` 的列与谓词与 `uq_ngac_oa_resource`
+        -- 完全相同（同一唯一性两份索引维护），保留前者（约束/推理目标）即可。
+        DROP INDEX IF EXISTS isahl_auth.uq_ngac_oa_resource_full;
         CREATE UNIQUE INDEX IF NOT EXISTS ngac_access_right_o_name_key
             ON isahl_auth.ngac_access_right (o_name);
         CREATE UNIQUE INDEX IF NOT EXISTS ngac_user_rr_attribute_fk_user_fk_user_attribute_key

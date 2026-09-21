@@ -49,6 +49,16 @@ impl GeneralAssistantAgent {
             generation_params: None,
             user_selectable: false, // 通用助手不可手动选择，作为回退
             sort_order: 99,
+            // E6（upgrade-chat-ai-tool-surface）：回退 agent 占多数流量，授予**只读**数据
+            // 工具（query_sql / query_schema），受 SchemaRestricted + allowed_schemas 约束；
+            // 写动作不授予（general 不承担业务写）。工具定义复用 executor 单一源。
+            available_tools: vec![
+                crate::tools::executor::QuerySqlTool::definition(),
+                crate::tools::executor::QuerySchemaTool::definition(),
+            ],
+            db_access_level: super::DbAccessLevel::SchemaRestricted,
+            allowed_schemas: vec!["isahl".to_string()],
+            max_execution_steps: 5,
             ..Default::default()
         };
 

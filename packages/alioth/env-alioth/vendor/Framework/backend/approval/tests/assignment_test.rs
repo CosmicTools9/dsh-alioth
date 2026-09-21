@@ -150,7 +150,7 @@ async fn add_node(pool: &PgPool, flow_id: i64, code: &str, node_type: &str) -> i
     };
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(op_id)
     .bind(template_id)
@@ -299,7 +299,7 @@ async fn create_first_instance(
     // fk_approve 列已移除：实例↔审批事件经 rr_event 桥
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(template)

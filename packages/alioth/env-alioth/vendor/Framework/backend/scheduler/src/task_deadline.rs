@@ -203,7 +203,7 @@ impl TaskDeadlineHandler {
             let _ = sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status"
                    (id, ref_left, ref_right, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                   VALUES (isahl.gen_next_uid(260), $1, $2, $3)"#,
             )
             .bind(task_id)
             .bind(overdue_id)

@@ -15,6 +15,12 @@ use std::path::Path;
 const NAMESPACE_ALIASES: &[(&str, &str)] = &[("Cosmic-Tools", "Alioth")];
 
 fn main() {
+    // === 构建溯源（build provenance）===
+    // 供 /health 与 /system 输出 `commit`：部署验收可比对「运行中的二进制 = 期望提交」，
+    // 消除「deploy 目录里的二进制落后于源码」一类隐性漂移（2026-09-16 WZ 实证：
+    // 部署映像缺 isahl-db 新路由注册，表现为 /seals 404，排查成本高）。
+    emit_build_provenance();
+
     // === Ontology 一致性预检（Gateway 构建门禁） ===
     ontology_preflight_check();
 
@@ -161,7 +167,7 @@ fn main() {
     code.push_str(
         "/// Alias namespaces from NAMESPACE_ALIASES are expanded into their target's match arm.\n",
     );
-    code.push_str("pub fn register_service_routes(cfg: &mut web::ServiceConfig) {\n");
+    code.push_str("pub fn register_service_routes(_cfg: &mut web::ServiceConfig) {\n");
     code.push_str("    let namespace = std::env::var(\"NAMESPACE\").unwrap_or_default();\n");
     code.push_str("    common::telemetry::info!(\"[service_registry] Registering routes for namespace '{}'\", namespace);\n");
     code.push('\n');
@@ -173,7 +179,7 @@ fn main() {
 
         code.push_str(&format!("        \"{}\" => {{\n", ns));
         // 自身 service 注册
-        code.push_str(&format!("            {}(cfg);\n", fn_name));
+        code.push_str(&format!("            {}(_cfg);\n", fn_name));
         // 别名指向的 target namespace 的注册（如 Cosmic-Tools 别名 → Alioth：
         // Cosmic-Tools 部署同时需要 Alioth service 组 + 自有 ct-git service）
         for (alias, target) in NAMESPACE_ALIASES {
@@ -187,7 +193,7 @@ fn main() {
                         "            // alias '{}' → '{}'：同时注册 target service 组\n",
                         alias, target
                     ));
-                    code.push_str(&format!("            {}(cfg);\n", target_fn));
+                    code.push_str(&format!("            {}(_cfg);\n", target_fn));
                 }
             }
         }
@@ -373,4 +379,33 @@ fn ontology_preflight_check() {
     } else {
         eprintln!("build.rs: ontology 预检通过 (namespace={})", namespace);
     }
+}
+
+/// 注入构建溯源环境：`ALIOTH_BUILD_COMMIT` / `ALIOTH_BUILD_TIME`（供 /health、/system 输出）。
+/// git 不可用（无 .git / 无 git 二进制）时降级为 "unknown"，不阻塞构建。
+fn emit_build_provenance() {
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=ALIOTH_BUILD_COMMIT={}", commit);
+
+    let built_at = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=ALIOTH_BUILD_TIME={}", built_at);
+
+    // 提交变化即重编（保证 /health 的 commit 与源码一致）
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/refs/heads");
 }

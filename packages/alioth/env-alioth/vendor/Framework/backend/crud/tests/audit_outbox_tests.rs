@@ -141,11 +141,16 @@ async fn actor_scope_populates_operator_identity() {
         "作用域内写入须带上操作者标识（血缘面口径 = username）"
     );
 
-    OutboxWorker::new(pool.clone())
-        .run_once()
-        .await
-        .expect("run_once");
-    let relayed = wait_relayed_identity(&pool, &table).await;
+    // 队列可能积压其他写入源的存量行（claim 按 id 升序批领 100/轮）——循环领批直到本行转写
+    let worker = OutboxWorker::new(pool.clone());
+    let mut relayed = None;
+    for _ in 0..60 {
+        worker.run_once().await.expect("run_once");
+        relayed = wait_relayed_identity(&pool, &table).await;
+        if relayed.is_some() {
+            break;
+        }
+    }
     assert_eq!(relayed.as_deref(), Some("alice"), "转写后标识须保留");
 
     // 作用域外（异步子任务等）：行仍写入，标识允许为空——不因缺失丢事件
@@ -179,13 +184,14 @@ async fn worker_relays_to_change_logs() {
             .expect("fetch outbox ts");
 
     let worker = OutboxWorker::new(pool.clone());
-    let _ = worker.run_once().await.expect("run_once");
 
     // data_change_logs 有对应行，action_timestamp 透传业务事务时刻
-    // （行可能由并行用例的 worker 实例先行转写 → 有界轮询，避免竞态抖动）
+    // （行可能由并行用例的 worker 实例先行转写 → 有界轮询，避免竞态抖动；
+    //   队列可能积压存量行 → 每轮先领批再查，本行 id 最新需多轮才轮到）
     let (action, record_id, ts): (String, i64, chrono::DateTime<Utc>) = {
         let mut found = None;
-        for _ in 0..40 {
+        for _ in 0..60 {
+            let _ = worker.run_once().await.expect("run_once");
             let row: Option<(String, i64, chrono::DateTime<Utc>)> = sqlx::query_as(
                 "SELECT action, record_id, action_timestamp FROM isahl_audit.data_change_logs WHERE table_name = $1",
             )
@@ -303,7 +309,20 @@ async fn worker_degrades_and_marks_poison_dead() {
         worker.max_attempts = 2;
 
         // 第 1 轮：fast path 批原子失败 → slow path 逐条：good done，poison failed
-        let n = worker.run_once().await.expect("run_once 1");
+        // （队列可能积压存量行 → 循环领批直到 good 行被领取转写）
+        let mut n = 0usize;
+        for _ in 0..60 {
+            n = worker.run_once().await.expect("run_once 1");
+            let st: String =
+                sqlx::query_scalar("SELECT status FROM isahl_audit.audit_outbox WHERE id = $1")
+                    .bind(good_id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("good status probe");
+            if st == "done" {
+                break;
+            }
+        }
         assert!(n >= 1, "正常行应被逐条转写");
 
         let good_status: String =
@@ -322,7 +341,29 @@ async fn worker_degrades_and_marks_poison_dead() {
         .execute(&pool)
         .await
         .expect("rewind backoff");
-        let _ = worker.run_once().await.expect("run_once 2");
+        // 第 2 轮起：循环领批直到 poison 达阈值标 dead（积压存量行同理需多轮）
+        let mut poison_dead = false;
+        for _ in 0..60 {
+            let _ = worker.run_once().await.expect("run_once 2");
+            sqlx::query(
+                "UPDATE isahl_audit.audit_outbox SET next_retry_at = now() - interval '1 second' WHERE id = $1 AND status != 'dead'",
+            )
+            .bind(poison_id)
+            .execute(&pool)
+            .await
+            .expect("rewind backoff");
+            let st: String =
+                sqlx::query_scalar("SELECT status FROM isahl_audit.audit_outbox WHERE id = $1")
+                    .bind(poison_id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("poison status probe");
+            if st == "dead" {
+                poison_dead = true;
+                break;
+            }
+        }
+        assert!(poison_dead, "poison 应在有界轮次内标 dead");
         let (poison_status, attempts): (String, i32) =
             sqlx::query_as("SELECT status, attempts FROM isahl_audit.audit_outbox WHERE id = $1")
                 .bind(poison_id)

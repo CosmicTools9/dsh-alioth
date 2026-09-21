@@ -1,0 +1,112 @@
+{
+  "version": "1.0.0",
+  "rule_reference": "docs/specs/SERVICE_SPEC.md §4.1（DB 物理列 → DTO 字段命名分层）＋ §3.1（field_mappings 必填）",
+  "note": "存量 DTO 字段映射缺口归线（SPEC_ENFORCEMENT_SUBSTRATE §设计原则 1：增量，非全量）。指纹=sha256(ns|判据|服务|实体|列|期望 DTO|实际别名)——未命中指纹的缺口为新增，阻断；缺口清零后应 --write-baseline 收缩（check-gate-hygiene 报 rot）。",
+  "generatedBy": "bun scripts/check/audit-dto-field-mapping.ts --ns wz --write-baseline",
+  "violations": [
+    {
+      "fp": "f981af3e03da5ac5",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractAgreement",
+      "rule": "P0-scalar-bare",
+      "column": "ref_left"
+    },
+    {
+      "fp": "c7c742b1d41dffef",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractMatter",
+      "rule": "P0-scalar-bare",
+      "column": "qk_price"
+    },
+    {
+      "fp": "6a625c5fd1d90711",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractMatter",
+      "rule": "P0-scalar-bare",
+      "column": "qk_qty"
+    },
+    {
+      "fp": "082dec81d5e2ff29",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractMatter",
+      "rule": "P0-scalar-bare",
+      "column": "ref_left"
+    },
+    {
+      "fp": "8ca2be204953610e",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractParty",
+      "rule": "P0-scalar-bare",
+      "column": "ref_left"
+    },
+    {
+      "fp": "b15ea0f1c09bd9c0",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractAgreement",
+      "rule": "P1-missing-projection",
+      "column": "qk_period"
+    },
+    {
+      "fp": "009adf7bacb020ad",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractMatter",
+      "rule": "P1-missing-projection",
+      "column": "qk_period"
+    },
+    {
+      "fp": "fe1a27247d0ebb66",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "ContractParty",
+      "rule": "P1-missing-projection",
+      "column": "qk_period"
+    },
+    {
+      "fp": "0485ca8e6c6c1797",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "Contract",
+      "rule": "P1-missing-projection",
+      "column": "qk_date"
+    },
+    {
+      "fp": "6fc63a4f064896ca",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "Contract",
+      "rule": "P1-missing-projection",
+      "column": "qk_valid-segm"
+    },
+    {
+      "fp": "3bbc586119765f86",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "Contract",
+      "rule": "P1-phantom-column",
+      "column": "qk_price"
+    },
+    {
+      "fp": "7a48731bbcbdb63f",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "Contract",
+      "rule": "P1-phantom-column",
+      "column": "qk_qty"
+    },
+    {
+      "fp": "942c430ae6f5a52f",
+      "ns": "WZ",
+      "service": "contract",
+      "entity": "Contract",
+      "rule": "P1-phantom-column",
+      "column": "ref_left"
+    }
+  ]
+}

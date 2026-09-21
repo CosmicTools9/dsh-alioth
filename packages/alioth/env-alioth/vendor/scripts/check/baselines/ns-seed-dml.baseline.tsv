@@ -1,0 +1,19 @@
+# ns→模型级契约表 DML 违规存量基线（**必须收缩**；空 = 零容忍）。
+# 每行 <TAB> 分隔三段：relPath<TAB>verb<TAB>table（不含计数）。基线外命中即阻断；
+# 基线条目不再被扫到（过期）同样阻断。重生成：--init；审阅存量面：--no-baseline。
+#
+# 供给面 scope：seed/ 与 test-data/（后者被 ns 套件以 psql -f 重放）
+#
+# 当前 2 条余项（同源：ns fixture 自用码，中心字典另有码集）：
+#   收敛路径 = 把 fixture 改为中心同义码（保语义），或按用户裁决把该码升模型字典。
+# 已收敛（2026-09-15）：`seed-contract-blacklist.sql` 的内建字典行与 code join 已删——
+#   fixture 只引用模型级 id（zc_id_stus-legal_person.LP-REVOKED=86694292826882998，来源
+#   Framework/seed/seed-dimensions.sql）+ EXISTS 存在性守卫，写面收缩到非契约表（主体行 + 状态桥）。
+
+# ── e2e 订单链测试状态 WZ-E2E-TP-STA-01..06（仅该 fixture 内部使用；非业务语义 ⇒ 不升模型）
+Pre-Proc/WZ/test-data/seed-wz-e2e-data.sh	INSERT	zc_id_stus-project
+
+# ── 计量单位价格字典：**模型级未供给**（Framework/seed 全域无该表数据行，仅注释/码登记）⇒ ns fixture 自备。
+#    2026-09-15 暴露：该 INSERT 在 HEAD 即存在，此前因同块 psql 解析失败被跳过；解析缺陷修复后才可见。
+#    退出路径 = 模型中心把该字典纳入 Framework/seed 数据段（或裁定改 ns-scope），随后删除本行与 fixture 写面。
+Pre-Proc/WZ/test-data/seed-wz-e2e-data.sh	INSERT	zc_id_unit-price

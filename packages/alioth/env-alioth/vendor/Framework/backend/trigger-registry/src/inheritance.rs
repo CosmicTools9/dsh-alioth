@@ -128,6 +128,45 @@ impl InheritanceGraph {
         Ok(graph)
     }
 
+    /// 从 PostgreSQL 目录（`pg_inherits`）装载继承图。
+    ///
+    /// **只读 `isahl` schema，不触碰 `isahl_meta`** —— Gateway 容器（DB 访问面限 `isahl` +
+    /// `isahl_auth`，MUST NOT 读 `isahl_meta`）用本函数把运行时触发面刷新为**数据库真实继承树**；
+    /// Meta 容器用 `config_driven::load_inheritance_graph_from_db`（读 `meta_collections.config.inherits`）。
+    ///
+    /// 动机：编译期硬编码图（`load_default_alioth_hierarchy`）只收录家族根与少数子类，
+    /// 未收录的叶表 `get_ancestors` 只返回自身 ⇒ `get_triggers_for_leaf` 取不到注册点 ⇒ 触发器不触发。
+    pub async fn from_pg_catalog(pool: &sqlx::PgPool) -> Result<Self, sqlx::Error> {
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            r#"
+                SELECT child.relname::text AS child, parent.relname::text AS parent
+                  FROM pg_inherits i
+                  JOIN pg_class child ON child.oid = i.inhrelid
+                  JOIN pg_class parent ON parent.oid = i.inhparent
+                  JOIN pg_namespace cn ON cn.oid = child.relnamespace
+                  JOIN pg_namespace pn ON pn.oid = parent.relnamespace
+                 WHERE cn.nspname = 'isahl' AND pn.nspname = 'isahl'
+                "#,
+        )
+        .fetch_all(pool)
+        .await?;
+
+        // 先按 child 聚合全部父表（PG 支持多继承），再逐表写入以避免重复重算叶表集
+        let mut by_child: HashMap<String, Vec<String>> = HashMap::new();
+        for (child, parent) in rows {
+            let parents = by_child.entry(child).or_default();
+            if !parents.contains(&parent) {
+                parents.push(parent);
+            }
+        }
+
+        let mut graph = Self::new();
+        for (child, parents) in by_child {
+            graph.add_inheritance(child, parents);
+        }
+        Ok(graph)
+    }
+
     /// Load default Alioth hierarchy
     pub fn load_default_alioth_hierarchy(&mut self) {
         // Root table

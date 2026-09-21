@@ -10,6 +10,15 @@ use crate::tools::{ToolCall, ToolContext, ToolResult};
 // Ports (Seams)
 // ============================================
 
+/// stream_with_tools 返回型（流 + 工具调用结果槽）
+type ToolStreamResult<'a> = Result<
+    (
+        futures_util::stream::BoxStream<'a, Result<String, String>>,
+        std::sync::Arc<std::sync::Mutex<Option<llm::StreamToolCallOutcome>>>,
+    ),
+    String,
+>;
+
 #[async_trait]
 pub trait LlmGenerationPort: Send + Sync {
     /// 非流式生成 + 工具调用：返回响应与单步 token 用量（provider 缺失为 None）。
@@ -28,13 +37,7 @@ pub trait LlmGenerationPort: Send + Sync {
         &'a self,
         _prompt: &'a str,
         _tools: &'a [llm::ToolDefinition],
-    ) -> Result<
-        (
-            futures_util::stream::BoxStream<'a, Result<String, String>>,
-            std::sync::Arc<std::sync::Mutex<Option<llm::StreamToolCallOutcome>>>,
-        ),
-        String,
-    > {
+    ) -> ToolStreamResult<'a> {
         Err("streaming not supported".to_string())
     }
 }

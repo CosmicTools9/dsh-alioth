@@ -75,7 +75,7 @@ impl AliothRepository<TransitRoute, CreateTransitRouteRequest, UpdateTransitRout
                             .unwrap_or("waypoint");
                         let cid: i64 = sqlx::query_scalar(
                             r#"INSERT INTO "isahl"."zc_id_geog-point" (notice, point, sk_unit, created_by_id)
-                               VALUES ($1, ST_SetSRID(ST_MakePoint($2, $3), 4326), $4, $5) RETURNING id"#,
+                               VALUES ($1, postgis.ST_SetSRID(postgis.ST_MakePoint($2, $3), 4326), $4, $5) RETURNING id"#,
                         )
                         .bind(name).bind(lng).bind(lat).bind(coord_sys_id).bind(user_id)
                         .fetch_one(&self.pool)

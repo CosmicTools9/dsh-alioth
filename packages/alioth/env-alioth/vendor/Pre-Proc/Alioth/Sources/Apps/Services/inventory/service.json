@@ -5,8 +5,15 @@
   "domain": "库存管理",
   "dtoDependencies": [],
   "dtoExposes": {
-    "queries": ["statistics"],
-    "refs": ["stock_stat", "voucher", "counting", "storage_nest"]
+    "queries": [
+      "statistics"
+    ],
+    "refs": [
+      "stock_stat",
+      "voucher",
+      "counting",
+      "storage_nest"
+    ]
   },
   "hasBackend": true,
   "hasFrontend": false,
@@ -192,7 +199,7 @@
             "json_path": "pre_balance"
           },
           {
-            "column": "fk_production",
+            "column": "fk_payload",
             "json_path": "production"
           },
           {
@@ -214,7 +221,7 @@
         ],
         "fields": [
           {
-            "column": "fk_production",
+            "column": "fk_payload",
             "dto": "production_id",
             "type": "bigint"
           },
@@ -325,7 +332,12 @@
           }
         ],
         "name": "Counting",
-        "table": "zc_id_even-counting"
+        "table": "zc_id_even-counting",
+        "coordinates": {
+          "scene": "GH",
+          "factor": "FJA",
+          "function": "↓_GD"
+        }
       },
       {
         "field_mappings": [
@@ -438,7 +450,12 @@
           }
         ],
         "name": "CountingDetail",
-        "table": "zc_id_deta-counting"
+        "table": "zc_id_deta-counting",
+        "coordinates": {
+          "scene": "JC",
+          "factor": "FTA",
+          "function": "↓_NC"
+        }
       },
       {
         "field_mappings": [
@@ -491,6 +508,31 @@
         ],
         "name": "StorageNest",
         "table": "zc_id_storage_rr_stock-in"
+      },
+      {
+        "coordinates": {
+          "scene": "JC",
+          "factor": "GID",
+          "function": "↓_LA"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "qk_qty",
+            "json_path": "qty"
+          }
+        ],
+        "inherits": null,
+        "name": "StockVoucher",
+        "relationships": [],
+        "table": "isahl.zc_id_stat-whs-voucher"
       }
     ]
   },

@@ -35,6 +35,8 @@ struct Fixture {
     email: String,
     employee_id: i64,
     position_id: i64,
+    /// 视角关联行 id（标签宿主：`zc_id_relation-post_view_r_tags.ref_left`）
+    pair_id: i64,
     tag_code: String,
 }
 
@@ -58,6 +60,37 @@ async fn seed_cognition_user_with_grant(pool: &PgPool, suffix: &str) -> Fixture 
             .await
             .expect("fetch user");
 
+    // 前置清理：重跑残留（同 email 历史 雇员行 / 任职桥 / 视角关联行与标签），
+    // 保证派生集只由本次 fixture 决定——否则历史 雇员行 仍可派生 UA，令「任职终止即撤销」断言假失败
+    let _ = sqlx::query(
+        "UPDATE isahl.\"zc_id_relation-post_view_r_tags\" SET deleted_at = NOW() \
+         WHERE ref_left IN (SELECT v.id FROM isahl.\"zc_id_subj-post_rr_view\" v \
+            WHERE v.ref_right IN (SELECT id FROM isahl.\"zc_id_empl-natural\" WHERE fk_user = $1))",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE isahl.\"zc_id_subj-post_rr_view\" SET deleted_at = NOW() \
+         WHERE ref_right IN (SELECT id FROM isahl.\"zc_id_empl-natural\" WHERE fk_user = $1)",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE isahl.\"zc_id_subj-post_rr_employee\" SET deleted_at = NOW() \
+         WHERE ref_right IN (SELECT id FROM isahl.\"zc_id_empl-natural\" WHERE fk_user = $1)",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE isahl.\"zc_id_empl-natural\" SET deleted_at = NOW() WHERE fk_user = $1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await;
+
     // 坐标三元组（§6.12 声明即必须）：TX/FJA/↓_GG（主体族），值经 ontology_binding 解析 code→ZUID，
     // 禁硬编码 ZUID（Gateway entity_binding_integration_test 同款）
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
@@ -76,15 +109,37 @@ async fn seed_cognition_user_with_grant(pool: &PgPool, suffix: &str) -> Fixture 
     .fetch_one(pool)
     .await
     .expect("insert employee");
+    // 类别字典基表行（`position:` 派生 UA 依据 = 岗位 ck_category → `zc_id_category` **基表行** code；
+    // 子族字典不派生——见 NGAC_SPEC §2.2.3）
+    sqlx::query(
+        "INSERT INTO isahl.zc_id_category (code, notice, created_by_id) \
+         SELECT 'SR-TEST-CAT', '自审测试类别', 1 \
+         WHERE NOT EXISTS (SELECT 1 FROM isahl.zc_id_category c \
+                           WHERE c.code = 'SR-TEST-CAT' \
+                             AND c.tableoid = 'isahl.zc_id_category'::regclass \
+                             AND c.deleted_at IS NULL)",
+    )
+    .execute(pool)
+    .await
+    .expect("ensure base category");
+    let category_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl.zc_id_category WHERE code = 'SR-TEST-CAT' \
+         AND tableoid = 'isahl.zc_id_category'::regclass AND deleted_at IS NULL LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("fetch base category");
+
     let position_id: i64 = sqlx::query_scalar(
         "INSERT INTO isahl.\"zc_id_subj-position\" \
-         (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
-         VALUES (isahl.gen_next_zuid(), '自审岗位', $1, 1, $2, $3, $4) RETURNING id",
+         (id, notice, code, ck_category, created_by_id, dk_scene, dk_factor, dk_function) \
+         VALUES (isahl.gen_next_zuid(), '自审岗位', $1, $5, 1, $2, $3, $4) RETURNING id",
     )
     .bind(format!("SR-POS-{}", suffix))
     .bind(dk_scene)
     .bind(dk_factor)
     .bind(dk_function)
+    .bind(category_id)
     .fetch_one(pool)
     .await
     .expect("insert position");
@@ -107,15 +162,24 @@ async fn seed_cognition_user_with_grant(pool: &PgPool, suffix: &str) -> Fixture 
     .fetch_one(pool)
     .await
     .expect("insert view tag");
-    let _ = sqlx::query(
-        "INSERT INTO isahl.\"zc_id_relation-post_view_r_tags\" (id, notice, ref_left, ref_right, created_by_id)
-         VALUES (isahl.gen_next_uid(180), '岗位视角', $1, $2, 1)",
+    let pair_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl.\"zc_id_subj-post_rr_view\" (id, notice, ref_left, ref_right, created_by_id)
+         VALUES (isahl.gen_next_uid(320), '自审视角绑定', $1, $2, 1) RETURNING id",
     )
     .bind(position_id)
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("link view pair");
+    let _ = sqlx::query(
+        "INSERT INTO isahl.\"zc_id_relation-post_view_r_tags\" (id, notice, ref_left, ref_right, created_by_id)
+         VALUES (isahl.gen_next_uid(180), '视角关联行标签', $1, $2, 1)",
+    )
+    .bind(pair_id)
     .bind(tag_id)
     .execute(pool)
     .await
-    .expect("link position tag");
+    .expect("link view pair tag");
 
     // 物化派生 UA 并建关联（view:UA → cogme/read）
     use gateway_sso::ngac::pip::PostgresPip;
@@ -182,6 +246,7 @@ async fn seed_cognition_user_with_grant(pool: &PgPool, suffix: &str) -> Fixture 
         email,
         employee_id,
         position_id,
+        pair_id,
         tag_code,
     }
 }
@@ -196,9 +261,13 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
     let _ = sqlx::query(
         "UPDATE isahl.\"zc_id_relation-post_view_r_tags\" SET deleted_at = NOW() WHERE ref_left = $1",
     )
-    .bind(f.position_id)
+    .bind(f.pair_id)
     .execute(pool)
     .await;
+    let _ = sqlx::query("DELETE FROM isahl.\"zc_id_subj-post_rr_view\" WHERE id = $1")
+        .bind(f.pair_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query(
         "DELETE FROM isahl_auth.ngac_association WHERE fk_user_attribute IN
          (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $1)",
@@ -238,7 +307,11 @@ async fn self_review_returns_derived_ua_and_permissions() {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes)),
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            ),
     )
     .await;
     let token = mint_token(&ast, f.user_id, &f.email);
@@ -298,7 +371,11 @@ async fn self_review_requires_token() {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes)),
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            ),
     )
     .await;
 
@@ -323,7 +400,11 @@ async fn self_explain_matches_decide_and_follows_derivation() {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes)),
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            ),
     )
     .await;
     let token = mint_token(&ast, f.user_id, &f.email);
@@ -345,7 +426,8 @@ async fn self_explain_matches_decide_and_follows_derivation() {
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/api/ngac/decide")
+            .uri("/api/ngac/pdp/decide")
+            .insert_header(auth.clone())
             .set_json(json!({"user_id": f.user_id, "resource": "cogme:0", "action": "read"}))
             .to_request(),
     )
@@ -385,7 +467,11 @@ async fn self_explain_requires_token() {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes)),
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            ),
     )
     .await;
 

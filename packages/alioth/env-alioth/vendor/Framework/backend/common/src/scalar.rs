@@ -20,7 +20,7 @@
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rust_decimal::Decimal;
-use sqlx::{AssertSqlSafe, PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::error::AliothError;
 
@@ -73,6 +73,69 @@ pub struct ScalarAmountValue {
 #[derive(Clone)]
 pub struct ScalarService {
     pool: PgPool,
+}
+
+// ---------------------------------------------------------------------------
+// 标量表静态 SQL 族
+// ---------------------------------------------------------------------------
+
+/// 标量表的三条通用语句（`mark` 列族）。表名在**编译期**由 `concat!` 固化，
+/// 运行期不拼串、无需 `AssertSqlSafe`。SQL 正文单一来源（宏内一处）。
+struct ScalarTableSql {
+    /// `SELECT id FROM <table> WHERE mark = $1 LIMIT 1`
+    find_mark_id: &'static str,
+    /// `INSERT INTO <table> (notice, mark, created_by_id) VALUES ($1, $2, 1) RETURNING id`
+    insert_mark: &'static str,
+    /// `SELECT mark FROM <table> WHERE id = $1`
+    select_mark: &'static str,
+}
+
+/// 裸表名 → 静态语句句柄
+macro_rules! scalar_table_sql {
+    ($table:literal) => {
+        ScalarTableSql {
+            find_mark_id: concat!(
+                "SELECT id FROM isahl.\"",
+                $table,
+                "\" WHERE mark = $1 LIMIT 1"
+            ),
+            insert_mark: concat!(
+                "INSERT INTO isahl.\"",
+                $table,
+                "\" (notice, mark, created_by_id) VALUES ($1, $2, 1) RETURNING id"
+            ),
+            select_mark: concat!("SELECT mark FROM isahl.\"", $table, "\" WHERE id = $1"),
+        }
+    };
+}
+
+/// 通用标量族成员（键 = 调用方传入的完全限定表名）。
+/// 族成员新增 = 在此加一行；未登记的表 fail-visible（不回落、不静默拼串）。
+macro_rules! scalar_table_sqls {
+    ($($table:literal),+ $(,)?) => {
+        &[$((
+            concat!("isahl.\"", $table, "\""),
+            scalar_table_sql!($table),
+        )),+]
+    };
+}
+
+const SCALAR_TABLE_SQLS: &[(&str, ScalarTableSql)] = scalar_table_sqls![
+    "zc_id_scal-amount",
+    "zc_id_scal-price",
+    "zc_id_scal-common",
+    "zc_id_scal-data",
+    "zc_id_scal-duration",
+    "zc_id_scal-weight",
+];
+
+/// 解析标量表静态句柄（未登记 → fail-visible）。
+fn scalar_table_sql(table: &str) -> Result<&'static ScalarTableSql, AliothError> {
+    SCALAR_TABLE_SQLS
+        .iter()
+        .find(|(t, _)| *t == table)
+        .map(|(_, sql)| sql)
+        .ok_or_else(|| AliothError::Internal(format!("未登记的标量表: {table}")))
 }
 
 impl ScalarService {
@@ -498,9 +561,10 @@ impl ScalarService {
     // 通用标量操作（基于 mark）
     // ------------------------------------------------------------------
 
-    /// 在任意标量表中根据 `mark` 查找或创建记录。
+    /// 在已登记的标量表中根据 `mark` 查找或创建记录。
     ///
-    /// `table` 应为完全限定表名（如 `isahl."zc_id_scal-amount"`）。
+    /// `table` 须为文件内 `SCALAR_TABLE_SQLS` 登记的完全限定表名（如 `isahl."zc_id_scal-amount"`）；
+    /// 未登记表返回 [`AliothError::Internal`]（不回落、不静默）。
     /// `notice_prefix` 用于生成默认 notice（如 `"amount: 100.50"`）。
     pub async fn find_or_create_scalar_mark(
         &self,
@@ -513,13 +577,10 @@ impl ScalarService {
             return Ok(id);
         }
 
-        // 不存在则创建（使用动态 SQL，表名已做基本校验）
+        // 不存在则创建（SQL 为编译期静态字面量，无运行期表名拼接）
         let notice = format!("{}: {}", notice_prefix, mark);
-        let sql = format!(
-            r#"INSERT INTO {} (notice, mark, created_by_id) VALUES ($1, $2, 1) RETURNING id"#,
-            table
-        );
-        let id: i64 = sqlx::query_scalar(AssertSqlSafe(sql.as_str()))
+        let sql = scalar_table_sql(table)?.insert_mark;
+        let id: i64 = sqlx::query_scalar(sql)
             .bind(&notice)
             .bind(mark)
             .fetch_one(&self.pool)
@@ -533,8 +594,8 @@ impl ScalarService {
 
     /// 在指定标量表中根据 `mark` 查找 ID。
     async fn find_mark_id(&self, mark: Decimal, table: &str) -> Result<Option<i64>, AliothError> {
-        let sql = format!(r#"SELECT id FROM {} WHERE mark = $1 LIMIT 1"#, table);
-        let id: Option<i64> = sqlx::query_scalar(AssertSqlSafe(sql.as_str()))
+        let sql = scalar_table_sql(table)?.find_mark_id;
+        let id: Option<i64> = sqlx::query_scalar(sql)
             .bind(mark)
             .fetch_optional(&self.pool)
             .await
@@ -544,14 +605,14 @@ impl ScalarService {
         Ok(id)
     }
 
-    /// 通过标量 ID 在任意标量表中查询 `mark` 值。
+    /// 通过标量 ID 在已登记的标量表中查询 `mark` 值。
     pub async fn get_mark(
         &self,
         scale_id: i64,
         table: &str,
     ) -> Result<Option<Decimal>, AliothError> {
-        let sql = format!(r#"SELECT mark FROM {} WHERE id = $1"#, table);
-        let mark: Option<Decimal> = sqlx::query_scalar(AssertSqlSafe(sql.as_str()))
+        let sql = scalar_table_sql(table)?.select_mark;
+        let mark: Option<Decimal> = sqlx::query_scalar(sql)
             .bind(scale_id)
             .fetch_optional(&self.pool)
             .await
@@ -609,8 +670,8 @@ impl ScalarService {
         table: &str,
         notice_prefix: &str,
     ) -> Result<i64, AliothError> {
-        let find_sql = format!(r#"SELECT id FROM {} WHERE mark = $1 LIMIT 1"#, table);
-        let id: Option<i64> = sqlx::query_scalar(AssertSqlSafe(find_sql.as_str()))
+        let sqls = scalar_table_sql(table)?;
+        let id: Option<i64> = sqlx::query_scalar(sqls.find_mark_id)
             .bind(mark)
             .fetch_optional(&mut **tx)
             .await
@@ -623,11 +684,7 @@ impl ScalarService {
         }
 
         let notice = format!("{}: {}", notice_prefix, mark);
-        let insert_sql = format!(
-            r#"INSERT INTO {} (notice, mark, created_by_id) VALUES ($1, $2, 1) RETURNING id"#,
-            table
-        );
-        let id: i64 = sqlx::query_scalar(AssertSqlSafe(insert_sql.as_str()))
+        let id: i64 = sqlx::query_scalar(sqls.insert_mark)
             .bind(&notice)
             .bind(mark)
             .fetch_one(&mut **tx)

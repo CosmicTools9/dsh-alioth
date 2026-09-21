@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "rule_reference": "docs/specs/SERVICE_SPEC.md §4.1（DB 物理列 → DTO 字段命名分层）＋ §3.1（field_mappings 必填）",
+  "note": "存量 DTO 字段映射缺口归线（SPEC_ENFORCEMENT_SUBSTRATE §设计原则 1：增量，非全量）。指纹=sha256(ns|判据|服务|实体|列|期望 DTO|实际别名)——未命中指纹的缺口为新增，阻断；缺口清零后应 --write-baseline 收缩（check-gate-hygiene 报 rot）。",
+  "generatedBy": "bun scripts/check/audit-dto-field-mapping.ts --ns cosmic-tools --write-baseline",
+  "violations": []
+}

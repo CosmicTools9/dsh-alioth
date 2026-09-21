@@ -80,10 +80,11 @@ impl RequirementRepository {
             .collect())
     }
 
-    /// 维度选择器：场所（zc_id_lifecycle 叶表）
+    /// 维度选择器：场所（stor-place 族根表——继承含 stor-plc-stop 等叶；勿查 zc_id_lifecycle
+    /// 总根：733 叶全族混入且根表行 notice 可空，解码即炸）
     pub async fn list_places(&self) -> Result<Vec<crate::models::DimensionOption>, ApiError> {
         let rows: Vec<(i64, String)> = sqlx::query_as(
-            r#"SELECT id, notice FROM isahl.zc_id_lifecycle WHERE deleted_at IS NULL ORDER BY notice"#,
+            r#"SELECT id, notice FROM isahl."zc_id_stor-place" WHERE deleted_at IS NULL AND notice IS NOT NULL ORDER BY notice"#,
         )
         .fetch_all(&self.pool)
         .await

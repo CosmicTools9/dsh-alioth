@@ -18,13 +18,19 @@
  *   R7 bad-sharing      `mode` 非法 / `shared` 时 consumers < 2 或元素不可解析
  *   R8 missing-prototype-version  同 ns `Prototypes/` 下该块目录存在原型痕迹（`b-v*.html` 或 `llm-tsx`）
  *                       时缺 `prototypeVersion`（无原型痕迹则 MAY 省略）
+ *   R9 unregistered-owner  `sharing.ownerModule` 指向的模块（同 ns 且存在）的 `blockAssembly.blocks[]`
+ *                       （兼容顶层 `blocks[]`）MUST 登记本块 `id`——即 `module-block-assembly` 能力的
+ *                       `block-json-must-register-in-module-json` 可执行面（缺失时该块在 Gateway
+ *                       Navigator 不可达 = 端到端链路断裂）
  *
  * Usage: bun scripts/check/check-block-json.ts [--ns NS] [--strict] [--only <block.json>] [--update-baseline]
  * Exit: 0 通过（基线档：无新增违规）; 1 存在新增违规（strict/only：任何违规）; 2 用法/IO 错误
  */
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { basename, dirname, join, resolve } from "node:path";
 import { isRecord } from "../lib/type-guards";
+import { parseBigIntSafe, rawIntegerText } from "../lib/json-bigint-safe";
 import {
   dbDimensionCodes, derivePrototypeVersion, fingerprint, hasPrototypeTraces, listNamespaces, loadBaseline, relPath,
   summarize, unitFiles, unitIds, writeBaseline, type Violation,
@@ -58,10 +64,35 @@ const PLACEHOLDER_CODES: Record<string, true> = {
 interface Ctx {
   services: Set<string>;
   modules: Set<string>;
+  /** 模块 id → 该模块 `blockAssembly.blocks[]`（兼容顶层 `blocks[]`）登记的块 id 集合（R9 判据） */
+  moduleBlocks: Map<string, Set<string>>;
   scenes: Set<string>;
   factors: Set<string>;
   functions: Set<string>;
   factorIsServiceAlias: boolean;
+  /** 维度行 id 解析（code → `isahl.zc_id_{dim}.id` 文本）；DB 不可得时为 undefined（R5b 跳过） */
+  dimIdOf?: (dim: string, code: string) => string | null;
+}
+
+/**
+ * 维度行 id（文本）解析 —— 经 `DATABASE_URL` + psql（与 `check-dk-binding-consistency.ts` 同通道；
+ * `mise run schema-info` 二进制未构建时 R5 的码存在性会跳过，本通道独立可用）。
+ * 返回 `id::text` 以免 17 位 id 经 Number 舍入。
+ */
+function dbDimensionIdResolver(): ((dim: string, code: string) => string | null) | undefined {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) return undefined;
+  const cache = new Map<string, string | null>();
+  return (dim: string, code: string): string | null => {
+    const key = `${dim}|${code}`;
+    if (cache.has(key)) return cache.get(key) ?? null;
+    const r = spawnSync("psql", [dbUrl, "-tA", "-c",
+      `SELECT id::text FROM isahl.zc_id_${dim} WHERE code = '${code.replace(/'/g, "''")}' AND deleted_at IS NULL LIMIT 1`],
+      { encoding: "utf-8", timeout: 15000 });
+    const id = r.status === 0 ? (r.stdout.trim() || null) : null;
+    cache.set(key, id);
+    return id;
+  };
 }
 
 function parseArgs(argv: string[]): Map<string, string | true> {
@@ -79,16 +110,50 @@ function contextFor(ns: string, dims: { scenes: Set<string>; factors: Set<string
   return {
     services: unitIds(ROOT, ns, "Services"),
     modules: unitIds(ROOT, ns, "Modules"),
+    moduleBlocks: moduleRegistrationIndex(ns),
     scenes: dims.scenes, factors: dims.factors, functions: dims.functions,
+    dimIdOf: dbDimensionIdResolver(),
     // WZ 口径：block.services[] 可为 factor 码（BLOCK_SCHEMA §1.1 `services` 说明）
     factorIsServiceAlias: ns === "WZ",
   };
 }
 
+/**
+ * 模块 id（目录名）→ 该模块登记的块 id 集合（R9 判据）。
+ * 登记形态取 `blockAssembly.blocks[]`（对象 `{id}` 或字符串）∪ 顶层 `blocks[]`——
+ * 后者为 `reconcile-module-declaration-drift` 记录的两种历史形态并存期兼容面。
+ */
+function moduleRegistrationIndex(ns: string): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const file of unitFiles(ROOT, ns, "Modules", "module.json")) {
+    const ids = new Set<string>();
+    const collect = (entries: unknown): void => {
+      if (!Array.isArray(entries)) return;
+      for (const e of entries) {
+        if (typeof e === "string" && e.trim()) ids.add(e.trim());
+        else if (isRecord(e) && typeof e.id === "string" && e.id.trim()) ids.add(e.id.trim());
+      }
+    };
+    try {
+      const mod = parseBigIntSafe(readFileSync(file, "utf-8"));
+      if (isRecord(mod)) {
+        const ba = mod.blockAssembly;
+        if (isRecord(ba)) collect(ba.blocks);
+        else collect(ba);
+        collect(mod.blocks);
+      }
+    } catch {
+      // module.json 不可解析：该模块登记集为空 = 零登记（R9 对声明归属该模块的块判失败）
+    }
+    index.set(basename(dirname(file)), ids);
+  }
+  return index;
+}
+
 function checkBlock(ns: string, file: string, ctx: Ctx, out: Violation[]): void {
   const rel = relPath(ROOT, file);
   let data: unknown;
-  try { data = JSON.parse(readFileSync(file, "utf-8")); }
+  try { data = parseBigIntSafe(readFileSync(file, "utf-8")); }
   catch (e) { out.push({ ns, file: rel, rule: "R2", detail: `JSON 解析失败: ${e}` }); return; }
   if (!isRecord(data)) { out.push({ ns, file: rel, rule: "R2", detail: "顶层非对象" }); return; }
 
@@ -149,6 +214,24 @@ function checkBlock(ns: string, file: string, ctx: Ctx, out: Violation[]): void 
       if (PLACEHOLDER_CODES[code]) { out.push({ ns, file: rel, rule: "R5", detail: `coordinates.${dim}.code='${code}' 为占位符` }); continue; }
       if (valid.size > 0 && !valid.has(code)) {
         out.push({ ns, file: rel, rule: "R5", detail: `coordinates.${dim}.code='${code}' 不在 isahl.zc_id_${dim}` });
+        continue;
+      }
+      // R5b：声明 id 与库中该 code 的维度行 id 逐位一致（防 >2^53 舍入 / 手抄错位；
+      // 经 rawIntegerText 取原始数字文本，绝不走 Number）
+      if (!ctx.dimIdOf) continue;
+      const declared = rawIntegerText(dimObj.id) ?? (typeof dimObj.id === "number" ? String(dimObj.id) : "");
+      if (!declared) {
+        out.push({ ns, file: rel, rule: "R5b", detail: `coordinates.${dim}.id 缺失或非整数（code='${code}'）` });
+        continue;
+      }
+      const dbId = ctx.dimIdOf(dim, code);
+      if (dbId !== null && dbId !== declared) {
+        out.push({
+          ns,
+          file: rel,
+          rule: "R5b",
+          detail: `coordinates.${dim}.id=${declared} 与库中 ${code} 的 id=${dbId} 不一致（精度丢位或抄错）`,
+        });
       }
     }
   }
@@ -162,6 +245,19 @@ function checkBlock(ns: string, file: string, ctx: Ctx, out: Violation[]): void 
       if (!mNs || !mId) out.push({ ns, file: rel, rule: "R6", detail: `ownerModule='${om}' 非法（期望 <ns>/<moduleId>）` });
       else if (mNs !== ns) out.push({ ns, file: rel, rule: "R6", detail: `ownerModule 跨 ns（'${om}' vs 文件 ns '${ns}'）` });
       else if (!ctx.modules.has(mId)) out.push({ ns, file: rel, rule: "R6", detail: `ownerModule='${om}' 模块目录不存在` });
+      else {
+        // R9：ownerModule 指向的模块 MUST 在 blockAssembly.blocks[]（或顶层 blocks[]）登记本块
+        const blockId = typeof data.id === "string" && data.id.trim() ? data.id.trim() : basename(dirname(file));
+        const registered = ctx.moduleBlocks.get(mId);
+        if (registered && !registered.has(blockId)) {
+          out.push({
+            ns,
+            file: rel,
+            rule: "R9",
+            detail: `ownerModule='${om}' 未在 blockAssembly.blocks[] 登记 '${blockId}'（该块在 Gateway Navigator 不可达；登记面 = 实现模块）`,
+          });
+        }
+      }
     }
 
     const mode = typeof sharing.mode === "string" ? sharing.mode.trim() : "";
@@ -243,7 +339,7 @@ function main(): void {
   if (show.length > 15) console.log(`   … 其余 ${show.length - 15} 条省略`);
 
   if (update) {
-    writeBaseline(BASELINE_PATH, violations, "block.json 形状/引用存量欠债基线（check-block-json.ts）；新增违规不得落入此文件");
+    writeBaseline(BASELINE_PATH, violations, "block.json 形状/引用存量欠债基线（check-block-json.ts）；新增违规不得落入此文件。基线项 MUST 在 docs/specs/BLOCK_READY_UNWIRED_REGISTRY.md 有对应条目（基线 = 登记册镜像，非逃生舱）。");
     console.log(`\n✅ 基线已写入 ${relPath(ROOT, BASELINE_PATH)}（${violations.length} 条）`);
     process.exit(0);
   }

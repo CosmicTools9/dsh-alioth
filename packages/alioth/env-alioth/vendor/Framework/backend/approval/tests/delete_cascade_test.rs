@@ -20,7 +20,7 @@ async fn test_user(pool: &PgPool) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'cascade-test', 'cascade-test', 'cascade@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -83,9 +83,8 @@ async fn create_and_publish(pool: &PgPool, name: &str) -> i64 {
     .await;
     assert_eq!(resp.status().as_u16(), 200, "publish 应 200");
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(
+    assert!(
         body["data"]["node_count"].as_i64().unwrap_or(0) >= 3,
-        true,
         "publish 应物化 ≥3 节点: {body}"
     );
     flow_id

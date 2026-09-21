@@ -16,6 +16,8 @@ use rust_decimal::Decimal;
 use sqlx::{AssertSqlSafe, FromRow, PgPool};
 
 use super::models::*;
+// 列清单宏（`concat!` 静态 SQL 的唯一来源；宏体见 models.rs）
+use super::models::{date_segm_select_fields, event_select_fields, plan_select_fields};
 
 /// 提醒事件识别码（`zc_id_even-alert.code`）：日程提醒 = 计划起始前的预警事件。
 ///
@@ -208,6 +210,22 @@ const SCHEDULE_ITEM_SELECT: &str = r#"SELECT
             LEFT JOIN isahl."zc_id_segm-date" ds ON ds.id = COALESCE(p."qk_date-segm", p."qk_time-segm")
             WHERE p.deleted_at IS NULL"#;
 
+/// 计划 INSERT 语句——表名以 `$table:literal`、列清单以 `plan_select_fields!` 在**编译期**
+/// 固化（`concat!`），两个叶表共用同一 SQL 正文（单一来源，新增路由 = 加一个 match 臂 + 一行宏调用）。
+macro_rules! plan_insert_sql {
+    ($table:literal) => {
+        concat!(
+            "INSERT INTO ",
+            $table,
+            r#"
+                (notice, code, "qk_date-segm", "qk_time-segm", cron, exclude, sort, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
+            RETURNING "#,
+            plan_select_fields!()
+        )
+    };
+}
+
 #[derive(Clone)]
 pub struct ScheduleRepository {
     pool: PgPool,
@@ -354,14 +372,14 @@ impl ScheduleRepository {
     // ----- Plan CRUD -----
 
     pub async fn find_plan_by_id(&self, id: i64) -> Result<Option<Plan>, sqlx::Error> {
-        let sql = format!(
-            "SELECT {} FROM isahl.zc_id_plan WHERE id = $1 AND deleted_at IS NULL",
-            Plan::SELECT_FIELDS
-        );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        sqlx::query_as::<_, Plan>(concat!(
+            "SELECT ",
+            plan_select_fields!(),
+            " FROM isahl.zc_id_plan WHERE id = $1 AND deleted_at IS NULL"
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     // ----- 提醒（预警事件路线）-----
@@ -371,7 +389,8 @@ impl ScheduleRepository {
         &self,
         plan_id: i64,
     ) -> Result<Option<ReminderResponse>, sqlx::Error> {
-        let row: Option<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        type WindowRow = (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+        let row: Option<WindowRow> = sqlx::query_as(
             r#"SELECT ds.date_st,
                       (SELECT sd.date FROM isahl.zc_id_plan_rr_event rpe
                        JOIN isahl."zc_id_even-alert" re
@@ -569,21 +588,14 @@ impl ScheduleRepository {
             qk_time_segm = qk_date_segm; // 时间并入同一 segm 行
         }
 
-        // 根据业务类型路由到对应叶表
+        // 根据业务类型路由到对应叶表（闭式 match：表名是编译期字面量）
         // meeting → zc_id_thre-meeting，其余兜底到 zc_id_plan-personal
-        let table = match code.as_deref() {
-            Some("meeting") => r#"isahl."zc_id_thre-meeting""#,
-            _ => r#"isahl."zc_id_plan-personal""#,
-        };
         // _t_ / _f_ 由 dk_scene/dk_factor/dk_function 坐标触发器自动赋值
-        let sql = format!(
-            r#"INSERT INTO {table}
-                (notice, code, "qk_date-segm", "qk_time-segm", cron, exclude, sort, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-            RETURNING {}"#,
-            Plan::SELECT_FIELDS
-        );
-        let plan: Plan = sqlx::query_as(AssertSqlSafe(sql.as_str()))
+        let sql = match code.as_deref() {
+            Some("meeting") => plan_insert_sql!(r#"isahl."zc_id_thre-meeting""#),
+            _ => plan_insert_sql!(r#"isahl."zc_id_plan-personal""#),
+        };
+        let plan: Plan = sqlx::query_as(sql)
             .bind(&notice)
             .bind(&code)
             .bind(qk_date_segm)
@@ -697,7 +709,7 @@ impl ScheduleRepository {
         req: &UpdatePlanRequest,
     ) -> Result<Option<Plan>, sqlx::Error> {
         let now = Utc::now();
-        let sql = format!(
+        let sql = concat!(
             r#"UPDATE isahl.zc_id_plan SET
                 notice = COALESCE($1, notice),
                 code = COALESCE($2, code),
@@ -708,10 +720,10 @@ impl ScheduleRepository {
                 sort = COALESCE($7, sort),
                 updated_at = $8
             WHERE id = $9 AND deleted_at IS NULL
-            RETURNING {}"#,
-            Plan::SELECT_FIELDS
+            RETURNING "#,
+            plan_select_fields!()
         );
-        let updated: Option<Plan> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
+        let updated: Option<Plan> = sqlx::query_as(sql)
             .bind(&req.notice)
             .bind(&req.code)
             .bind(req.qk_date_segm)
@@ -772,8 +784,8 @@ impl ScheduleRepository {
             Some(id) => id,
             None => {
                 sqlx::query_scalar::<_, i64>(
-                    r#"INSERT INTO isahl."zc_id_stus-plan" (id, code, notice)
-                       VALUES (isahl.gen_next_zuid(), 'completed', '已完成') RETURNING id"#,
+                    r#"INSERT INTO isahl."zc_id_stus-plan" (id, code, notice, flag)
+                       VALUES (isahl.gen_next_uid(103), 'completed', '已完成', 'end') RETURNING id"#,
                 )
                 .fetch_one(&self.pool)
                 .await?
@@ -959,7 +971,7 @@ impl ScheduleRepository {
             None => {
                 sqlx::query_scalar::<_, i64>(
                     r#"INSERT INTO isahl."zc_id_stus-event" (id, code, notice, flag)
-                       VALUES (isahl.gen_next_zuid(), 'completed', '完成', 'end')
+                       VALUES (isahl.gen_next_uid(89), 'completed', '完成', 'end')
                        RETURNING id"#,
                 )
                 .fetch_one(&self.pool)
@@ -1038,14 +1050,14 @@ impl ScheduleRepository {
         }
 
         // 返回 event 实体（调用方无需区分 plan/event 路径）
-        let sql = format!(
-            "SELECT {} FROM isahl.zc_id_event WHERE id = $1 AND deleted_at IS NULL",
-            Event::SELECT_FIELDS
-        );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        sqlx::query_as::<_, Event>(concat!(
+            "SELECT ",
+            event_select_fields!(),
+            " FROM isahl.zc_id_event WHERE id = $1 AND deleted_at IS NULL"
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     // ----- Event CRUD -----
@@ -1055,24 +1067,23 @@ impl ScheduleRepository {
         // 叶表坐标（§6.12）：值经 ontology_binding 解析 code→ZUID（禁硬编码 ZUID）
         let (dk_scene, dk_factor, dk_function) =
             ontology_binding::resolve(&self.pool, ("JE", "FBB", "↓_EE")).await?;
-        let sql = format!(
-            r#"INSERT INTO "isahl.zc_id_even-alert" 
+        sqlx::query_as::<_, Event>(concat!(
+            r#"INSERT INTO isahl."zc_id_even-alert" 
                 (notice, fk_place, fk_subject, qk_date, created_at, updated_at, dk_scene, dk_factor, dk_function)
             VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8)
-            RETURNING {}"#,
-            Event::SELECT_FIELDS
-        );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
-            .bind(&req.notice)
-            .bind(req.fk_place)
-            .bind(req.fk_subject)
-            .bind(req.qk_date)
-            .bind(now)
-            .bind(dk_scene)
-            .bind(dk_factor)
-            .bind(dk_function)
-            .fetch_one(&self.pool)
-            .await
+            RETURNING "#,
+            event_select_fields!()
+        ))
+        .bind(&req.notice)
+        .bind(req.fk_place)
+        .bind(req.fk_subject)
+        .bind(req.qk_date)
+        .bind(now)
+        .bind(dk_scene)
+        .bind(dk_factor)
+        .bind(dk_function)
+        .fetch_one(&self.pool)
+        .await
     }
 
     pub async fn create_event_for_plan(
@@ -1104,7 +1115,7 @@ impl ScheduleRepository {
         req: &UpdateEventRequest,
     ) -> Result<Option<Event>, sqlx::Error> {
         let now = Utc::now();
-        let sql = format!(
+        let sql = concat!(
             r#"UPDATE isahl.zc_id_event SET
                 notice = COALESCE($1, notice),
                 fk_place = COALESCE($2, fk_place),
@@ -1112,10 +1123,10 @@ impl ScheduleRepository {
                 qk_date = COALESCE($4, qk_date),
                 updated_at = $5
             WHERE id = $6 AND deleted_at IS NULL
-            RETURNING {}"#,
-            Event::SELECT_FIELDS
+            RETURNING "#,
+            event_select_fields!()
         );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
+        sqlx::query_as::<_, Event>(sql)
             .bind(&req.notice)
             .bind(req.fk_place)
             .bind(req.fk_subject)
@@ -1174,14 +1185,14 @@ impl ScheduleRepository {
 
     /// 通过日期段外键获取 segm-date 详情
     pub async fn find_date_segm(&self, id: i64) -> Result<Option<DateSegm>, sqlx::Error> {
-        let sql = format!(
-            r#"SELECT {} FROM isahl."zc_id_segm-date" WHERE id = $1"#,
-            DateSegm::SELECT_FIELDS
-        );
-        sqlx::query_as(AssertSqlSafe(sql.as_str()))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
+        sqlx::query_as::<_, DateSegm>(concat!(
+            "SELECT ",
+            date_segm_select_fields!(),
+            r#" FROM isahl."zc_id_segm-date" WHERE id = $1"#
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
     }
 
     /// 获取当前用户的未完成待办数量（徽标计数）。
@@ -1419,13 +1430,15 @@ impl ScheduleService {
         let participants = Vec::new();
         Ok(into_item_response_from_plan(
             plan,
-            None,
-            None,
-            None,
-            None,
-            None,
-            participants,
-            reminder,
+            PlanItemContext {
+                date_segm: None,
+                place_name: None,
+                subject_name: None,
+                approval_status: None,
+                approval_title: None,
+                participants,
+                reminder,
+            },
         ))
     }
 
@@ -1441,13 +1454,15 @@ impl ScheduleService {
                 let participants = Vec::new();
                 Ok(Some(into_item_response_from_plan(
                     p,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    participants,
-                    reminder,
+                    PlanItemContext {
+                        date_segm: None,
+                        place_name: None,
+                        subject_name: None,
+                        approval_status: None,
+                        approval_title: None,
+                        participants,
+                        reminder,
+                    },
                 )))
             }
             None => Ok(None),
@@ -1470,13 +1485,15 @@ impl ScheduleService {
                 let participants = Vec::new();
                 Ok(Some(into_item_response_from_plan(
                     p,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    participants,
-                    reminder,
+                    PlanItemContext {
+                        date_segm: None,
+                        place_name: None,
+                        subject_name: None,
+                        approval_status: None,
+                        approval_title: None,
+                        participants,
+                        reminder,
+                    },
                 )))
             }
             None => Ok(None),
@@ -1664,8 +1681,8 @@ fn into_item_response(
     }
 }
 
-fn into_item_response_from_plan(
-    plan: Plan,
+/// into_item_response_from_plan 的附加上下文（plan 之外的组装输入）
+struct PlanItemContext {
     date_segm: Option<DateSegm>,
     place_name: Option<String>,
     subject_name: Option<String>,
@@ -1673,7 +1690,18 @@ fn into_item_response_from_plan(
     approval_title: Option<String>,
     participants: Vec<ParticipantResponse>,
     reminder: Option<ReminderResponse>,
-) -> ScheduleItemResponse {
+}
+
+fn into_item_response_from_plan(plan: Plan, ctx: PlanItemContext) -> ScheduleItemResponse {
+    let PlanItemContext {
+        date_segm,
+        place_name,
+        subject_name,
+        approval_status,
+        approval_title,
+        participants,
+        reminder,
+    } = ctx;
     let progress = Decimal::ZERO;
     let done = false;
     let date_start = date_segm

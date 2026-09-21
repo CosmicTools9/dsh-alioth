@@ -7,7 +7,9 @@
 //! 1. 模型级：`Framework/seed/`（dev）或 `Deploy/{ns}/seed/model-seed` 软链
 //!    （release，DEPLOY_PATH）。按 `seed-dimensions.meta.json` 键先建
 //!    `uq_seed_id_*` 唯一索引（对齐 Deploy start.sh 4b），再字典序重放
-//!    `seed-*.sql`（剥除 pg_dump 的 `\restrict`/`\unrestrict`）。
+//!    `seed-*.sql`（剥除 pg_dump 的 `\restrict`/`\unrestrict`）。其中声明文件
+//!    `seed-model-contract.sql` 仅在目标库持有 `isahl_meta.meta_collections`
+//!    判定面时重放，namespace 库跳过（CONTAINER_BOUNDARY §2；探测失败照常重放）。
 //! 2. namespace 级：`Pre-Proc/{ns}/seed/`（dev）或 `Deploy/{ns}/seed/`
 //!    （release）。以 `seed-manifest.json` 为唯一契约：仅重放 `in_suite=true`
 //!    文件、按 `order` 升序、逐文件做目标表存在性门禁（缺失 WARN 跳过）。
@@ -178,6 +180,24 @@ async fn replay_model_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSee
         }
     }
 
+    // 声明文件（seed-model-contract.sql）= isahl_meta.meta_collections 上的幂等 merge，
+    // 只对持有模型元数据面的库适用；namespace 库按 CONTAINER_BOUNDARY §2 无该面
+    // ⇒ 重放必报 relation does not exist（2026-09-13 AVIC-CAASEC 事故同源；判据见
+    // openspec/changes/migrate-seed-contract-into-model/design.md §3c）。
+    // 探测失败（DB 不可达）保持旧行为（照常重放并 WARN），不因探测失败而跳过。
+    let has_model_face: bool = match sqlx::query_scalar::<_, bool>(
+        "SELECT to_regclass('isahl_meta.meta_collections') IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            common::telemetry::warn!("判定面探测失败（照常重放模型级种子）: {}", e);
+            true
+        }
+    };
+
     // 2. seed-*.sql 字典序重放（幂等 ON CONFLICT，失败 WARN 不阻断）
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .map(|entries| {
@@ -201,6 +221,14 @@ async fn replay_model_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSee
             .and_then(|n| n.to_str())
             .unwrap_or("?")
             .to_string();
+        if !has_model_face && name == "seed-model-contract.sql" {
+            common::telemetry::info!(
+                "模型级种子跳过（目标库无 isahl_meta 判定面，声明文件不适用）: {}",
+                name
+            );
+            stats.model_skipped += 1;
+            continue;
+        }
         match replay_sql_file(pool, path).await {
             Ok(()) => {
                 common::telemetry::info!("模型级种子载入：{}", name);
@@ -320,14 +348,23 @@ async fn replay_sql_file(pool: &PgPool, path: &PathBuf) -> Result<(), String> {
         .acquire()
         .await
         .map_err(|e| format!("获取连接失败: {}", e))?;
-    if let Err(e) = sqlx::raw_sql(AssertSqlSafe(stripped.as_str()))
+    let exec = sqlx::raw_sql(AssertSqlSafe(stripped.as_str()))
         .execute(&mut *conn)
-        .await
-    {
+        .await;
+    if exec.is_err() {
         // 失败后补发 ROLLBACK 清理（无事务时仅为 NOTICE，无害）。
         let _ = sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await;
-        return Err(format!("执行失败: {}", e));
     }
+    // 会话状态复位（fix-ns-seed-session-pollution）：种子文件多为 pg_dump 产物，
+    // 头部含**会话级** GUC 改写——`SELECT pg_catalog.set_config('search_path','',false)`
+    // 与 `SET statement_timeout/lock_timeout/row_security=…`（pg_dump 常规段落）。
+    // 本函数把连接还池，若不复位则被污染的连接此后对所有**未限定**表名/函数解析失败：
+    // 实测 `relation "zc_id_stor-acc-stock" does not exist`、
+    // `function st_asgeojson(postgis.geometry) does not exist`——随请求命中哪个连接而
+    // **间歇**出现（同端点时通时不通）。`RESET ALL` 一次性恢复连接默认 GUC；
+    // MUST 在成功与失败两条路径都执行（连接即将还池）。
+    let _ = sqlx::raw_sql("RESET ALL").execute(&mut *conn).await;
+    exec.map_err(|e| format!("执行失败: {}", e))?;
     Ok(())
 }
 

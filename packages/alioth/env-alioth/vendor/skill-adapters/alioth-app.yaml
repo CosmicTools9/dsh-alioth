@@ -1,6 +1,7 @@
 name: alioth-app
 description: "App 级原型集成 — AppLayout 设计（llm-tsx/app.tsx）+ a-v{N}.html 构建与验证"
-version: "2.0"
+version: "2.2"
+default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
   - ".agents/skills/alioth-design/references/prototype-base.css"
@@ -10,13 +11,13 @@ tracks:
     steps:
       - id: "1.1"
         instruction: "preflight — 确认 App 上下文：读取 Pre-Proc/{ns}/Apps/{app}/app.json（若已生成，config.modules 即模块列表）；否则用 search_files 扫描 Pre-Proc/{ns}/Sources/Apps/Modules/*/module.json 发现模块 id。App 骨架目录由 AppCreation 创建，本步骤只确认模块清单，不写文件。"
-        tools: [read_file, search_files]
+        tools: [read_file, search_files, list_dir]
         schema: {type: object, required: [ns, app, modules]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Apps/{app}/"
       - id: "1.2"
         instruction: "AppLayout 设计 — 在 Pre-Proc/{ns}/Prototypes/Apps/{app}/llm-tsx/app.tsx 写入 App 级原型，必须满足：(1) export default function AppLayout()（named export 不行）；(2) 第一行 import { useState } from 'react'；(3) 从 ../../../../../../.agents/skills/alioth-design/references/gateway-shell 导入（6 级相对路径，禁止 .agents/ 项目根相对路径）；(4) 组件签名含 embedded 参数（默认 false）；(5) TopBar ModuleTabs 从步骤 1.1 确认的模块列表推导（label 用模块业务名）；(6) DOM 对齐 gateway-shell.tsx：root(flex h-screen flex-col overflow-hidden bg-background) → TopBar(h-14 border-b px-6 bg-background shrink-0，左 Logo+ModuleTabs 右 SearchSlot+ActionGroup+UserMenu) → body(flex flex-1 min-h-0 overflow-hidden，main + WorkspaceDock 二子节点) → main(flex flex-col min-w-0 overflow-hidden flex-1，无 accent-bar 无外层滚动)；推荐直接组合 GatewayShell（hideNavigation/hideFooter/noContentScroll）。App 层禁止包含 Module/Block 内部 UI。"
-        tools: [read_file, write_file]
+        tools: [read_file, write_file, lint_file]
         schema: {type: object, required: [app_tsx_path]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Prototypes/Apps/{app}/llm-tsx/app.tsx"
@@ -32,5 +33,11 @@ tracks:
           - program: "bun"
             args: ["scripts/check/check-nav-hrefs.ts", "--fail", "--ns", "{ns}"]
             timeout_sec: 120
+          - program: "bun"
+            args: ["scripts/check/check-prototype-types.ts", "--fail"]
+            timeout_sec: 120
+          - program: "bun"
+            args: ["scripts/check/check-prototype-render.ts", "--changed", "--fail"]
+            timeout_sec: 300
 source:
-  content_sha256: 77bf067c37fdad8118817307d23325e79cd864bf75dac86c60c69b383d3101c7
+  content_sha256: 4946ab91019769fce4f1129529634cc7fc4026fa483ee1ea6baf684f054a8819

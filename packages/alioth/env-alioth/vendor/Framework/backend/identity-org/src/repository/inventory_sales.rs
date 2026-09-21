@@ -87,8 +87,12 @@ impl
         // 校验 ref_left 必须指向 zc_id_production 的一个有效成员
         self.validate_ref_left(req.ref_left).await?;
 
+        // 载体迁移（用户裁决 2026-09-21，报缺产物 R6）：库存统计关系行原写读在声明语义
+        // 「关联-文件↔URL」的桥表上（挪用）；合法载体 = `zc_id_prod-payload_rr_stor-container`
+        // （关联-载荷↔容器，⊂ `zc_id_production_rr_storage`）。不显式传 id → 走载体自身
+        // uid 段默认 `gen_next_uid(517)`（原借用为 335）；update/delete 走父表故照常可见。
         sqlx::query_as::<_, InventorySales>(
-            r#"INSERT INTO "isahl"."zc_id_file_rr_url" (code, notice, comments, ref_left, ref_right, qk_p_capacity, qk_qty, sk_unit, created_by_id)
+            r#"INSERT INTO "isahl"."zc_id_prod-payload_rr_stor-container" (code, notice, comments, ref_left, ref_right, qk_p_capacity, qk_qty, sk_unit, created_by_id)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                RETURNING id, code, notice, comments, ref_left, ref_right, qk_p_capacity, qk_qty, sk_unit, created_at, updated_at, deleted_at"#,
         )

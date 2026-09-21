@@ -88,7 +88,7 @@ async fn insert_test_approval_instance(
     // fk_approve 列已移除：实例↔审批事件经 operation_rr_event 桥
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(event_id)

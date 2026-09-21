@@ -7,12 +7,12 @@ use async_trait::async_trait;
 use common::data::{ListQuery, PaginatedResponse};
 use common::AliothError as ApiError;
 use crud::{AliothRepository, GenericRepository};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 use crate::biz::models::{
     CreateUnitConversionRateRequest, UnitConversionRate, UpdateUnitConversionRateRequest,
 };
-use crate::biz::repositories::rate_leaf_table_for_dimension;
+use crate::biz::repositories::{rate_leaf_sql_for_dimension, RATE_LEAF_PARENT};
 
 #[derive(Clone)]
 pub struct UnitConversionRateRepository {
@@ -71,22 +71,11 @@ impl
         user_id: i64,
     ) -> Result<UnitConversionRate, ApiError> {
         let p = self.generic.pool();
-        let table = req
-            .dimension_key
-            .as_deref()
-            .map(rate_leaf_table_for_dimension)
-            .unwrap_or("isahl.\"zc_id_rate\"");
-        let sql = format!(
-            r#"INSERT INTO {} (notice, ck_left, ck_right, multiply, division, precision_, intrinsic, created_by_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-               RETURNING id, notice AS name, ck_left AS left, ck_right AS right,
-                         multiply, division, precision_, intrinsic,
-                         CASE WHEN tableoid = 'isahl.zc_id_rate'::regclass THEN NULL
-                              ELSE replace(replace(tableoid::regclass::text, '"zc_id_rate-', ''), '"', '') END AS dimension,
-                         created_at, updated_at, deleted_at"#,
-            table
-        );
-        sqlx::query_as::<_, UnitConversionRate>(AssertSqlSafe(sql.as_str()))
+        let sql = match req.dimension_key.as_deref() {
+            Some(dim_key) => rate_leaf_sql_for_dimension(dim_key).insert_sql,
+            None => RATE_LEAF_PARENT.insert_sql,
+        };
+        sqlx::query_as::<_, UnitConversionRate>(sql)
             .bind(&req.name)
             .bind(req.left)
             .bind(req.right)
@@ -107,7 +96,7 @@ impl
     ) -> Result<Option<UnitConversionRate>, ApiError> {
         let p = self.generic.pool();
         sqlx::query_as::<_, UnitConversionRate>(
-            r#"UPDATE isahl.zc_id_rate
+            r#"UPDATE isahl.zc_id_rate AS e
                SET notice = COALESCE($1, notice), ck_left = COALESCE($2, ck_left),
                    ck_right = COALESCE($3, ck_right), multiply = COALESCE($4, multiply),
                    division = COALESCE($5, division), precision_ = COALESCE($6, precision_),
@@ -115,8 +104,8 @@ impl
                WHERE id = $9 AND deleted_at IS NULL
                RETURNING id, notice AS name, ck_left AS left, ck_right AS right,
                          multiply, division, precision_, intrinsic,
-                         CASE WHEN tableoid = 'isahl.zc_id_rate'::regclass THEN NULL
-                              ELSE replace(replace(tableoid::regclass::text, '"zc_id_rate-', ''), '"', '') END AS dimension,
+                         CASE WHEN e.tableoid = 'isahl.zc_id_rate'::regclass THEN NULL
+                              ELSE replace((SELECT relname FROM pg_class WHERE oid = e.tableoid), 'zc_id_rate-', '') END AS dimension,
                          created_at, updated_at, deleted_at"#,
         )
         .bind(&req.name)

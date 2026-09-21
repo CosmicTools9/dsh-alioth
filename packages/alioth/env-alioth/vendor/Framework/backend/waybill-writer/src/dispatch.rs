@@ -1,6 +1,5 @@
 //! 派车核心事务（迁自 transport-dispatch `repositories/dispatch_core.rs`，单份实现）。
 
-use common::operator_org::resolve_operator_org;
 use common::AliothError as ApiError;
 use consignment_writer::{insert_order_mirror_tx, sync_mirror_status_tx, OrderMirrorInput};
 use rust_decimal::Decimal;
@@ -9,49 +8,90 @@ use crate::bom::{dispatch_vehicle_plate, ensure_default_capacity_pool};
 use crate::models::DispatchParams;
 use crate::ontology::{resolve_ontology_coords, DkEntity};
 
-/// 委托层 B（运营主体）解析——供「非平台运营用户」发起 B 侧写动作时使用
-/// （承运商自有系统走开放 API 服务令牌：服务主体 `auth_users.entity_id IS NULL`，
-/// 无运营组织可解析，B 只能由委托派生；平台运营用户仍走绑定组织门禁）。
+/// 运单 B（运营组织）解析——**取单据所属客户委托链根的承运商槽**。
 ///
-/// 来源优先级：
-/// ① 委托明细 `fk_deal` → 产品 `fk_subj-provider`——`consignment-writer` 建单**不写**
-///    产品 `fk_previous`，明细桥是唯一可用链路（实测 PRD 行 `fk_previous IS NULL`）；
-/// ② 产品 `fk_previous` = 委托且 `code LIKE 'PRD-%'`（OA / 历史路径）。
+/// **入参**可为**运单**（`WB-%`）或**委托**（`CNS-%`，含小委托 `CNS-…-S{n}`）：
+/// 运单先经 `"isahl"."zc_id_order_rr_demand"`（`ref_left`=该运单、`code NOT LIKE 'SPL-%'`）
+/// 跳一次得到其**委托**，再按委托上溯——防调用方误传运单 id 时静默取到该运单自身
+/// `fk_object`（= **承运商** ✗）当运营主体。
 ///
-/// 两者皆无 → `Ok(None)`，调用方回落系统运营主体。
+/// **语义（2026-09-14 用户裁决 + 同日补正）**：运单 B = 该单据所属**客户委托链根**的 `fk_object`，
+/// 即**建客户委托时选定的承运商 = 建单时选定的平台主体**（客户视角承运商 = 平台）。
+/// 平台主体**不唯一、因委托而异**（用户可能选不同平台主体）⇒
+/// - MUST NOT 写成常量 / 单一组织；
+/// - MUST NOT 取登录用户绑定组织（属**身份/权限层**——属权谓词 / NGAC 过滤，与单据上的平台主体
+///   无从属关系 ✗）；
+/// - MUST NOT 读明细 `fk_deal` → 产品行 `"fk_subj-provider"`（那是产品侧卖方 = **外部承运商** ✗）；
+/// - MUST NOT 用系统占位（`SUBJ-SYSTEM` / `SUBJ-ISAH-ADMIN`）兜底。
+///
+/// 上溯路径：小委托（选商后的拆分单）`fk_object` 是**外部**承运商，必须沿
+/// `"isahl"."zc_id_order_rr_demand"` 的 `SPL-*` 父桥（`ref_left`=子 / `ref_right`=父）上溯到
+/// 链根（= 无 `SPL-%` 父桥的委托），再取该行 `fk_object`。有界 **≤5 跳**防环。
+///
+/// 解析不出 → `Ok(None)`（调用方 MUST 拒绝派车，不得回落绑定组织或系统占位）。
 pub async fn resolve_consignment_operator_org(
     conn: &mut sqlx::PgConnection,
-    consignment_id: i64,
+    doc_id: i64,
 ) -> Result<Option<i64>, ApiError> {
-    let by_detail: Option<i64> = sqlx::query_scalar(
-        r#"SELECT fp."fk_subj-provider"
-           FROM "isahl"."zc_id_deta-trade_order" d
-           JOIN "isahl"."zc_id_prod-freight_road-sales" fp
-             ON fp.id = d.fk_deal AND fp.deleted_at IS NULL
-           WHERE d.fk_list = $1 AND d.deleted_at IS NULL
-             AND fp."fk_subj-provider" IS NOT NULL
-           ORDER BY CASE WHEN d.code LIKE 'DTL-LDG-%' THEN 1 ELSE 0 END, d.id
-           LIMIT 1"#,
+    // 入参行类型判定：`WB-%` ⇒ 先跳一次到其委托；其余（`CNS-%`）视为委托。
+    let doc_code: Option<String> = sqlx::query_scalar(
+        r#"SELECT code FROM "isahl"."zc_id_orde-land" WHERE id = $1 AND deleted_at IS NULL"#,
     )
-    .bind(consignment_id)
+    .bind(doc_id)
     .fetch_optional(&mut *conn)
     .await?
     .flatten();
-    if by_detail.is_some() {
-        return Ok(by_detail);
+    let Some(doc_code) = doc_code else {
+        return Ok(None);
+    };
+    let mut current = if doc_code.starts_with("WB-") {
+        let consignment: Option<i64> = sqlx::query_scalar(
+            // 运单→委托桥的写入不落 code（dispatch.rs 的 INSERT 只给 ref_left/ref_right）
+            // ⇒ code 为 NULL；SQL 三值逻辑下 `NULL NOT LIKE …` 为 NULL=假，
+            // 故 MUST 显式放行 NULL，否则该跳恒不命中（防 `NULL` 被 SPL 分流的同时不误伤本桥）。
+            r#"SELECT ref_right
+               FROM "isahl"."zc_id_order_rr_demand"
+               WHERE ref_left = $1 AND (code IS NULL OR code NOT LIKE 'SPL-%')
+                 AND deleted_at IS NULL
+               ORDER BY id LIMIT 1"#,
+        )
+        .bind(doc_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten();
+        match consignment {
+            Some(cid) => cid,
+            None => return Ok(None),
+        }
+    } else {
+        doc_id
+    };
+    for _ in 0..5 {
+        let parent: Option<i64> = sqlx::query_scalar(
+            r#"SELECT ref_right
+               FROM "isahl"."zc_id_order_rr_demand"
+               WHERE ref_left = $1 AND code LIKE 'SPL-%' AND deleted_at IS NULL
+               ORDER BY id LIMIT 1"#,
+        )
+        .bind(current)
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten();
+        match parent {
+            Some(pid) if pid != current => current = pid,
+            _ => break,
+        }
     }
-    let by_previous: Option<i64> = sqlx::query_scalar(
-        r#"SELECT fp."fk_subj-provider"
-           FROM "isahl"."zc_id_prod-freight_road-sales" fp
-           WHERE fp.fk_previous = $1 AND fp.deleted_at IS NULL
-             AND fp.code LIKE 'PRD-%' AND fp."fk_subj-provider" IS NOT NULL
-           ORDER BY fp.id LIMIT 1"#,
+    let root_org: Option<i64> = sqlx::query_scalar(
+        r#"SELECT o.fk_object
+           FROM "isahl"."zc_id_orde-land" o
+           WHERE o.id = $1 AND o.deleted_at IS NULL AND o.fk_object IS NOT NULL"#,
     )
-    .bind(consignment_id)
+    .bind(current)
     .fetch_optional(&mut *conn)
     .await?
     .flatten();
-    Ok(by_previous)
+    Ok(root_org)
 }
 
 /// dispatch_vehicles_tx 的可共享事务变体（测试复用，调用方负责提交/回滚）。
@@ -88,10 +128,16 @@ pub async fn dispatch_vehicles_tx_inner(
     .fetch_optional(&mut **tx)
     .await?;
     if let Some(code) = lifecycle_code.as_deref() {
-        const DISPATCHABLE: [&str; 2] = ["ST-ACCEPTED", "ST-DISPATCHED"];
-        if !DISPATCHABLE.contains(&code) {
+        // 可派判定走**统一状态映射**（`status::status_mapper::is_dispatchable_consignment`，
+        // 框架级单一来源）——禁在守卫里硬编码 `ST-*` code 白名单：委托创建现落初始状态桥
+        // `ST-NEW`「待受理」（consignment-writer writer.rs「初始状态桥」），常量白名单必然漂移
+        // （批注 1862daf2 / 2026-09-14：OA 门户承运商点「新建运单」被误拒
+        // `DISPATCH_FAILED: 委托状态 ST-NEW 不可派车`）。
+        // 可派 = 未开始（pending_review 族）∪ 已受理（accepted）∪ 已派车（partially_allocated）；
+        // 在途/抵达/签收/结算/完结/取消/事故 → fail-closed 拒。
+        if !status::status_mapper::is_dispatchable_consignment(Some(code)) {
             return Err(ApiError::BadRequest(format!(
-                "委托状态 {code} 不可派车（仅新建/ST-ACCEPTED/ST-DISPATCHED 可派）"
+                "委托状态 {code} 不可派车（仅待受理/已受理/已派车可派）"
             )));
         }
     }
@@ -176,13 +222,17 @@ pub async fn dispatch_vehicles_tx_inner(
     // ── Step 0d: 凭证归属池解析（不再参与可用量校验——可售扣减已在下单完成）──
     // 派车不再做池总量/余额校验（设计契约 §2.4：下单=可售↓、派车=形态迁移；原 transit_net
     // 读径的受理预留双计/字典缺失静默失效/负余额虚增问题随本 change 退役）。
-    // effective_capacity_product_id 仅用于 Step 5b tsp 迁移凭证的 fk_production 归属（审计事实）。
+    // effective_capacity_product_id 仅用于 Step 5b tsp 迁移凭证的交易对象列（凭证族「物/货」列）
+    // 归属（审计事实；列名运行期探测：新模型 `fk_payload` / 旧模型 `fk_production`）。
     let effective_capacity_product_id: i64 = if let Some(pid) = capacity_product_id {
         pid
     } else {
+        // 载体迁移（用户裁决 2026-09-21，报缺产物 R6）：容量池/履约实例关系行原写读在声明语义
+        // 「关联-文件↔URL」的桥表上（挪用）；合法载体 = `zc_id_prod-payload_rr_stor-container`
+        // （关联-载荷↔容器，⊂ `zc_id_production_rr_storage`）。
         let deduction_pool: Option<i64> = sqlx::query_scalar(
                 r#"SELECT r.ref_left
-                   FROM "isahl"."zc_id_file_rr_url" r
+                   FROM "isahl"."zc_id_prod-payload_rr_stor-container" r
                    LEFT JOIN "isahl"."zc_id_prod-freight_road-sales" pp
                      ON pp.id = r.ref_left AND pp.deleted_at IS NULL
                    WHERE r.ref_right = $1 AND r.deleted_at IS NULL
@@ -370,25 +420,22 @@ pub async fn dispatch_vehicles_tx_inner(
     let mut results = Vec::with_capacity(allocations.len());
 
     // 双层双方（D1）：运单 fk_subject=B（运营主体）、fk_object=C（承运商）。
-    // B 语义：运单 B 与委托层 B 一致——取委托 PRD 销售实例 fk_subj-provider。
-    // 派车发起方有两类：① 平台运营用户（绑定运营组织，保留门禁）；② 承运商自有系统
-    // （开放 API 服务令牌，服务主体不承载运营组织，无绑定可解析）——后者 B 只能由委托派生。
-    let caller_user_type: Option<String> =
-        sqlx::query_scalar(r#"SELECT user_type FROM isahl_auth.auth_users WHERE id = $1"#)
-            .bind(user_id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .flatten();
-    let operator_org = if caller_user_type.as_deref() == Some("service") {
-        match resolve_consignment_operator_org(&mut *tx, consignment_id).await? {
-            Some(org) => org,
-            // 委托层无 B 证据（老数据）——回落系统运营主体（SUBJ-SYSTEM），仍拒绝无运营主体派车
-            None => resolve_operator_org(tx, common::SYSTEM_USER_ID).await?,
-        }
-    } else {
-        // 门禁：平台用户未绑定运营组织 → OPERATOR_ORG_UNBOUND
-        resolve_operator_org(tx, user_id).await?
-    };
+    // B 语义（2026-09-14 用户裁决 + 同日补正）：B **只由单据决定** = 该运单所属**客户委托链根**的
+    // `fk_object`（= 建客户委托时选定的承运商 = 建单时选定的平台主体），平台主体因委托而异。
+    // 登录用户绑定组织属**身份/权限层**（属权谓词 / NGAC 过滤），**MUST NOT** 参与 B 取值——
+    // 承运商自有系统（开放 API 服务令牌 `user_type='service'`）、承运门户（`user_type='external'`，
+    // 其绑定组织是**外部承运商自己**）与平台运营用户**一律同源取链根**，不分调用方类型：
+    // 同一平台用户在不同委托上可对应不同平台主体，绑定组织与单据上的平台主体**无从属关系**。
+    // 权限/属权过滤在 Gateway / 签名层，本函数只管 B 取值。
+    // 无链根证据 ⇒ 拒绝（400）；禁绑定组织兜底、禁系统占位（SUBJ-SYSTEM / SUBJ-ISAH-ADMIN）。
+    let operator_org = resolve_consignment_operator_org(&mut *tx, consignment_id)
+        .await?
+        .ok_or_else(|| {
+            ApiError::BadRequest(
+                "运单缺少运营主体：委托链未解析出运营组织（客户委托链根 fk_object 为空/无桥）"
+                    .to_string(),
+            )
+        })?;
 
     // 委托 PRD 销售实例（起讫地 rr_stop 场所复用来源；历史数据缺失时跳过 rr_stop 复制）
     let consign_sales_id: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
@@ -502,6 +549,14 @@ pub async fn dispatch_vehicles_tx_inner(
     // PUR（B 的采购实例）在循环后按委托创建一次；多承运商派车时取首个非空承运商为供应商
     // （多 C 混合派车为边缘场景，code 唯一性按委托保证）
     let mut pur_carrier: Option<i64> = None;
+    // 本事务内新建的运单 id（Step 5b-0 批次对账的**排除集**，2026-09-20 批注修复）：
+    // 本事务是「先建运单（`zc_id_orde-land` INSERT + 同车 CSALE 产品/运具桥 + ST-DISPATCHED
+    // 状态桥）→ 后做批次凭证对账」，故 Step 5b-0 的占用判据若不排除本批行，会把**本批正在
+    // 创建的那张运单**读成「历史未释放运单」占用该车（其状态为正落在集的 ST-DISPATCHED）
+    // ⇒ 只要该 (委托,车辆) 存在陈旧活跃批次凭证（如该车上一单已签收但凭证未冲销），
+    // 就**恒判占用**、必然拒绝（重建/重启无效的真正根因）。
+    // 排除集只含本事务新建行：事务开始前已存在的运单（含无状态桥者）仍 fail-closed 计入占用。
+    let mut tx_created_wb_ids: Vec<i64> = Vec::new();
     for alloc in allocations {
         let vehicle_id = alloc.vehicle_id;
         let weight = alloc.allocated_weight;
@@ -509,12 +564,13 @@ pub async fn dispatch_vehicles_tx_inner(
         // ── Step 0f: 每车独立重量标量（qk_w_qty 引用目标，scal-weight）──
         let weight_scale_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO "isahl"."zc_id_scal-weight" (id, code, notice, mark, created_by_id)
-                   VALUES (isahl.gen_next_uid(), $1, $2, $3, 1)
+                   VALUES (isahl.gen_next_uid(432), $1, $2, $3, $4)
                    RETURNING id"#,
         )
         .bind(format!("WT-{}-{}", consign_code, vehicle_id))
         .bind(format!("{}吨", weight))
         .bind(weight)
+        .bind(user_id)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -522,12 +578,13 @@ pub async fn dispatch_vehicles_tx_inner(
         // meta_fields 权威：deta-trade_order.qty → zc_id_scal-common
         let qty_scale_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO "isahl"."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-                   VALUES (isahl.gen_next_uid(), $1, $2, $3, 1)
+                   VALUES (isahl.gen_next_uid(419), $1, $2, $3, $4)
                    RETURNING id"#,
         )
         .bind(format!("QTY-{}-{}", consign_code, vehicle_id))
         .bind(format!("{}吨", weight))
         .bind(weight)
+        .bind(user_id)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -585,13 +642,14 @@ pub async fn dispatch_vehicles_tx_inner(
                 Some(
                         sqlx::query_scalar(
                             r#"INSERT INTO "isahl"."zc_id_scal-price" (id, code, notice, mark, created_by_id)
-                               VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1)
+                               VALUES (isahl.gen_next_uid(428), $1, $2, $3, $4)
                                RETURNING id"#,
                         )
                         .bind(format!("PRC-CSALE-{}-{}", consign_code, vehicle_id))
                         .bind(format!("运单{} 成交单价", waybill_code))
                         .bind(unit_price)
-                        .fetch_one(&mut **tx)
+                                                .bind(user_id)
+                                                .fetch_one(&mut **tx)
                         .await?,
                     )
             }
@@ -604,7 +662,7 @@ pub async fn dispatch_vehicles_tx_inner(
                     dk_scene, dk_factor, dk_function, qk_period, qk_price, "_f_", "_t_", created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2,
                            $3::text,
-                           $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 1)
+                           $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                    RETURNING id"#,
             )
             .bind(format!("{}-CSALE", waybill_code))
@@ -629,7 +687,8 @@ pub async fn dispatch_vehicles_tx_inner(
             .bind(consign_seg_id)
             .bind(csale_price_id)
             .bind(dispatch_form).bind(dispatch_tier)
-            .fetch_one(&mut **tx)
+                        .bind(user_id)
+                        .fetch_one(&mut **tx)
             .await?;
         let product_id = row.0;
 
@@ -640,7 +699,7 @@ pub async fn dispatch_vehicles_tx_inner(
                 sqlx::query(
                     r#"INSERT INTO "isahl"."zc_id_prod-transport_rr_stop"
                            (id, code, ref_left, ref_right, ck_category, created_by_id)
-                           SELECT isahl.gen_next_zuid(), $1, $2, s.ref_right, s.ck_category, 1
+                           SELECT isahl.gen_next_uid(288), $1, $2, s.ref_right, s.ck_category, $5
                            FROM "isahl"."zc_id_prod-transport_rr_stop" s
                            JOIN "isahl"."zc_id_cate-traffic" ct ON ct.id = s.ck_category
                            WHERE s.ref_left = $3 AND s.deleted_at IS NULL AND ct.code = $4
@@ -650,6 +709,7 @@ pub async fn dispatch_vehicles_tx_inner(
                 .bind(product_id)
                 .bind(prd_id)
                 .bind(cat_code)
+                .bind(user_id)
                 .execute(&mut **tx)
                 .await?;
             }
@@ -662,7 +722,7 @@ pub async fn dispatch_vehicles_tx_inner(
                     dk_scene, dk_factor, dk_function, "_f_", "_t_", created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2,
                            $3::text,
-                           $4, $5, $6, $7, $8, $9, $10, $11, 1)
+                           $4, $5, $6, $7, $8, $9, $10, $11, $12)
                    RETURNING id"#,
         )
         .bind(format!("{}-REQ", waybill_code))
@@ -681,6 +741,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(dk_function_id)
         .bind(dispatch_form)
         .bind(dispatch_tier)
+        .bind(user_id)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -690,7 +751,7 @@ pub async fn dispatch_vehicles_tx_inner(
                    (id, code, notice, comments, fk_previous, "fk_subj-demand", "fk_subj-provider",
                     dk_scene, dk_factor, dk_function, "_f_", "_t_", created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, '承运商履约实例', $3, $4, $5,
-                           $6, $7, $8, $9, $10, 1)
+                           $6, $7, $8, $9, $10, $11)
                    RETURNING id"#,
         )
         .bind(format!("DSP-{}-{}", consign_code, vehicle_id))
@@ -703,6 +764,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(dk_function_id)
         .bind(dispatch_form)
         .bind(dispatch_tier)
+        .bind(user_id)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -712,13 +774,14 @@ pub async fn dispatch_vehicles_tx_inner(
             Some(
                     sqlx::query_scalar(
                         r#"INSERT INTO "isahl"."zc_id_scal-price" (id, code, notice, mark, created_by_id)
-                           VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1)
+                           VALUES (isahl.gen_next_uid(428), $1, $2, $3, $4)
                            RETURNING id"#,
                     )
                     .bind(format!("PRC-PUR-{}-{}", consign_code, vehicle_id))
                     .bind(format!("运单{} 采购单价", waybill_code))
                     .bind(pp)
-                    .fetch_one(&mut **tx)
+                                        .bind(user_id)
+                                        .fetch_one(&mut **tx)
                     .await?,
                 )
         } else if let (Some(carrier_id), Some(line_id)) = (carrier, traffic_line_id) {
@@ -751,7 +814,7 @@ pub async fn dispatch_vehicles_tx_inner(
                    (id, code, notice, comments, fk_previous, "fk_subj-demand", "fk_subj-provider",
                     dk_scene, dk_factor, dk_function, qk_price, "_f_", "_t_", created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, '承运商采购实例', $3, $4, $5,
-                           $6, $7, $8, $9, $10, $11, 1)
+                           $6, $7, $8, $9, $10, $11, $12)
                    RETURNING id"#,
         )
         .bind(format!("{}-PUR", waybill_code))
@@ -765,6 +828,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(pur_price_id)
         .bind(dispatch_form)
         .bind(dispatch_tier)
+        .bind(user_id)
         .fetch_one(&mut **tx)
         .await?;
 
@@ -775,7 +839,7 @@ pub async fn dispatch_vehicles_tx_inner(
                 // 表达式索引，ON CONFLICT (ref_left, ref_right) 无匹配唯一约束（运行时必报错）
                 r#"INSERT INTO "isahl"."zc_id_order_rr_contract"
                        (id, code, notice, ref_left, ref_right, created_by_id)
-                       SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, 1
+                       SELECT isahl.gen_next_uid(470), $1, $2, $3, $4, $5
                        WHERE NOT EXISTS (
                          SELECT 1 FROM "isahl"."zc_id_order_rr_contract"
                          WHERE ref_left = $3 AND ref_right = $4 AND deleted_at IS NULL)"#,
@@ -784,6 +848,7 @@ pub async fn dispatch_vehicles_tx_inner(
             .bind(format!("运单{} 采购合同挂接", waybill_code))
             .bind(consignment_id)
             .bind(ct_id)
+            .bind(user_id)
             .execute(&mut **tx)
             .await?;
         }
@@ -794,7 +859,7 @@ pub async fn dispatch_vehicles_tx_inner(
         let row: (i64,) = sqlx::query_as(
             r#"INSERT INTO "isahl"."zc_id_prod-traffic_rr_conveyance"
                    (id, code, ref_left, ref_right, comments)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, '派车: 车辆已分配')
+                   VALUES (isahl.gen_next_uid(287), $1, $2, $3, '派车: 车辆已分配')
                    RETURNING id"#,
         )
         .bind(format!("CNV-{}-{}", consign_code, vehicle_id))
@@ -811,13 +876,14 @@ pub async fn dispatch_vehicles_tx_inner(
                 Some(
                         sqlx::query_scalar(
                             r#"INSERT INTO "isahl"."zc_id_scal-amount" (id, code, notice, mark, created_by_id)
-                               VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1)
+                               VALUES (isahl.gen_next_uid(416), $1, $2, $3, $4)
                                RETURNING id"#,
                         )
                         .bind(format!("AMT-WB-{}-{}", consign_code, vehicle_id))
                         .bind(format!("运单{} 该车运费", waybill_code))
                         .bind(share)
-                        .fetch_one(&mut **tx)
+                                                .bind(user_id)
+                                                .fetch_one(&mut **tx)
                         .await?,
                     )
             }
@@ -855,7 +921,8 @@ pub async fn dispatch_vehicles_tx_inner(
             // 聚合由明细求和（orde-* 聚合列已删）：运单不再写 qk_total/qk_amount
             // qk_date 继承委托的日期标量引用（F-A 修复：qk_* 为 bigint 引用，禁止绑 NOW()）
             .bind(consignment_info.4)
-            .bind(1i64)
+            // created_by_id：真实操作者（原硬编码 1=system 为缺陷）
+            .bind(user_id)
             .bind(dispatch_form)
             .bind(dispatch_tier)
             .bind(waybill_scene)
@@ -865,6 +932,9 @@ pub async fn dispatch_vehicles_tx_inner(
             .bind(user_id)
             .fetch_one(&mut **tx)
             .await?;
+
+        // 记入本事务新建运单集（Step 5b-0 批次对账排除集，见声明处注释）
+        tx_created_wb_ids.push(wb_id);
 
         // ── 总单守卫（拆单↔总单铁律，判别只用编码前缀；ck_category 已退役）──
         // zc_id_order_rr_demand 的 ref_right（总单）MUST 是委托（CNS-*）——
@@ -902,19 +972,23 @@ pub async fn dispatch_vehicles_tx_inner(
         )
         .bind(wb_id)
         .bind(consignment_id)
-        .bind(1i64)
+        // created_by_id/updated_by_id：真实操作者（原硬编码 1=system 为缺陷）
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
 
         // ── 一式两份镜像运单（矩阵 #6/#7，用户裁决 2026-09-11）──
         // 同表同类别、甲/乙主体互换（fk_subject=B↔fk_object=C）、code=`{WB}-R`；
         // 镜像行 + **叶子**桥 zc_id_lifecycle_rr_form 下沉 consignment-writer（单一写件，
-        // `_f_`/`_t_` 由职能码派生）；镜像行内已补 ak_permit_user（读侧行级权属可见）。
+        // `_f_`/`_t_` 由职能码派生）；镜像行级权属（ak_permit_user/ak_access_user）随入参
+        // `user_id` 落库——MUST 是真实操作者（不得硬编码 1=system）。
         // 总单关联仍由主运单 order_rr_demand 承载。
         let _mirror_wb_id = insert_order_mirror_tx(
             &mut **tx,
             wb_id,
             &OrderMirrorInput {
+                // 运单链不承载合同关联（合同 fk_contract 语义仅委托主档；镜像运单保持 NULL）
+                fk_contract: None,
                 code: &format!("{}-R", waybill_code),
                 notice: &format!(
                     "运单 {} 车辆:{} 装载{}吨（镜像）",
@@ -926,7 +1000,8 @@ pub async fn dispatch_vehicles_tx_inner(
                 qk_date: consignment_info.4,
                 fn_code: "↓_BE",
                 kind_label: "运单",
-                user_id: 1,
+                // 行级权属（D5）：镜像行与主行同源——真实操作者 uid（原硬编码 1=system 为缺陷）
+                user_id,
             },
         )
         .await?;
@@ -939,13 +1014,14 @@ pub async fn dispatch_vehicles_tx_inner(
                 Some(
                         sqlx::query_scalar(
                             r#"INSERT INTO "isahl"."zc_id_scal-price" (id, code, notice, mark, created_by_id)
-                               VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1)
+                               VALUES (isahl.gen_next_uid(428), $1, $2, $3, $4)
                                RETURNING id"#,
                         )
                         .bind(format!("PRC-WB-{}-{}", consign_code, vehicle_id))
                         .bind(format!("运单{} 单价", waybill_code))
                         .bind(unit_price)
-                        .fetch_one(&mut **tx)
+                                                .bind(user_id)
+                                                .fetch_one(&mut **tx)
                         .await?,
                     )
             }
@@ -957,8 +1033,9 @@ pub async fn dispatch_vehicles_tx_inner(
         // fk_deal=CSALE 实例、fk_demand=B 对 C 的 REQ 实例、fk_delivery=DSP made 实例、
         // fk_purchase={waybill}-PUR（B 对 C 采购实例，审视 G1 接线）、fk_biller=C、fk_counterparty=B
         let carrier_pool: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+            // 载体迁移（2026-09-21 裁决）：详见 Step 0d——容量池关系行载体 = 关联-载荷↔容器
             r#"SELECT r.ref_left
-                   FROM "isahl"."zc_id_file_rr_url" r
+                   FROM "isahl"."zc_id_prod-payload_rr_stor-container" r
                    JOIN "isahl"."zc_id_prod-freight_road-sales" p ON p.id = r.ref_left
                    WHERE r.ref_right = $1 AND r.qk_p_capacity IS NOT NULL
                      AND r.deleted_at IS NULL AND p.deleted_at IS NULL
@@ -1031,6 +1108,93 @@ pub async fn dispatch_vehicles_tx_inner(
         // ── Step 5b: 派车转换 tsp 凭证（设计契约 §2.4/D8，T7b：dispatch_deduction comments-JSON 退役）──
         // 制造范例在途 → 制造实例在途（源池 STO-TRANSIT qk_outgo / 目标池 STO-TRANSIT qk_income）
         let ts = format!("TSP-DSP-{}-{}", consign_code, vehicle_id);
+        // 交易对象列（凭证族「物/货」列）运行期探测——两条 tsp 写入同取该列名：新模型
+        // `fk_payload`，旧模型回落 `fk_production`（`_test` 库尚未同步新模型，硬编码会报列不存在）。
+        let title_col = trigger_registry::stock_materialization::voucher_title_column(&mut **tx)
+            .await
+            .map_err(|e| ApiError::Internal(format!("凭证交易对象列探测失败: {e}")))?;
+
+        // ── Step 5b-0: 批次凭证对账（批注 #4：门户新建运单 `DISPATCH_FAILED: 约束违反: 重复键
+        // 违反唯一约束 "uq_zc_id_stat-tsp-voucher_code_active"`）──
+        // 批次 code 确定性 = `TSP-DSP-{委托}-{车辆}-{OUT|IN}`（wz-fleet-capacity 规约：禁时间戳）
+        // ⇒ 该键上至多一条**活跃**行（部分唯一索引，谓词 `deleted_at IS NULL`）。改派（原地换车）
+        // 只软删被换下的**运具桥**行、不冲销该车批次凭证 ⇒ 该车被释放回可选集而凭证仍活跃；
+        // 它再次入选派车时本批 code 与活跃行同键 ⇒ 23505 整批失败。
+        // 处置两路（与取消运单 `release_waybill_transit` 同款冲销语义；不改 code、不动索引）：
+        //   ① 本委托下该车**已无未释放运单**占用（批次陈旧：改派换车软删了运具桥；或原运单
+        //      已签收/取消/关闭/完结/结清）→ 先冲销该批次 OUT/IN 再写本批；
+        //   ② 仍被未释放运单占用（批次有效）→ 业务拒绝（fail-visible），不再把 23505
+        //      当作拒绝理由抛给调用方。
+        // 陈旧判据 MUST 以**运单释放态**为准（与 `fleet_overview` 可用性谓词 / 门户
+        // `supplier::WAYBILL_RELEASED_STATUSES` / 本文件 Step 0e TOCTOU 复查同族）——
+        // 原判据只看「运具桥是否活跃」：签收后运具桥按设计**不软删**（`get_waybill_detail`
+        // 的车牌/司机读径 + 改派原地重建都依赖它），故签收车被判「批次仍有效」永久拒绝
+        // （批注 2026-09-20「签收了车辆和司机不应该释放出来吗」）。
+        // 且判据 MUST **排除本事务正在创建的运单**（`tx_created_wb_ids`）：本事务先建单
+        // （`zc_id_orde-land` + CSALE 产品/运具桥 + ST-DISPATCHED 状态桥）后对账，本批新单
+        // 的 ST-DISPATCHED 不在已释放集内 ⇒ 计入即恒判占用（签收车重派**必然**被拒的根因，
+        // 与构建/重启无关）。
+        let stale_batch: bool = sqlx::query_scalar(
+            r#"SELECT EXISTS (
+                   SELECT 1 FROM "isahl"."zc_id_stat-tsp-voucher"
+                   WHERE code = $1 AND deleted_at IS NULL)"#,
+        )
+        .bind(format!("{}-OUT", ts))
+        .fetch_one(&mut **tx)
+        .await?;
+        if stale_batch {
+            // 占用判定：本委托（CSALE 产品 `fk_previous` = 委托）下是否仍有**未释放运单**
+            // 挂在该车运具桥上。「已释放」集 = 签收/取消/关闭/完结/结清（与门户
+            // `supplier::WAYBILL_RELEASED_STATUSES` 同集）；无状态桥的运单按在办计
+            // （`COALESCE(...,'')` 不在集内 ⇒ 占用，fail-closed）。
+            // 改派换车会软删被换下的运具桥行（`redispatch_tx`）⇒ 该车不再在链上 ⇒ false。
+            // **排除本事务新建运单**（`$3 = tx_created_wb_ids`，见声明处）：本事务先建单后对账，
+            // 本批新单不该被读成「历史占用」。历史运单（事务外既有，含无状态桥者）不在排除集内
+            // ⇒ fail-closed 语义完整保留，真正的在途占用仍被拒。
+            let vehicle_occupied: bool = sqlx::query_scalar(
+                r#"SELECT EXISTS (
+                       SELECT 1
+                         FROM "isahl"."zc_id_prod-traffic_rr_conveyance" cv
+                         JOIN "isahl"."zc_id_prod-freight_road-sales" p
+                           ON p.id = cv.ref_left AND p.deleted_at IS NULL
+                         JOIN "isahl"."zc_id_deta-trade_order" d
+                           ON d.fk_deal = p.id AND d.deleted_at IS NULL
+                         JOIN "isahl"."zc_id_orde-land" wb
+                           ON wb.id = d.fk_list AND wb.deleted_at IS NULL
+                         LEFT JOIN "isahl"."zc_id_lifecycle_r_primary-status" ls
+                           ON ls.ref_left = wb.id AND ls.deleted_at IS NULL
+                         LEFT JOIN "isahl"."zc_id_stus-trade" st
+                           ON st.id = ls.ref_right AND st.deleted_at IS NULL
+                        WHERE cv.ref_right = $1 AND cv.deleted_at IS NULL
+                          AND p.fk_previous = $2
+                          AND wb.id <> ALL($3)
+                          AND COALESCE(st.code, '') NOT IN
+                              ('ST-SIGNED','ST-CANCELLED','ST-CLOSED','ST-COMPLETED','ST-SETTLED'))"#,
+            )
+            .bind(vehicle_id)
+            .bind(consignment_id)
+            .bind(&tx_created_wb_ids)
+            .fetch_one(&mut **tx)
+            .await?;
+            if vehicle_occupied {
+                return Err(ApiError::BadRequest(format!(
+                    "车辆{vehicle_id} 已在本委托派车（批次凭证仍有效）：如需换车请改派，如需重派同车请先取消该运单"
+                )));
+            }
+            let affected = sqlx::query(
+                r#"UPDATE "isahl"."zc_id_stat-tsp-voucher"
+                      SET deleted_at = NOW(), updated_at = NOW()
+                    WHERE code = ANY($1) AND deleted_at IS NULL"#,
+            )
+            .bind(vec![format!("{}-OUT", ts), format!("{}-IN", ts)])
+            .execute(&mut **tx)
+            .await?;
+            log::info!(
+                "派车批次对账：冲销陈旧批次凭证 {ts}-OUT/IN（{} 行）——车辆{vehicle_id} 在本委托已无未释放运单占用",
+                affected.rows_affected()
+            );
+        }
+
         for (dir, qk_col, family, tier) in [
             ("OUT", "qk_outgo", "made", "template"),
             ("IN", "qk_income", "made", "instance"),
@@ -1049,45 +1213,53 @@ pub async fn dispatch_vehicles_tx_inner(
                 "派车转换 委托{} 车辆{} 方向{} 族{} 层{}",
                 consignment_id, vehicle_id, dir, family, tier
             );
-            let sql = if qk_col == "qk_outgo" {
+            let sql_tpl = if qk_col == "qk_outgo" {
                 r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
-                       (id, code, notice, comments, fk_production, "fk_subj-storage", "fk_obj-storage",
+                       (id, code, notice, comments, {title_col}, "fk_subj-storage", "fk_obj-storage",
                         qk_outgo, "ck_sto-title", dk_scene, dk_factor, dk_function, _t_, created_by_id)
                        VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $5, $6,
                                (SELECT id FROM "isahl"."zc_id_cate-sto-title" WHERE code = 'STO-TRANSIT' LIMIT 1),
-                               $7, $8, $9, $10, 1)"#
+                               $7, $8, $9, $10, $11)"#
             } else {
                 r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
-                       (id, code, notice, comments, fk_production, "fk_subj-storage", "fk_obj-storage",
+                       (id, code, notice, comments, {title_col}, "fk_subj-storage", "fk_obj-storage",
                         qk_income, "ck_sto-title", dk_scene, dk_factor, dk_function, _t_, created_by_id)
                        VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $5, $6,
                                (SELECT id FROM "isahl"."zc_id_cate-sto-title" WHERE code = 'STO-TRANSIT' LIMIT 1),
-                               $7, $8, $9, $10, 1)"#
+                               $7, $8, $9, $10, $11)"#
             };
-            sqlx::query(sql)
-                .bind(format!("{}-{}", ts, dir))
-                .bind(format!(
-                    "派车转换 {} 车辆{} {}吨",
-                    consign_code, vehicle_id, weight
-                ))
-                .bind(&comments)
-                .bind(effective_capacity_product_id)
-                .bind(traffic_line_id)
-                .bind(weight_scale_id)
-                .bind(leg_scene)
-                .bind(leg_factor)
-                .bind(leg_function)
-                .bind(leg_tier)
-                .execute(&mut **tx)
-                .await?;
+            // 占位替换值恒为探测函数的两个编译期字面量之一（非用户输入），经 AssertSqlSafe 执行
+            sqlx::query(sqlx::AssertSqlSafe(
+                sql_tpl.replace("{title_col}", title_col),
+            ))
+            .bind(format!("{}-{}", ts, dir))
+            .bind(format!(
+                "派车转换 {} 车辆{} {}吨",
+                consign_code, vehicle_id, weight
+            ))
+            .bind(&comments)
+            .bind(effective_capacity_product_id)
+            .bind(traffic_line_id)
+            .bind(weight_scale_id)
+            .bind(leg_scene)
+            .bind(leg_factor)
+            .bind(leg_function)
+            .bind(leg_tier)
+            .bind(user_id)
+            .execute(&mut **tx)
+            .await?;
         }
 
-        // ── Step 5c: 记录履约库存实例 (production_rr_storage)，qk_qty 引用本车装载量标量 ──
+        // ── Step 5c: 记录履约库存实例（`zc_id_prod-payload_rr_stor-container`，⊂ production_rr_storage），
+        // qk_qty 引用本车装载量标量 ──
+        // 载体迁移（用户裁决 2026-09-21，报缺产物 R6）：库存/履约实例原写在声明语义「关联-文件↔URL」
+        // 的桥表上 = 挪用；合法载体 = 关联-载荷↔容器，mv_inventory 读者为父表 `zc_id_production_rr_storage`
+        // ⇒ 经 PG 继承照常可见。id 走载体自身 uid 段（模型默认 `gen_next_uid(517)`；原借用写的是 335 = 桥表段）。
         // comments.type='instance' 区分派车实例与履约模板（模板无 type 或非 instance）
         sqlx::query(
-            r#"INSERT INTO "isahl"."zc_id_file_rr_url"
+            r#"INSERT INTO "isahl"."zc_id_prod-payload_rr_stor-container"
                    (id, code, notice, comments, ref_left, ref_right, qk_qty, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, 1)"#,
+                   VALUES (isahl.gen_next_uid(517), $1, $2, $3, $4, $5, $6, $7)"#,
         )
         .bind(format!("FULFILL-INST-{}-{}", consign_code, vehicle_id))
         .bind(format!("履约出库 {}吨", weight))
@@ -1096,6 +1268,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(product_id)
         .bind(traffic_line_id)
         .bind(weight_scale_id)
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
 
@@ -1127,7 +1300,7 @@ pub async fn dispatch_vehicles_tx_inner(
                     dk_scene, dk_factor, dk_function)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3,
                            $4,
-                           $5, 1, 1, $6, $7, $8)
+                           $5, $9, $9, $6, $7, $8)
                    RETURNING id"#,
             )
             .bind(waybill_code.clone())
@@ -1148,7 +1321,8 @@ pub async fn dispatch_vehicles_tx_inner(
             .bind(trade_scene)
             .bind(trade_factor)
             .bind(trade_function)
-            .fetch_one(&mut **tx)
+                        .bind(user_id)
+                        .fetch_one(&mut **tx)
             .await?;
 
         // 缺口修复：追踪链（even-tracking → event_rr_matter → prod-loading → 运单）
@@ -1156,7 +1330,7 @@ pub async fn dispatch_vehicles_tx_inner(
         sqlx::query(
             r#"INSERT INTO "isahl"."zc_id_prod-loading-request"
                    (id, code, notice, fk_previous, created_by_id, dk_scene, dk_factor, dk_function)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1, $4, $5, $6)"#,
+                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $7, $4, $5, $6)"#,
         )
         .bind(format!("LDG-{}", waybill_code))
         .bind(format!("{} 装载服务", waybill_code))
@@ -1164,6 +1338,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(loading_scene)
         .bind(loading_factor)
         .bind(loading_function)
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
         let loading_id: i64 = sqlx::query_scalar(
@@ -1176,7 +1351,7 @@ pub async fn dispatch_vehicles_tx_inner(
         let event_id: i64 = sqlx::query_scalar(
             r#"INSERT INTO "isahl"."zc_id_even-tracking"
                    (id, code, notice, fk_subject, created_by_id, dk_scene, dk_factor, dk_function)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1, $4, $5, $6)
+                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $7, $4, $5, $6)
                    RETURNING id"#,
         )
         .bind(format!("EV-{}", waybill_code))
@@ -1185,15 +1360,17 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(trade_scene)
         .bind(trade_factor)
         .bind(trade_function)
+        .bind(user_id)
         .fetch_one(&mut **tx)
         .await?;
         sqlx::query(
             r#"INSERT INTO "isahl"."zc_id_event_rr_matter"
                    (id, ref_left, ref_right, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+                   VALUES (isahl.gen_next_uid(333), $1, $2, $3)"#,
         )
         .bind(event_id)
         .bind(loading_id)
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
 
@@ -1229,13 +1406,14 @@ pub async fn dispatch_vehicles_tx_inner(
                 Some(
                         sqlx::query_scalar(
                             r#"INSERT INTO "isahl"."zc_id_scal-price" (id, code, notice, mark, created_by_id)
-                               VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1)
+                               VALUES (isahl.gen_next_uid(428), $1, $2, $3, $4)
                                RETURNING id"#,
                         )
                         .bind(format!("PRC-PUR-{}", consign_code))
                         .bind(format!("{} 采购单价", consign_code))
                         .bind(pp)
-                        .fetch_one(&mut **tx)
+                                                .bind(user_id)
+                                                .fetch_one(&mut **tx)
                         .await?,
                     )
             } else if let (Some(carrier_id), Some(line_id)) = (pur_carrier, traffic_line_id) {
@@ -1266,7 +1444,7 @@ pub async fn dispatch_vehicles_tx_inner(
                     r#"INSERT INTO "isahl"."zc_id_prod-freight_road-purchase"
                        (id, code, notice, comments, fk_previous, "fk_subj-demand", "fk_subj-provider",
                         dk_scene, dk_factor, dk_function, qk_price, "_f_", "_t_", created_by_id)
-                       VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 1)
+                       VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                        RETURNING id"#,
                 )
                 .bind(format!("{}-PUR", consign_code))
@@ -1285,7 +1463,8 @@ pub async fn dispatch_vehicles_tx_inner(
                 .bind(dk_function_id)
                 .bind(price_id)
                 .bind(dispatch_form).bind(dispatch_tier)
-                .fetch_one(&mut **tx)
+                                .bind(user_id)
+                                .fetch_one(&mut **tx)
                 .await?
         }
     };
@@ -1297,7 +1476,7 @@ pub async fn dispatch_vehicles_tx_inner(
             // NOT EXISTS 幂等守卫——同上：表达式唯一索引与 ON CONFLICT (ref_left, ref_right) 不匹配
             r#"INSERT INTO "isahl"."zc_id_order_rr_contract"
                    (id, code, notice, ref_left, ref_right, created_by_id)
-                   SELECT isahl.gen_next_zuid(), $1, $2, $3, $4, 1
+                   SELECT isahl.gen_next_uid(470), $1, $2, $3, $4, $5
                    WHERE NOT EXISTS (
                      SELECT 1 FROM "isahl"."zc_id_order_rr_contract"
                      WHERE ref_left = $3 AND ref_right = $4 AND deleted_at IS NULL)"#,
@@ -1306,6 +1485,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind(format!("{} 采购合同挂接", consign_code))
         .bind(consignment_id)
         .bind(ct_id)
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
     }
@@ -1340,7 +1520,7 @@ pub async fn dispatch_vehicles_tx_inner(
             // 无匹配唯一约束，运行时必报「没有匹配ON CONFLICT说明的唯一或者排除约束」
             r#"INSERT INTO "isahl"."zc_id_prod-made_rr_prod-purchase"
                    (code, notice, ref_left, ref_right, created_by_id)
-                   SELECT $1, $2, $3, $4, 1
+                   SELECT $1, $2, $3, $4, $5
                    WHERE NOT EXISTS (
                      SELECT 1 FROM "isahl"."zc_id_prod-made_rr_prod-purchase"
                      WHERE ref_left = $3 AND ref_right = $4 AND deleted_at IS NULL)"#,
@@ -1349,6 +1529,7 @@ pub async fn dispatch_vehicles_tx_inner(
         .bind("制造→采购关联")
         .bind(made_id)
         .bind(pur_id)
+        .bind(user_id)
         .execute(&mut **tx)
         .await?;
     }

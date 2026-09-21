@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use common::data::{ListQuery, PaginatedResponse};
 use common::error::AliothError;
 use crud::AliothRepository;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 // ── 运行环境 Environment Repository ──────────────────────────────────────────
 // ontology 映射：
@@ -26,13 +26,16 @@ impl EnvironmentRepository {
         Self { pool }
     }
 
-    /// 环境级别统计 — 按 level 聚合 `isahl."zc_id_even-log"`
+    /// 环境日志统计 — 按日志类别聚合 `isahl."zc_id_even-log"`。
+    /// 语义迁移：模型已删 `level` 列（无替代标量）——按 `ck_category`（zc_id_cate-log
+    /// 动作类别 code）聚合；handler 的 info/warn/error 等槽位得不到匹配即为 0（端点保活）。
     pub async fn stats(&self) -> Result<Vec<(String, i64)>, AliothError> {
         sqlx::query_as::<_, (String, i64)>(
-            r#"SELECT level::text AS level, COUNT(*)::bigint AS cnt
-               FROM isahl."zc_id_even-log"
-               WHERE deleted_at IS NULL
-               GROUP BY level"#,
+            r#"SELECT COALESCE(cc.code, 'uncategorized')::text AS level, COUNT(*)::bigint AS cnt
+               FROM isahl."zc_id_even-log" e
+               LEFT JOIN isahl."zc_id_cate-log" cc ON cc.id = e.ck_category AND cc.deleted_at IS NULL
+               WHERE e.deleted_at IS NULL
+               GROUP BY 1"#,
         )
         .fetch_all(&self.pool)
         .await
@@ -46,8 +49,10 @@ impl From<PgPool> for EnvironmentRepository {
     }
 }
 
-/// 用于 list/get 的 JOIN 查询字段列表。
-const ENVIRONMENT_SELECT_FIELDS: &str = r#"
+/// 用于 list/get 的 JOIN 查询字段列表（编译期字面量——站点一律 `concat!` 展开）。
+macro_rules! environment_select_fields {
+    () => {
+        r#"
 e.id, e.notice AS name, e.code AS host,
 settings->>'os' AS os,
 settings->>'runtime' AS runtime,
@@ -57,7 +62,9 @@ rps.ref_right AS status,
 settings->>'uptime' AS uptime,
 e.comments, e.settings,
 rps._refs AS _refs,
-e.created_at, e.updated_at, e.deleted_at"#;
+e.created_at, e.updated_at, e.deleted_at"#
+    };
+}
 fn merge_env_settings(
     current: Option<&serde_json::Value>,
     os: Option<&str>,
@@ -114,8 +121,10 @@ impl
         let page_size = query.page_size.max(1);
         let offset = (page - 1) * page_size;
 
-        let items_sql = format!(
-            r#"SELECT {} FROM isahl."zc_id_prot-env_config" e
+        let items: Vec<models::Environment> = sqlx::query_as::<_, models::Environment>(concat!(
+            r#"SELECT "#,
+            environment_select_fields!(),
+            r#" FROM isahl."zc_id_prot-env_config" e
                LEFT JOIN LATERAL (
                    SELECT rps.ref_right,
                           jsonb_build_object(
@@ -129,16 +138,13 @@ impl
                    LIMIT 1
                ) rps ON true
                WHERE e.deleted_at IS NULL AND e.settings ? 'type'
-               ORDER BY e.id DESC LIMIT $1 OFFSET $2"#,
-            ENVIRONMENT_SELECT_FIELDS
-        );
-        let items: Vec<models::Environment> =
-            sqlx::query_as::<_, models::Environment>(AssertSqlSafe(items_sql))
-                .bind(page_size)
-                .bind(offset)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(AliothError::from)?;
+               ORDER BY e.id DESC LIMIT $1 OFFSET $2"#
+        ))
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AliothError::from)?;
 
         let count_sql = r#"SELECT COUNT(*) FROM isahl."zc_id_prot-env_config" e WHERE e.deleted_at IS NULL AND e.settings ? 'type'"#;
         let (total,): (i64,) = sqlx::query_as::<_, (i64,)>(count_sql)
@@ -155,8 +161,10 @@ impl
     }
 
     async fn get(&self, id: i64) -> Result<Option<models::Environment>, AliothError> {
-        let sql = format!(
-            r#"SELECT {} FROM isahl."zc_id_prot-env_config" e
+        sqlx::query_as::<_, models::Environment>(concat!(
+            r#"SELECT "#,
+            environment_select_fields!(),
+            r#" FROM isahl."zc_id_prot-env_config" e
                LEFT JOIN LATERAL (
                    SELECT rps.ref_right,
                           jsonb_build_object(
@@ -169,14 +177,12 @@ impl
                    WHERE rps.ref_left = e.id AND rps.deleted_at IS NULL
                    LIMIT 1
                ) rps ON true
-               WHERE e.id = $1 AND e.deleted_at IS NULL AND e.settings ? 'type'"#,
-            ENVIRONMENT_SELECT_FIELDS
-        );
-        sqlx::query_as::<_, models::Environment>(AssertSqlSafe(sql.as_str()))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(AliothError::from)
+               WHERE e.id = $1 AND e.deleted_at IS NULL AND e.settings ? 'type'"#
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AliothError::from)
     }
 
     async fn create(
@@ -292,21 +298,13 @@ impl
         .map_err(AliothError::from)?;
 
         if let Some(status_id) = req.status {
-            // 软删除旧关系
-            sqlx::query(
-                r#"UPDATE isahl."zc_id_lifecycle_r_primary-status" SET deleted_at = NOW(), updated_by_id = $3
-                   WHERE ref_left = $1 AND deleted_at IS NULL"#,
-            )
-            .bind(id)
-            .bind(user_id)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(AliothError::from)?;
-            // 插入新关系
+            // 主状态桥 upsert：ref_left 严格唯一索引不含 deleted_at 谓词（软删行仍占位），
+            // 删+插必撞 23505——单语句 ON CONFLICT 换代（publish_test 同款先例）
             sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (ref_left, ref_right, created_by_id)
-                   VALUES ($1, $2, $3)"#,
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (ref_left) DO UPDATE SET ref_right = EXCLUDED.ref_right,
+                                                        deleted_at = NULL, updated_by_id = $3"#,
             )
             .bind(id)
             .bind(status_id)

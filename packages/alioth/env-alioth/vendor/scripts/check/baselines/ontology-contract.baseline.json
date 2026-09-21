@@ -1,0 +1,2294 @@
+{
+  "version": "1.0.0",
+  "rule_reference": "docs/specs/ALIOTH_ONTOLOGY_SPEC.md §十（alignment_matrix 条目单一定义）＋ §7.3.3（prototype_semantics dk 静态绑定三元组）",
+  "note": "存量违规归线（SPEC_ENFORCEMENT_SUBSTRATE §设计原则 1：增量，非全量）。指纹=sha256(ns|判据|主体内容)——条目内容派生，重生成导致的索引位移不使基线失配；未命中指纹的违规为新增，阻断。条目清零后应 --write-baseline 收缩（check-gate-hygiene 报 rot）。",
+  "generatedBy": "bun scripts/ts/check-ontology-contract.ts --ns <ns> --write-baseline",
+  "violations": [
+    {
+      "fp": "832d0a2f3838399d",
+      "ns": "Alioth",
+      "entity": "Account._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7c968372b166bdd6",
+      "ns": "Alioth",
+      "entity": "Account._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "acad92866c891a85",
+      "ns": "Alioth",
+      "entity": "Account.account",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "41ed1cf1ff4e48d2",
+      "ns": "Alioth",
+      "entity": "Account.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "02ac631b7c329ce3",
+      "ns": "Alioth",
+      "entity": "Account.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b5c2f49b15eecad5",
+      "ns": "Alioth",
+      "entity": "Account.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "81a33c99e238c6c3",
+      "ns": "Alioth",
+      "entity": "Account.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5daadc58685268f4",
+      "ns": "Alioth",
+      "entity": "Account.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "40e88bd1e9e6e909",
+      "ns": "Alioth",
+      "entity": "Account.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2d26d8f52da90434",
+      "ns": "Alioth",
+      "entity": "Account.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "eeb0b87ffd3d3894",
+      "ns": "Alioth",
+      "entity": "Account.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "4e8dfdc6c6eed739",
+      "ns": "Alioth",
+      "entity": "Account.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2d3987b1639a565c",
+      "ns": "Alioth",
+      "entity": "Account.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e41b7b4a0591adc2",
+      "ns": "Alioth",
+      "entity": "Account.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8bb093346860c7b0",
+      "ns": "Alioth",
+      "entity": "Account.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c4004aaa19f9fa5b",
+      "ns": "Alioth",
+      "entity": "Account.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "28a8bc2630c1d710",
+      "ns": "Alioth",
+      "entity": "Account.fk_trustee",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "774a5cb93ffcc2b0",
+      "ns": "Alioth",
+      "entity": "Account.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "cafa614eaf05e4e7",
+      "ns": "Alioth",
+      "entity": "Account.name",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6be701ef5c06788b",
+      "ns": "Alioth",
+      "entity": "Account.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7a03be4e639d2abe",
+      "ns": "Alioth",
+      "entity": "Account.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "250037f5f23b1539",
+      "ns": "Alioth",
+      "entity": "Account.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "02ba1d78a34fb2b4",
+      "ns": "Alioth",
+      "entity": "Account.qk_capacity",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "26470b18c6d909e1",
+      "ns": "Alioth",
+      "entity": "Account.sk_unit",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ae0d01acf8ff0d01",
+      "ns": "Alioth",
+      "entity": "Account.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "600f55567b5bc0bc",
+      "ns": "Alioth",
+      "entity": "Account.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3cd27d908c6eb857",
+      "ns": "Alioth",
+      "entity": "Account.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "da225a5786025c4e",
+      "ns": "Alioth",
+      "entity": "Account.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2299c5a271d7fceb",
+      "ns": "Alioth",
+      "entity": "Customer.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6188a15d13fcc569",
+      "ns": "Alioth",
+      "entity": "Customer.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "49bfcd9bd073e8a6",
+      "ns": "Alioth",
+      "entity": "Customer.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "53aad4847c830323",
+      "ns": "Alioth",
+      "entity": "Customer.c_sort_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0908f1d9c48450ff",
+      "ns": "Alioth",
+      "entity": "Customer.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bcc974da61e5cde7",
+      "ns": "Alioth",
+      "entity": "Customer.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5df7fae37bbd979a",
+      "ns": "Alioth",
+      "entity": "Customer.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2f6bb372bfa02c92",
+      "ns": "Alioth",
+      "entity": "Customer.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a86ae5af748e11e3",
+      "ns": "Alioth",
+      "entity": "Customer.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0dabc1ed3f32add4",
+      "ns": "Alioth",
+      "entity": "Customer.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3274a2fa6201183d",
+      "ns": "Alioth",
+      "entity": "Customer.enable",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "56701abd6b47654f",
+      "ns": "Alioth",
+      "entity": "Customer.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "642c00b2454df859",
+      "ns": "Alioth",
+      "entity": "Customer.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c057fee643e6d952",
+      "ns": "Alioth",
+      "entity": "Customer.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7df4c022bee6cba9",
+      "ns": "Alioth",
+      "entity": "Customer.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "df637b622867cb91",
+      "ns": "Alioth",
+      "entity": "Customer.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "77d3894aaf4431c7",
+      "ns": "Alioth",
+      "entity": "Customer.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6a9728a42f63a016",
+      "ns": "Alioth",
+      "entity": "InboundBom._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "125d10529c197a0d",
+      "ns": "Alioth",
+      "entity": "InboundBom._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b96db38ad8bf0f73",
+      "ns": "Alioth",
+      "entity": "InboundBom.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3f0d0b8dc1fda31e",
+      "ns": "Alioth",
+      "entity": "InboundBom.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2e92dcaf1f60c87c",
+      "ns": "Alioth",
+      "entity": "InboundBom.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "060e09298538e905",
+      "ns": "Alioth",
+      "entity": "InboundBom.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "488895e4bea847f1",
+      "ns": "Alioth",
+      "entity": "InboundBom.b_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7c69337e70a37639",
+      "ns": "Alioth",
+      "entity": "InboundBom.ck_branch",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "36d1e533abf76af1",
+      "ns": "Alioth",
+      "entity": "InboundBom.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0b9319d8fd3e1bba",
+      "ns": "Alioth",
+      "entity": "InboundBom.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8aca6ef3d55858b3",
+      "ns": "Alioth",
+      "entity": "InboundBom.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "9b848872fcf609f0",
+      "ns": "Alioth",
+      "entity": "InboundBom.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dc1877ec9ca8721a",
+      "ns": "Alioth",
+      "entity": "InboundBom.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "39c297b1151b3ba0",
+      "ns": "Alioth",
+      "entity": "InboundBom.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fc0c4a156da3a6ee",
+      "ns": "Alioth",
+      "entity": "InboundBom.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "29aa62fdabc3596a",
+      "ns": "Alioth",
+      "entity": "InboundBom.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7e729f38725b9b75",
+      "ns": "Alioth",
+      "entity": "InboundBom.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "eb206c8eb18eb35c",
+      "ns": "Alioth",
+      "entity": "InboundBom.fk_editor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8f18176c912de106",
+      "ns": "Alioth",
+      "entity": "InboundBom.fk_previous",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0df5ee9f48c72b70",
+      "ns": "Alioth",
+      "entity": "InboundBom.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3afc30ff2df5adcc",
+      "ns": "Alioth",
+      "entity": "InboundBom.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d88c7b86a7ba1452",
+      "ns": "Alioth",
+      "entity": "InboundBom.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a14821532d704c8b",
+      "ns": "Alioth",
+      "entity": "InboundBom.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "78ed1d028f26e5fa",
+      "ns": "Alioth",
+      "entity": "InboundBom.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dbb24dd8bf180263",
+      "ns": "Alioth",
+      "entity": "InboundBom.tk_batch_no",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7fc41c4f7202c70c",
+      "ns": "Alioth",
+      "entity": "InboundBom.tk_version",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "df86b20ff38a6ccb",
+      "ns": "Alioth",
+      "entity": "InboundBom.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1ab2f2ae53c9dd55",
+      "ns": "Alioth",
+      "entity": "InboundBom.type",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c8dedfe3593a678d",
+      "ns": "Alioth",
+      "entity": "InboundBom.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fd907cefd4d8e038",
+      "ns": "Alioth",
+      "entity": "InboundBom.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c76e3fb5b73c1e3f",
+      "ns": "Alioth",
+      "entity": "InboundOrder._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "299c1b43238f51fb",
+      "ns": "Alioth",
+      "entity": "InboundOrder._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "331ef39f92f03cbb",
+      "ns": "Alioth",
+      "entity": "InboundOrder.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "587b8d325f176a4a",
+      "ns": "Alioth",
+      "entity": "InboundOrder.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "936ec87806250b4d",
+      "ns": "Alioth",
+      "entity": "InboundOrder.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b57160fa2b9fda1f",
+      "ns": "Alioth",
+      "entity": "InboundOrder.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8e9af4cf171d8dc6",
+      "ns": "Alioth",
+      "entity": "InboundOrder.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dda1653a9e120aca",
+      "ns": "Alioth",
+      "entity": "InboundOrder.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "33baa2ebfce9b98d",
+      "ns": "Alioth",
+      "entity": "InboundOrder.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f1f2724d0c363473",
+      "ns": "Alioth",
+      "entity": "InboundOrder.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "24cebe4152632112",
+      "ns": "Alioth",
+      "entity": "InboundOrder.cron",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fa2450bdb2ecf02f",
+      "ns": "Alioth",
+      "entity": "InboundOrder.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "069f63ce21916b50",
+      "ns": "Alioth",
+      "entity": "InboundOrder.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fc00bd9c848bf491",
+      "ns": "Alioth",
+      "entity": "InboundOrder.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "33f657b827eca0c1",
+      "ns": "Alioth",
+      "entity": "InboundOrder.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e1ae670c97a2ca60",
+      "ns": "Alioth",
+      "entity": "InboundOrder.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1fc5bad971f51393",
+      "ns": "Alioth",
+      "entity": "InboundOrder.exclude",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "70fdad5c880b7385",
+      "ns": "Alioth",
+      "entity": "InboundOrder.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d6179a5b8c036540",
+      "ns": "Alioth",
+      "entity": "InboundOrder.lk_health",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "13a92f62d00ddb2e",
+      "ns": "Alioth",
+      "entity": "InboundOrder.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dc6f0b6a479417e0",
+      "ns": "Alioth",
+      "entity": "InboundOrder.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "079c4f618551fffd",
+      "ns": "Alioth",
+      "entity": "InboundOrder.progress_pct",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "00483255463f57e3",
+      "ns": "Alioth",
+      "entity": "InboundOrder.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "764c6253163ab855",
+      "ns": "Alioth",
+      "entity": "InboundOrder.qk_date-segm",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5b48b40d8feaa608",
+      "ns": "Alioth",
+      "entity": "InboundOrder.qk_progress",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1059941ca509e9ce",
+      "ns": "Alioth",
+      "entity": "InboundOrder.qk_time-segm",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b613419c47e191e8",
+      "ns": "Alioth",
+      "entity": "InboundOrder.schedule_pct",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d4c10c9081e2ab31",
+      "ns": "Alioth",
+      "entity": "InboundOrder.sort",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5bd7c8403649ebf6",
+      "ns": "Alioth",
+      "entity": "InboundOrder.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7ba842968742c9cb",
+      "ns": "Alioth",
+      "entity": "InboundOrder.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "158e292476a275db",
+      "ns": "Alioth",
+      "entity": "InboundOrder.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "81d52957381befac",
+      "ns": "Alioth",
+      "entity": "InboundOrder.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a03c33220de26daa",
+      "ns": "Alioth",
+      "entity": "InventoryBalance.capacity",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8c25f99ca80dd3c0",
+      "ns": "Alioth",
+      "entity": "InventoryBalance.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7aaf59ffeb8571f2",
+      "ns": "Alioth",
+      "entity": "InventoryBalance.production_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "75fd66c82313d854",
+      "ns": "Alioth",
+      "entity": "InventoryBalance.qty",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "682a95f5f3e13259",
+      "ns": "Alioth",
+      "entity": "InventoryBalance.storage_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "73561cd92f81106d",
+      "ns": "Alioth",
+      "entity": "InventoryBalance.unit",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f98489e2793cfada",
+      "ns": "Alioth",
+      "entity": "LedgerEntry._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a1b7ea584daa9f54",
+      "ns": "Alioth",
+      "entity": "LedgerEntry._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d55d48332434698a",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "532c09214ee351f2",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8913aba87fd9cc7e",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3dffea9edc04644b",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a25dab9702f70fb3",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.ck_branch",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "17f1ead44731f6c1",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "90d49f496ff7925b",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "4f01667e6170752f",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c5a41b9109064f25",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2295b0eb9b142f6d",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "37ba13a1dbc671c0",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2d9cf9404fd13269",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7b905a48f8985b9e",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b9433df3b3693f39",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bdbbb63ad5e083e1",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.fk_previous",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3120601a687c54e7",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fa31705e394d700d",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "da6d9d672221c36e",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2cb92153269b777b",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8886d482e637a7ee",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e784847a1120ee5a",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.tk_batch_no",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bf8ea48cff9b59af",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.tk_version",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "89fa0e8990b3ceba",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6e1d685d8b19a77a",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "aba47f1d173ed32c",
+      "ns": "Alioth",
+      "entity": "LedgerEntry.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1eb880922f9b6a7e",
+      "ns": "Alioth",
+      "entity": "SalesOrder._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c3e4b36be23bf8d9",
+      "ns": "Alioth",
+      "entity": "SalesOrder._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ee08ec261c0f4204",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a19caedf3ce811e9",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6551321bc23ad27a",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "752e2149f7d49a52",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "37b2557f52226475",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ck_branch",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "eb06f2b2ede02137",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ck_cate-biz",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "594fc72d338c147b",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ck_cate-proc_op",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ba1be626a92de8fa",
+      "ns": "Alioth",
+      "entity": "SalesOrder.ck_cate-wh",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ed20358dc6ec7b60",
+      "ns": "Alioth",
+      "entity": "SalesOrder.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b164bc17cac7ce09",
+      "ns": "Alioth",
+      "entity": "SalesOrder.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c10ce9464ceb6aaf",
+      "ns": "Alioth",
+      "entity": "SalesOrder.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "134e96f4c60d0a18",
+      "ns": "Alioth",
+      "entity": "SalesOrder.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b01ac9b4eb9b725d",
+      "ns": "Alioth",
+      "entity": "SalesOrder.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d9c843ae5d05b759",
+      "ns": "Alioth",
+      "entity": "SalesOrder.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d5852888cd601c88",
+      "ns": "Alioth",
+      "entity": "SalesOrder.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "80c5fc97de3b30ec",
+      "ns": "Alioth",
+      "entity": "SalesOrder.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e8c7bd96b2506013",
+      "ns": "Alioth",
+      "entity": "SalesOrder.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b3e779361b50110c",
+      "ns": "Alioth",
+      "entity": "SalesOrder.fk_approve",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ae863905abc45bb4",
+      "ns": "Alioth",
+      "entity": "SalesOrder.fk_operator",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "21217d7567eb618c",
+      "ns": "Alioth",
+      "entity": "SalesOrder.fk_previous",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "28dba6a19c58d292",
+      "ns": "Alioth",
+      "entity": "SalesOrder.fk_subject",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "73d58fea3746727c",
+      "ns": "Alioth",
+      "entity": "SalesOrder.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fa33276a8013df90",
+      "ns": "Alioth",
+      "entity": "SalesOrder.lk_urgent",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ec8eeedaae3d8abc",
+      "ns": "Alioth",
+      "entity": "SalesOrder.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6a3903a1b22d97ad",
+      "ns": "Alioth",
+      "entity": "SalesOrder.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fe870e0265c53dbd",
+      "ns": "Alioth",
+      "entity": "SalesOrder.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8162f2711a8a381d",
+      "ns": "Alioth",
+      "entity": "SalesOrder.qk_arrived",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "cc57a6ee8b1c6161",
+      "ns": "Alioth",
+      "entity": "SalesOrder.qk_period",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a19071f18d1f64eb",
+      "ns": "Alioth",
+      "entity": "SalesOrder.qk_sla",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bddb1641ea2d21d7",
+      "ns": "Alioth",
+      "entity": "SalesOrder.qk_work_duration",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dd883c768d6215dd",
+      "ns": "Alioth",
+      "entity": "SalesOrder.sk_unit-working",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "53ada84a963b018f",
+      "ns": "Alioth",
+      "entity": "SalesOrder.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fb93cfe56134efb1",
+      "ns": "Alioth",
+      "entity": "SalesOrder.tk_batch_no",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6abef445532bc002",
+      "ns": "Alioth",
+      "entity": "SalesOrder.tk_version",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c3f86c84e3569c19",
+      "ns": "Alioth",
+      "entity": "SalesOrder.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "cf429924ef9bbdc0",
+      "ns": "Alioth",
+      "entity": "SalesOrder.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f4109b463edbe031",
+      "ns": "Alioth",
+      "entity": "SalesOrder.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7a17887ba808919a",
+      "ns": "Alioth",
+      "entity": "StockCount._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f6596703ba682d57",
+      "ns": "Alioth",
+      "entity": "StockCount._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bbfdffd13900fa6b",
+      "ns": "Alioth",
+      "entity": "StockCount.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "75364e12514f2b5c",
+      "ns": "Alioth",
+      "entity": "StockCount.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "69ee97bf22149c70",
+      "ns": "Alioth",
+      "entity": "StockCount.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f5fb86a833241285",
+      "ns": "Alioth",
+      "entity": "StockCount.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d9a6ca56ec947e97",
+      "ns": "Alioth",
+      "entity": "StockCount.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d93e7ed1520f725b",
+      "ns": "Alioth",
+      "entity": "StockCount.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5178ce6b14ed05ad",
+      "ns": "Alioth",
+      "entity": "StockCount.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0b7f9afdf24627a8",
+      "ns": "Alioth",
+      "entity": "StockCount.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e75b8f434c1ead62",
+      "ns": "Alioth",
+      "entity": "StockCount.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d2dbe44fe16a7ddd",
+      "ns": "Alioth",
+      "entity": "StockCount.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8a015df48ea7a07d",
+      "ns": "Alioth",
+      "entity": "StockCount.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "289dc9c5f81022ea",
+      "ns": "Alioth",
+      "entity": "StockCount.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d0ba083c46e1834a",
+      "ns": "Alioth",
+      "entity": "StockCount.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f89c58f0a36df428",
+      "ns": "Alioth",
+      "entity": "StockCount.fk_place",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d031dc15967686c7",
+      "ns": "Alioth",
+      "entity": "StockCount.fk_storage",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3c48476500b397d7",
+      "ns": "Alioth",
+      "entity": "StockCount.fk_subject",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dc2312e3f83afff1",
+      "ns": "Alioth",
+      "entity": "StockCount.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "40f4bbe65347f61d",
+      "ns": "Alioth",
+      "entity": "StockCount.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "714fe51dec8b3c0b",
+      "ns": "Alioth",
+      "entity": "StockCount.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "98f33ff72b625cd3",
+      "ns": "Alioth",
+      "entity": "StockCount.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c703cee14055caa8",
+      "ns": "Alioth",
+      "entity": "StockCount.qk_date",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "db11512fe5046011",
+      "ns": "Alioth",
+      "entity": "StockCount.summary",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c4fcf776521714bc",
+      "ns": "Alioth",
+      "entity": "StockCount.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1729cf3052f75071",
+      "ns": "Alioth",
+      "entity": "StockCount.timeline",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "27a539860526c914",
+      "ns": "Alioth",
+      "entity": "StockCount.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "91e4bf7abdd6555a",
+      "ns": "Alioth",
+      "entity": "StockCount.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a93175e2398e8979",
+      "ns": "Alioth",
+      "entity": "StockCount.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "40bf04a038022b49",
+      "ns": "Alioth",
+      "entity": "StockCountDetail._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7913c568155b87db",
+      "ns": "Alioth",
+      "entity": "StockCountDetail._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a77accd58dfca0af",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b8d44fa8a1357a7c",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "38ab47f5a7a9ac36",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b1f4bbf99486f28f",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e103b3e3b812f3ac",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.ck_category",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "407cc3a5a3271a30",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "394e015ba8ffa925",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "35883f4f90a5a722",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5f139e862fdf3074",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fc4a85e0e78145ea",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2fef70f1ddda88d2",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1a97246ccc1f8f1c",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "9ef298877683a661",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bc8bd5f88f1c126f",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "65c909df264d5a75",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.fk_biller",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7a3c5b472e4c0217",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.fk_list",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "9100fe711a70f44c",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.fk_production",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "11b6669edbb6e0fe",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.fk_storage",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "09d12f5c236143d1",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.fk_voucher",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a0235ff2d1b1aa59",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b7fd82d938455a55",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "159722744275827c",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "aefbe9075a21c831",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fe28b27dbdc742c5",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.qk_date",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "12a081a67d6a6923",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.qk_qty",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ff528d6af55bfa23",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.qk_v_qty",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "70d4e5eac696c1e5",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.qk_w_qty",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a2c5f612bf478a71",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5077040a341cd22a",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a20a05ac64d8ce4c",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a94a9dcfbe863f0c",
+      "ns": "Alioth",
+      "entity": "StockCountDetail.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7cbff4a90aa06cc4",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6cd8806f05cebfdd",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7be0d26ac321d15c",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "64e816884d86789e",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "60f5babea9bcdeff",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1a812d3b2849a10f",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fbc612c4d1673c62",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3c8e4b4e7a4c1cf9",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ea61c9b2ebf37da2",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "69afe1d9b88a8bb7",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.enable",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b7829fa60b76eae0",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.flag",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "29f3f1794418d9db",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "338b65a1f9f68dae",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8c97ae2e812b0f75",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1f824debaee2dfcb",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5dc532e4f214dcee",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b12a8680137585af",
+      "ns": "Alioth",
+      "entity": "StockCountStatus.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "9108851f5feb1272",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "cd339eb7602a0fb8",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8579c8c8a9e8e88e",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "85f80bb3bde17751",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a3d550238c102fa3",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5c6b3ba3ad2db8e2",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "bb3e813a76d64b87",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "35736595114e4a91",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5f4f6a2b932ebc02",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.qk_period",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1c808d854894ffea",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.ref_left",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "46693de943baa6f0",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.ref_right",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "23a45d766aa161de",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1c1ee2eaff4378c3",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6395f69eb6f45e03",
+      "ns": "Alioth",
+      "entity": "SubjectAccount.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "76ca8636986e7553",
+      "ns": "Alioth",
+      "entity": "Warehouse.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "4519316044ea2c6d",
+      "ns": "Alioth",
+      "entity": "Warehouse.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "14982abaca72d585",
+      "ns": "Alioth",
+      "entity": "Warehouse.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b99e6c3a0ab976ab",
+      "ns": "Alioth",
+      "entity": "Warehouse.c_sort_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "891210d659b30915",
+      "ns": "Alioth",
+      "entity": "Warehouse.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "62075215d4bda823",
+      "ns": "Alioth",
+      "entity": "Warehouse.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0af12dedae44c03a",
+      "ns": "Alioth",
+      "entity": "Warehouse.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "fd3cdd68c23f5eb9",
+      "ns": "Alioth",
+      "entity": "Warehouse.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2e4eaa79682d2eb1",
+      "ns": "Alioth",
+      "entity": "Warehouse.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "63a633147c03716c",
+      "ns": "Alioth",
+      "entity": "Warehouse.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "76ffd206e04c98f2",
+      "ns": "Alioth",
+      "entity": "Warehouse.enable",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "af4dae46b1f32c57",
+      "ns": "Alioth",
+      "entity": "Warehouse.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2203e0491914e1ab",
+      "ns": "Alioth",
+      "entity": "Warehouse.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8691d5486a66b7a7",
+      "ns": "Alioth",
+      "entity": "Warehouse.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7ef3745110c920b9",
+      "ns": "Alioth",
+      "entity": "Warehouse.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "19669a9ab69c6f12",
+      "ns": "Alioth",
+      "entity": "Warehouse.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d86fa4d5a8e60eb2",
+      "ns": "Alioth",
+      "entity": "Warehouse.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "789bdebd5e226527",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation._f_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0a606f2056d0a28e",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation._t_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "1f0c3c85a086872d",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.ak_access_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "511cdb9a2dd1b3a9",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.ak_benefit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "df223370e1f04a49",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.ak_permit_user",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "d9b652f709e7040e",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.ak_source",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "87f937938bcca7f1",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.code",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "4f51ebcfefa009b4",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.comments",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "019b04ffe187f224",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.created_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "74215e21fb0c4d1e",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.created_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2de16c1b3123b5f1",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.deleted_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6ddef730362ac2ce",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.deleted_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5e3e986bf200a2e6",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.dk_factor",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "8a37e55b2cbc0824",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.dk_function",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "68a7a46988c9539f",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.dk_scene",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "faea182e5111b1ed",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.fk_address",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ef04701d61e0a39e",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.fk_parent",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "93eafd148d64af8a",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.fk_trustee",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "26596529a1d01005",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "7debedcdc30c78be",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.notice",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "5c8f25fd2a291aff",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.o_number",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "553e52f4b4ea52db",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.projection",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ee86784ed3ab7426",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.qk_capacity",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "e575fccecac38231",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.qk_fence",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "235d6f4f602b4f02",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.sk_unit",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "2d4a38360b0cf622",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.t_color_",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "6f93386f020ab32e",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.tpl_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "b06ea6ac75205654",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.updated_at",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "a61c0bb3b843b016",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation.updated_by_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "ad556050079b621a",
+      "ns": "Alioth",
+      "entity": "Account",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "b5c97b3b4e956b78",
+      "ns": "Alioth",
+      "entity": "ApprovalRole",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "5207d6e09618d786",
+      "ns": "Alioth",
+      "entity": "Approver",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "0c5a3f362f8b09f1",
+      "ns": "Alioth",
+      "entity": "Customer",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "7528f6e9bbb01521",
+      "ns": "Alioth",
+      "entity": "Employee",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "f1d7901c0fc3a641",
+      "ns": "Alioth",
+      "entity": "ExchangeRate",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "2621d9af1cea82cd",
+      "ns": "Alioth",
+      "entity": "InventoryBalance",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "d32da568bd851399",
+      "ns": "Alioth",
+      "entity": "LedgerEntry",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "cc94ba71698ef4de",
+      "ns": "Alioth",
+      "entity": "MeasurementUnit",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "a96ddb5cbecf0800",
+      "ns": "Alioth",
+      "entity": "Requirement",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "d033f0f01f6109ba",
+      "ns": "Alioth",
+      "entity": "SalesOrder",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "cc16b14709690efe",
+      "ns": "Alioth",
+      "entity": "SkillTag",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "4ad7d55407265aa8",
+      "ns": "Alioth",
+      "entity": "Status",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "38206bdd41ca6cdc",
+      "ns": "Alioth",
+      "entity": "StockCount",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "fc396524f248235b",
+      "ns": "Alioth",
+      "entity": "StockCountDetail",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "a7f98701b808cc14",
+      "ns": "Alioth",
+      "entity": "StockCountStatus",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "6300c2b34fe33311",
+      "ns": "Alioth",
+      "entity": "StockStat",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "c3cd41a3bba917c2",
+      "ns": "Alioth",
+      "entity": "StorageNest",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "eb5f211405d872ea",
+      "ns": "Alioth",
+      "entity": "SubjectAccount",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "e4e5d373dcecca93",
+      "ns": "Alioth",
+      "entity": "Voucher",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "99d1c474baba3a82",
+      "ns": "Alioth",
+      "entity": "Warehouse",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "97a824f7e66b25f1",
+      "ns": "Alioth",
+      "entity": "WarehouseLocation",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "0c0f4b627f06f9ae",
+      "ns": "AVIC-CAASEC",
+      "entity": "ApprovalRole",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "1086820d3a524d5d",
+      "ns": "AVIC-CAASEC",
+      "entity": "CaacArticle",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "ea7723c7f6482cd8",
+      "ns": "AVIC-CAASEC",
+      "entity": "CasArticle",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "13dc1bca997a2227",
+      "ns": "AVIC-CAASEC",
+      "entity": "CommonCase",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "2ca3dd647a7f7b36",
+      "ns": "AVIC-CAASEC",
+      "entity": "CommonHolding",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "f1a4c374e79bfbf3",
+      "ns": "AVIC-CAASEC",
+      "entity": "CommonSection",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "6ceb1a23aeb3d388",
+      "ns": "AVIC-CAASEC",
+      "entity": "CommonStatute",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "6b90af6136e25542",
+      "ns": "AVIC-CAASEC",
+      "entity": "EasaArticle",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "5925fb14a1b7778a",
+      "ns": "AVIC-CAASEC",
+      "entity": "FaaArticle",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "f1970973fb22a2f2",
+      "ns": "AVIC-CAASEC",
+      "entity": "IcaoArticle",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "a61b29dcd72e52b6",
+      "ns": "AVIC-CAASEC",
+      "entity": "IfrsArticle",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "a60feec7bfd04458",
+      "ns": "AVIC-CAASEC",
+      "entity": "flow-template",
+      "rule": "semantics:partial:factor/function"
+    },
+    {
+      "fp": "2d0d7a2fb9f86b6b",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance.capacity",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "98ed9730fe44f1c2",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance.id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "c6023de1159cf9a5",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance.production_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "dd095fae3b064481",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance.qty",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "0dafb13e965accd0",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance.storage_id",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "f57393539465daa8",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance.unit",
+      "rule": "binding:field-cols"
+    },
+    {
+      "fp": "3140d00060f9aba6",
+      "ns": "Cosmic-Tools",
+      "entity": "ApprovalRole",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "7117aaf920bcba9a",
+      "ns": "Cosmic-Tools",
+      "entity": "Approver",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "711f999a2a50561b",
+      "ns": "Cosmic-Tools",
+      "entity": "Employee",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "5a252f5135dffc15",
+      "ns": "Cosmic-Tools",
+      "entity": "git_branch",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "634b0866946da103",
+      "ns": "Cosmic-Tools",
+      "entity": "git_tag",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "07e90855d1fd3b43",
+      "ns": "Cosmic-Tools",
+      "entity": "InventoryBalance",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "bfe151270fc747f7",
+      "ns": "Cosmic-Tools",
+      "entity": "SkillTag",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "32eddf22b3426f66",
+      "ns": "Cosmic-Tools",
+      "entity": "VersionTag",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "da30f9f8084a2e78",
+      "ns": "WZ",
+      "entity": "Inquiry",
+      "rule": "binding:table"
+    },
+    {
+      "fp": "fdb15f76ab3ae9d6",
+      "ns": "WZ",
+      "entity": "ProcureContract",
+      "rule": "binding:table"
+    },
+    {
+      "fp": "ba79387949ad615d",
+      "ns": "WZ",
+      "entity": "Quote",
+      "rule": "binding:table"
+    },
+    {
+      "fp": "119874b19b84d5a8",
+      "ns": "WZ",
+      "entity": "ApprovalAction",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "017655ce37e50a7b",
+      "ns": "WZ",
+      "entity": "ApprovalFlow",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "a23ab062fb948544",
+      "ns": "WZ",
+      "entity": "ApprovalInstance",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "4bfc2cf12a8adf8d",
+      "ns": "WZ",
+      "entity": "batch_tag",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "8785a088546eaa23",
+      "ns": "WZ",
+      "entity": "DelegationRule",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "7db900f1f9719aaf",
+      "ns": "WZ",
+      "entity": "FlowNode",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "71718ea31a36883a",
+      "ns": "WZ",
+      "entity": "InvoiceApplicationHeader",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "85f64da5636eaa62",
+      "ns": "WZ",
+      "entity": "ReceiptCollectionHeader",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "2ed5cb69b2843133",
+      "ns": "WZ",
+      "entity": "trade_order",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "c30fd8b77c6b4b4f",
+      "ns": "WZ",
+      "entity": "trustee_account",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "5617e3daa7bea3d5",
+      "ns": "WZ",
+      "entity": "trustee_account_futures",
+      "rule": "coord:empty:scene_code/factor_code/function_code"
+    },
+    {
+      "fp": "2193b5ff163e7feb",
+      "ns": "WZ",
+      "entity": "flow-template",
+      "rule": "semantics:partial:factor/function"
+    }
+  ]
+}

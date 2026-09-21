@@ -1,0 +1,60 @@
+# AppAgent 端到端构建回归评测 — 基准任务集
+#
+# 契约：openspec/changes/add-appagent-runtime-verify-eval-and-rollback
+#   capability `appagent-build-eval-baseline`（specs/appagent-build-eval-baseline/spec.md）
+#
+# 判定：**机械证据为主**（extension_verify / e2e / closure_audit / eval_report_rules / artifacts），
+# LLM rubric 仅次级加权（各 case `rubric_weight` 默认 0 → 不需要 rubric 文件）。
+# 证据缺失记 0 分且整轮记 degraded（≠ 通过）——MUST NOT 按满分或按通过处理。
+#
+# 首次运行预期 degraded：本集指向的既有 app 尚无 extension-verify.json / closure-audit 裁决
+#（验证设施刚落地）——待各 app 产出证据面后，用 `--write-baseline` 建立基线。
+# 建立基线后：`run --gate` 阻断未达标/回归；回归经 plans/（source: eval-regression）投递修复意图。
+#
+# 校验：bun scripts/eval/appagent-build-eval.ts validate
+
+schema: appagent-build-eval/v1
+threshold: 0.8
+# 单 case 相对基线允许的最大降幅（超过即判回归）
+tolerance: 0.1
+
+cases:
+  - id: ct-wms
+    namespace: Cosmic-Tools
+    app: ct-wms
+    goal: 重建 Cosmic-Tools 的 ct-wms 应用：仓库管理（产品/库存/入库/出库），保留既有模块组合与扩展声明
+    weight: 0.25
+    rubric_weight: 0.0
+    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+
+  - id: ct-git
+    namespace: Cosmic-Tools
+    app: ct-git
+    goal: 重建 Cosmic-Tools 的 ct-git 应用：代码仓库与流水线管理，保留既有模块组合与扩展声明
+    weight: 0.2
+    rubric_weight: 0.0
+    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+
+  - id: ct-bv-local
+    namespace: Cosmic-Tools
+    app: ct-bv-local
+    goal: 重建 Cosmic-Tools 的 ct-bv-local 应用：本地生活服务订单管理，保留既有模块组合与扩展声明
+    weight: 0.2
+    rubric_weight: 0.0
+    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+
+  - id: mall-erp
+    namespace: Cosmic-Tools
+    app: mall-erp
+    goal: 重建 Cosmic-Tools 的 mall-erp 应用：商城 ERP 主数据与订单，保留既有模块组合与扩展声明
+    weight: 0.15
+    rubric_weight: 0.0
+    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+
+  - id: wz-yy-wms
+    namespace: WZ
+    app: wz-yy-wms
+    goal: 重建 WZ 的 wz-yy-wms 应用：仓库管理，保留既有模块组合与扩展声明
+    weight: 0.2
+    rubric_weight: 0.0
+    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }

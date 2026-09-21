@@ -2,7 +2,7 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 use super::tokens::{
     is_valid_refresh_token, record_failed_login, reset_failed_login, revoke_all_user_tokens,
@@ -69,19 +69,25 @@ pub async fn login(
     // Fetch user from database (incl. lockout counters — SECURITY_SPEC §5)
     // email 为可选认证链路（1:N 存于 auth_user_emails），登录经 auth_user_emails UNION
     // auth_users.email 解析；username/phone 仍按单列匹配。
-    let where_expr = if search_column == "email" {
-        "id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1 AND deleted_at IS NULL) \
-         OR email = $1"
-            .to_string()
-    } else {
-        format!("{} = $1", search_column)
-    };
-    let query = format!(
-        "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
+    // 认证标识列闭集（email/phone/username，见上方自动判别）⇒ 查询文本编译期固化（零运行期拼装）
+    let query = match search_column {
+        "email" => {
+            "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
          COALESCE(failed_login_attempts, 0), locked_until \
-         FROM isahl_auth.auth_users WHERE {}",
-        where_expr
-    );
+         FROM isahl_auth.auth_users WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails \
+         WHERE email = $1 AND deleted_at IS NULL) OR email = $1"
+        }
+        "phone" => {
+            "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
+         COALESCE(failed_login_attempts, 0), locked_until \
+         FROM isahl_auth.auth_users WHERE phone = $1"
+        }
+        _ => {
+            "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
+         COALESCE(failed_login_attempts, 0), locked_until \
+         FROM isahl_auth.auth_users WHERE username = $1"
+        }
+    };
 
     let user_result = sqlx::query_as::<
         _,
@@ -93,7 +99,7 @@ pub async fn login(
             i32,
             Option<chrono::DateTime<chrono::Utc>>,
         ),
-    >(AssertSqlSafe(query.as_str()))
+    >(query)
     .bind(search_value)
     .fetch_optional(pool.get_ref())
     .await;
@@ -1209,20 +1215,23 @@ pub async fn me(
                     }
                 };
 
-            // ── 视角解析（主体→岗位→视角标签链的「我」侧）──
-            // 视角标签为岗位级属性（relation-post_view_r_tags: ref_left=岗位, ref_right=标签）：
-            // 我的视角 = 我的岗位集合各自的标签集合。失败降级为空数组 + 告警（不阻断 me）。
+            // ── 视角解析（主体→岗位→视角关联行→视角标签链的「我」侧）──
+            // 视角标签宿主 = 岗位↔主体关联行（relation-post_view_r_tags: ref_left=关联行, ref_right=标签）：
+            // 我的视角 = 我的岗位集合各自名下关联行的标签集合。失败降级为空数组 + 告警（不阻断 me）。
             let perspectives: Vec<serde_json::Value> = if position_rows.is_empty() {
                 Vec::new()
             } else {
                 let position_ids: Vec<i64> = position_rows.iter().map(|(id, _, _)| *id).collect();
                 match sqlx::query_as::<_, (i64, String, Option<String>)>(
-                    r#"SELECT r.ref_left, vt.code, vt.notice
-                       FROM isahl."zc_id_relation-post_view_r_tags" r
+                    r#"SELECT v.ref_left, vt.code, vt.notice
+                       FROM isahl."zc_id_subj-post_rr_view" v
+                       JOIN isahl."zc_id_relation-post_view_r_tags" r
+                           ON r.ref_left = v.id AND r.deleted_at IS NULL
                        JOIN isahl."zc_id_tags-post_view" vt
                            ON vt.id = r.ref_right AND vt.deleted_at IS NULL
-                       WHERE r.ref_left = ANY($1) AND r.deleted_at IS NULL
-                       ORDER BY r.ref_left, vt.o_number, vt.id"#,
+                       WHERE v.deleted_at IS NULL AND v.ref_left = ANY($1)
+                       GROUP BY v.ref_left, vt.code, vt.notice, vt.o_number, vt.id
+                       ORDER BY v.ref_left, vt.o_number, vt.id"#,
                 )
                 .bind(&position_ids)
                 .fetch_all(pool.get_ref())

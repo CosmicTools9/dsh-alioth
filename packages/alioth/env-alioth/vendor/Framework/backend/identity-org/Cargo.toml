@@ -13,6 +13,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 async-trait = { workspace = true }
 common = { path = "../common" }
+consignment-writer = { path = "../consignment-writer" }
 crud = { path = "../crud" }
 framework-contacts = { path = "../contacts" }
 ontology-binding = { path = "../ontology-binding" }

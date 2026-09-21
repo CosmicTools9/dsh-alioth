@@ -50,8 +50,8 @@ pub async fn context_objects(
 
     let kind = query.kind.as_deref().unwrap_or("").trim().to_string();
     let rows: Vec<(String, Option<String>, String)> = sqlx::query_as(
-        r#"SELECT id::text, notice, tableoid::regclass::text AS leaf
-           FROM isahl."zc_id_proc-context"
+        r#"SELECT id::text, notice, (SELECT relname FROM pg_class WHERE oid = pc.tableoid) AS leaf
+           FROM isahl."zc_id_proc-context" pc
            WHERE deleted_at IS NULL
              AND ($1 = '' OR notice ILIKE $1)
              AND ($3 = ''

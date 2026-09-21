@@ -15,6 +15,7 @@ use ::common::testing::connect_test_db;
 use alioth_gateway::api::chat_sessions::adapters::agent_dispatch::AgentRouterAdapter;
 use alioth_gateway::api::chat_sessions::adapters::db_message::SqlxMessageAdapter;
 use alioth_gateway::api::chat_sessions::adapters::db_session::SqlxSessionAdapter;
+use alioth_gateway::api::chat_sessions::memory_scope::load_subject_persona;
 use alioth_gateway::api::chat_sessions::ports::{
     AgentDispatchPort, MessageStorePort, SessionStorePort,
 };
@@ -57,6 +58,14 @@ async fn ensure_registry(pool: &sqlx::PgPool) {
         .execute(pool)
         .await
         .expect("ensure chat_message_meta (019)");
+        // 与 Gateway/backend/migrations/021_chat_ai_tool_calls.sql 同构（来源标注）
+        sqlx::query(
+            r#"ALTER TABLE isahl_auth.chat_message_meta
+                   ADD COLUMN IF NOT EXISTS tool_calls jsonb"#,
+        )
+        .execute(pool)
+        .await
+        .expect("ensure chat_message_meta.tool_calls (021)");
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS isahl_auth.chat_message_feedback (
                 msg_id     bigint NOT NULL REFERENCES isahl."zc_id_msgs-chat_ai"(id) ON DELETE CASCADE,
@@ -91,6 +100,98 @@ async fn cleanup(pool: &sqlx::PgPool, session_ids: &[i64], msg_ids: &[i64]) {
         .ok();
 }
 
+/// 建一条联系方式叶行（isahl 数据面；测试用，负 id 段自清）。
+async fn ensure_contact_info(pool: &sqlx::PgPool, code: &str) -> i64 {
+    if let Some(id) = sqlx::query_scalar::<_, i64>(
+        r#"SELECT id FROM isahl.zc_id_contact_infos WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await
+    .expect("lookup contact info")
+    {
+        return id;
+    }
+    sqlx::query_scalar::<_, i64>(
+        r#"INSERT INTO isahl."zc_id_info-isahl" (code, notice, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $1, (SELECT id FROM isahl.zc_id_scene WHERE code = 'RR' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_factor WHERE code = 'PFA' AND deleted_at IS NULL),
+                   (SELECT id FROM isahl.zc_id_function WHERE code = '↓_MA' AND deleted_at IS NULL))
+           RETURNING id"#,
+    )
+    .bind(code)
+    .fetch_one(pool)
+    .await
+    .expect("create contact info")
+}
+
+/// 参与方写入（refactor-chat-ai-subject-identity-memory D-2）：
+/// 消息 + 收件人同事务；且「用户消息定位」按智能体侧 code 规则排除 agent-* 与历史 llm-agent。
+#[tokio::test]
+async fn participant_rows_written_and_user_row_located() {
+    let pool = connect_test_db().await;
+    ensure_registry(&pool).await;
+    let (session_id, sessions) = new_session(&pool).await;
+    let mut msgs: Vec<i64> = Vec::new();
+
+    let agent_info = ensure_contact_info(&pool, "agent-general").await;
+    let counterpart_info = ensure_contact_info(&pool, "test-counterpart-1").await;
+    let store = SqlxMessageAdapter::new(pool.clone());
+
+    // 用户消息：发送方=对话方联系方式，收件人=智能体侧
+    let user_msg = store
+        .add_message(
+            session_id,
+            "帮我看这单",
+            Some(counterpart_info),
+            &[agent_info],
+        )
+        .await
+        .expect("user msg");
+    msgs.push(user_msg.id);
+    // AI 回复：发送方=主体联系方式（agent-<code>），收件人=对话方
+    let ai_msg = store
+        .add_message(session_id, "已分析", Some(agent_info), &[counterpart_info])
+        .await
+        .expect("assistant msg");
+    msgs.push(ai_msg.id);
+
+    // 参与方行落库（direction: ref_left=消息, ref_right=联系方式）
+    let user_recipients: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT ref_right FROM isahl."zc_id_message_rr_recipients"
+           WHERE ref_left = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(user_msg.id)
+    .fetch_all(&pool)
+    .await
+    .expect("user recipients");
+    assert_eq!(user_recipients, vec![agent_info], "用户消息收件人=智能体侧");
+
+    let ai_recipients: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT ref_right FROM isahl."zc_id_message_rr_recipients"
+           WHERE ref_left = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(ai_msg.id)
+    .fetch_all(&pool)
+    .await
+    .expect("ai recipients");
+    assert_eq!(
+        ai_recipients,
+        vec![counterpart_info],
+        "AI 回复收件人=对话方联系方式（最后一条消息可直接算出对话方）"
+    );
+
+    // 用户消息定位：AI 回复（发送方 agent-*）不得被当作「最后一条用户消息」
+    let last_user = store
+        .get_last_user_message_row(session_id)
+        .await
+        .expect("locate user msg")
+        .expect("user msg exists");
+    assert_eq!(last_user.id, user_msg.id, "须定位到用户消息而非 AI 回复");
+
+    cleanup(&pool, &sessions, &msgs).await;
+}
+
 async fn new_session(pool: &sqlx::PgPool) -> (i64, Vec<i64>) {
     let store = SqlxSessionAdapter::new(pool.clone());
     let session = store
@@ -111,7 +212,7 @@ async fn meta_roundtrip_and_join_restore() {
 
     // user 消息 + 附件/知识引用 meta
     let user_msg = store
-        .add_message(session_id, "帮我看看这个合同", None)
+        .add_message(session_id, "帮我看看这个合同", None, &[])
         .await
         .expect("user msg");
     msgs.push(user_msg.id);
@@ -124,13 +225,14 @@ async fn meta_roundtrip_and_join_restore() {
             None,
             Some(&json!([{ "type": "image", "mime": "image/png", "data_base64": "AAAA" }])),
             Some(&json!([{ "key": "LAB-44", "title": "赔偿标准" }])),
+            None,
         )
         .await
         .expect("save user meta");
 
     // assistant 消息 + agent_code/structured/usage/knowledge_refs meta
     let assistant_msg = store
-        .add_message(session_id, "已分析该合同…", Some(AI_USER))
+        .add_message(session_id, "已分析该合同…", Some(AI_USER), &[])
         .await
         .expect("assistant msg");
     msgs.push(assistant_msg.id);
@@ -143,9 +245,39 @@ async fn meta_roundtrip_and_join_restore() {
             Some(&json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 })),
             None,
             Some(&json!([{ "key": "LAB-44", "title": "赔偿标准" }])),
+            Some(&json!([
+                { "name": "query_sql", "arguments": { "query": "SELECT 1" }, "success": true, "output": "1" }
+            ])),
         )
         .await
         .expect("save assistant meta");
+
+    // E7（upgrade-chat-ai-tool-surface）：工具调用记录落 meta（追溯用）
+    let tool_calls: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT tool_calls FROM isahl_auth.chat_message_meta WHERE msg_id = $1")
+            .bind(assistant_msg.id)
+            .fetch_one(&pool)
+            .await
+            .expect("read tool_calls");
+    let calls = tool_calls.expect("tool_calls 应落库");
+    assert_eq!(
+        calls.as_array().map(|a| a.len()),
+        Some(1),
+        "工具调用记录应含 1 项"
+    );
+    assert_eq!(
+        calls[0].get("name").and_then(|v| v.as_str()),
+        Some("query_sql"),
+        "记录须含工具名"
+    );
+    // 无工具调用的消息该列为 NULL（user 消息侧）
+    let user_calls: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT tool_calls FROM isahl_auth.chat_message_meta WHERE msg_id = $1")
+            .bind(user_msg.id)
+            .fetch_one(&pool)
+            .await
+            .expect("read user tool_calls");
+    assert!(user_calls.is_none(), "无工具调用应保持 NULL");
 
     // JOIN 恢复：assistant 行携带 meta（agent_code/structured/usage/knowledge_refs）
     let rows = store
@@ -181,8 +313,32 @@ async fn meta_roundtrip_and_join_restore() {
             .map(|a| a.len()),
         Some(1)
     );
+    // 批 ④（add-chat-ai-runtime-context T4）：工具记录须经 meta JOIN 回读——
+    // 历史重建据此渲染「本轮工具执行」注记（此前 META_SELECT 未取该列）。
+    assert_eq!(
+        assistant
+            .tool_calls
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|a| a.len()),
+        Some(1),
+        "assistant 行须回读 tool_calls"
+    );
+    assert_eq!(
+        assistant
+            .tool_calls
+            .as_ref()
+            .and_then(|v| v.get(0))
+            .and_then(|c| c.get("name"))
+            .and_then(|n| n.as_str()),
+        Some("query_sql")
+    );
     // user 行 meta 保留附件/知识引用
     let user_row = rows.iter().find(|r| r.id == user_msg.id).expect("user row");
+    assert!(
+        user_row.tool_calls.is_none(),
+        "无工具记录的行该列须为 None（零回归）"
+    );
     assert_eq!(
         user_row
             .attachments
@@ -218,7 +374,7 @@ async fn feedback_toggle_semantics() {
 
     let store = SqlxMessageAdapter::new(pool.clone());
     let msg = store
-        .add_message(session_id, "hi", None)
+        .add_message(session_id, "hi", None, &[])
         .await
         .expect("msg");
     msgs.push(msg.id);
@@ -350,11 +506,11 @@ async fn session_delete_cascades_to_messages() {
         .expect("create session");
     let session_id = session.id;
     let user_msg = msg_store
-        .add_message(session_id, "你好", None)
+        .add_message(session_id, "你好", None, &[])
         .await
         .expect("user msg");
     let ai_msg = msg_store
-        .add_message(session_id, "回复", Some(AI_USER))
+        .add_message(session_id, "回复", Some(AI_USER), &[])
         .await
         .expect("assistant msg");
     msg_store
@@ -364,6 +520,7 @@ async fn session_delete_cascades_to_messages() {
             "general",
             None,
             Some(&json!({ "total_tokens": 3 })),
+            None,
             None,
             None,
         )
@@ -380,7 +537,7 @@ async fn session_delete_cascades_to_messages() {
         .await
         .expect("create other session");
     let other_msg = msg_store
-        .add_message(other_session.id, "他方消息", None)
+        .add_message(other_session.id, "他方消息", None, &[])
         .await
         .expect("other msg");
 
@@ -494,4 +651,58 @@ async fn patch_title_updates_notice() {
         .expect("not owner"));
 
     cleanup(&pool, &sessions, &[]).await;
+}
+
+/// add-agent-persona-channel：人格读侧契约——`soul` 落值即回读（管理面写物理列
+/// 的等价路径），空白归一为 `None`（不产段），测试末复原为 NULL（共享测试库）。
+/// 无种子主体行时自适应跳过（不依赖「库内碰巧有行」）。
+#[tokio::test]
+async fn subject_persona_roundtrip_via_physical_column() {
+    let pool = connect_test_db().await;
+    ensure_registry(&pool).await;
+
+    let subject_id: Option<i64> = sqlx::query_scalar(
+        r#"SELECT id FROM isahl."zc_id_empl-agent"
+           WHERE deleted_at IS NULL ORDER BY id LIMIT 1"#,
+    )
+    .fetch_optional(&pool)
+    .await
+    .expect("探测主体行");
+    let Some(id) = subject_id else {
+        return;
+    };
+
+    sqlx::query(r#"UPDATE isahl."zc_id_empl-agent" SET soul = $2 WHERE id = $1"#)
+        .bind(id)
+        .bind("集成测试人格：先核对单据再作答")
+        .execute(&pool)
+        .await
+        .expect("写入 soul");
+    assert_eq!(
+        load_subject_persona(&pool, id).await.expect("读取不得报错"),
+        Some("集成测试人格：先核对单据再作答".to_string()),
+        "人格须按主体 id 回读一致"
+    );
+
+    // 空白 → None（清空语义：不产段）
+    sqlx::query(r#"UPDATE isahl."zc_id_empl-agent" SET soul = $2 WHERE id = $1"#)
+        .bind(id)
+        .bind("   ")
+        .execute(&pool)
+        .await
+        .expect("写入空白 soul");
+    assert!(
+        load_subject_persona(&pool, id)
+            .await
+            .expect("读取不得报错")
+            .is_none(),
+        "空白 soul 必须归一为 None"
+    );
+
+    // 复原（避免污染共享测试库的种子行）
+    sqlx::query(r#"UPDATE isahl."zc_id_empl-agent" SET soul = NULL WHERE id = $1"#)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("复原 soul");
 }

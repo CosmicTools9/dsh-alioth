@@ -4,6 +4,26 @@ use sqlx::PgPool;
 
 use crate::api::chat_sessions::ports::LlmConfigPort;
 
+/// 「LLM 未配置」内部哨兵前缀（fix-llm-unconfigured-visibility）。
+///
+/// 只在**进程内**错误串上流转，供端点受理侧分类为 `LLM_NOT_CONFIGURED`；
+/// MUST NOT 进入任何用户可见文本——落库/回响应前用 `visible_message()` 剥离。
+/// 配置缺失是用户可自行修复的前提缺失，与 DB/SQL 内部错误（`chat-ai-error-sanitized`
+/// 的泛化面）不同，故以哨兵显式区分。
+pub(crate) const LLM_UNCONFIGURED_MARKER: &str = "llm-unconfigured:";
+
+/// 是否为「LLM 未配置」类错误（仅哨兵判定，不做文案匹配）。
+pub(crate) fn is_unconfigured(err: &str) -> bool {
+    err.starts_with(LLM_UNCONFIGURED_MARKER)
+}
+
+/// 剥离内部哨兵 —— 用户可见文本入口（用户可见串 MUST NOT 含哨兵）。
+pub(crate) fn visible_message(err: &str) -> &str {
+    err.strip_prefix(LLM_UNCONFIGURED_MARKER)
+        .unwrap_or(err)
+        .trim()
+}
+
 /// 从 provider code + 已解密 api_key + settings 构建 `LlmService`。
 /// `load_service`（DB 优先/env 兜底）与系统配置「测试连接」端点共用——
 /// 测试端点从表单草稿或已存行（服务端解密）拿到同构输入后调用本函数，
@@ -78,10 +98,10 @@ pub(crate) fn build_llm_service(
     };
 
     if api_key.is_empty() {
-        return Err(
-            "LLM_API_KEY not configured. Add an LLM provider in System Config > LLM or set the LLM_API_KEY environment variable."
-                .to_string(),
-        );
+        return Err(format!(
+            "{} LLM_API_KEY not configured. Add an LLM provider in System Config > LLM or set the LLM_API_KEY environment variable.",
+            LLM_UNCONFIGURED_MARKER
+        ));
     }
 
     // roles 由 model / flash_model 派生——必须在结构体字面量移动两者**之前**计算

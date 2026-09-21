@@ -25,7 +25,7 @@ async fn seed_user(pool: &PgPool, id: i64, username: &str) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(id)
     .bind(username)
@@ -80,7 +80,7 @@ async fn add_approve_node(
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(op_id)
     .bind(template_id)
@@ -167,7 +167,7 @@ async fn create_first_instance(pool: &PgPool, node_id: i64, actor: i64) -> i64 {
     // 实例 ↔ 节点事件模板桥（advance_flow 反查流程/节点依赖此桥）
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(template)
@@ -201,11 +201,13 @@ async fn node_instance_operators(pool: &PgPool, node_id: i64) -> Vec<(i64, Optio
 }
 
 async fn cleanup_dl_users(pool: &PgPool) {
-    // 共享测试库防串扰：清除历次运行的专属委托测试身份（含曾用名变体）
+    // 只清历次运行的委托规则，不删用户行——共享测试库下硬 DELETE auth_users 双害：
+    // ① 删到并行会话在用的夹具行；② ngac_object_attribute.created_by_id FK 反挂直接 23503。
+    // 用户行由 seed_user 幂等托管（ON CONFLICT DO NOTHING），无需清理。
     sqlx::query(
-        r#"DELETE FROM isahl_auth.auth_users
-           WHERE id IN ($1, $2, 444001, 444002, 444012)
-              OR username IN ('dl-principal', 'dl-trustee', 'dlp-principal', 'dlp-trustee')"#,
+        r#"DELETE FROM isahl_auth.ngac_delegation
+           WHERE fk_delegator IN ($1, $2, 444001, 444002, 444012)
+              OR fk_delegatee IN ($1, $2, 444001, 444002, 444012)"#,
     )
     .bind(DELEGATOR)
     .bind(TRUSTEE)

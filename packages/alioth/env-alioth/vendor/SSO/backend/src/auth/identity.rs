@@ -36,6 +36,27 @@ pub struct AuthError {
     pub error: String,
 }
 
+/// 实名核验通过后的账号状态处理（自动审批通过开关 `approval:auto-approve` 感知）。
+///
+/// - 开关开启：**保留**现有账号状态——激活态由审批链授予，实名不构成二次人工审批门槛
+///   （免人工模式下「注册→实名→申请认证」旅程必须一次通过，不得把已激活用户打回待批）；
+/// - 开关关闭 / 配置行缺失（fail-closed）：置 `pending_approval`——原语义，交管理面审批。
+pub async fn apply_status_after_identity_verify(pool: &PgPool, user_id: i64) {
+    if common::platform_config::is_enabled(pool, common::platform_config::AUTO_APPROVE_CODE).await {
+        log::info!(
+            "自动审批通过已启用：用户 {} 实名提交后保留现有账号状态（不降级 pending_approval）",
+            user_id
+        );
+        return;
+    }
+    let _ = sqlx::query(
+        "UPDATE isahl_auth.auth_users SET status = 'pending_approval', updated_at = NOW() WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await;
+}
+
 pub async fn submit_identity(
     req: HttpRequest,
     body: web::Json<SubmitIdentityRequest>,
@@ -391,12 +412,8 @@ pub async fn verify_identity(
         .execute(pool.get_ref())
         .await;
 
-        let _ = sqlx::query(
-            "UPDATE isahl_auth.auth_users SET status = 'pending_approval', updated_at = NOW() WHERE id = $1"
-        )
-        .bind(user_id)
-        .execute(pool.get_ref())
-        .await;
+        // 实名核验通过后的账号状态（自动审批通过开关感知，见 helper 文档）
+        apply_status_after_identity_verify(pool.get_ref(), user_id).await;
 
         HttpResponse::Ok().json(serde_json::json!({
             "status": "verified",

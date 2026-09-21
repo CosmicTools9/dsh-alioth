@@ -1,6 +1,7 @@
 name: alioth-gui
 description: "前端业务代码开发 — 类型 → API hooks → 页面组件 → 路由 → 视觉验证"
 version: "2.0"
+default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
   - ".agents/skills/alioth-design/references/prototype-base.css"
@@ -9,36 +10,39 @@ tracks:
     steps:
       - id: "1.1"
         instruction: Track 0 — 模块分析，读取 module.json/block.json → 数据模型文档
-        tools: [read_file, write_file]
+        tools: [read_file, write_file, search_content, list_dir, run_code]
         schema: {type: object, required: [data_model_doc]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/module.json"
       - id: "1.2"
         instruction: Track 1 — 类型定义 + API hooks + mapper 函数
-        tools: [read_file, write_file, search_files, code_intel]
+        tools: [read_file, write_file, search_files, code_intel, search_content, lint_file]
         schema: {type: object, required: [types_api_hooks]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/src/types/*.ts"
       - id: "1.3"
         instruction: Track 2 — 页面组件：列表页 → 表单页 → 详情页 → 通用组件
-        tools: [read_file, write_file, search_files, code_intel]
+        tools: [read_file, write_file, search_files, code_intel, search_content, lint_file]
         schema: {type: object, required: [page_components]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/src/pages/*.tsx"
       - id: "1.4"
         instruction: "Track 3 — 路由集成：App.tsx + ModuleLayout + i18n + theme.css。本步 MUST 同时补齐前端工程骨架（缺失才写，禁止覆盖已存在文件）：(A) package.json — 参照 Pre-Proc/WZ/Sources/Apps/Blocks/outgo-payment/frontend/package.json 的结构与依赖版本（react ^19.2.8、react-dom ^19.2.8、@tanstack/react-query ^5.101.4、jotai ^2.20.2、lucide-react、tailwind-merge、zod、react-router、single-spa、@alioth/{api,components,hooks,i18n,types} 均为 workspace:*；devDependencies 含 typescript、@types/react、@types/react-dom、vite、@vitejs/plugin-react、@alioth/config），name 用 @alioth/{module}-frontend，scripts.lint = tsc --noEmit；(B) tsconfig.json — compilerOptions.moduleResolution MUST 为 \"bundler\"（TS 7 已移除 node/node10 值，写 node 会触发 TS5108 门禁失败），其余选项参照 Framework/frontend/config/typescript/tsconfig.base.json（module ESNext、jsx react-jsx、strict、noEmit、isolatedModules、skipLibCheck、allowImportingTsExtensions、resolveJsonModule、include [\"src\"]）。完成后再写 App.tsx/ModuleLayout/i18n/theme.css。"
-        tools: [read_file, write_file]
+        tools: [read_file, write_file, patch_file, file_diff, lint_file, openspec_status, http_get, web_search]
         schema: {type: object, required: [routing_integration]}
         gates:
           - program: "npx"
             args: ["tsc", "--noEmit"]
             timeout_sec: 180
       - id: "1.5"
-        instruction: Track 4 — 原型代码对齐：差距分析 → Block 修正 → 视觉验证（调用 visual_verify 对最新 v{N}.html 执行截图评分；失败则修复后重跑）
-        tools: [read_file, write_file, visual_verify]
+        instruction: "Track 4 — 原型代码对齐：差距分析 → Block 修正 → 视觉验证（调用 visual_verify 对最新 v{N}.html 执行截图评分；失败则修复后重跑）。本步骤工具面较宽（含调试/服务/图像工具），按需选用——常规对齐只需 read_file/patch_file/write_file/visual_verify/inspect_image，深调试与服务观察仅在页面不渲染或行为异常时使用。"
+        tools: [read_file, write_file, visual_verify, patch_file, file_diff, inspect_image, start_service, stop_service, service_logs, debug_start, debug_eval, debug_breakpoint, debug_resume, debug_stack, debug_stop, eval]
         schema: {type: object, required: [alignment_report]}
         gates:
-          - output_glob: "Pre-Proc/{ns}/Prototypes/visual-verify/{module}/v*/report.json"
+          - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/visual-verify/report.json"
+            # 产物存在 ≠ 内容合格：REVISE/FAIL 也写报告（add-step-gate-json-predicate）
+            require_json_pointer: "/verdict"
+            require_json_equals: "PASS"
       - id: "1.6"
         instruction: "Track 5 构建验证 — 本步骤由门禁自动执行前端库构建（tsc 类型检查 + vite build → dist/single-spa.es.js），与原型链「组装构建」步骤同形：两链的验证都落在产出可验证产物。你【不需要】自己运行构建；构建失败时按门禁回灌的错误修复源码后重试。确认产物存在即输出 completed: true。"
         tools: [read_file, write_file]
@@ -48,5 +52,8 @@ tracks:
             args: ["vite", "build"]
             output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/dist/single-spa.es.js"
             timeout_sec: 300
+          - program: "bash"
+            args: ["scripts/check/check-namespace-frontend.sh"]
+            timeout_sec: 120
 source:
-  content_sha256: 695bf9e2ed0dd13a1b70b3480a92291767bbeb84e05e0434780cb3acd259fc0c
+  content_sha256: 99f2c4eec3b6f12af3f2b8a93d9d405e85cfa69f93a8dfa91284b7b2f19dd3ef

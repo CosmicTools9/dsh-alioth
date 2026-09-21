@@ -47,7 +47,7 @@ async fn get_tracking_points(
         r#"SELECT COALESCE(notice, '') AS loc,
                   qk_date AS time,
                   COALESCE(code, 'enroute') AS status
-           FROM "isahl.zc_id_even-tracking"
+           FROM isahl."zc_id_even-tracking"
            WHERE fk_subject = $1 AND deleted_at IS NULL
            ORDER BY COALESCE(qk_date, 0), id
            LIMIT 50"#,

@@ -9,7 +9,9 @@
 mod common;
 
 use ::common::testing::connect_test_db;
+use actix_web::HttpMessage;
 use actix_web::{test, web, App};
+use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Claims};
 use gateway_sso::auth::AuthState;
 use serde_json::json;
 use sqlx::PgPool;
@@ -120,7 +122,9 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
         .expect("AR");
     }
 
-    let assoc_id: i64 = sqlx::query_scalar(
+    // 幂等夹具：唯一键 (fk_user_attribute, fk_object_attribute, fk_policy_class) 命中时
+    // ON CONFLICT DO NOTHING 不 RETURNING——回落读既有行（共享测试库前轮残留）
+    let inserted: Option<i64> = sqlx::query_scalar(
         r#"INSERT INTO isahl_auth.ngac_association (fk_user_attribute, fk_object_attribute, ak_access_rights, fk_policy_class, created_at, updated_at)
            VALUES ($1, $2, ARRAY[$3], $4, NOW(), NOW())
            ON CONFLICT DO NOTHING
@@ -130,9 +134,23 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
     .bind(oa)
     .bind(ars[0])
     .bind(pc)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await
-    .expect("association");
+    .expect("association insert");
+    let assoc_id: i64 = match inserted {
+        Some(id) => id,
+        None => sqlx::query_scalar(
+            r#"SELECT id FROM isahl_auth.ngac_association
+               WHERE fk_user_attribute = $1 AND fk_object_attribute = $2 AND fk_policy_class = $3
+               LIMIT 1"#,
+        )
+        .bind(reader_ua)
+        .bind(oa)
+        .bind(pc)
+        .fetch_one(pool)
+        .await
+        .expect("association reload"),
+    };
 
     Seed {
         user,
@@ -174,18 +192,27 @@ async fn decide(pool: &PgPool, user: i64, action: &str) -> serde_json::Value {
             ),
     )
     .await;
-    let resp = test::call_service(
-        &app,
-        test::TestRequest::post()
-            .uri("/api/ngac/decide")
-            .set_json(json!({
-                "user_id": user,
-                "resource": "sd-engineers:0",
-                "action": action
-            }))
-            .to_request(),
-    )
-    .await;
+    // decide 端点硬化（enforce_decision_subject）：Bearer + Claims 双通道，
+    // 测试无中间件链须自行注入（同 ngac_explain_test 先例）
+    let state = test_auth_state();
+    configure_token_validation(
+        "http://localhost:9002".to_string(),
+        "http://localhost:9002".to_string(),
+    );
+    let email = format!("sd-{user}@test.local");
+    let claims = Claims::new(&user.to_string(), &email, false);
+    let token = encode_access_token(&claims, &state.jwt_private_key).expect("encode token");
+    let req = test::TestRequest::post()
+        .uri("/api/ngac/decide")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .set_json(json!({
+            "user_id": user,
+            "resource": "sd-engineers:0",
+            "action": action
+        }))
+        .to_request();
+    req.extensions_mut().insert(claims);
+    let resp = test::call_service(&app, req).await;
     test::read_body_json(resp).await
 }
 

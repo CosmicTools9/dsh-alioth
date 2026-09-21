@@ -78,7 +78,7 @@ async fn insert_flow_node(pool: &PgPool, label: &str, _fk_flow: i64) -> i64 {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(op)
     .bind(template)
@@ -181,7 +181,7 @@ async fn insert_approval_instance(
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(event_id)
@@ -191,10 +191,13 @@ async fn insert_approval_instance(
     instance_id
 }
 
-async fn count_flows(pool: &PgPool) -> i64 {
+/// 按 code 收窄计数——共享测试库并行会话会并发增删 flow，全局 COUNT 差分断言必互踩
+/// （test_code 每次唯一 ⇒ 本测试的 code 域是确定性的）
+async fn count_flows_named(pool: &PgPool, codes: &[String]) -> i64 {
     sqlx::query_scalar::<_, i64>(
-        r#"SELECT COUNT(*) FROM isahl.zc_id_process WHERE deleted_at IS NULL"#,
+        r#"SELECT COUNT(*) FROM isahl.zc_id_process WHERE deleted_at IS NULL AND notice = ANY($1)"#,
     )
+    .bind(codes)
     .fetch_one(pool)
     .await
     .unwrap()
@@ -317,7 +320,7 @@ async fn delegation_rule_dates_roundtrip() {
     // 时间窗经 qk_period → zc_id_segm-date 标量引用承载（不写平铺列）
     let period_id = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO isahl."zc_id_segm-date" (id, date_st, date_ed, notice, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1::timestamptz, $2::timestamptz, $3, 1)
+           VALUES (isahl.gen_next_uid(437), $1::timestamptz, $2::timestamptz, $3, 1)
            RETURNING id"#,
     )
     .bind(date_st)
@@ -442,7 +445,7 @@ async fn approval_action_crud() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(event_id)
@@ -476,14 +479,13 @@ async fn list_all_flows_count() {
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
 
-    let count_before = count_flows(&pool).await;
-
     let f1 = test_code("e2e-list-f1");
     let f2 = test_code("e2e-list-f2");
+    let count_before = count_flows_named(&pool, &[f1.clone(), f2.clone()]).await;
     insert_flow(&pool, &f1).await;
     insert_flow(&pool, &f2).await;
 
-    let count_after = count_flows(&pool).await;
+    let count_after = count_flows_named(&pool, &[f1, f2]).await;
     assert_eq!(
         count_after,
         count_before + 2,
@@ -499,7 +501,7 @@ async fn soft_delete_flow_excludes_from_count() {
     let flow_name = test_code("e2e-softdel");
     let flow_id = insert_flow(&pool, &flow_name).await;
 
-    let count_before = count_flows(&pool).await;
+    let count_before = count_flows_named(&pool, std::slice::from_ref(&flow_name)).await;
 
     // 软删除
     sqlx::query(r#"UPDATE isahl.zc_id_process SET deleted_at = NOW() WHERE id = $1"#)
@@ -521,7 +523,7 @@ async fn soft_delete_flow_excludes_from_count() {
     );
 
     // 确认 count 不再包含该记录
-    let count_after = count_flows(&pool).await;
+    let count_after = count_flows_named(&pool, &[flow_name]).await;
     assert_eq!(
         count_after,
         count_before - 1,
@@ -644,7 +646,7 @@ async fn approval_instance_comments_roundtrip() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(approve_event_id)
@@ -745,7 +747,7 @@ async fn test_advance_flow() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(n1_template)
@@ -862,7 +864,7 @@ async fn advance_flow_with_designer_approval_vocabulary() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(n1_template)

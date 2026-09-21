@@ -37,7 +37,7 @@ async fn test_user(pool: &sqlx::PgPool) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'gw-test', 'gw-test', 'gw@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -78,8 +78,8 @@ async fn mark_published(pool: &sqlx::PgPool, flow_id: i64) {
     let status_id: i64 = match existing {
         Some(id) => id,
         None => sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice)
-                   VALUES (isahl.gen_next_zuid(), 'published', '已发布') RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice, flag)
+                   VALUES (isahl.gen_next_uid(105), 'published', '已发布', 'doing') RETURNING id"#,
         )
         .fetch_one(pool)
         .await
@@ -87,7 +87,7 @@ async fn mark_published(pool: &sqlx::PgPool, flow_id: i64) {
     };
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-           VALUES (isahl.gen_next_zuid(), $1, $2)
+           VALUES (isahl.gen_next_uid(260), $1, $2)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(flow_id)
@@ -121,7 +121,7 @@ fn valid_graph() -> Value {
     json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     })
@@ -142,8 +142,8 @@ async fn subflow_publish_validates_target_flow() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
-            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "AF-SUB"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "AF-SUB", "next": [{"to": 2}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -175,8 +175,8 @@ async fn subflow_publish_validates_target_flow() {
     let graph2 = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
-            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "NO-SUCH-FLOW"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "NO-SUCH-FLOW", "next": [{"to": 2}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -189,8 +189,8 @@ async fn subflow_publish_validates_target_flow() {
     let graph3 = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
-            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "AF-UNPUB"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "AF-UNPUB", "next": [{"to": 2}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -202,8 +202,8 @@ async fn subflow_publish_validates_target_flow() {
     let graph4 = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
-            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "AF-SELF"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "AF-SELF", "next": [{"to": 2}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -222,11 +222,11 @@ async fn loop_and_branch_publish_materialize_timeline() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop", "type": "loop", "label": "循环", "loopExpr": "{{count}} < 3", "maxIter": 10,
              "next": [{"to": 2, "cond": "{{count}} < 3"}, {"to": 3}]},
-            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign"},
-            {"id": "n-branch", "type": "branch", "label": "汇聚", "joinRule": "any"},
+            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
+            {"id": "n-branch", "type": "branch", "label": "汇聚", "joinRule": "any", "next": [{"to": 4}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -282,11 +282,11 @@ async fn loop_formula_publish_materializes_chain_and_rejects_bad_formula() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop", "type": "loop", "label": "循环", "loopFormula": "cursor < maxIter",
              "loopVars": [{"name": "maxIter", "init": 3}],
              "next": [{"to": 2}, {"to": 3}]},
-            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign"},
+            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -363,8 +363,8 @@ async fn loop_formula_publish_materializes_chain_and_rejects_bad_formula() {
     let bad_graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
-            {"id": "n-loop", "type": "loop", "label": "循环", "loopFormula": "cursor < maxIter (("},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-loop", "type": "loop", "label": "循环", "loopFormula": "cursor < maxIter ((", "next": [{"to": 2}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -376,9 +376,9 @@ async fn loop_formula_publish_materializes_chain_and_rejects_bad_formula() {
     let no_fmla = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop", "type": "loop", "label": "循环", "next": [{"to": 2}, {"to": 3}]},
-            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign"},
+            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -390,10 +390,10 @@ async fn loop_formula_publish_materializes_chain_and_rejects_bad_formula() {
     let legacy_graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop", "type": "loop", "label": "循环", "loopExpr": "{{count}} < 3", "maxIter": 10,
              "next": [{"to": 2, "cond": "{{count}} < 3"}, {"to": 3}]},
-            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign"},
+            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -413,10 +413,10 @@ async fn loop_formula_embeds_threshold_with_default_maxiter() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop-emb", "type": "loop", "label": "循环", "loopFormula": "cursor < 3",
              "next": [{"to": 2}, {"to": 3}]},
-            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign"},
+            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
@@ -445,11 +445,11 @@ async fn loop_formula_embeds_threshold_with_default_maxiter() {
     let legacy_graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop-emb", "type": "loop", "label": "循环", "loopFormula": "cursor < maxIter",
              "loopVars": [{"name": "maxIter", "init": 5}],
              "next": [{"to": 2}, {"to": 3}]},
-            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign"},
+            {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });

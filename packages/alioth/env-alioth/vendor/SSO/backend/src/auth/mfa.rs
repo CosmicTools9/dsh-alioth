@@ -23,28 +23,27 @@ pub struct TotpSetup {
 
 pub fn generate_totp_secret(account_name: &str, issuer: &str) -> Result<TotpSetup, MfaError> {
     use base32::Alphabet;
-    use totp_rs::{Algorithm, Secret, TOTP};
+    use totp_rs::{Algorithm, Builder, Secret};
 
     // Generate a random 20-byte secret
     let raw_secret: Vec<u8> = (0..20).map(|_| rand::random::<u8>()).collect();
-    let secret = Secret::Raw(raw_secret);
-    let secret_bytes = secret
-        .to_bytes()
+    let secret = Secret::new(raw_secret.into_boxed_slice());
+    let encoded_secret = base32::encode(Alphabet::Rfc4648 { padding: false }, secret.as_bytes());
+
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_issuer(Some(issuer.to_string()))
+        .with_account_name(account_name.to_string())
+        .build()
         .map_err(|_| MfaError::SecretGenerationError)?;
-    let encoded_secret = base32::encode(Alphabet::Rfc4648 { padding: false }, &secret_bytes);
 
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret_bytes,
-        Some(issuer.to_string()),
-        account_name.to_string(),
-    )
-    .map_err(|_| MfaError::SecretGenerationError)?;
-
-    let provisioning_uri = totp.get_url();
+    let provisioning_uri = totp
+        .to_url()
+        .map_err(|e| MfaError::QrCodeError(e.to_string()))?;
 
     Ok(TotpSetup {
         secret: encoded_secret,
@@ -74,22 +73,21 @@ pub fn verify_totp_code(secret: &[u8], code: &str) -> bool {
 }
 
 pub fn verify_totp_code_with_leeway(secret: &[u8], code: &str, leeway: i64) -> bool {
-    use totp_rs::{Algorithm, TOTP};
+    use totp_rs::{Algorithm, Builder};
 
-    let totp = match TOTP::new(
-        Algorithm::SHA1,
-        6,
-        leeway as u8,
-        30,
-        secret.to_vec(),
-        None,
-        String::new(),
-    ) {
+    let totp = match Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(leeway as u16)
+        .with_step_duration(30)
+        .with_secret(secret.to_vec())
+        .build()
+    {
         Ok(t) => t,
         Err(_) => return false,
     };
 
-    totp.check_current(code).unwrap_or(false)
+    totp.check_current(code).is_some()
 }
 
 pub fn generate_mfa_bypass_codes(count: usize) -> Vec<String> {

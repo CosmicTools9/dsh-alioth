@@ -92,18 +92,20 @@ async fn resolve_entity_ref(
     .map_err(|e| ApiError::Database(e.to_string()))?;
     if let Some(entity_id) = task_entity {
         let leaf: Option<String> = sqlx::query_scalar(
-            r#"SELECT tableoid::regclass::text FROM isahl.zc_id_task WHERE id = $1"#,
+            r#"SELECT (SELECT relname FROM pg_class WHERE oid = t.tableoid)
+               FROM isahl.zc_id_task t WHERE t.id = $1"#,
         )
         .bind(entity_id)
         .fetch_optional(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?
         .flatten();
-        return Ok(leaf.map(|t| (t.trim_matches('"').to_string(), entity_id)));
+        // relname 恒为裸叶表名（无引号/无 schema 前缀）——无需再 trim
+        return Ok(leaf.map(|t| (t, entity_id)));
     }
     // event/approve 域（排除节点接线/模板行：非业务实例行——按 _t_ 判别）
     let event_entity: Option<(String, i64)> = sqlx::query_as(
-        r#"SELECT e.tableoid::regclass::text AS leaf, e.id
+        r#"SELECT (SELECT relname FROM pg_class WHERE oid = e.tableoid) AS leaf, e.id
            FROM isahl.zc_id_event e
            JOIN isahl.zc_id_operation_rr_event rr
              ON rr.ref_right = e.id AND rr.deleted_at IS NULL
@@ -724,9 +726,9 @@ pub async fn advance_flow(
                         WHEN c.code IS NOT NULL
                           AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
                           THEN c.code
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-action' THEN 'action'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-check' THEN 'review'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
                         WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
                                      WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
                           THEN 'end'
@@ -1101,7 +1103,7 @@ async fn create_approval_instances(
 
     // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：实例行落 dk 三元组
     let (dk_scene, dk_factor, dk_function) =
-        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJeFtaEz)
+        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JeFtaEz)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?;
 
@@ -1145,7 +1147,7 @@ async fn create_approval_instances(
         sqlx::query(
             r#"INSERT INTO isahl.zc_id_operation_rr_event
                (id, ref_left, ref_right, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+               VALUES (isahl.gen_next_uid(267), $1, $2, $3)"#,
         )
         .bind(instance_id)
         .bind(template_id)
@@ -1162,7 +1164,7 @@ async fn create_approval_instances(
                 sqlx::query(
                     r#"INSERT INTO isahl.zc_id_operation_rr_task
                        (id, ref_left, ref_right, created_by_id)
-                       VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                       VALUES (isahl.gen_next_uid(271), $1, $2, $3)"#,
                 )
                 .bind(instance_id)
                 .bind(entity_row)
@@ -1174,7 +1176,7 @@ async fn create_approval_instances(
                 sqlx::query(
                     r#"INSERT INTO isahl.zc_id_operation_rr_event
                        (id, ref_left, ref_right, created_by_id)
-                       VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                       VALUES (isahl.gen_next_uid(267), $1, $2, $3)"#,
                 )
                 .bind(instance_id)
                 .bind(entity_row)
@@ -1212,7 +1214,7 @@ async fn create_gate_operation(
 ) -> Result<i64, ApiError> {
     // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
     let (dk_scene, dk_factor, dk_function) =
-        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJeFbbEz)
+        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JeFbbEz)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?;
     let gate_id: i64 = sqlx::query_scalar(
@@ -1236,7 +1238,7 @@ async fn create_gate_operation(
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event
            (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, $3)"#,
     )
     .bind(gate_id)
     .bind(event_id)
@@ -1295,9 +1297,9 @@ async fn advance_fan_out(
                         WHEN c.code IS NOT NULL
                           AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
                           THEN c.code
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-action' THEN 'action'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-check' THEN 'review'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
                         WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
                                      WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
                           THEN 'end'
@@ -1382,7 +1384,7 @@ async fn any_branch_reached(
         )"#,
     )
     .bind(flow_id)
-    .bind(serde_json::json!([{ "id": branch_op_id.to_string() }]).to_string())
+    .bind(serde_json::json!([{ "id": branch_op_id }]).to_string()) // id-json-ok：jsonb 键含须数值（publish.rs 2026-09-02 A1 契约，非 JSON API 出参）
     .fetch_one(pool)
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;
@@ -1622,7 +1624,7 @@ async fn advance_auto_node(
                  AND rro2."next-ops" @> $2::jsonb"#,
         )
         .bind(flow_id)
-        .bind(serde_json::json!([{ "id": template_node_id.to_string() }]).to_string())
+        .bind(serde_json::json!([{ "id": template_node_id }]).to_string()) // id-json-ok：jsonb 键含须数值（publish.rs 2026-09-02 A1 契约，非 JSON API 出参）
         .fetch_one(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;
@@ -1650,7 +1652,7 @@ async fn advance_auto_node(
                 )"#,
             )
             .bind(flow_id)
-            .bind(serde_json::json!([{ "id": template_node_id.to_string() }]).to_string())
+            .bind(serde_json::json!([{ "id": template_node_id }]).to_string()) // id-json-ok：jsonb 键含须数值（publish.rs 2026-09-02 A1 契约，非 JSON API 出参）
             .fetch_one(pool)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?
@@ -2145,8 +2147,11 @@ async fn resume_parent_flow(
     entity: Option<&(String, i64)>,
     bus: Option<&Arc<dyn DomainEventBus>>,
 ) -> Result<(), ApiError> {
-    let parent_row: Option<(i64, serde_json::Value)> = match entity {
-        Some((table, id)) => sqlx::query_as::<_, (i64, serde_json::Value)>(
+    // `meta->'parent'` 为 NULL = 顶层流程执行行（非 wait 子流程）⇒ MUST 容忍：
+    // 非 Option 解码会抛 `unexpected null; try decoding as an Option`（列索引 1），
+    // 且该调用位于「意见 + 状态桥已提交」之后 ⇒ 动作成功但整个请求 500。
+    let parent_row: Option<(i64, Option<serde_json::Value>)> = match entity {
+        Some((table, id)) => sqlx::query_as::<_, (i64, Option<serde_json::Value>)>(
             r#"SELECT id, meta->'parent' FROM isahl."zc_id_proc-approve"
                WHERE tpl_id = $1 AND deleted_at IS NULL AND meta->>'ended' IS NULL
                  AND meta->'parent'->>'entity_table' = $2
@@ -2159,9 +2164,10 @@ async fn resume_parent_flow(
         .fetch_optional(pool)
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?,
-        None => sqlx::query_as::<_, (i64, serde_json::Value)>(
+        None => sqlx::query_as::<_, (i64, Option<serde_json::Value>)>(
             r#"SELECT id, meta->'parent' FROM isahl."zc_id_proc-approve"
                WHERE tpl_id = $1 AND deleted_at IS NULL AND meta->>'ended' IS NULL
+                 AND meta->'parent' IS NOT NULL
                ORDER BY id DESC LIMIT 1"#,
         )
         .bind(child_flow_id)
@@ -2169,7 +2175,8 @@ async fn resume_parent_flow(
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?,
     };
-    let Some((exec_row_id, parent)) = parent_row else {
+    // 候选行必须携带 parent 上下文（无 parent 的执行行 = 顶层流程，无父流程可续推）
+    let Some((exec_row_id, Some(parent))) = parent_row else {
         return Ok(());
     };
     let (p_flow, p_node, p_initiator, p_entity) = (
@@ -2250,7 +2257,7 @@ async fn materialize_end_statement(
         return Ok(());
     }
     let tpl: Option<(String, i64)> = sqlx::query_as(
-        r#"SELECT replace(s.tableoid::regclass::text, '"', ''), rs.ref_right
+        r#"SELECT (SELECT relname FROM pg_class WHERE oid = s.tableoid), rs.ref_right
            FROM isahl.zc_id_operation_rr_statement rs
            JOIN isahl.zc_id_statement s ON s.id = rs.ref_right AND s.deleted_at IS NULL
            WHERE rs.ref_left = $1 AND rs.deleted_at IS NULL
@@ -2371,9 +2378,9 @@ async fn process_node_advancement(
                         WHEN c.code IS NOT NULL
                           AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
                           THEN c.code
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-action' THEN 'action'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-check' THEN 'review'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
                         WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
                                      WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
                           THEN 'end'
@@ -2522,9 +2529,9 @@ pub async fn initiate_flow(
                         WHEN c.code IS NOT NULL
                           AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
                           THEN c.code
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-action' THEN 'action'
-                        WHEN replace(o.tableoid::regclass::text, '"', '') = 'zc_id_oper-check' THEN 'review'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
                         WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
                                      WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
                           THEN 'end'
@@ -2569,6 +2576,32 @@ pub async fn initiate_flow(
     Ok(created)
 }
 
+/// 实现·实例 INSERT（7 张流程叶表各自静态固化）：notice=$7 范例原名、
+/// comments=$6 执行摘要、dk 坐标换 实现·实例 function 码、tpl_id → 范例行；
+/// code 不设（发布位归范例）。表名为 `$table:literal`，正文编译期由 `concat!` 拼接。
+/// 多行字面量的缩进即 SQL 正文（勿重排）。
+macro_rules! exec_insert_sql {
+    ($table:literal) => {
+        concat!(
+            "INSERT INTO isahl.\"",
+            $table,
+            "\"
+           (notice, comments, dk_scene, dk_factor, dk_function, tpl_id, created_by_id,
+            _f_, _t_)
+           VALUES ($7, $6, $3, $4, $2, $1, $5, '实现', '实例')
+           RETURNING id"
+        )
+    };
+}
+
+static EXEC_INSERT_APPROVE: &str = exec_insert_sql!("zc_id_proc-approve");
+static EXEC_INSERT_CICD: &str = exec_insert_sql!("zc_id_proc-cicd");
+static EXEC_INSERT_LOADING: &str = exec_insert_sql!("zc_id_proc-loading");
+static EXEC_INSERT_MAKE: &str = exec_insert_sql!("zc_id_proc-make");
+static EXEC_INSERT_PROJECT: &str = exec_insert_sql!("zc_id_proc-project");
+static EXEC_INSERT_PURCHASE: &str = exec_insert_sql!("zc_id_proc-purchase");
+static EXEC_INSERT_SERVICE: &str = exec_insert_sql!("zc_id_proc-service");
+
 /// 物化执行实例行（flow-lifecycle-split）：以 实现·范例 行为模板，在同叶表
 /// 物化一行「实现·实例」（function 码 `↓.{suffix}` → `↓_{suffix}` 换前缀交
 /// trigger 派生，tpl_id → 范例行）。返回行 id——本次执行首链审批实例的
@@ -2588,7 +2621,7 @@ pub(crate) async fn materialize_flow_execution(
         Option<i64>,
         Option<String>,
     )> = sqlx::query_as(
-        r#"SELECT replace(e.tableoid::regclass::text, '"', ''), e.notice, e.dk_scene,
+        r#"SELECT (SELECT relname FROM pg_class WHERE oid = e.tableoid), e.notice, e.dk_scene,
                   e.dk_factor,
                   (SELECT f.code FROM isahl.zc_id_function f
                    WHERE f.id = e.dk_function AND f.deleted_at IS NULL LIMIT 1)
@@ -2624,14 +2657,16 @@ pub(crate) async fn materialize_flow_execution(
         }
         None => None,
     };
-    let insert_sql = match branch.as_str() {
-        "zc_id_proc-approve" => exec_insert_sql("isahl.\"zc_id_proc-approve\""),
-        "zc_id_proc-cicd" => exec_insert_sql("isahl.\"zc_id_proc-cicd\""),
-        "zc_id_proc-loading" => exec_insert_sql("isahl.\"zc_id_proc-loading\""),
-        "zc_id_proc-make" => exec_insert_sql("isahl.\"zc_id_proc-make\""),
-        "zc_id_proc-project" => exec_insert_sql("isahl.\"zc_id_proc-project\""),
-        "zc_id_proc-purchase" => exec_insert_sql("isahl.\"zc_id_proc-purchase\""),
-        "zc_id_proc-service" => exec_insert_sql("isahl.\"zc_id_proc-service\""),
+    // 静态 match 分发（7 张已知流程叶表）：SQL 在编译期固化（表名字面量），
+    // 运行期零表名拼接；未知分支 fail-visible（不回落）
+    let insert_sql: &'static str = match branch.as_str() {
+        "zc_id_proc-approve" => EXEC_INSERT_APPROVE,
+        "zc_id_proc-cicd" => EXEC_INSERT_CICD,
+        "zc_id_proc-loading" => EXEC_INSERT_LOADING,
+        "zc_id_proc-make" => EXEC_INSERT_MAKE,
+        "zc_id_proc-project" => EXEC_INSERT_PROJECT,
+        "zc_id_proc-purchase" => EXEC_INSERT_PURCHASE,
+        "zc_id_proc-service" => EXEC_INSERT_SERVICE,
         other => {
             return Err(ApiError::Validation {
                 field: "branch".into(),
@@ -2639,7 +2674,7 @@ pub(crate) async fn materialize_flow_execution(
             });
         }
     };
-    let exec_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql.as_str()))
+    let exec_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
         .bind(exemplar_id)
         .bind(exec_fn_id)
         .bind(dk_scene)
@@ -2652,18 +2687,6 @@ pub(crate) async fn materialize_flow_execution(
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;
     Ok(exec_id)
-}
-
-/// 实现·实例 INSERT：notice=$7 范例原名、comments=$6 执行摘要、
-/// dk 坐标换 实现·实例 function 码、tpl_id → 范例行；code 不设（发布位归范例）。
-fn exec_insert_sql(table: &str) -> String {
-    format!(
-        r#"INSERT INTO {table}
-           (notice, comments, dk_scene, dk_factor, dk_function, tpl_id, created_by_id,
-            _f_, _t_)
-           VALUES ($7, $6, $3, $4, $2, $1, $5, '实现', '实例')
-           RETURNING id"#
-    )
 }
 
 // ============================================================

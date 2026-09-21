@@ -84,7 +84,7 @@ pub async fn transfer(
     let date_anchor = super::approve_reject::today_date_anchor(&pool).await?;
     // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
     let (dk_scene, dk_factor, dk_function) =
-        crate::dk::resolve_ontology_coords_pool(pool.get_ref(), crate::dk::DkEntity::DkJcFtaNc)
+        crate::dk::resolve_ontology_coords_pool(pool.get_ref(), crate::dk::DkEntity::JcFtaNc)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?;
     sqlx::query(
@@ -160,7 +160,7 @@ pub async fn cc(
     let date_anchor = super::approve_reject::today_date_anchor(&pool).await?;
     // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
     let (dk_scene, dk_factor, dk_function) =
-        crate::dk::resolve_ontology_coords_pool(pool.get_ref(), crate::dk::DkEntity::DkJcFtaNc)
+        crate::dk::resolve_ontology_coords_pool(pool.get_ref(), crate::dk::DkEntity::JcFtaNc)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?;
     sqlx::query(

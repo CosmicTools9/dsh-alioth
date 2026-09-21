@@ -7,10 +7,26 @@ use actix_web::{test, web, App};
 use common::testing::{connect_test_db, setup_test_schema_light};
 use serde_json::json;
 
+/// 注入请求身份（handlers 走 require_auth；Gateway 集成测试同先例：
+/// extensions_mut + RequestContext，绕 JWT 中间件只测 handler 层）
+fn authed<R: actix_web::HttpMessage>(req: R) -> R {
+    req.extensions_mut()
+        .insert(common::context::RequestContext::new(
+            1,
+            "test@local".to_string(),
+        ));
+    req
+}
+
 #[tokio::test]
 async fn language_http_lifecycle() {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
+    // 前轮失败残留 lang:% 行会污染 list 计数——前置清场（本测试族独占该 code 域）
+    sqlx::query(r#"DELETE FROM isahl."zc_id_prot-env_config" WHERE code LIKE 'lang:%'"#)
+        .execute(&pool)
+        .await
+        .expect("clean lang residue");
 
     let app = test::init_service(
         App::new()
@@ -29,19 +45,25 @@ async fn language_http_lifecycle() {
             "coverage": 0.85
         }))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert!(resp.status().is_success(), "create should succeed");
     let created: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(created["success"], true);
     assert_eq!(created["data"]["name"], "English (US)");
     assert_eq!(created["data"]["code"], "lang:en-US");
-    let id = created["data"]["id"].as_i64().expect("created id");
+    // ID_JSON_PRECISION：id 以字符串下发（JS 精度安全）
+    let id: String = created["data"]["id"]
+        .as_str()
+        .expect("created id (string)")
+        .to_string();
+    // ID_JSON_PRECISION：id 以字符串下发（JS 精度安全）——同时断言可无损解析为 i64
+    assert!(id.parse::<i64>().is_ok(), "id MUST 可解析为 i64: {id}");
 
     // List
     let req = test::TestRequest::get()
         .uri("/service/language/languages")
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert!(resp.status().is_success());
     let list: serde_json::Value = test::read_body_json(resp).await;
     let items = list["items"].as_array().expect("items array");
@@ -52,7 +74,7 @@ async fn language_http_lifecycle() {
     let req = test::TestRequest::get()
         .uri(&format!("/service/language/languages/{}", id))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert!(resp.status().is_success());
     let fetched: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(fetched["id"], id);
@@ -67,7 +89,7 @@ async fn language_http_lifecycle() {
         .uri(&format!("/service/language/languages/{}", id))
         .set_json(json!({ "coverage": 0.95 }))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert!(resp.status().is_success());
     let updated: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(updated["success"], true);
@@ -85,7 +107,7 @@ async fn language_http_lifecycle() {
     let req = test::TestRequest::get()
         .uri(&format!("/service/language/languages/{}", id))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     let fetched: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(fetched["coverage"], 0.95);
     assert_eq!(fetched["locale"], "en-US", "PATCH should preserve locale");
@@ -95,14 +117,14 @@ async fn language_http_lifecycle() {
     let req = test::TestRequest::delete()
         .uri(&format!("/service/language/languages/{}", id))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert_eq!(resp.status(), 204);
 
     // Get after delete should be 404
     let req = test::TestRequest::get()
         .uri(&format!("/service/language/languages/{}", id))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert_eq!(resp.status(), 404);
 }
 
@@ -110,6 +132,11 @@ async fn language_http_lifecycle() {
 async fn language_http_create_then_list() {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
+    // 前轮失败残留 lang:% 行会污染 list 计数——前置清场（本测试族独占该 code 域）
+    sqlx::query(r#"DELETE FROM isahl."zc_id_prot-env_config" WHERE code LIKE 'lang:%'"#)
+        .execute(&pool)
+        .await
+        .expect("clean lang residue");
 
     let app = test::init_service(
         App::new()
@@ -127,13 +154,13 @@ async fn language_http_create_then_list() {
             "coverage": 1.0
         }))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     assert!(resp.status().is_success());
 
     let req = test::TestRequest::get()
         .uri("/service/language/languages")
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = test::call_service(&app, authed(req)).await;
     let list: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(list["total"], 1);
     assert_eq!(list["items"][0]["code"], "lang:zh-CN");

@@ -105,7 +105,7 @@ pub async fn grant_user_access(
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .bind(format!("test-user-{}", user_id))
@@ -271,12 +271,23 @@ pub async fn ensure_role_member(
     {
         Some(id) => id,
         None => {
-            sqlx::query_scalar(
+            // SELECT→INSERT 竞态加固：并行会话同插 'default' 时唯一索引兜底，
+            // 空手则重查（对端已提交可见）
+            let got: Option<i64> = sqlx::query_scalar(
                 r#"INSERT INTO isahl_auth.ngac_policy_class (o_name, description)
-                   VALUES ('default', '测试默认策略类') RETURNING id"#,
+                   VALUES ('default', '测试默认策略类')
+                   ON CONFLICT DO NOTHING RETURNING id"#,
             )
-            .fetch_one(pool)
-            .await?
+            .fetch_optional(pool)
+            .await?;
+            match got {
+                Some(id) => id,
+                None => sqlx::query_scalar(
+                    "SELECT id FROM isahl_auth.ngac_policy_class WHERE o_name = 'default' LIMIT 1",
+                )
+                .fetch_one(pool)
+                .await?,
+            }
         }
     };
     let attr: i64 = match sqlx::query_scalar(
@@ -288,26 +299,32 @@ pub async fn ensure_role_member(
     {
         Some(id) => id,
         None => {
-            sqlx::query_scalar(
+            // 同上加固：idx_ngac_ua_name_pc_unique（partial, deleted_at IS NULL）
+            let got: Option<i64> = sqlx::query_scalar(
                 r#"INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class)
-                   VALUES ($1, $2) RETURNING id"#,
+                   VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id"#,
             )
             .bind(role)
             .bind(default_class)
-            .fetch_one(pool)
-            .await?
+            .fetch_optional(pool)
+            .await?;
+            match got {
+                Some(id) => id,
+                None => sqlx::query_scalar(
+                    "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $1 AND deleted_at IS NULL LIMIT 1",
+                )
+                .bind(role)
+                .fetch_one(pool)
+                .await?,
+            }
         }
     };
-    // 用户行（无 admin 授权；system 用户保护）
-    if user_id == common::SYSTEM_USER_ID {
-        common::system_user::ensure_system_user(pool).await?;
-    }
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .bind(format!("role-user-{}", user_id))
@@ -315,13 +332,16 @@ pub async fn ensure_role_member(
     .execute(pool)
     .await?;
     sqlx::query(
+        // NOT EXISTS 谓词含 deleted_at 过滤，但唯一索引不含——软删残留行仍占位；
+        // 补 ON CONFLICT 兜底（跨会话/上轮中断残留安全）
         r#"INSERT INTO isahl_auth.ngac_user_rr_attribute
            (id, o_name, fk_user, fk_user_attribute, assigned_at, created_at)
            SELECT isahl.gen_next_zuid(), $1, $2, $3, NOW(), NOW()
            WHERE NOT EXISTS (
                SELECT 1 FROM isahl_auth.ngac_user_rr_attribute
                WHERE fk_user = $2 AND fk_user_attribute = $3 AND deleted_at IS NULL
-           )"#,
+           )
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(format!("role-{}-{}", role, user_id))
     .bind(user_id)
@@ -403,7 +423,7 @@ pub async fn wire_approval_node(
         .await?;
         sqlx::query(
             r#"INSERT INTO isahl.zc_id_operation_rr_approve (id, ref_left, ref_right)
-               VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+               VALUES (isahl.gen_next_uid(265), $1, $2)"#,
         )
         .bind(op_id)
         .bind(pos_id)

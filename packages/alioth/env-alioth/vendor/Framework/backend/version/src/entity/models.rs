@@ -11,7 +11,7 @@ use sqlx::FromRow;
 ///
 /// 字段并集吸收 WZ/Alioth 两 ns 契约：
 /// - WZ：notice/code/comments/tk_version/tk_batch_no/fk_previous/ck_branch（链语义）
-/// - Alioth：tpl_id（实体锚点）/tk_version→version_number/reversion→revision/fk_previous→previous_id
+/// - Alioth：tpl_id（实体锚点）/tk_version→version_number/fk_previous→previous_id
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct VersionRecord {
     #[serde(with = "common::serde_zuid")]
@@ -26,9 +26,6 @@ pub struct VersionRecord {
     pub tk_version: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub tk_batch_no: Option<i64>,
-    /// 修订号（Alioth revision 语义；WZ 不消费）
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub reversion: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_previous: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -49,7 +46,7 @@ impl AliothDbEntity for VersionRecord {
         "isahl.zc_id_version"
     }
     const SELECT_FIELDS: &'static str =
-        "id, tpl_id, notice, code, comments, tk_version, tk_batch_no, reversion, fk_previous, ck_branch, created_at, updated_at, deleted_at";
+        "id, tpl_id, notice, code, comments, tk_version, tk_batch_no, fk_previous, ck_branch, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "version";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -65,8 +62,6 @@ pub struct CreateVersionRequest {
     pub tk_version: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub tk_batch_no: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub reversion: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_previous: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -86,8 +81,6 @@ pub struct UpdateVersionRequest {
     pub tk_version: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub tk_batch_no: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub reversion: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_previous: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]

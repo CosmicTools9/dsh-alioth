@@ -81,6 +81,14 @@ impl SimulationAgent {
             }),
             user_selectable: true,
             sort_order: 40,
+            // E6：仿真 agent 需真实数据与表结构（只读）
+            available_tools: vec![
+                crate::tools::executor::QuerySqlTool::definition(),
+                crate::tools::executor::QuerySchemaTool::definition(),
+            ],
+            db_access_level: super::DbAccessLevel::SchemaRestricted,
+            allowed_schemas: vec!["isahl".to_string()],
+            max_execution_steps: 5,
             suggested_actions: vec![
                 "调整参数再试".to_string(),
                 "导出报告".to_string(),

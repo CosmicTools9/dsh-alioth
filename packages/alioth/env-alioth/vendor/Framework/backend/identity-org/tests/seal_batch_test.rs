@@ -29,9 +29,38 @@ fn prefix(tag: &str) -> String {
     format!("TS{tag}{:x}", nanos % 0xFFFF_FFFF)
 }
 
-fn req(prefix: String, count: Option<i64>, start_code: Option<String>) -> CreateSealBatchRequest {
+/// 字典类型行自愈 ensure（`zc_id_cate-seal`；类型码驱动 ck_category 与缺省批量规模）
+async fn ensure_seal_type(pool: &PgPool, code: &str, notice: &str, o_number: Option<&str>) -> i64 {
+    sqlx::query_scalar(
+        r#"INSERT INTO "isahl"."zc_id_cate-seal" (code, notice, o_number)
+           VALUES ($1, $2, $3) RETURNING id"#,
+    )
+    .bind(code)
+    .bind(notice)
+    .bind(o_number)
+    .fetch_one(pool)
+    .await
+    .expect("ensure seal type")
+}
+
+/// 清理本用例自建的类型行
+async fn drop_seal_type(pool: &PgPool, code: &str) {
+    let _ = sqlx::query(r#"DELETE FROM "isahl"."zc_id_cate-seal" WHERE code = $1"#)
+        .bind(code)
+        .execute(pool)
+        .await;
+}
+
+/// 批量请求（`sealType` = 字典类型码；`codePrefix` = 编号前缀；`startCode` 优先于前缀）
+fn req(
+    seal_type: &str,
+    code_prefix: Option<String>,
+    count: Option<i64>,
+    start_code: Option<String>,
+) -> CreateSealBatchRequest {
     CreateSealBatchRequest {
-        seal_type: Some(prefix),
+        seal_type: Some(seal_type.to_string()),
+        code_prefix,
         start_code,
         count,
         notice: None,
@@ -53,11 +82,14 @@ async fn seal_batch_auto_sequential() {
     let pool = test_pool().await;
     let repo = SealRepository::new(pool.clone());
     let pfx = prefix("A");
+    // 类型码 = 自建字典行（`o_number=1` ⇒ 缺省批量规模 1）；编号前缀走 codePrefix（不依赖字典）
+    let seal_type = format!("TS{pfx}");
+    ensure_seal_type(&pool, &seal_type, "测试类型-自动续号", Some("1")).await;
     cleanup(&pool, &pfx).await;
 
     // 首建 3 条连号：空前缀从 0001 起等宽 4 位
     let items = repo
-        .batch_create(req(pfx.clone(), Some(3), None), 1)
+        .batch_create(req(&seal_type, Some(pfx.clone()), Some(3), None), 1)
         .await
         .expect("first batch");
     assert_eq!(items.len(), 3);
@@ -67,21 +99,22 @@ async fn seal_batch_auto_sequential() {
 
     // 续建 2 条：从现有最大序号 +1 续号
     let more = repo
-        .batch_create(req(pfx.clone(), Some(2), None), 1)
+        .batch_create(req(&seal_type, Some(pfx.clone()), Some(2), None), 1)
         .await
         .expect("second batch");
     assert_eq!(more[0].code, Some(format!("{pfx}-0004")));
     assert_eq!(more[1].code, Some(format!("{pfx}-0005")));
 
-    // count 缺省 = 1（单号）
+    // count 缺省：取类型字典 `o_number`（本例 =1 ⇒ 单号）
     let single = repo
-        .batch_create(req(pfx.clone(), None, None), 1)
+        .batch_create(req(&seal_type, Some(pfx.clone()), None, None), 1)
         .await
         .expect("single");
     assert_eq!(single.len(), 1);
     assert_eq!(single[0].code, Some(format!("{pfx}-0006")));
 
     cleanup(&pool, &pfx).await;
+    drop_seal_type(&pool, &seal_type).await;
 }
 
 #[tokio::test]
@@ -89,16 +122,26 @@ async fn seal_batch_explicit_start_conflict_rejected() {
     let pool = test_pool().await;
     let repo = SealRepository::new(pool.clone());
     let pfx = prefix("B");
+    let seal_type = format!("TS{pfx}");
+    ensure_seal_type(&pool, &seal_type, "测试类型-显式起始号", Some("1")).await;
     cleanup(&pool, &pfx).await;
 
     // 种子 1 条（自动续号 → {pfx}-0001）
-    repo.batch_create(req(pfx.clone(), Some(1), None), 1)
+    repo.batch_create(req(&seal_type, Some(pfx.clone()), Some(1), None), 1)
         .await
         .expect("seed");
 
     // 显式 startCode 撞现有号 → 400 且消息含冲突号
     let err = repo
-        .batch_create(req(pfx.clone(), Some(1), Some(format!("{pfx}-0001"))), 1)
+        .batch_create(
+            req(
+                &seal_type,
+                Some(pfx.clone()),
+                Some(1),
+                Some(format!("{pfx}-0001")),
+            ),
+            1,
+        )
         .await;
     match err {
         Err(common::AliothError::BadRequest(msg)) => {
@@ -106,7 +149,7 @@ async fn seal_batch_explicit_start_conflict_rejected() {
         }
         other => panic!("expected BadRequest, got {other:?}"),
     }
-
+    drop_seal_type(&pool, &seal_type).await;
     cleanup(&pool, &pfx).await;
 }
 
@@ -118,13 +161,25 @@ async fn seal_waybill_lands_in_projection_not_comments() {
 
     let pool = test_pool().await;
     let pfx = prefix("WBC");
+    // 批量类型（`o_number` 非正整数亦可——本例显式给 count）
+    let seal_type = format!("TS{pfx}");
+    ensure_seal_type(&pool, &seal_type, "测试类型-运单载体", None).await;
+    // 自查运单夹具：不借用库内在册运单（dev 对齐后的 test 库无带 code 的运单行 →
+    // `fetch_one` RowNotFound）。写法与本文件两跳桥用例同款（坐标经 scene/factor/function
+    // code 子查询解析，禁硬编码 ZUID）。
     let (waybill_id, waybill_code): (i64, String) = sqlx::query_as(
-        r#"SELECT id, code FROM "isahl"."zc_id_orde-land"
-           WHERE deleted_at IS NULL AND code IS NOT NULL AND code <> '' ORDER BY id LIMIT 1"#,
+        r#"INSERT INTO "isahl"."zc_id_orde-land"
+             (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
+           VALUES (isahl.gen_next_zuid(), $1, 'P3 封签载体', 1,
+                   (SELECT id FROM "isahl"."zc_id_scene"    WHERE code = 'TD'  AND deleted_at IS NULL),
+                   (SELECT id FROM "isahl"."zc_id_factor"   WHERE code = 'FJA' AND deleted_at IS NULL),
+                   (SELECT id FROM "isahl"."zc_id_function" WHERE code = '↓_GG' AND deleted_at IS NULL))
+           RETURNING id, code"#,
     )
+    .bind(format!("{pfx}-WB"))
     .fetch_one(&pool)
     .await
-    .expect("在册运单夹具");
+    .expect("自查运单夹具");
     let missing_waybill: i64 =
         sqlx::query_scalar(r#"SELECT COALESCE(MAX(id), 0) + 1 FROM "isahl"."zc_id_orde-land""#)
             .fetch_one(&pool)
@@ -201,7 +256,8 @@ async fn seal_waybill_lands_in_projection_not_comments() {
     let batch = repo
         .batch_create(
             CreateSealBatchRequest {
-                seal_type: Some(format!("{pfx}B")),
+                seal_type: Some(seal_type.clone()),
+                code_prefix: Some(format!("{pfx}B")),
                 start_code: None,
                 count: Some(1),
                 notice: Some("P3 批量".to_string()),
@@ -269,15 +325,20 @@ async fn seal_waybill_lands_in_projection_not_comments() {
 
     cleanup(&pool, &pfx).await;
     cleanup(&pool, &format!("{pfx}B")).await;
+    let _ = sqlx::query(r#"DELETE FROM "isahl"."zc_id_orde-land" WHERE code = $1"#)
+        .bind(format!("{pfx}-WB"))
+        .execute(&pool)
+        .await;
+    drop_seal_type(&pool, &seal_type).await;
 }
 
-/// P3b（真结构路径）：封签的运单 = 装车条两跳桥推导
-/// （seal → `zc_id_tsp-voucher_rr_devi-seal` → 装车条 → `zc_id_orde-traffic_rr_tsp-voucher` → 运单）；
-/// `projection` 仅在无桥时回退。桥由 transport-operations 装车条组装写侧落库，
+/// P3b（真结构路径）：封签的运单 = **运输订单↔铅封直连桥**推导
+/// （seal → `zc_id_orde-traffic_rr_devi-seal`（ref_left = 运输订单）→ 运单 code）；
+/// `projection` 仅在无桥时回退。桥由 transport-operations 装/卸车组装写侧落库，
 /// 本测在 test 库构造等价行验证读侧优先级（写侧端到端见 transport-operations
 /// `three_info_assembles_load_then_unload_with_confirm_code`）。
 #[tokio::test]
-async fn seal_waybill_prefers_two_hop_bridge_over_projection() {
+async fn seal_waybill_prefers_order_bridge_over_projection() {
     use common::data::ListQuery;
 
     let pool = test_pool().await;
@@ -316,7 +377,7 @@ async fn seal_waybill_prefers_two_hop_bridge_over_projection() {
     let seal = repo
         .create(
             CreateSealRequest {
-                notice: Some("两跳桥优先".to_string()),
+                notice: Some("订单直连桥优先".to_string()),
                 code: Some(format!("{pfx}-0001")),
                 comments: None,
                 seal_type: None,
@@ -335,47 +396,24 @@ async fn seal_waybill_prefers_two_hop_bridge_over_projection() {
         "无桥时应回退 projection"
     );
 
-    // ② 构桥：装车条 + 运单桥 + 铅封桥（照装车条组装写侧）
-    let voucher_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
-             (id, code, notice, created_by_id, dk_scene, dk_factor, dk_function)
-           VALUES (isahl.gen_next_zuid(), $1, '装车单', 1,
-                   (SELECT id FROM "isahl"."zc_id_scene"    WHERE code = 'TD'  AND deleted_at IS NULL),
-                   (SELECT id FROM "isahl"."zc_id_factor"   WHERE code = 'FJA' AND deleted_at IS NULL),
-                   (SELECT id FROM "isahl"."zc_id_function" WHERE code = '↓_GG' AND deleted_at IS NULL))
-           RETURNING id"#,
-    )
-    .bind(format!("{pfx}-LOAD"))
-    .fetch_one(&pool)
-    .await
-    .expect("装车条");
+    // ② 构桥：运输订单 ↔ 铅封**直连桥**（照 transport-operations 组装写侧口径）
     sqlx::query(
-        r#"INSERT INTO "isahl"."zc_id_orde-traffic_rr_tsp-voucher"
+        r#"INSERT INTO "isahl"."zc_id_orde-traffic_rr_devi-seal"
            (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(499), $1, $2, 1)"#,
     )
     .bind(bridge_wb_id)
-    .bind(voucher_id)
-    .execute(&pool)
-    .await
-    .expect("运单桥");
-    sqlx::query(
-        r#"INSERT INTO "isahl"."zc_id_tsp-voucher_rr_devi-seal"
-           (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
-    )
-    .bind(voucher_id)
     .bind(seal.id)
     .execute(&pool)
     .await
-    .expect("铅封桥");
+    .expect("订单↔铅封直连桥");
 
     // ③ 有桥 → 结构路径优先于 projection（详情 + 列表同口径）
     let detail = repo.get_refs(seal.id).await.expect("详情").expect("行存在");
     assert_eq!(
         detail.waybill_no.as_deref(),
         Some(bridge_wb_code.as_str()),
-        "两跳桥应优先于 projection（详情）"
+        "直连桥应优先于 projection（详情）"
     );
     let list = repo
         .list(&ListQuery {
@@ -397,25 +435,16 @@ async fn seal_waybill_prefers_two_hop_bridge_over_projection() {
     assert_eq!(
         row.waybill_no.as_deref(),
         Some(bridge_wb_code.as_str()),
-        "两跳桥应优先于 projection（列表）"
+        "直连桥应优先于 projection（列表）"
     );
 
-    // 清理：桥 → 装车条 → 封签 → 运单
-    let _ =
-        sqlx::query(r#"DELETE FROM "isahl"."zc_id_tsp-voucher_rr_devi-seal" WHERE ref_right = $1"#)
-            .bind(seal.id)
-            .execute(&pool)
-            .await;
+    // 清理：桥 → 封签 → 运单
     let _ = sqlx::query(
-        r#"DELETE FROM "isahl"."zc_id_orde-traffic_rr_tsp-voucher" WHERE ref_right = $1"#,
+        r#"DELETE FROM "isahl"."zc_id_orde-traffic_rr_devi-seal" WHERE ref_right = $1"#,
     )
-    .bind(voucher_id)
+    .bind(seal.id)
     .execute(&pool)
     .await;
-    let _ = sqlx::query(r#"DELETE FROM "isahl"."zc_id_stat-tsp-voucher" WHERE id = $1"#)
-        .bind(voucher_id)
-        .execute(&pool)
-        .await;
     cleanup(&pool, &pfx).await;
     for code in [format!("{pfx}-WB-PROJ"), format!("{pfx}-WB-BRIDGE")] {
         let _ = sqlx::query(r#"DELETE FROM "isahl"."zc_id_orde-land" WHERE code = $1"#)

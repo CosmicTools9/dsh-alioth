@@ -320,7 +320,7 @@ impl AliothDbEntity for StockCountStatus {
         r#"isahl."zc_id_stus-counting""#
     }
 
-    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, enable, flag"#;
+    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, enable, flag::text AS flag"#;
     const ENTITY_NAME: &'static str = "stock_count_status";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;

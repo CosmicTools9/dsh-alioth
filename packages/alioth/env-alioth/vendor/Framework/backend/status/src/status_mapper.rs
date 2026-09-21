@@ -114,3 +114,95 @@ pub fn map_consignment_status(code: Option<&str>) -> String {
         other => map_status(other),
     }
 }
+
+/// 委托是否**尚未受理**（受理动作的前置）——受理守卫的单一来源判定。
+///
+/// 复用 `map_consignment_status` 的语义（`pending_review` = 流程尚未开始）：
+/// 新建/待受理族（`ST-NEW`、缺省、`ST-ORDERED`、`ST-PREPARING`）为 `true`；
+/// 已受理及之后（`accepted`/`partially_allocated`/终态/事故）与在途/抵达/签收为 `false`。
+///
+/// 门禁用例 MUST 走本谓词，**禁止**在守卫里硬编码 `ST-*` code 白名单——委托创建改落
+/// 初始状态桥（`ST-NEW`「待受理」）后，常量白名单必然漂移（批注 1862daf2 / 2026-09-14）。
+pub fn is_pre_acceptance(code: Option<&str>) -> bool {
+    map_consignment_status(code) == STATUS_PENDING_REVIEW
+}
+
+/// 委托是否**可派车**——派车守卫的单一来源判定。
+///
+/// 可派 = 流程未开始（`pending_review` 族：`ST-NEW`/缺省、`ST-ORDERED`、`ST-PREPARING`）
+/// ∪ 已受理（`accepted`）∪ 已派车（`partially_allocated`，委托语境即 `ST-DISPATCHED`）；
+/// 在途/抵达/签收/结算/完结/取消/事故一律 `false`（守卫 fail-closed 拒之）。
+///
+/// 同 `is_pre_acceptance`：MUST 复用它而不是在守卫里另立 code 字面量（批注 1862daf2）。
+pub fn is_dispatchable_consignment(code: Option<&str>) -> bool {
+    let mapped = map_consignment_status(code);
+    mapped == STATUS_PENDING_REVIEW
+        || mapped == STATUS_ACCEPTED
+        || mapped == STATUS_PARTIALLY_ALLOCATED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 批注 1862daf2 回归：委托创建落初始状态桥 `ST-NEW`「待受理」⇒ 派车守卫 MUST 放行，
+    /// 且判定 MUST 与 `map_consignment_status` 同源（禁 code 字面量白名单）。
+    #[test]
+    fn dispatchable_fleet_matches_mapping() {
+        // 放行：新建/待受理族 + 已受理 + 已派车（含缺省 = 无桥「新建」）
+        for code in [
+            Some("ST-NEW"),
+            Some("ST-ORDERED"),
+            Some("ST-PREPARING"),
+            None,
+            Some("ST-ACCEPTED"),
+            Some("ST-DISPATCHED"),
+        ] {
+            assert!(
+                is_dispatchable_consignment(code),
+                "{code:?} 应可派车（映射 {}）",
+                map_consignment_status(code)
+            );
+        }
+        // 拒绝：执行期/终态/事故 fail-closed
+        for code in [
+            "ST-IN_TRANSIT",
+            "ST-ARRIVED",
+            "ST-SIGNED",
+            "ST-DELIVERED",
+            "ST-SETTLED",
+            "ST-COMPLETED",
+            "ST-CANCELLED",
+            "ST-ACCIDENT",
+        ] {
+            assert!(
+                !is_dispatchable_consignment(Some(code)),
+                "{code} 不应可派车"
+            );
+        }
+    }
+
+    /// 受理门禁：仅受理前族可受理（ST-NEW 放行；已受理及之后拒，杜绝状态回退）。
+    #[test]
+    fn pre_acceptance_only_pending_review_family() {
+        for code in [
+            Some("ST-NEW"),
+            Some("ST-ORDERED"),
+            Some("ST-PREPARING"),
+            None,
+        ] {
+            assert!(is_pre_acceptance(code), "{code:?} 应可受理");
+        }
+        for code in [
+            "ST-ACCEPTED",
+            "ST-DISPATCHED",
+            "ST-IN_TRANSIT",
+            "ST-ARRIVED",
+            "ST-SIGNED",
+            "ST-CANCELLED",
+            "ST-SETTLED",
+        ] {
+            assert!(!is_pre_acceptance(Some(code)), "{code} 不应可受理");
+        }
+    }
+}

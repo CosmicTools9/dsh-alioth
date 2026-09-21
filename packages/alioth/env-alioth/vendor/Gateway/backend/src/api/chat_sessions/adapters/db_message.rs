@@ -12,7 +12,8 @@ const META_SELECT: &str = r#"
     cm.structured AS structured,
     cm.usage AS usage,
     cm.knowledge_refs AS knowledge_refs,
-    cm.attachments AS attachments"#;
+    cm.attachments AS attachments,
+    cm.tool_calls AS tool_calls"#;
 
 const META_JOIN: &str = r#"LEFT JOIN isahl_auth.chat_message_meta cm ON cm.msg_id = m.id"#;
 
@@ -33,12 +34,20 @@ impl MessageStorePort for SqlxMessageAdapter {
         session_id: i64,
         content: &str,
         sender_addr: Option<i64>,
+        recipients: &[i64],
     ) -> Result<MessageRow, String> {
         // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
         let (dk_scene, dk_factor, dk_function) =
             ontology_binding::resolve(&self.pool, ("JE", "FRE", "↓_GG"))
                 .await
                 .map_err(|e| format!("Failed to resolve dk coords: {}", e))?;
+        // 消息 + 参与方同事务（refactor-chat-ai-subject-identity-memory D-2）：
+        // 参与方写入失败即回滚，不留「无参与方的 AI 消息」半态。
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| format!("Failed to begin message tx: {}", e))?;
         let row = sqlx::query_as::<_, MessageRow>(
             r#"INSERT INTO isahl."zc_id_msgs-chat_ai"
                    (fk_thread, content, "fk_sender-addr", dk_scene, dk_factor, dk_function)
@@ -51,9 +60,25 @@ impl MessageStorePort for SqlxMessageAdapter {
         .bind(dk_scene)
         .bind(dk_factor)
         .bind(dk_function)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| format!("Failed to add message: {}", e))?;
+
+        // 参与方关系叶（ref_left = 消息 id，ref_right = 联系方式 id）
+        for recipient in recipients {
+            sqlx::query(
+                r#"INSERT INTO isahl."zc_id_message_rr_recipients" (ref_left, ref_right)
+                   VALUES ($1, $2)"#,
+            )
+            .bind(row.id)
+            .bind(recipient)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Failed to add message recipient: {}", e))?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| format!("Failed to commit message tx: {}", e))?;
 
         Ok(row)
     }
@@ -90,40 +115,30 @@ impl MessageStorePort for SqlxMessageAdapter {
     async fn get_last_user_message_row(
         &self,
         session_id: i64,
-        ai_contact_id: Option<i64>,
     ) -> Result<Option<MessageRow>, String> {
-        let ai_id = match ai_contact_id {
-            Some(id) => id,
-            None => {
-                // 回退到通过 code 查询
-                let id = sqlx::query_scalar::<_, i64>(
-                    r#"SELECT id FROM isahl.zc_id_contact_infos
-                       WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
-                )
-                .bind(super::db_ai_contact::AI_ASSISTANT_CODE)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| format!("DB error: {}", e))?;
-                match id {
-                    Some(i) => i,
-                    None => return Ok(None),
-                }
-            }
-        };
-
+        // 用户侧判定：发送方不是智能体侧联系方式（`agent-<code>` 前缀 ∪ 历史 `llm-agent`，
+        // 单一事实源见 memory_scope 常量）。共享联系人 llm-agent 不再新建，但历史行仍须排除。
+        let agent_prefix = super::super::memory_scope::subject_contact_code_prefix_like();
         let sql = format!(
             r#"SELECT m.id, m.content, m."fk_sender-addr", m.created_at,
                       {}
                FROM isahl."zc_id_msgs-chat_ai" m
                {}
-               WHERE m.fk_thread = $1 AND m."fk_sender-addr" IS DISTINCT FROM $2
+               WHERE m.fk_thread = $1
                  AND m.deleted_at IS NULL
-               ORDER BY m.created_at DESC LIMIT 1"#,
+                 AND NOT EXISTS (
+                     SELECT 1 FROM isahl.zc_id_contact_infos ci
+                      WHERE ci.id = m."fk_sender-addr"
+                        AND ci.deleted_at IS NULL
+                        AND (ci.code LIKE $2 OR ci.code = $3)
+                 )
+               ORDER BY m.created_at DESC, m.id DESC LIMIT 1"#,
             META_SELECT, META_JOIN
         );
         let row = sqlx::query_as::<_, MessageRow>(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(session_id)
-            .bind(ai_id)
+            .bind(agent_prefix)
+            .bind(super::super::memory_scope::LEGACY_SHARED_AI_CONTACT_CODE)
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| format!("DB error: {}", e))?;
@@ -170,6 +185,7 @@ impl MessageStorePort for SqlxMessageAdapter {
         usage: Option<&Value>,
         attachments: Option<&Value>,
         knowledge_refs: Option<&Value>,
+        tool_calls: Option<&Value>,
     ) -> Result<(), String> {
         db_message_meta::save_meta(
             &self.pool,
@@ -180,6 +196,7 @@ impl MessageStorePort for SqlxMessageAdapter {
             usage,
             attachments,
             knowledge_refs,
+            tool_calls,
         )
         .await
     }

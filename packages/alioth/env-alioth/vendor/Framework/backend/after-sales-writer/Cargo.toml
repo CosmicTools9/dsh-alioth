@@ -1,0 +1,17 @@
+[package]
+name = "after-sales-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "售后段写链共享事务（zc_id_order-after_sales 子叶 + order_rr_contract 幂等桥 + zc_id_stat-appeal 申诉）——WZ 交易售后与 Cosmic-Tools bv-local 服务售后共用单份实现（change wire-after-sales-order-chain D2）"
+
+[dependencies]
+sqlx = { workspace = true }
+common = { path = "../common" }
+consignment-writer = { path = "../consignment-writer" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+contract-writer = { path = "../contract-writer" }
+ontology-binding = { path = "../ontology-binding" }

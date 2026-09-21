@@ -91,6 +91,18 @@ impl DocumentAutomationAgent {
             user_selectable: true,
             sort_order: 50,
             requires_input_default: true,
+            // E6：单据自动化 = 批量处理/状态推进 ⇒ 授予 execute_action（**写动作**）。
+            // 写动作 MUST 经既有用户确认链（chat-ai-action-execution：LLM 自称
+            // confirmed=true 恒被拒，真实执行仅经 HTTP execute-action 端点 + 审计）。
+            available_tools: vec![
+                crate::tools::executor::QuerySqlTool::definition(),
+                crate::tools::executor::QuerySchemaTool::definition(),
+                crate::tools::executor::ExecuteActionTool::definition(),
+            ],
+            db_access_level: super::DbAccessLevel::SchemaRestricted,
+            allowed_schemas: vec!["isahl".to_string()],
+            required_confirmation_level: super::ConfirmationLevel::Explicit,
+            max_execution_steps: 5,
             suggested_actions: vec![
                 "确认执行".to_string(),
                 "逐条审核".to_string(),

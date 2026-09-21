@@ -55,7 +55,7 @@ impl
     ) -> Result<WarehouseLocation, ApiError> {
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_stor-plc-warehouse"
-               (notice, code, comments, ak_source, fk_address, sk_unit, fk_trustee, qk_capacity, fk_parent, qk_fence, created_by_id,
+               (notice, code, comments, ak_source, fk_address, sk_currency, fk_trustee, qk_capacity, fk_parent, qk_fence, created_by_id,
                 dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
                        (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JE'   AND deleted_at IS NULL),
@@ -68,7 +68,7 @@ impl
         .bind(&req.comments)
         .bind(&req.ak_source)
         .bind(req.fk_address)
-        .bind(req.sk_unit)
+        .bind(req.sk_currency)
         .bind(req.fk_trustee)
         .bind(req.qk_capacity)
         .bind(req.fk_parent)
@@ -100,7 +100,7 @@ impl
                    comments = COALESCE($3, comments),
                    ak_source = COALESCE($4, ak_source),
                    fk_address = COALESCE($5, fk_address),
-                   sk_unit = COALESCE($6, sk_unit),
+                   sk_currency = COALESCE($6, sk_currency),
                    fk_trustee = COALESCE($7, fk_trustee),
                    qk_capacity = COALESCE($8, qk_capacity),
                    fk_parent = COALESCE($9, fk_parent),
@@ -113,7 +113,7 @@ impl
         .bind(&req.comments)
         .bind(&req.ak_source)
         .bind(req.fk_address)
-        .bind(req.sk_unit)
+        .bind(req.sk_currency)
         .bind(req.fk_trustee)
         .bind(req.qk_capacity)
         .bind(req.fk_parent)

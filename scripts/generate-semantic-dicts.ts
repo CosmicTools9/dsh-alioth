@@ -10,7 +10,7 @@
  * The library ships with the plugin — no dev-database dependency.
  * Usage: ALIOTH_REPO=~/WorkSpace/Alioth node --import tsx scripts/generate-semantic-dicts.ts
  */
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -174,9 +174,14 @@ async function read(pathStr: string): Promise<string> {
  * dir and diffs against the checked-in files). */
 export async function generateDicts(targetDir: string, repoDir = ALIOTH_REPO): Promise<{ source: string }> {
   const latest = JSON.parse(await read(path.join(repoDir, 'latest.json'))) as { version: string; published_at: string }
-  const versionDir = path.join(repoDir, latest.version)
-  const seeds = await read(path.join(versionDir, 'seed-dimensions.sql'))
-  const tablesDdl = await read(path.join(versionDir, '002_isahl_tables.sql'))
+  // 发行物布局有两态：2026-09-21 起上游模型发布线把产物改为**平铺固定路径**——文件落在仓库根，
+  // 版本号只由 `latest.json` 与 annotated tag 承载；更早的发行物仍在 `<repo>/<version>/` 下。
+  // 两种都认：有版本目录用版本目录，没有回落仓库根。（只认版本目录会让模型一发新版、
+  // CI 的 check:dicts 立刻 ENOENT 全红。）
+  const versioned = path.join(repoDir, latest.version)
+  const contentDir = await stat(versioned).then(() => versioned, () => repoDir)
+  const seeds = await read(path.join(contentDir, 'seed-dimensions.sql'))
+  const tablesDdl = await read(path.join(contentDir, '002_isahl_tables.sql'))
   const fkSeed = await read(path.join(VENDOR_DDL, '004_isahl_meta_seed_fields.sql'))
 
   const scene = extractCodes(seeds, 'zc_id_scene')

@@ -63,7 +63,60 @@ const SYNC_SCHEMAS: &[&str] = &["isahl", "isahl_auth", "isahl_audit"];
 /// Meta table tracking which migration files have been applied.
 /// Lives in `isahl_meta` schema of the reference database (aliothstudio_dev),
 /// because namespace databases don't have isahl_meta — tracking goes to reference DB.
-const MIGRATIONS_TABLE: &str = "isahl_meta._namespace_schema_migrations";
+/// 迁移记账表的限定名（唯一字面量来源）：三条静态 SQL 经 `migrations_table!()` 组合，
+/// 编译期同源 ⇒ 改一处即全改，无法漂移。
+macro_rules! migrations_table {
+    () => {
+        "isahl_meta._namespace_schema_migrations"
+    };
+}
+
+/// 迁移记账表的静态 SQL（表名经 `migrations_table!()` 组合 ⇒ 编译期同源，无 `format!` 插值）。
+const SQL_COUNT_APPLIED: &str = concat!(
+    "SELECT COUNT(*) FROM ",
+    migrations_table!(),
+    " WHERE filename = \u{24}1"
+);
+
+/// 见 [`SQL_COUNT_APPLIED`]（同名表的 INSERT 形态）。
+const SQL_INSERT_APPLIED: &str = concat!(
+    "INSERT INTO ",
+    migrations_table!(),
+    " (filename) VALUES (\u{24}1) ON CONFLICT (filename) DO NOTHING"
+);
+
+/// 记账表建表语句（DDL 形态；表名经 `migrations_table!()` 组合，与之同源）。
+const SQL_CREATE_MIGRATIONS_TABLE: &str = concat!(
+    "CREATE TABLE IF NOT EXISTS ",
+    migrations_table!(),
+    " (id SERIAL PRIMARY KEY, ",
+    "filename VARCHAR(255) NOT NULL UNIQUE, ",
+    "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ",
+    "checksum VARCHAR(64))"
+);
+
+/// 三条静态 SQL 的目标表 MUST 全等参考库记账表（期望值侧独立书写：误改目标表即失败）。
+#[cfg(test)]
+mod static_sql_tests {
+    use super::*;
+
+    /// 期望值侧：记账表限定名（三条静态 SQL 的目标表 MUST 全等此值）。
+    const EXPECTED_MIGRATIONS_TABLE: &str = "isahl_meta._namespace_schema_migrations";
+
+    #[test]
+    fn migration_sql_constants_target_reference_tracking_table() {
+        for (form, sql) in [
+            ("COUNT", SQL_COUNT_APPLIED),
+            ("INSERT", SQL_INSERT_APPLIED),
+            ("CREATE", SQL_CREATE_MIGRATIONS_TABLE),
+        ] {
+            assert!(
+                sql.contains(EXPECTED_MIGRATIONS_TABLE),
+                "{form} 目标表漂移: {sql}"
+            );
+        }
+    }
+}
 
 /// Run schema sync + migration when `NAMESPACE` is set.
 ///
@@ -461,16 +514,7 @@ async fn full_schema_sync(
 }
 /// Ensure the `_namespace_schema_migrations` meta table exists in the reference DB's isahl_meta.
 async fn ensure_migrations_table(reference_pool: &PgPool) {
-    let sql = format!(
-        "CREATE TABLE IF NOT EXISTS {} (
-            id SERIAL PRIMARY KEY,
-            filename VARCHAR(255) NOT NULL UNIQUE,
-            applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            checksum VARCHAR(64)
-        )",
-        MIGRATIONS_TABLE
-    );
-    if let Err(e) = sqlx::query(AssertSqlSafe(sql.as_str()))
+    if let Err(e) = sqlx::query(AssertSqlSafe(SQL_CREATE_MIGRATIONS_TABLE))
         .execute(reference_pool)
         .await
     {
@@ -486,27 +530,18 @@ async fn ensure_migrations_table(reference_pool: &PgPool) {
 async fn mark_initial_sync(reference_pool: &PgPool) {
     let migration_files = discover_migration_files();
     for filename in &migration_files {
-        let result = sqlx::query_scalar::<_, i64>(AssertSqlSafe(
-            format!(
-                "SELECT COUNT(*) FROM {} WHERE filename = $1",
-                MIGRATIONS_TABLE
-            )
-            .as_str(),
-        ))
-        .bind(filename)
-        .fetch_one(reference_pool)
-        .await;
+        let result = sqlx::query_scalar::<_, i64>(SQL_COUNT_APPLIED)
+            .bind(filename)
+            .fetch_one(reference_pool)
+            .await;
 
         match result {
             Ok(count) if count > 0 => {}
             _ => {
-                let _ = sqlx::query(AssertSqlSafe(format!(
-                    "INSERT INTO {} (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING",
-                    MIGRATIONS_TABLE
-                )))
-                .bind(filename)
-                .execute(reference_pool)
-                .await;
+                let _ = sqlx::query(SQL_INSERT_APPLIED)
+                    .bind(filename)
+                    .execute(reference_pool)
+                    .await;
             }
         }
     }
@@ -557,13 +592,10 @@ async fn run_pending_migrations(pool: &PgPool, reference_pool: &PgPool) {
                 filename
             );
             // Record as skipped in reference DB's tracking table
-            let _ = sqlx::query(AssertSqlSafe(format!(
-                "INSERT INTO {} (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING",
-                MIGRATIONS_TABLE
-            )))
-            .bind(filename)
-            .execute(reference_pool)
-            .await;
+            let _ = sqlx::query(SQL_INSERT_APPLIED)
+                .bind(filename)
+                .execute(reference_pool)
+                .await;
             continue;
         }
 
@@ -583,13 +615,10 @@ async fn run_pending_migrations(pool: &PgPool, reference_pool: &PgPool) {
         match migrate_result {
             Ok(_) => {
                 // Migration succeeded — record as applied in reference DB's tracking table
-                let _ = sqlx::query(AssertSqlSafe(format!(
-                    "INSERT INTO {} (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING",
-                    MIGRATIONS_TABLE
-                )))
-                .bind(filename)
-                .execute(reference_pool)
-                .await;
+                let _ = sqlx::query(SQL_INSERT_APPLIED)
+                    .bind(filename)
+                    .execute(reference_pool)
+                    .await;
                 common::telemetry::info!("Migration '{}' applied successfully", filename);
             }
             Err(e) => {
@@ -648,13 +677,10 @@ fn discover_migration_files() -> Vec<String> {
 async fn get_pending_migrations(reference_pool: &PgPool, all_files: &[String]) -> Vec<String> {
     let mut pending = Vec::new();
     for filename in all_files {
-        let applied: Result<i64, _> = sqlx::query_scalar(AssertSqlSafe(format!(
-            "SELECT COUNT(*) FROM {} WHERE filename = $1",
-            MIGRATIONS_TABLE
-        )))
-        .bind(filename)
-        .fetch_one(reference_pool)
-        .await;
+        let applied: Result<i64, _> = sqlx::query_scalar(SQL_COUNT_APPLIED)
+            .bind(filename)
+            .fetch_one(reference_pool)
+            .await;
 
         match applied {
             Ok(count) if count > 0 => {}

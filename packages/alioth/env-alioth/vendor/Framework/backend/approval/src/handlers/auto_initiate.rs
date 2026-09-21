@@ -29,8 +29,10 @@ struct EntityCreatedPayload {
 ///   route-flow-context-to-domain-leaves）→ entity_table 的域 == 范畴行的域
 ///   （按叶表域比对；遗留父表落点经 `domain_of_leaf` 基表臂同样命中）。
 async fn bound_published_flow(pool: &PgPool, entity_table: &str) -> Result<Option<i64>, ApiError> {
-    let candidates: Vec<(i64, String, String)> = sqlx::query_as(
-        r#"SELECT p.id, replace(c.tableoid::regclass::text, '"', ''), c._t_
+    let candidates: Vec<(i64, String, String)> = sqlx::query_as(concat!(
+        r#"SELECT p.id, "#,
+        common::leaf_relname!(c),
+        r#", c._t_
            FROM isahl.zc_id_process p
            JOIN isahl."zc_id_process_rr_context" rc
              ON rc.ref_left = p.id AND rc.deleted_at IS NULL
@@ -43,8 +45,8 @@ async fn bound_published_flow(pool: &PgPool, entity_table: &str) -> Result<Optio
                  JOIN isahl."zc_id_stus-process" s ON s.id = ls.ref_right
                  WHERE ls.ref_left = p.id AND ls.deleted_at IS NULL AND s.code = 'published'
              )
-           ORDER BY p.updated_at DESC"#,
-    )
+           ORDER BY p.updated_at DESC"#
+    ))
     .fetch_all(pool)
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;

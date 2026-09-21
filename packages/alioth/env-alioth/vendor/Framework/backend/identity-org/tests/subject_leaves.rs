@@ -11,7 +11,6 @@
 use crud::repository::AliothRepository as _;
 use identity_org::models::*;
 use identity_org::repository::*;
-use sqlx::AssertSqlSafe;
 use sqlx::PgPool;
 
 async fn test_pool() -> PgPool {
@@ -60,10 +59,11 @@ macro_rules! leaf_crud_test {
             assert_eq!(created.code.as_deref(), Some(code.as_str()));
 
             // dk 坐标非空（维度行已种子 → resolve 必须命中）
-            let dk: (Option<i64>, Option<i64>) = sqlx::query_as(AssertSqlSafe(format!(
-                "SELECT dk_scene, dk_factor FROM isahl.\"{}\" WHERE id = $1",
-                $table
-            )))
+            let dk: (Option<i64>, Option<i64>) = sqlx::query_as(concat!(
+                "SELECT dk_scene, dk_factor FROM isahl.\"",
+                $table,
+                "\" WHERE id = $1"
+            ))
             .bind(created.id)
             .fetch_one(&pool)
             .await

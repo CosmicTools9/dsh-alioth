@@ -5,7 +5,11 @@
 //! voucher 链路，自动触发物化更新（`apply_voucher`：净变 + 余额链 + rollup）：
 //! - 盘盈（实盘 > 物化）→ 校准凭证 `qk_income` = 差异，入库位 = 明细储元
 //! - 盘亏（实盘 < 物化）→ 校准凭证 `qk_outgo` = |差异|，出库位 = 明细储元
-//! - 溯源：`zc_id_statement_rr_reason`（ref_left = 校准凭证 / ref_right = 盘点明细）
+//! - 溯源：**缺桥，已报缺**（§8.5.10「缺桥必须报缺，MUST NOT 借用他桥」）——模型无
+//!   「校准凭证 ↔ 盘点明细」桥：通用 `zc_id_statement_rr_reason` 本体零直插，其叶
+//!   `zc_id_order_rr_contract` 声明语义 = 关联-订单↔合约（写凭证/明细即越界借桥）。
+//!   申请单 = `Pre-Proc/WZ/model-center-requests.md` §R4（「事实↔前因」专叶）。专叶落地前
+//!   明细↔凭证**无合法溯源落点**（写径不落行、读径取不到），不得借用他桥。
 //!
 //! 差异为 0 不生成凭证；UPDATE 明细不重复校准（校准事实已发生）。
 //!
@@ -25,6 +29,16 @@ use std::collections::HashMap;
 use trigger_registry::stock_materialization as sm;
 
 use crate::models::{CountingDetail, CreateCountingDetailRequest, UpdateCountingDetailRequest};
+
+/// 校准凭证 INSERT 模板（目标表 = 凭证族 `zc_id_stat-whs-voucher`）——
+/// `{title_col}` = 库内当前「物/交易对象」列（[`sm::voucher_title_column`]：
+/// 新模型 `fk_payload` / 旧模型 `fk_production`），运行期替换后经 `AssertSqlSafe` 执行。
+const CALIB_VOUCHER_INSERT_SQL: &str = r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
+                       ({title_col}, "fk_subj-storage", "fk_obj-storage",
+                        qk_income, qk_outgo, notice, created_by_id,
+                        dk_scene, dk_factor, dk_function)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                       RETURNING id"#;
 
 #[derive(Debug, Clone)]
 pub struct CountingDetailRepository {
@@ -159,35 +173,33 @@ impl
 
                 // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
                 let (dk_scene, dk_factor, dk_function) =
-                    ontology_binding::resolve(self.generic.pool(), ("GH", "FRA", "↓_GG"))
+                    ontology_binding::resolve(self.generic.pool(), ("JC", "GID", "↓_LA"))
                         .await
                         .map_err(ApiError::from)?;
-                let voucher_id: i64 = sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
-                       (fk_production, "fk_subj-storage", "fk_obj-storage",
-                        qk_income, qk_outgo, notice, created_by_id,
-                        dk_scene, dk_factor, dk_function)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-                       RETURNING id"#,
-                )
-                .bind(prod)
-                .bind(subj_storage)
-                .bind(obj_storage)
-                .bind(income_id)
-                .bind(outgo_id)
-                .bind("盘点校准")
-                .bind(user_id)
-                .bind(dk_scene)
-                .bind(dk_factor)
-                .bind(dk_function)
-                .fetch_one(self.generic.pool())
-                .await
-                .map_err(ApiError::from)?;
+                // 校准凭证「物/交易对象」列运行期探测（凭证族：新 fk_payload / 旧 fk_production）
+                let title_col = sm::voucher_title_column(self.generic.pool())
+                    .await
+                    .map_err(ApiError::Database)?;
+                let insert_sql = CALIB_VOUCHER_INSERT_SQL.replace("{title_col}", title_col);
+                let voucher_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
+                    .bind(prod)
+                    .bind(subj_storage)
+                    .bind(obj_storage)
+                    .bind(income_id)
+                    .bind(outgo_id)
+                    .bind("盘点校准")
+                    .bind(user_id)
+                    .bind(dk_scene)
+                    .bind(dk_factor)
+                    .bind(dk_function)
+                    .fetch_one(self.generic.pool())
+                    .await
+                    .map_err(ApiError::from)?;
 
                 // 物化：走 apply_voucher（净变 + 余额链回填 + rollup）
                 let mut new_map = HashMap::new();
                 new_map.insert("id".to_string(), Value::from(voucher_id));
-                new_map.insert("fk_production".to_string(), Value::from(prod));
+                new_map.insert(title_col.to_string(), Value::from(prod));
                 if let Some(s) = subj_storage {
                     new_map.insert("fk_subj-storage".to_string(), Value::from(s));
                 }
@@ -204,18 +216,10 @@ impl
                     .await
                     .map_err(ApiError::Database)?;
 
-                // 溯源：校准凭证 ↔ 盘点明细（statement_rr_reason，ref_left=凭证 / ref_right=明细）
-                sqlx::query(
-                    r#"INSERT INTO isahl."zc_id_order_rr_contract"
-                       (ref_left, ref_right, created_by_id)
-                       VALUES ($1, $2, $3)"#,
-                )
-                .bind(voucher_id)
-                .bind(row.id)
-                .bind(user_id)
-                .execute(self.generic.pool())
-                .await
-                .map_err(ApiError::from)?;
+                // 溯源：缺桥，已报缺（§8.5.10）——模型无「校准凭证 ↔ 盘点明细」桥，
+                // `zc_id_statement_rr_reason` 本体零直插、其叶 `zc_id_order_rr_contract`
+                // 声明语义 = 关联-订单↔合约（写凭证/明细即越界借桥）。故此处**不落任何桥行**；
+                // 申请单 = `Pre-Proc/WZ/model-center-requests.md` §R4。专叶落地前这条溯源不可用。
             }
         }
 

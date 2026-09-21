@@ -132,6 +132,56 @@
           }
         ],
         "table": "isahl.zc_id_prod-license-purchase"
+      },
+      {
+        "coordinates": {
+          "factor": "FJA",
+          "function": "↓_GG",
+          "scene": "TX"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "fk_list",
+            "json_path": "orderId"
+          }
+        ],
+        "inherits": null,
+        "name": "TradeOrderDetail",
+        "relationships": [],
+        "table": "isahl.zc_id_deta-trade_order"
+      },
+      {
+        "coordinates": {
+          "factor": "FJA",
+          "function": "↑_DA",
+          "scene": "JE"
+        },
+        "field_mappings": [
+          {
+            "column": "notice",
+            "json_path": "name"
+          },
+          {
+            "column": "code",
+            "json_path": "code"
+          },
+          {
+            "column": "enable",
+            "json_path": "enabled"
+          }
+        ],
+        "inherits": null,
+        "name": "LicenseStatus",
+        "relationships": [],
+        "table": "isahl.zc_id_stus-license"
       }
     ]
   },

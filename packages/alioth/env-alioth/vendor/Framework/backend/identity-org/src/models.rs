@@ -47,40 +47,73 @@ pub struct SubjectIdentityRow {
 /// 未知/中间层输入 MUST 返回 None（fail-fast，2026-08-29 裁决）——
 /// 旧实现静默回退 zc_id_subj-group：传 zc_id_orga-legal 等中间层名会被错分类为
 /// 「组」且无任何报错，属违规源头级缺陷，已废除。
-pub fn subject_leaf_table(kind: &str) -> Option<&'static str> {
+/// 主体叶表映射项：叶表名 + 该表的静态 INSERT（同一 match 产出，杜绝两份白名单漂移）
+struct SubjectLeaf {
+    /// 形如 `"isahl"."zc_id_empl-natural"`（引号已含）
+    table: &'static str,
+    /// 编译期常量 INSERT（`concat!` 拼字面量，无 `format!` 插值）
+    insert_sql: &'static str,
+}
+
+/// 叶表字面量 → `SubjectLeaf`（SQL 形状单点定义；表名为白名单字面量）
+macro_rules! leaf {
+    ($t:literal) => {
+        SubjectLeaf {
+            table: $t,
+            insert_sql: concat!(
+                r#"INSERT INTO "#,
+                $t,
+                r#" (id, notice, code, comments, created_by_id) VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4) RETURNING id"#
+            ),
+        }
+    };
+}
+
+/// 主体类型 → 真叶表映射（isahl 全局，含业务别名）
+/// 未知/中间层输入 MUST 返回 None（fail-fast，2026-08-29 裁决）——
+/// 旧实现静默回退 zc_id_subj-group：传 zc_id_orga-legal 等中间层名会被错分类为
+/// 「组」且无任何报错，属违规源头级缺陷，已废除。
+fn subject_leaf(kind: &str) -> Option<SubjectLeaf> {
     Some(match kind {
         // 叶表名直通（白名单字面量；create 时还会再校验叶表 ∈ subjects 继承链）
-        "zc_id_orga-non-banking-legal" => "\"isahl\".\"zc_id_orga-non-banking-legal\"",
-        "zc_id_bank-commercial" => "\"isahl\".\"zc_id_bank-commercial\"",
-        "zc_id_bank-central" => "\"isahl\".\"zc_id_bank-central\"",
-        "zc_id_empl-natural" => "\"isahl\".\"zc_id_empl-natural\"",
-        "zc_id_empl-agent" => "\"isahl\".\"zc_id_empl-agent\"",
-        "zc_id_subj-group" => "\"isahl\".\"zc_id_subj-group\"",
-        "zc_id_orga-department" => "\"isahl\".\"zc_id_orga-department\"",
-        "zc_id_subj-country" => "\"isahl\".\"zc_id_subj-country\"",
-        "zc_id_subj-supranational" => "\"isahl\".\"zc_id_subj-supranational\"",
-        "zc_id_subj-hierarchy" => "\"isahl\".\"zc_id_subj-hierarchy\"",
-        "zc_id_subj-position" => "\"isahl\".\"zc_id_subj-position\"",
-        "zc_id_subj-sovereign" => "\"isahl\".\"zc_id_subj-sovereign\"",
-        "zc_id_subj-ministry" => "\"isahl\".\"zc_id_subj-ministry\"",
-        "zc_id_subj-bank" => "\"isahl\".\"zc_id_subj-bank\"",
-        // 业务中文/英文别名（映射到真叶表）
-        "natural" | "自然人" => "\"isahl\".\"zc_id_empl-natural\"",
-        // 法人（中间表）→ 企业法人叶表
-        "legal" | "法人" | "non-banking" | "非银行法人" => {
-            "\"isahl\".\"zc_id_orga-non-banking-legal\""
+        "zc_id_orga-non-banking-legal" | "legal" | "法人" | "non-banking" | "非银行法人" => {
+            leaf!("\"isahl\".\"zc_id_orga-non-banking-legal\"")
         }
-        "commercial-bank" | "商业银行" => "\"isahl\".\"zc_id_bank-commercial\"",
-        "central-bank" | "中央银行" => "\"isahl\".\"zc_id_bank-central\"",
-        "agent" | "智能体" => "\"isahl\".\"zc_id_empl-agent\"",
-        "group" | "组" => "\"isahl\".\"zc_id_subj-group\"",
-        "department" | "部门" => "\"isahl\".\"zc_id_orga-department\"",
-        // 雇员（中间表）→ 自然人叶表（雇员族无独立叶表）
-        "employee" | "雇员" => "\"isahl\".\"zc_id_empl-natural\"",
-        "country" | "国家" => "\"isahl\".\"zc_id_subj-country\"",
-        "supranational" | "超国家" => "\"isahl\".\"zc_id_subj-supranational\"",
+        "zc_id_bank-commercial" | "commercial-bank" | "商业银行" => {
+            leaf!("\"isahl\".\"zc_id_bank-commercial\"")
+        }
+        "zc_id_bank-central" | "central-bank" | "中央银行" => {
+            leaf!("\"isahl\".\"zc_id_bank-central\"")
+        }
+        "zc_id_empl-natural" | "natural" | "自然人" | "employee" | "雇员" => {
+            leaf!("\"isahl\".\"zc_id_empl-natural\"")
+        }
+        "zc_id_empl-agent" | "agent" | "智能体" => leaf!("\"isahl\".\"zc_id_empl-agent\""),
+        "zc_id_subj-group" | "group" | "组" => leaf!("\"isahl\".\"zc_id_subj-group\""),
+        "zc_id_orga-department" | "department" | "部门" => {
+            leaf!("\"isahl\".\"zc_id_orga-department\"")
+        }
+        "zc_id_subj-country" | "country" | "国家" => leaf!("\"isahl\".\"zc_id_subj-country\""),
+        "zc_id_subj-supranational" | "supranational" | "超国家" => {
+            leaf!("\"isahl\".\"zc_id_subj-supranational\"")
+        }
+        "zc_id_subj-hierarchy" => leaf!("\"isahl\".\"zc_id_subj-hierarchy\""),
+        "zc_id_subj-position" => leaf!("\"isahl\".\"zc_id_subj-position\""),
+        "zc_id_subj-sovereign" => leaf!("\"isahl\".\"zc_id_subj-sovereign\""),
+        "zc_id_subj-ministry" => leaf!("\"isahl\".\"zc_id_subj-ministry\""),
+        "zc_id_subj-bank" => leaf!("\"isahl\".\"zc_id_subj-bank\""),
         _ => return None,
     })
+}
+
+/// 主体类型 → 叶表名（调用方仅需表名时用）
+pub fn subject_leaf_table(kind: &str) -> Option<&'static str> {
+    subject_leaf(kind).map(|l| l.table)
+}
+
+/// 主体类型 → 叶表静态 INSERT（`INSERT … RETURNING id`）
+pub fn subject_leaf_insert_sql(kind: &str) -> Option<&'static str> {
+    subject_leaf(kind).map(|l| l.insert_sql)
 }
 
 // 身份实体模型（从 WZ isahl-db 提取）：软删除 + SELECT_FIELDS 匹配 DB 列。
@@ -275,7 +308,12 @@ pub struct UpdateIdentityRequest {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
-    /// MDM 主数据编码（wz_fssc.subject_mdm 侧表；Some(空串)=清除，None=不动）
+    /// MDM 主数据编码（**视角 → 码**映射，wz_fssc.subject_mdm；值为空串=删该视角行，
+    /// 未出现的视角不动）。与单值 `mdmCode` 同传时以本字段为准。
+    #[serde(default)]
+    pub mdm_codes: Option<std::collections::BTreeMap<String, String>>,
+    /// MDM 主数据编码兼容单值（Some(空串)=清除，None=不动）；
+    /// 落码视角 = 该主体拥有的 CUST → SUPP 首个，判不出则 VIEW-BIZ。
     #[serde(default, rename = "mdmCode", alias = "mdm_code")]
     pub mdm_code: Option<String>,
 }
@@ -544,6 +582,41 @@ pub struct UpdateConsignmentRequest {
     /// 批注 a2bd97b6：行编辑运费仅写 comments 摘要文本（读侧不解析）→ 列表运费不变
     #[serde(default)]
     pub amount: Option<f64>,
+    // ── 结构化写路（change: migrate-consignment-fields-to-structures T10）─────────────────
+    // 读侧已切结构（`logi-consignment/repositories/tasks.rs`），业务字段 MUST 落结构载体；
+    // 载体形态与读侧/门户/`consignment-writer` 同源，逐字段写路见
+    // `repository/consignment_structures.rs`。`comments` 仅存展示摘要，读侧不解析。
+    /// 货物描述——非本表列；落明细行 `zc_id_deta-trade_order` 主行（`fk_list`=本委托、
+    /// 排除 `DTL-LDG-%`）的 `notice`+`comments`（OA/读侧口径 `COALESCE(comments, notice)`）；
+    /// 无明细行则按 writer Step 5 形态补建（幂等）
+    #[serde(default)]
+    pub cargo: Option<String>,
+    /// 体积 m³——非本表列；落明细 `qk_v_qty` → `zc_id_scal-volume` 标量真值
+    /// （`mark` = 数值、`notice` = `X m³`；同货量 `qk_w_qty` 形态）
+    #[serde(default)]
+    pub cbm: Option<f64>,
+    /// 成交单价（元/吨）——非本表列；落明细 `qk_price` → `zc_id_scal-price` 标量真值
+    #[serde(default)]
+    pub price: Option<f64>,
+    /// 起运地——非本表列；落停靠桥 `zc_id_prod-transport_rr_stop`
+    /// （`ref_left` = 委托产品、`ref_right` = 停靠行、`ck_category` = ST-DEPART、`"over-seq"` = 1）；
+    /// 入参为 `zc_id_place` id 或名称首匹配；未命中 → 校验错误（fail-visible）
+    #[serde(default)]
+    pub origin: Option<String>,
+    /// 目的地——同上（ST-ARRIVE / `"over-seq"` = 2）
+    #[serde(default)]
+    pub dest: Option<String>,
+    /// 预计提货——非本表列；落产品 `qk_period` → `zc_id_segm-date.date_st`
+    /// （`YYYY-MM-DD` / `YYYY-MM-DDTHH:MM`，按 +08 解释）
+    #[serde(default, alias = "pickupTime")]
+    pub pickup_time: Option<String>,
+    /// 预计送达——同上 → `date_ed`
+    #[serde(default)]
+    pub eta: Option<String>,
+    /// 承运商——非本表列；落产品 `zc_id_prod-freight_road-sales."fk_subj-provider"`
+    /// （读侧 `carrier_name` 的唯一结构来源）；入参为主体 id 或名称首匹配
+    #[serde(default)]
+    pub carrier: Option<String>,
 }
 
 // Waybill 共享 zc_id_orde-land，通过 ck_category='waybill' 区分
@@ -612,10 +685,12 @@ impl HasReferenceJoins for Vehicle {
                 display_fields: &["notice", "code"],
             },
             ReferenceJoin {
-                name: "qk_capacity",
+                // 载重 = 模型 `w_capacity`（语义叶 scal-weight / 引用列 qk_w_capacity；
+                // 通用 `capacity`/qk_capacity 不承载车辆载重——用户 2026-09-21 裁决）
+                name: "qk_w_capacity",
                 card: Card::ToOne,
                 kind: JoinKind::Forward {
-                    local_fk: "qk_capacity",
+                    local_fk: "qk_w_capacity",
                     target_key: "id",
                 },
                 target_table: r#"isahl."zc_id_scal-weight""#,
@@ -703,9 +778,10 @@ pub struct TrafficLine {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
-    /// 起讫文本镜像（模型 from→to 语义）；结构化端点为 rr_stop 桥（seq 0=起 / 末=讫）
-    pub _f_: Option<String>,
-    pub _t_: Option<String>,
+    // `_f_`/`_t_` **不在 DTO 中**（ALIOTH_ONTOLOGY_SPEC §4.3）：该两列是生命周期派生对
+    // （功能阶段 设计/实现 × 抽象层级 范例/实例），由 `dk_function.code` 前缀经
+    // `trigger-registry::lifecycle::derive_form_type` 派生，业务层禁读写。
+    // 线路起讫的结构化落点 = `zc_id_stor-traffic_line_rr_stop` 桥（over-seq + ck_category）。
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -728,7 +804,7 @@ impl AliothDbEntity for TrafficLine {
         "\"isahl\".\"zc_id_stor-traffic_line\""
     }
     const SELECT_FIELDS: &'static str =
-        "id, code, notice, comments, \"_f_\", \"_t_\", fk_trustee, qk_path, created_at, updated_at, deleted_at";
+        "id, code, notice, comments, fk_trustee, qk_path, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "traffic_line";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -755,7 +831,12 @@ impl HasReferenceJoins for TrafficLine {
                     target_key: "id",
                 },
                 target_table: r#"isahl."zc_id_geom-path""#,
-                display_fields: &["notice", "code", "ak_nodes"],
+                // `ak_nodes` **不作 display_field**：它是 array_fk（bigint[] 节点 id），
+                // jsonb 直出即 ID_JSON_PRECISION 违规（量级 10^17 > 2^53），且 display_fields
+                // 是「引用行显示值」位（notice/code/mark/date），不承载裸 id 数组。
+                // 途经点真实来源 = `repository::traffic_line::enrich_qk_path_ak_nodes`
+                // （同键覆盖为 {id,name,lng,lat} 对象数组，id 已字符串化）。
+                display_fields: &["notice", "code"],
             },
         ]
     }
@@ -766,9 +847,7 @@ pub struct CreateTrafficLineRequest {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
-    /// 起讫文本镜像（`_f_`=起始地 / `_t_`=目的地；结构化端点为 rr_stop 桥）
-    pub _f_: Option<String>,
-    pub _t_: Option<String>,
+    // 起讫文本不经本 DTO；`_f_`/`_t_` 由 dk_function 派生（§4.3），结构化起讫 = rr_stop 桥。
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -780,9 +859,7 @@ pub struct UpdateTrafficLineRequest {
     pub code: Option<String>,
     pub notice: Option<String>,
     pub comments: Option<String>,
-    /// 起讫文本镜像（`_f_`=起始地 / `_t_`=目的地）
-    pub _f_: Option<String>,
-    pub _t_: Option<String>,
+    // 同 Create：`_f_`/`_t_` 不在请求面（§4.3/§4.3.3 形态 1）。
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -2297,7 +2374,7 @@ impl AliothDbEntity for Fence {
     // 读路径恒空/删路径脱靶——fence-gis 规约禁止）；list/get/update/delete 由
     // FenceRepository 按类型分派三张叶表，本绑定仅作通用路径兜底。
     const SELECT_FIELDS: &'static str = r#"id, notice, code, comments,
-              ST_AsGeoJSON(circle)::jsonb as circle, sk_unit, qk_radius,
+              postgis.ST_AsGeoJSON(circle)::jsonb as circle, sk_unit, qk_radius,
               t_color_, created_at, updated_at, deleted_at"#;
     const ENTITY_NAME: &'static str = "fence";
     const SOFT_DELETE: bool = true;
@@ -2384,7 +2461,8 @@ pub struct Seal {
     pub created_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
-    /// 关联运单号：优先装车条两跳桥（seal→tsp-voucher→orde-traffic）；否则回读投影列
+    /// 关联运单号：优先**直连结构路径**（运输订单↔铅封 `zc_id_orde-traffic_rr_devi-seal`；
+    /// 模型中心 2026-09-15 以该桥替换「经装车条两跳」链）；否则回读投影列
     /// `projection`（管理页新增/编辑关联运单编号，P3 迁移后 comments 不再承载 JSON）
     #[sqlx(default)]
     pub waybill_no: Option<String>,
@@ -2405,13 +2483,13 @@ impl AliothDbEntity for Seal {
            (SELECT c.code FROM "isahl"."zc_id_cate-seal" c
             WHERE c.id = e.ck_category AND c.deleted_at IS NULL) AS seal_type,
            COALESCE(
-             (SELECT w.code FROM "isahl"."zc_id_orde-land" w
-              JOIN "isahl"."zc_id_orde-traffic_rr_tsp-voucher" bv ON bv.ref_left = w.id AND bv.deleted_at IS NULL
-              JOIN "isahl"."zc_id_stat-tsp-voucher" v ON v.id = bv.ref_right AND v.deleted_at IS NULL
-              JOIN "isahl"."zc_id_tsp-voucher_rr_devi-seal" ds ON ds.ref_left = v.id AND ds.deleted_at IS NULL
-              WHERE ds.ref_right = e.id AND w.deleted_at IS NULL LIMIT 1),
+             -- 直连结构路径（运输订单 ↔ 铅封）：ref_left = 运输订单族
+             -- （zc_id_orde-traffic；zc_id_orde-land 为其子叶，查父见子），ref_right = 铅封
+             (SELECT o.code FROM "isahl"."zc_id_orde-traffic" o
+              JOIN "isahl"."zc_id_orde-traffic_rr_devi-seal" ds ON ds.ref_left = o.id AND ds.deleted_at IS NULL
+              WHERE ds.ref_right = e.id AND o.deleted_at IS NULL LIMIT 1),
              -- P3 迁移：管理页新增/编辑关联运单编号直落 projection（文本载荷列；
-             -- comments 不再承载 JSON）；真结构路径（tsp-voucher 两跳桥）写侧属装车条组装
+             -- comments 不再承载 JSON）
              NULLIF(e.projection, '')
            ) AS waybill_no"#;
     const ENTITY_NAME: &'static str = "seal";
@@ -2458,16 +2536,19 @@ pub struct UpdateSealRequest {
     pub waybill_id: Option<i64>,
 }
 
-/// 批量创建铅封请求（POST /seals/batch；add-wz-seal-batch-creation，
-/// refactor-dispatch-seal-code-generation 重构：去字典 o_number 依赖）
+/// 批量创建铅封请求（POST /seals/batch）
 ///
-/// `sealType` 为铅封类型 code（固定常量列表，编号前缀）；`count` 缺省 1（1=单号、N=连号）。
-/// `startCode` 缺省 → code 前缀自动续号（`<CODE>-000N`，服务端取该前缀最大尾部序号 +1）；
-/// `startCode` 显式 → 从起始号等宽递增（铅封管理页手输场景保留）。
+/// 字段分列（用户裁决 2026-09-15，解除 `sealType` 一词两义）：
+/// - `sealType` = 铅封类型 code（字典 `zc_id_cate-seal`），落 `zc_id_devi-seal.ck_category`；
+///   字典行 `o_number` 为合法正整数时声明该类型批量规模（缺省 `count` 取此值）
+/// - `codePrefix` = 编号前缀：无 `startCode` 时按 `<PREFIX>-000N` 自动续号（前缀不依赖字典）
+/// - `startCode` = 显式起始号（含前缀 + 数字段），优先于 `codePrefix`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSealBatchRequest {
     pub seal_type: Option<String>,
+    /// 连号前缀（自动续号用；与 `startCode` 二选一，`startCode` 优先）
+    pub code_prefix: Option<String>,
     pub start_code: Option<String>,
     pub count: Option<i64>,
     pub notice: Option<String>,

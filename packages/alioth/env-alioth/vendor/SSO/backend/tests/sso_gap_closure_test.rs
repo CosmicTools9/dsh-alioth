@@ -208,7 +208,14 @@ async fn audit_ingest_endpoint() {
     .await;
     assert_eq!(resp.status().as_u16(), 201, "audit ingest returns 201");
     let body: serde_json::Value = test::read_body_json(resp).await;
-    assert!(body["id"].as_i64().is_some(), "returns event id");
+    // ID_JSON_PRECISION：id 以字符串下发
+    assert!(
+        body["id"]
+            .as_str()
+            .and_then(|v| v.parse::<i64>().ok())
+            .is_some(),
+        "returns event id"
+    );
 
     // 自然人令牌摄入 → 403（防伪造审计）
     let user_token = mint_token(&ast, 70201, "audit@example.com");

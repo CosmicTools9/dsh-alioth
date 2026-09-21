@@ -34,6 +34,51 @@ const CERT_KINDS: &[(&str, &str)] = &[
     ("marriage", "zc_id_prod-marriage_cert-sales"),
 ];
 
+/// 证书叶表 → 业务键预检 SQL（编译期固化：表名是字面量，正文单一来源）
+macro_rules! cert_dup_check_sql {
+    ($table:literal) => {
+        concat!(
+            "SELECT EXISTS(SELECT 1 FROM isahl.\"",
+            $table,
+            "\" WHERE code = $1 AND deleted_at IS NULL)"
+        )
+    };
+}
+
+const CERT_DUP_CHECK_SQL: &[(&str, &str)] = &[
+    (
+        "zc_id_prod-digital_cert-sales",
+        cert_dup_check_sql!("zc_id_prod-digital_cert-sales"),
+    ),
+    (
+        "zc_id_prod-type_cert-sales",
+        cert_dup_check_sql!("zc_id_prod-type_cert-sales"),
+    ),
+    (
+        "zc_id_prod-air_cert-sales",
+        cert_dup_check_sql!("zc_id_prod-air_cert-sales"),
+    ),
+    (
+        "zc_id_prod-diploma-sales",
+        cert_dup_check_sql!("zc_id_prod-diploma-sales"),
+    ),
+    (
+        "zc_id_prod-marriage_cert-sales",
+        cert_dup_check_sql!("zc_id_prod-marriage_cert-sales"),
+    ),
+];
+
+/// 未列叶回落（与下方 INSERT 路由 `_` 臂同口径：marriage_cert-sales）
+const CERT_DUP_CHECK_FALLBACK: &str = cert_dup_check_sql!("zc_id_prod-marriage_cert-sales");
+
+fn cert_dup_check_sql_for(leaf: &str) -> &'static str {
+    CERT_DUP_CHECK_SQL
+        .iter()
+        .find(|(t, _)| *t == leaf)
+        .map(|(_, sql)| *sql)
+        .unwrap_or(CERT_DUP_CHECK_FALLBACK)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AcquireCertificateRequest {
     /// 证书名称（notice）
@@ -136,15 +181,13 @@ pub async fn acquire(
     })?;
 
     // dk 坐标解析（形态 1 派生源）
-    let dk = ontology_binding::resolve_conn(&mut *tx, TITLE_COORDS)
+    let dk = ontology_binding::resolve_conn(&mut tx, TITLE_COORDS)
         .await
         .map_err(ApiError::from_sqlx)?;
 
     // 业务键预检（code 无库级唯一索引——fail-closed 拒绝重复取得）
-    let dup_sql = format!(
-        r#"SELECT EXISTS(SELECT 1 FROM isahl."{leaf}" WHERE code = $1 AND deleted_at IS NULL)"#
-    );
-    let dup: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(dup_sql.as_str()))
+    let dup_sql = cert_dup_check_sql_for(&leaf);
+    let dup: bool = sqlx::query_scalar(dup_sql)
         .bind(&body.code)
         .fetch_one(&mut *tx)
         .await
@@ -160,7 +203,7 @@ pub async fn acquire(
     let cert_id: i64 = match leaf.as_str() {
         "zc_id_prod-digital_cert-sales" => sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prod-digital_cert-sales"
-                   (id, code, notice, ck_category, dk_scene, dk_factor, dk_function, created_by_id)
+                   (id, code, notice, "ck_cate-cert", dk_scene, dk_factor, dk_function, created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(&body.code)
@@ -175,7 +218,7 @@ pub async fn acquire(
         .map_err(ApiError::from_sqlx)?,
         "zc_id_prod-type_cert-sales" => sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prod-type_cert-sales"
-                   (id, code, notice, ck_category, dk_scene, dk_factor, dk_function, created_by_id)
+                   (id, code, notice, "ck_cate-cert", dk_scene, dk_factor, dk_function, created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(&body.code)
@@ -190,7 +233,7 @@ pub async fn acquire(
         .map_err(ApiError::from_sqlx)?,
         "zc_id_prod-air_cert-sales" => sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prod-air_cert-sales"
-                   (id, code, notice, ck_category, dk_scene, dk_factor, dk_function, created_by_id)
+                   (id, code, notice, "ck_cate-cert", dk_scene, dk_factor, dk_function, created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(&body.code)
@@ -205,7 +248,7 @@ pub async fn acquire(
         .map_err(ApiError::from_sqlx)?,
         "zc_id_prod-diploma-sales" => sqlx::query_scalar(
             r#"INSERT INTO isahl."zc_id_prod-diploma-sales"
-                   (id, code, notice, ck_category, dk_scene, dk_factor, dk_function, created_by_id)
+                   (id, code, notice, "ck_cate-cert", dk_scene, dk_factor, dk_function, created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
         )
         .bind(&body.code)
@@ -222,7 +265,7 @@ pub async fn acquire(
             // marriage（marriage_cert-sales）
             sqlx::query_scalar(
                 r#"INSERT INTO isahl."zc_id_prod-marriage_cert-sales"
-                   (id, code, notice, ck_category, dk_scene, dk_factor, dk_function, created_by_id)
+                   (id, code, notice, "ck_cate-cert", dk_scene, dk_factor, dk_function, created_by_id)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7) RETURNING id"#,
             )
             .bind(&body.code)
@@ -241,7 +284,7 @@ pub async fn acquire(
     // 初始物权凭证（同事务；幂等：同 voucher code 已存在则跳过）
     let voucher_code = format!("TTL-SUBJ{subject_id}-CERT{}", body.code);
     trigger_registry::stock_materialization::create_title_voucher_tx(
-        &mut *tx,
+        &mut tx,
         subject_id,
         cert_id,
         &voucher_code,
@@ -273,6 +316,9 @@ pub async fn acquire(
 }
 
 /// 持有证书查询核心：mv_title_ownership × 证书族（纸质/数字化聚合）
+///
+/// 叶表名（`kind`）取 `pg_class.relname`——UNION 各分支只投影 `t.tableoid AS kind_oid`，
+/// 外层**一次**解析（10 分支各写一次 `tableoid::regclass::text` 会随连接 `search_path` 逐连接漂移）。
 pub async fn held(pool: &PgPool, subject_id: i64) -> Result<Vec<SubjectCertificate>, ApiError> {
     let certs: Vec<SubjectCertificate> = sqlx::query_as::<
         _,
@@ -286,70 +332,73 @@ pub async fn held(pool: &PgPool, subject_id: i64) -> Result<Vec<SubjectCertifica
             i64,
             chrono::DateTime<chrono::Utc>,
         ),
-    >(
-        r#"SELECT * FROM (
-             SELECT t.id, t.tableoid::regclass::text AS kind, t.notice AS name, t.code,
+    >(concat!(
+        r#"SELECT c.id, "#,
+        common::leaf_relname!(c, kind_oid),
+        r#" AS kind, c.name, c.code, c.category, c.net_qty, c.voucher_count, c.first_voucher_at
+           FROM (
+             SELECT t.id, t.tableoid AS kind_oid, t.notice AS name, t.code,
                     cc.notice AS category, o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-certificate" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
-             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t.ck_category
+             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t."ck_cate-cert"
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, cc.notice,
+             SELECT t.id, t.tableoid, t.notice, t.code, cc.notice,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-digital_cert-sales" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
-             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t.ck_category
+             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t."ck_cate-cert"
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, cc.notice,
+             SELECT t.id, t.tableoid, t.notice, t.code, cc.notice,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-type_cert-sales" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
-             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t.ck_category
+             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t."ck_cate-cert"
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, cc.notice,
+             SELECT t.id, t.tableoid, t.notice, t.code, cc.notice,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-air_cert-sales" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
-             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t.ck_category
+             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t."ck_cate-cert"
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, cc.notice,
+             SELECT t.id, t.tableoid, t.notice, t.code, cc.notice,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-diploma-sales" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
-             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t.ck_category
+             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t."ck_cate-cert"
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, cc.notice,
+             SELECT t.id, t.tableoid, t.notice, t.code, cc.notice,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-marriage_cert-sales" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
-             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t.ck_category
+             LEFT JOIN isahl."zc_id_cate-certification" cc ON cc.id = t."ck_cate-cert"
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, NULL::text,
+             SELECT t.id, t.tableoid, t.notice, t.code, NULL::text,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-license" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, NULL::text,
+             SELECT t.id, t.tableoid, t.notice, t.code, NULL::text,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-license-purchase" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
              WHERE t.deleted_at IS NULL
              UNION ALL
-             SELECT t.id, t.tableoid::regclass::text, t.notice, t.code, NULL::text,
+             SELECT t.id, t.tableoid, t.notice, t.code, NULL::text,
                     o.net_qty::float8, o.voucher_count, o.first_voucher_at
              FROM isahl."zc_id_prod-license-sales" t
              JOIN isahl.mv_title_ownership o ON o.production_id = t.id AND o.subject_id = $1 AND o.net_qty > 0
              WHERE t.deleted_at IS NULL
-           ) held
-           ORDER BY first_voucher_at DESC"#,
-    )
+           ) c
+           ORDER BY c.first_voucher_at DESC"#
+    ))
     .bind(subject_id)
     .fetch_all(pool)
     .await

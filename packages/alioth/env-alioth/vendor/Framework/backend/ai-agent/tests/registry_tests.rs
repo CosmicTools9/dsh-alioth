@@ -652,7 +652,7 @@ async fn test_tool_orchestrator_streaming_emits_events_and_final() {
     assert!(!result.truncated);
     assert_eq!(result.steps_taken, 2);
     assert_eq!(result.tool_calls.len(), 1);
-    assert_eq!(result.tool_calls[0].success, true);
+    assert!(result.tool_calls[0].success);
     assert_eq!(
         result.usage,
         TokenUsage {

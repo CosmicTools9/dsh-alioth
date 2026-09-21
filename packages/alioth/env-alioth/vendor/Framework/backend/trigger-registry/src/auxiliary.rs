@@ -49,12 +49,28 @@ impl TriggerTemplate for ProductionAfterTemplate {
         };
 
         let mut result = TriggerResult::new();
-        for col in ["fk_demand", "fk_goods", "fk_deal", "fk_delivery"] {
-            result = result.with_side_effect(crate::SideEffect::RawSql(format!(
-                r#"UPDATE isahl."zc_id_deta-trade_order" SET {} = {}, updated_at = NOW() WHERE {} = {}"#,
-                col, new_id, col, prev_id
-            )));
+        // 列名闭集（常量数组）⇒ 编译期固化进 SQL（`concat!` 宏）；id 值仍按原口径内联。
+        // 原实现 `for col in […] { format!("… SET {} = {} …", col, …) }` 的表名/列名均在
+        // 运行期拼装；此处把列名移到编译期，SQL 文本逐字节不变。
+        macro_rules! relink_demand {
+            ($col:literal) => {{
+                let sql = format!(
+                    concat!(
+                        "UPDATE isahl.\"zc_id_deta-trade_order\" SET ",
+                        $col,
+                        " = {}, updated_at = NOW() WHERE ",
+                        $col,
+                        " = {}"
+                    ),
+                    new_id, prev_id
+                );
+                result = result.with_side_effect(crate::SideEffect::RawSql(sql));
+            }};
         }
+        relink_demand!("fk_demand");
+        relink_demand!("fk_goods");
+        relink_demand!("fk_deal");
+        relink_demand!("fk_delivery");
         Ok(result)
     }
 }
@@ -104,7 +120,7 @@ impl TriggerTemplate for ProductionDeleteTemplate {
             id
         )));
         result = result.with_side_effect(crate::SideEffect::RawSql(format!(
-            r#"DELETE FROM isahl."zc_id_stat-sto-voucher" WHERE fk_production = {}"#,
+            r#"DELETE FROM isahl."zc_id_stat-sto-voucher" WHERE {{title_col}} = {}"#,
             id
         )));
         Ok(result)

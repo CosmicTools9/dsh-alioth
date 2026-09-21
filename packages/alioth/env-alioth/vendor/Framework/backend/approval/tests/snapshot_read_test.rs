@@ -38,7 +38,7 @@ async fn test_user(pool: &sqlx::PgPool) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'sn-test', 'sn-test', 'sn@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -143,8 +143,8 @@ async fn runtime_uses_published_snapshot_not_draft_meta() {
             {"id": "n-cond", "type": "condition", "label": "VIP 判断",
              "expr": "code == 'VIP'",
              "next": [{"to": 2, "cond": "code == 'VIP'"}, {"to": 3}]},
-            {"id": "n-vip", "type": "approve", "label": "VIP 审批"},
-            {"id": "n-other", "type": "approve", "label": "普通审批"},
+            {"id": "n-vip", "type": "approve", "label": "VIP 审批", "next": [{"to": 4}]},
+            {"id": "n-other", "type": "approve", "label": "普通审批", "next": [{"to": 4}]},
             {"id": "n-end", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });

@@ -61,7 +61,7 @@ impl AliothDbEntity for StockStat {
 pub struct Voucher {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
-    /// 货（fk_production）
+    /// 货/交易对象（「物」列：新模型 `fk_payload` / 旧模型 `fk_production`，读列运行期自适应）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub production_id: Option<i64>,
     /// 出库位（fk_subj-storage）
@@ -101,8 +101,15 @@ impl AliothDbEntity for Voucher {
         r#"isahl."zc_id_stat-sto-voucher""#
     }
 
+    // 「物/交易对象」列随模型演进（新模型 `fk_payload` / 旧模型 `fk_production`）：
+    // `SELECT_FIELDS` 是框架编译期常量（QueryBuilder 直出 SELECT，无运行期替换缝），
+    // 故以 JSONB 动态取键——列不存在时 `->>` 返回 NULL 而非解析错误，两态同一常量可执行；
+    // 优先当前模型列 `fk_payload`，回落旧列 `fk_production`。别名 `e` = QueryBuilder 的
+    // `FROM {} AS e`（本实体读路径仅经 QueryBuilder）。
     const SELECT_FIELDS: &'static str = concat!(
-        r#"id, fk_production AS production_id, "fk_subj-storage" AS from_storage_id, "#,
+        r#"id, COALESCE((to_jsonb(e)->>'fk_payload')::bigint, "#,
+        r#"(to_jsonb(e)->>'fk_production')::bigint) AS production_id, "#,
+        r#""fk_subj-storage" AS from_storage_id, "#,
         r#""fk_obj-storage" AS to_storage_id, qk_qty AS qty, qk_income AS income, "#,
         r#"qk_outgo AS outgo, qk_pre_balance AS pre_balance, qk_balance AS balance, "#,
         r#"created_at, updated_at, deleted_at"#

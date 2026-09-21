@@ -207,7 +207,7 @@ async fn apply_onboarding_approved(
     // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：自然人叶行落 dk 三元组；
     // 解析失败降级 NULL（不阻断创建，与既有错误面一致）
     let (dk_scene, dk_factor, dk_function) =
-        match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkTxFjaGg).await {
+        match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::TxFjaGg).await {
             Ok(v) => v,
             Err(e) => {
                 common::telemetry::warn!("employee-onboarding: dk 坐标解析失败: {}", e);
@@ -291,8 +291,7 @@ async fn apply_onboarding_approved(
         // 叶表坐标（§6.12 声明即必须）：prot 配置族 = JE/GEC/↑_DA（同族先例 prot-env_config /
         // prot-oss_config）；维度缺行 → NULL 降级（BACKEND_FRAMEWORK §7.3.3）
         let (dk_scene, dk_factor, dk_function) =
-            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJeGecDa)
-                .await
+            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JeGecDa).await
             {
                 Ok(c) => c,
                 Err(e) => {

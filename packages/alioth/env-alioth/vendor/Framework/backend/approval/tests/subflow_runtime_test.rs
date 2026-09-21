@@ -181,7 +181,8 @@ fn parent_graph(target: &str, wait: bool) -> Value {
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             sub,
-            {"id": "b", "type": "approval", "label": "父后续", "mode": "or_sign"}
+            {"id": "b", "type": "approval", "label": "父后续", "mode": "or_sign", "next": [{"to": 3}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     })
 }

@@ -84,6 +84,62 @@ impl ContactsService {
         }))
     }
 
+    /// 联系方式（`zc_id_contact_infos`）→ 所属联系人（`zc_id_contacts`）id。
+    ///
+    /// 方向契约：消息层身份空间是**联系方式** id（`zc_id_message."fk_sender-addr"`
+    /// 与参与方关系叶的 `ref_right`），联系人（`zc_id_contacts`）是聚合层产物；
+    /// 本函数即该聚合的反向单跳（经 `zc_id_contacts_rr_infos`，`default_info` 优先）。
+    /// 多命中按同一择一规则取首选；无行 → None。
+    pub async fn resolve_contact_of_info(
+        pool: &PgPool,
+        info_id: i64,
+    ) -> Result<Option<i64>, String> {
+        let row: Option<i64> = sqlx::query_scalar(
+            r#"
+            SELECT cri.ref_left
+              FROM isahl."zc_id_contacts_rr_infos" cri
+              JOIN isahl.zc_id_contacts c ON c.id = cri.ref_left
+             WHERE cri.ref_right = $1
+               AND cri.deleted_at IS NULL
+               AND c.deleted_at IS NULL
+             ORDER BY cri.default_info DESC NULLS LAST, cri.ref_left
+             LIMIT 1
+            "#,
+        )
+        .bind(info_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("resolve contact of info failed: {}", e))?;
+        Ok(row)
+    }
+
+    /// 联系人（`zc_id_contacts`）→ 首选联系方式（`zc_id_contact_infos`）id。
+    ///
+    /// 与 `resolve_user_contact` 同一择一规则（`default_info` 优先），供消息参与方
+    /// 写入（AI 回复收件人 = 对话方首选联系方式）使用。无联系方式 → None。
+    pub async fn resolve_preferred_info(
+        pool: &PgPool,
+        contact_id: i64,
+    ) -> Result<Option<i64>, String> {
+        let row: Option<i64> = sqlx::query_scalar(
+            r#"
+            SELECT ci.id
+              FROM isahl."zc_id_contacts_rr_infos" cri
+              JOIN isahl.zc_id_contact_infos ci ON ci.id = cri.ref_right
+             WHERE cri.ref_left = $1
+               AND cri.deleted_at IS NULL
+               AND ci.deleted_at IS NULL
+             ORDER BY cri.default_info DESC NULLS LAST, ci.id
+             LIMIT 1
+            "#,
+        )
+        .bind(contact_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("resolve preferred info failed: {}", e))?;
+        Ok(row)
+    }
+
     /// 获取联系人列表（含全部关联信息，支持分页）
     pub async fn list_contacts(
         pool: &PgPool,
@@ -189,7 +245,7 @@ impl ContactsService {
         };
         // 叶表坐标（§6.12）：联系人行 dk 经静态绑定解析（禁硬编码 ZUID）
         let (dk_scene, dk_factor, dk_function) =
-            ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+            ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG"))
                 .await
                 .map_err(|e| format!("resolve contact coords failed: {}", e))?;
         let contact_id: i64 = sqlx::query_scalar(
@@ -350,11 +406,12 @@ impl ContactsService {
     /// 按 ID 获取单条联系人
     async fn get_contact_by_id(pool: &PgPool, id: i64) -> Result<Option<ContactInfo>, String> {
         let refs_suffix = crud::reference::build_refs_select_suffix::<ContactsEntity>();
+        // 表名编译期固化（字面量与 `ContactsEntity::table_name()` 同源，禁运行期拼表名）；
+        // 两个 `{}` 为列清单占位（fields / _refs 后缀），非表名。
         let sql = format!(
-            "SELECT {} {} FROM {} AS e WHERE e.id = $1 AND e.deleted_at IS NULL",
+            r#"SELECT {} {} FROM isahl."zc_id_contacts" AS e WHERE e.id = $1 AND e.deleted_at IS NULL"#,
             ContactsEntity::SELECT_FIELDS,
             refs_suffix,
-            ContactsEntity::table_name(),
         );
         let entity: Option<ContactsEntity> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
             .bind(id)
@@ -386,14 +443,14 @@ impl ContactsService {
         // 叶表坐标（§6.12）：联系方式叶表（zc_id_contact_infos 族）dk 经静态绑定解析
         // （禁硬编码 ZUID；与同文件 zc_id_contacts / zc_id_info-postal 同款三元组）
         let (dk_scene, dk_factor, dk_function) =
-            ontology_binding::resolve_conn(&mut **executor, ("TX", "FJA", "↓_GG"))
+            ontology_binding::resolve_conn(executor, ("TX", "FJA", "↓_GG"))
                 .await
                 .map_err(|e| format!("resolve contact info coords failed: {}", e))?;
         // zc_id_info-isahl（站内信）语义独立于其余联系方式叶表：declared 源为
         // trigger-registry/src/entity.rs 的 notice 解析（场所标识/消息账号/通讯联系）
         // → RR/PFA/↓_MA（三码已 DB 实证存在）。禁硬编码 ZUID。
         let (isahl_scene, isahl_factor, isahl_function) =
-            ontology_binding::resolve_conn(&mut **executor, ("RR", "PFA", "↓_MA"))
+            ontology_binding::resolve_conn(executor, ("RR", "PFA", "↓_MA"))
                 .await
                 .map_err(|e| format!("resolve info-isahl coords failed: {}", e))?;
         let info_id = match kind {
@@ -459,6 +516,34 @@ impl ContactsService {
             .map_err(|e| format!("create zipcode info failed: {}", e))?,
             other => return Err(format!("unknown info kind: {}", other)),
         };
+
+        // 批注 76ddc317 / 18f2a80a：默认唯一性——同一联系人下**每个分类至多一个默认**。
+        // 分类判据 = 值行所在叶表（`zc_id_contact_infos.tableoid`）：kind 归一已在上一段完成
+        // （mobile→telephone、fax→postal、wechat/qq→im），故「同叶表」等价于「同分类」，
+        // 与读径（`resolve_preferred_info` / `resolve_user_contact` 按 `default_info` 优先取一条）
+        // 同源，不另立分类定义。同分类出现多个 `is_default` 时**后写入者胜出**（payload 顺序）。
+        if info.is_default {
+            sqlx::query(
+                r#"UPDATE isahl."zc_id_contacts_rr_infos" ri
+                      SET default_info = FALSE, updated_at = now()
+                    WHERE ri.ref_left = $1
+                      AND ri.deleted_at IS NULL
+                      AND ri.default_info
+                      AND ri.ref_right <> $2
+                      AND ri.ref_right IN (
+                            SELECT ci.id FROM isahl.zc_id_contact_infos ci
+                             WHERE ci.deleted_at IS NULL
+                               AND ci.tableoid = (
+                                     SELECT tableoid FROM isahl.zc_id_contact_infos WHERE id = $2
+                                   )
+                          )"#,
+            )
+            .bind(contact_id)
+            .bind(info_id)
+            .execute(&mut **executor)
+            .await
+            .map_err(|e| format!("unset same-kind defaults failed: {}", e))?;
+        }
 
         // 关联到联系人
         sqlx::query(

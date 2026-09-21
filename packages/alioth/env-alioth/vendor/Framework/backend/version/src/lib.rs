@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{AssertSqlSafe, PgPool, Row};
+use sqlx::{PgPool, Row};
 
 pub mod error;
 pub use error::{VersionError, VersionResult};
@@ -31,13 +31,17 @@ pub use git::{detect_backend, BackendKind, Capability, GitBackend, MemoryBackend
 pub struct VersionRecord {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub tk_version: Option<i64>,
     pub x_version: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub reversion: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_previous: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub ck_branch: Option<i64>,
     pub majority: Option<String>,
@@ -47,6 +51,7 @@ pub struct VersionRecord {
     /// Git commit OID（hex）
     pub git_oid: Option<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub created_by_id: Option<i64>,
 }
@@ -59,10 +64,107 @@ pub struct VersionDiff {
     pub new_value: Option<Value>,
 }
 
+// ---------------------------------------------------------------------------
+// 版本表静态 SQL 族
+// ---------------------------------------------------------------------------
+
+/// 版本表族的五条语句。表名在**编译期**由 `concat!` 固化（运行期不拼串、
+/// 无 `AssertSqlSafe`）；SQL 正文单一来源（宏内一处）。
+struct VersionTableSql {
+    /// 读取单行（`create_version` 当前行 / `rollback` 目标行）
+    select_row: &'static str,
+    /// 复制当前行、链式递增版本号并回挂 `fk_previous`
+    insert_chain: &'static str,
+    /// 递归追溯 `fk_previous` 版本链（同表两处引用）
+    chain_recursive: &'static str,
+    /// 回滚：更新实体行的 `fk_previous`
+    update_previous: &'static str,
+    /// 单行 JSON（`diff` 两侧）
+    row_json: &'static str,
+}
+
+/// 裸表名 → 静态语句句柄
+macro_rules! version_table_sql {
+    ($table:literal) => {
+        VersionTableSql {
+            select_row: concat!("SELECT * FROM isahl.\"", $table, "\" WHERE id = $1"),
+            insert_chain: concat!(
+                "INSERT INTO isahl.\"",
+                $table,
+                "\" (notice, code, comments, dk_scene, dk_factor, dk_function, ",
+                "tk_version, reversion, fk_previous, ck_branch, majority, sprint, created_by_id) ",
+                "SELECT notice, code, comments, dk_scene, dk_factor, dk_function, ",
+                "COALESCE(tk_version, 0) + 1, COALESCE(reversion, 0) + 1, ",
+                "id, ck_branch, majority, sprint, $1 ",
+                "FROM isahl.\"",
+                $table,
+                "\" WHERE id = $2 ",
+                "RETURNING id, tk_version, x_version, reversion, fk_previous, ck_branch, ",
+                "majority, sprint, created_at, created_by_id"
+            ),
+            chain_recursive: concat!(
+                "WITH RECURSIVE version_chain AS ( ",
+                "SELECT id, tk_version, x_version, reversion, fk_previous, ck_branch, majority, ",
+                "sprint, created_at, created_by_id, 0 AS depth ",
+                "FROM isahl.\"",
+                $table,
+                "\" WHERE id = $1 ",
+                "UNION ALL ",
+                "SELECT v.id, v.tk_version, v.x_version, v.reversion, v.fk_previous, v.ck_branch, ",
+                "v.majority, v.sprint, v.created_at, v.created_by_id, vc.depth + 1 ",
+                "FROM isahl.\"",
+                $table,
+                "\" v ",
+                "JOIN version_chain vc ON v.id = vc.fk_previous WHERE vc.depth < 100 ) ",
+                "SELECT * FROM version_chain ORDER BY depth"
+            ),
+            update_previous: concat!(
+                "UPDATE isahl.\"",
+                $table,
+                "\" SET fk_previous = $1, updated_at = NOW() WHERE id = $2 ",
+                "RETURNING id, tk_version, x_version, reversion, fk_previous, ck_branch, ",
+                "majority, sprint, created_at, created_by_id"
+            ),
+            row_json: concat!(
+                "SELECT row_to_json(t.*)::text FROM isahl.\"",
+                $table,
+                "\" t WHERE id = $1"
+            ),
+        }
+    };
+}
+
+/// 版本表族成员（键 = `VersionService::version_table_name()` 返回值）。
+/// 族成员新增 = 在此加一行；未登记的表 fail-visible（不回落、不静默拼串）。
+macro_rules! version_table_sqls {
+    ($($table:literal),+ $(,)?) => {
+        &[$((
+            $table,
+            version_table_sql!($table),
+        )),+]
+    };
+}
+
+const VERSION_TABLE_SQLS: &[(&str, VersionTableSql)] = version_table_sqls![
+    // 全仓 `VersionService` 实现所声明的表（含测试实现）
+    "zc_id_version",
+    "zc_id_even-modify",
+    "zc_id_project",
+];
+
+/// 解析版本表静态句柄（未登记 → `InvalidOperation`，不回落、不静默）。
+fn version_table_sql(table: &str) -> VersionResult<&'static VersionTableSql> {
+    VERSION_TABLE_SQLS
+        .iter()
+        .find(|(t, _)| *t == table)
+        .map(|(_, sql)| sql)
+        .ok_or_else(|| VersionError::InvalidOperation(format!("未登记的版本表: {table}")))
+}
+
 /// 版本控制服务 trait（面向 zc_id_version 子表）
 #[async_trait]
 pub trait VersionService: Send + Sync {
-    /// 业务表名（如 "zc_id_process"）
+    /// 业务表名（须为文件内 `VERSION_TABLE_SQLS` 登记的表，如 `zc_id_project`）
     fn version_table_name(&self) -> &'static str;
 
     /// 创建新版本：复制当前行，更新 fk_previous 链
@@ -74,15 +176,13 @@ pub trait VersionService: Send + Sync {
         _comment: Option<String>,
     ) -> VersionResult<VersionRecord> {
         let table = self.version_table_name();
+        let sqls = version_table_sql(table)?;
         // 获取当前行的所有列
-        let current = sqlx::query(AssertSqlSafe(format!(
-            r#"SELECT * FROM isahl."{}" WHERE id = $1"#,
-            table
-        )))
-        .bind(_entity_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let current = sqlx::query(sqls.select_row)
+            .bind(_entity_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(VersionError::from)?;
 
         if current.is_none() {
             return Err(VersionError::NotFound(format!(
@@ -92,24 +192,12 @@ pub trait VersionService: Send + Sync {
         }
 
         // INSERT 新行，拷贝当前行数据，fk_previous 指向旧 id
-        let row = sqlx::query(
-            AssertSqlSafe(format!(
-                r#"
-                INSERT INTO isahl."{}" (notice, code, comments, dk_scene, dk_factor, dk_function,
-                    tk_version, reversion, fk_previous, ck_branch, majority, sprint, created_by_id)
-                SELECT notice, code, comments, dk_scene, dk_factor, dk_function,
-                    COALESCE(tk_version, 0) + 1, COALESCE(reversion, 0) + 1,
-                    id, ck_branch, majority, sprint, $1
-                FROM isahl."{}" WHERE id = $2
-                RETURNING id, tk_version, x_version, reversion, fk_previous, ck_branch, majority, sprint, created_at, created_by_id
-                "#,
-                table, table
-            )))
-        .bind(x_version)
-        .bind(_entity_id)
-        .fetch_one(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let row = sqlx::query(sqls.insert_chain)
+            .bind(x_version)
+            .bind(_entity_id)
+            .fetch_one(pool)
+            .await
+            .map_err(VersionError::from)?;
 
         Ok(parse_version_record(&row)?)
     }
@@ -121,28 +209,13 @@ pub trait VersionService: Send + Sync {
         entity_id: i64,
     ) -> VersionResult<Vec<VersionRecord>> {
         let table = self.version_table_name();
-        let rows = sqlx::query(
-            AssertSqlSafe(format!(
-                r#"
-                WITH RECURSIVE version_chain AS (
-                    SELECT id, tk_version, x_version, reversion, fk_previous, ck_branch, majority, sprint, created_at, created_by_id, 0 AS depth
-                    FROM isahl."{}"
-                    WHERE id = $1
-                    UNION ALL
-                    SELECT v.id, v.tk_version, v.x_version, v.reversion, v.fk_previous, v.ck_branch, v.majority, v.sprint, v.created_at, v.created_by_id, vc.depth + 1
-                    FROM isahl."{}" v
-                    JOIN version_chain vc ON v.id = vc.fk_previous
-                    WHERE vc.depth < 100
-                )
-                SELECT * FROM version_chain ORDER BY depth
-                "#,
-                table, table
-            )))
-        .bind(entity_id)
-        .bind(entity_id)
-        .fetch_all(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let sqls = version_table_sql(table)?;
+        let rows = sqlx::query(sqls.chain_recursive)
+            .bind(entity_id)
+            .bind(entity_id)
+            .fetch_all(pool)
+            .await
+            .map_err(VersionError::from)?;
 
         rows.iter().map(parse_version_record).collect()
     }
@@ -155,15 +228,14 @@ pub trait VersionService: Send + Sync {
         target_version_id: i64,
     ) -> VersionResult<VersionRecord> {
         let table = self.version_table_name();
+        let sqls = version_table_sql(table)?;
 
         // 获取目标版本的数据
-        let target = sqlx::query(AssertSqlSafe(
-            format!(r#"SELECT * FROM isahl."{}" WHERE id = $1"#, table).as_str(),
-        ))
-        .bind(target_version_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let target = sqlx::query(sqls.select_row)
+            .bind(target_version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(VersionError::from)?;
 
         if target.is_none() {
             return Err(VersionError::NotFound(format!(
@@ -173,22 +245,12 @@ pub trait VersionService: Send + Sync {
         }
 
         // 更新当前实体，标记为回滚版本
-        let row = sqlx::query(
-            AssertSqlSafe(format!(
-                r#"
-                UPDATE isahl."{}"
-                SET fk_previous = $1,
-                    updated_at = NOW()
-                WHERE id = $2
-                RETURNING id, tk_version, x_version, reversion, fk_previous, ck_branch, majority, sprint, created_at, created_by_id
-                "#,
-                table
-            )))
-                .bind(entity_id)
-        .bind(target_version_id)
-        .fetch_one(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let row = sqlx::query(sqls.update_previous)
+            .bind(entity_id)
+            .bind(target_version_id)
+            .fetch_one(pool)
+            .await
+            .map_err(VersionError::from)?;
 
         Ok(parse_version_record(&row)?)
     }
@@ -201,24 +263,19 @@ pub trait VersionService: Send + Sync {
         version_b_id: i64,
     ) -> VersionResult<Vec<VersionDiff>> {
         let table = self.version_table_name();
+        let sqls = version_table_sql(table)?;
 
-        let a_json_str: String = sqlx::query_scalar(AssertSqlSafe(format!(
-            r#"SELECT row_to_json(t.*)::text FROM isahl."{}" t WHERE id = $1"#,
-            table
-        )))
-        .bind(version_a_id)
-        .fetch_one(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let a_json_str: String = sqlx::query_scalar(sqls.row_json)
+            .bind(version_a_id)
+            .fetch_one(pool)
+            .await
+            .map_err(VersionError::from)?;
 
-        let b_json_str: String = sqlx::query_scalar(AssertSqlSafe(format!(
-            r#"SELECT row_to_json(t.*)::text FROM isahl."{}" t WHERE id = $1"#,
-            table
-        )))
-        .bind(version_b_id)
-        .fetch_one(pool)
-        .await
-        .map_err(VersionError::from)?;
+        let b_json_str: String = sqlx::query_scalar(sqls.row_json)
+            .bind(version_b_id)
+            .fetch_one(pool)
+            .await
+            .map_err(VersionError::from)?;
 
         let a_json: serde_json::Value = serde_json::from_str(&a_json_str)
             .map_err(|e| VersionError::InvalidOperation(format!("JSON parse A: {}", e)))?;

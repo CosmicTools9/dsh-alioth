@@ -133,6 +133,23 @@ fn quote_ident(s: &str) -> String {
     format!(r#""{}""#, s)
 }
 
+/// 「桥接行与目标行均未软删」谓词——Junction / OrderedJunction 聚合专用。
+///
+/// Alioth 模型表恒带审计块 `deleted_at`（实测 4 个命名空间库 `isahl` schema 972/972 表齐全，
+/// 且 Junction 系关联的桥接表/目标表全在该 schema），故引用聚合可按存活性过滤。
+/// **缺此谓词时软删后重插的桥接行会累积进 `_refs`**（实测：同一联系人连续 PUT →
+/// 响应 `infos` 出现两份同值电话，保存次数越多越累积，观感为「修改变新增」）。
+/// `Forward` / `Reverse` / `ArrayFk` 不适用——其目标可为 `isahl_auth` 等无 `deleted_at` 的表。
+fn junction_alive_predicate(jt: &str, target_alias: &str) -> String {
+    format!(
+        " AND {}.{} IS NULL AND {}.{} IS NULL",
+        jt,
+        quote_ident("deleted_at"),
+        target_alias,
+        quote_ident("deleted_at")
+    )
+}
+
 impl ReferenceJoin {
     /// 渲染为 SQL 片段
     ///
@@ -149,6 +166,10 @@ impl ReferenceJoin {
             .map(|f| format!("'{}', {}.{}", f, alias, quote_ident(f)))
             .collect::<Vec<_>>()
             .join(", ");
+
+        // 桥接行/目标行存活性谓词（仅 Junction / OrderedJunction 分支消费；别名与各分支
+        // 内 `jt{idx}` 同源）。见 `junction_alive_predicate`。
+        let alive = junction_alive_predicate(&format!("jt{}", idx), &alias);
 
         let subquery = match (&self.kind, self.card) {
             // ── ToOne: 标量子查询 → jsonb_build_object ──
@@ -217,7 +238,7 @@ impl ReferenceJoin {
                 format!(
                     "(SELECT jsonb_build_object({}) FROM {} AS {} \
                      JOIN {} AS {} ON {}.{} = {}.{} \
-                     WHERE {}.{} = e.{}{} LIMIT 1)",
+                     WHERE {}.{} = e.{}{alive}{} LIMIT 1)",
                     fields,
                     self.target_table,
                     alias,
@@ -249,7 +270,7 @@ impl ReferenceJoin {
                 format!(
                     "(SELECT jsonb_agg(jsonb_build_object({}){}) FROM {} AS {} \
                      JOIN {} AS {} ON {}.{} = {}.{} \
-                     WHERE {}.{} = e.{})",
+                     WHERE {}.{} = e.{}{alive})",
                     fields,
                     order_clause,
                     self.target_table,
@@ -320,7 +341,7 @@ impl ReferenceJoin {
                 format!(
                     "(SELECT jsonb_build_object({}) FROM {} AS {} \
                      JOIN {} AS {} ON {}.{} = {}.{} \
-                     WHERE {}.{} = e.{}{} LIMIT 1)",
+                     WHERE {}.{} = e.{}{alive}{} LIMIT 1)",
                     all_fields,
                     self.target_table,
                     alias,
@@ -379,7 +400,7 @@ impl ReferenceJoin {
                 format!(
                     "COALESCE((SELECT jsonb_agg(jsonb_build_object({}){}) FROM {} AS {} \
                      JOIN {} AS {} ON {}.{} = {}.{} \
-                     WHERE {}.{} = e.{}), '[]'::jsonb)",
+                     WHERE {}.{} = e.{}{alive}), '[]'::jsonb)",
                     combined,
                     order_clause,
                     self.target_table,
@@ -429,6 +450,28 @@ pub fn build_refs_select_suffix<E: HasReferenceJoins>() -> String {
         ", jsonb_strip_nulls(jsonb_build_object({})) AS _refs",
         pairs.join(", ")
     )
+}
+
+/// 取单行的引用解析 JSON（`_refs`）——供写入/单条读响应补引用用。
+///
+/// SQL 由 `build_refs_select_suffix` 同源生成（主表别名固定 `e`，与后缀内的子查询自洽），
+/// 故补出的 `_refs` 与 `/refs`、列表读径形态一致。行不存在（或已软删）→ `Ok(None)`。
+pub async fn fetch_refs_json<E: HasReferenceJoins>(
+    pool: &sqlx::PgPool,
+    id: i64,
+) -> Result<Option<serde_json::Value>, sqlx::Error> {
+    let suffix = build_refs_select_suffix::<E>();
+    let expr = suffix.strip_prefix(", ").unwrap_or(&suffix);
+    let sql = format!(
+        "SELECT {} FROM {} e WHERE e.id = $1 AND e.deleted_at IS NULL",
+        expr,
+        E::table_name()
+    );
+    let row: Option<(serde_json::Value,)> = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(v,)| v))
 }
 
 /// 列级安全投影后缀（NGAC 授权列裁剪，B 方案）

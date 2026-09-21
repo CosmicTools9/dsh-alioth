@@ -1,0 +1,20 @@
+{
+  "note": "ns 库 schema 漂移基线（表级）：missing = 参考库有而该 ns 库缺；leftover = 该 ns 库独有。基线内条目豁免（存量：模型新增表尚未经 Gateway 启动触发 namespace_schema 同步），**新增漂移仍阻断**。修复后 MUST 重生成基线（bash scripts/check/check-namespace-schema-drift.sh --write-baseline）。isahl_meta 模型面缺席断言不在此基线（MUST 恒为空）。",
+  "generatedBy": "scripts/check/check-namespace-schema-drift.sh --write-baseline",
+  "missing": {
+    "alioth": [
+      "isahl.zc_id_prod-biz-license-sales",
+      "isahl.zc_id_prod-insurance-license-sales",
+      "isahl.zc_id_prod-tsp_land-license-sales"
+    ],
+    "avic_caasec": [
+      "isahl.zc_id_prod-biz-license-sales",
+      "isahl.zc_id_prod-insurance-license-sales",
+      "isahl.zc_id_prod-tsp_land-license-sales"
+    ],
+    "cosmic_tools": [
+      "isahl.zc_id_prod-insurance-license-sales"
+    ]
+  },
+  "leftover": {}
+}

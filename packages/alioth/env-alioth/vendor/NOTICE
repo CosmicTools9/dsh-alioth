@@ -6,20 +6,35 @@ consumed from the published model distribution (github:CosmicTools9/AppCreator,
 subsequently mirrored at github:CosmicTools9/Alioth), licensed Apache-2.0:
 
   backend/ddl/*isahl_meta*.sql           — isahl_meta registry baseline DDL + seed
-  skill-adapters/*.yaml                  — AppAgent track/step/gate definitions
+  skill-adapters/*.yaml                  — AppAgent track/step/gate definitions (v2.0–v2.2;
+                                           upstream `Meta/backend/app-agent/skill-adapters/`)
   scripts/prototype-tool.js              — prototype build chain (PROTOTYPE_TOOL_ROOT override added)
+  scripts/capability-catalog.ts          — scope capability catalog (gate + CLI)
   scripts/check/audit-css-framework.mjs  — CSS framework audit
   scripts/check/check-nav-hrefs.ts       — prototype nav integrity check
+  scripts/check/check-prototype-types.ts — prototype source mechanical checks
+  scripts/check/check-prototype-render.ts — prototype render assertions (real browser)
+  scripts/check/check-namespace-frontend.sh|.ts — module frontend build-contract check
   scripts/eval/evaluate-prototype-reference.ts — prototype evaluation
-  scripts/lib/parsers.ts                 — shared parser façade (cheerio/css-tree/meriyah/postcss)
+  scripts/eval/appagent-build-eval.ts, appagent-client.ts, *.selftest.ts —
+                                           AppAgent build-regression eval + session client
+  Meta/backend/app-agent/eval/cases.yaml — eval baseline case set (read at its upstream path)
+  scripts/lib/                           — shared parser façade + gate/cargo/sql helpers
   scripts/build-ns.sh, scripts/cargo-check.sh — namespace build + isolated cargo check
   .agents/skills/alioth-design/references/ — design tokens, shells, icon pool, vendor runtime
+  .agents/skills/alioth-service/references/ — service-track reference notes
+  docs/specs/BLOCK_SCHEMA.md, docs/specs/MODULE_SPEC.md — adapter reference specifications
+  Pre-Proc/Alioth/Prototypes/Modules/system-settings/llm-tsx/module.tsx —
+                                           module assembly reference declared by alioth-module 1.3
+  Pre-Proc/Alioth/Sources/Apps/Services/, Pre-Proc/Alioth/openapi/ — baseline services the
+                                           vendored gateway manifest path-deps on
   Framework/frontend/components/utilities.json — utility registry
 
 The .agents design assets and Framework utilities.json are consumed from the
 AliothStudio working checkout (same authors, The Alioth Authors) to complete
 the prototype chain the build scripts require; hashes are pinned in
-PROVENANCE.json.
+PROVENANCE.json. Gateway runtime state (`Gateway/backend/data/`, the local
+file-storage root upstream gitignores) is deliberately NOT vendored.
  
 Copyright for the vendored artifacts is held by The Alioth Authors.
 Licensed under the Apache License, Version 2.0 (see LICENSE in this directory).

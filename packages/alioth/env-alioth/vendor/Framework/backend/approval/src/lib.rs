@@ -12,11 +12,13 @@
 use actix_web::web;
 
 pub mod advance;
+pub mod completion;
 pub mod context_domain;
 pub mod context_meta;
 mod dk;
 pub mod dmn;
 pub mod handlers;
+pub mod initiate;
 pub mod llm_assist;
 pub mod mermaid;
 pub mod models;

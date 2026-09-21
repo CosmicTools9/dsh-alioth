@@ -1,12 +1,13 @@
 name: alioth-compose
 description: "应用组装 — app.json(全字段对齐 app.schema.json) + extensions/*.yaml + ESM 原型构建与校验"
-version: "2.0"
+version: "2.2"
+default_tools: [todo]
 tracks:
   - name: 应用组装验证
     steps:
       - id: "1.1"
         instruction: preflight — 确认 compose 产物目录已生成 app.json
-        tools: [read_file]
+        tools: [read_file, list_dir]
         schema: {type: object, required: [app_name]}
         gates:
           - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
@@ -41,4 +42,4 @@ tracks:
             args: ["scripts/check/check-nav-hrefs.ts", "--fail", "--ns", "{ns}"]
             timeout_sec: 120
 source:
-  content_sha256: 632a971f42d4873c063994388f938b97975aacba43e88a4aaf0432680b14c977
+  content_sha256: a188efdc1120b795a7f0f4a9f48bd39aa7d9164910e3b554e1ed911df004f300

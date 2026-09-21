@@ -147,6 +147,26 @@ pub fn derive_cascade_targets(entity_table: &str, config: &CascadeConfig) -> Vec
             });
         }
     }
+    // 叶表自引用链下探：fk_index 反向索引按 meta_fields 注册面生成，fk_previous 的
+    // 注册目标是父表（zc_id_version），叶表自链（孙行 fk_previous=叶行 id）不在其中——
+    // 从正向索引补自递归目标（叶表沿 fk_previous/fk_parent 下探自身）
+    if config.child_entities {
+        for &(_field_name, _target_table, local_key) in
+            crate::fk_index::lookup_forward_fk(entity_table)
+        {
+            if matches!(local_key, "fk_parent" | "fk_previous")
+                && !targets
+                    .iter()
+                    .any(|t| t.table == entity_table && t.fk_column == local_key)
+            {
+                targets.push(CascadeTarget {
+                    table: entity_table.to_string(),
+                    fk_column: local_key.to_string(),
+                    kind: CascadeKind::ChildEntity,
+                });
+            }
+        }
+    }
     targets
 }
 

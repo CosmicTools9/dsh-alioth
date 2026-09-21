@@ -24,6 +24,7 @@
  *   bun scripts/check/check-shared-kernel.ts [ROOT] [--report]
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { gatewaySourcesKindDir } from '../lib/preproc-layout.mjs';
 import { join, resolve } from 'node:path';
 
 const ROOT = resolve(process.argv.slice(2).find((a) => !a.startsWith('--')) || '.');
@@ -105,7 +106,7 @@ let nsLocalTables = 0;
 if (existsSync(PREPROC_DIR)) {
   for (const ns of readdirSync(PREPROC_DIR, { withFileTypes: true })) {
     if (!ns.isDirectory()) continue;
-    const servicesDir = join(PREPROC_DIR, ns.name, 'Sources/Services');
+    const servicesDir = gatewaySourcesKindDir(ROOT, ns.name, 'Services');
     if (!existsSync(servicesDir)) continue;
     for (const svc of readdirSync(servicesDir, { withFileTypes: true })) {
       if (!svc.isDirectory()) continue;

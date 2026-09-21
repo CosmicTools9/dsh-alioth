@@ -1,70 +1,29 @@
+//! AI 联系人端口适配：用户发送方地址解析。
+//!
+//! 主体化后**不再**有共享 AI 联系人（`llm-agent`）：每个智能体主体有自己的联系方式
+//! （`agent-<agent_code>`，见 `memory_scope::resolve_subject_contact_id`），AI 回复的
+//! 发送方 = 该主体的联系方式 id。故本适配器只剩「用户 → 发送方地址」一问。
+//!
+//! 历史行的识别（旧消息发送方仍是 `llm-agent`）由 `memory_scope::LEGACY_SHARED_AI_CONTACT_CODE`
+//! 在**只读**判定面处理（角色判定 / 用户消息定位 / regenerate 定位），不在此新建行。
+
 use async_trait::async_trait;
 use sqlx::PgPool;
-use std::sync::OnceLock;
 
 use crate::api::chat_sessions::ports::AIContactPort;
-use crate::i18n::I18nManagerRef;
-
-pub const AI_ASSISTANT_CODE: &str = "llm-agent";
-
-static AI_CONTACT_ID: OnceLock<Option<i64>> = OnceLock::new();
-
-fn cached_ai_contact_id() -> Option<i64> {
-    AI_CONTACT_ID.get().and_then(|opt| *opt)
-}
 
 pub struct DbAIContactAdapter {
     pool: PgPool,
-    i18n: I18nManagerRef,
 }
 
 impl DbAIContactAdapter {
-    pub fn new(pool: PgPool, i18n: I18nManagerRef) -> Self {
-        Self { pool, i18n }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 }
 
 #[async_trait]
 impl AIContactPort for DbAIContactAdapter {
-    async fn resolve_ai_contact_id(&self, locale: &i18n::Locale) -> Result<Option<i64>, String> {
-        if let Some(id) = cached_ai_contact_id() {
-            return Ok(Some(id));
-        }
-
-        let row = sqlx::query_scalar::<_, i64>(
-            r#"SELECT id FROM isahl.zc_id_contact_infos
-               WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
-        )
-        .bind(AI_ASSISTANT_CODE)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| format!("DB error: {}", e))?;
-
-        if let Some(id) = row {
-            let _ = AI_CONTACT_ID.set(Some(id));
-            return Ok(Some(id));
-        }
-
-        let i18n = self.i18n.read().await;
-        let ai_name = i18n
-            .get(locale, "chat.session.aiContactName")
-            .unwrap_or("EmpAgent");
-
-        let row = sqlx::query_scalar::<_, i64>(
-            r#"INSERT INTO isahl."zc_id_info-isahl" (code, notice)
-               VALUES ($1, $2)
-               RETURNING id"#,
-        )
-        .bind(AI_ASSISTANT_CODE)
-        .bind(ai_name)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| format!("Failed to create AI contact: {}", e))?;
-
-        let _ = AI_CONTACT_ID.set(Some(row));
-        Ok(Some(row))
-    }
-
     /// 用户发送方地址（`zc_id_contact_infos` id）：账号 1:1 绑定实体 → 默认联系人 → 首选联系方式。
     /// 复用 framework_contacts 的联系链唯一实现；未绑定 / 实体无联系人 → None（发送方留空）。
     async fn resolve_user_contact_id(&self, user_id: i64) -> Result<Option<i64>, String> {

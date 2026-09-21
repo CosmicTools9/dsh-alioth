@@ -21,6 +21,8 @@
 //! - [`event_bus`] — 领域事件总线
 //! - [`messaging`] — 消息服务 trait
 // api_response 模块保留为兼容性入口
+pub mod actor_identity;
+pub mod age;
 pub mod api_response;
 pub mod audit;
 pub mod cluster;
@@ -33,6 +35,7 @@ pub mod dk_context;
 pub mod email;
 pub mod error;
 pub mod event_bus;
+pub mod knowledge_domains;
 pub mod messaging;
 pub mod middleware;
 pub mod ngac_org;
@@ -41,12 +44,14 @@ pub mod ontology;
 pub mod operator_org;
 pub mod permissions;
 pub mod plan_execution;
+pub mod platform_config;
 pub mod progress;
 pub mod scalar;
 pub mod search;
 pub mod serde_zuid;
 pub mod server;
 pub mod sms;
+pub mod sql;
 pub mod status;
 pub mod system_user;
 pub mod telemetry;

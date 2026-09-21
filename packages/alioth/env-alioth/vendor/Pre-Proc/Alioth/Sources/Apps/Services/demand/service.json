@@ -23,11 +23,6 @@
         "name": "Requirement",
         "table": "isahl.zc_id_event",
         "inherits": "zc_id_lifecycle",
-        "coordinates": {
-          "factor": "",
-          "function": "",
-          "scene": ""
-        },
         "field_mappings": [
           {
             "column": "code",

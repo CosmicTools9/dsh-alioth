@@ -20,7 +20,7 @@ async fn publish_creates_event_rows() {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'publish-test', 'publish-test', 'publish@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)
@@ -30,7 +30,8 @@ async fn publish_creates_event_rows() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
 
@@ -98,7 +99,7 @@ async fn publish_rejects_subflow_with_missing_target() {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'publish-test-2', 'publish-test-2', 'publish2@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)
@@ -110,8 +111,8 @@ async fn publish_rejects_subflow_with_missing_target() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
-            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "FLOW-X"},
+            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-sub", "type": "subflow", "label": "子流程引用", "target": "FLOW-X", "next": [{"to": 2}]},
         ]
     });
 
@@ -192,7 +193,7 @@ async fn publish_retires_old_batch_and_marks_version() {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'publish-test-3', 'publish-test-3', 'publish3@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)
@@ -248,12 +249,14 @@ async fn publish_retires_old_batch_and_marks_version() {
     // v1：两节点（start + approve 带岗位 meta + 边 cond）
     let graph1 = json!({
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-appr", "type": "approve", "label": "审批",
              "role": "法务岗（publish 测试）", "roleKind": "role"},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ],
         "edges": [
-            {"source": "n-start", "target": "n-appr"}
+            {"source": "n-start", "target": "n-appr"},
+            {"source": "n-appr", "target": "n-end"}
         ]
     });
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
@@ -330,12 +333,14 @@ async fn publish_retires_old_batch_and_marks_version() {
     // v2：单节点重发布（无在途 → 放行）
     let graph2 = json!({
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-appr2", "type": "approve", "label": "审批2",
              "role": "法务岗（publish 测试）", "roleKind": "role"},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ],
         "edges": [
-            {"source": "n-start", "target": "n-appr2"}
+            {"source": "n-start", "target": "n-appr2"},
+            {"source": "n-appr2", "target": "n-end"}
         ]
     });
     sqlx::query(r#"UPDATE isahl.zc_id_process SET meta = $2::jsonb WHERE id = $1"#)
@@ -418,7 +423,7 @@ async fn publish_blocked_by_inflight_instance() {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'publish-test-4', 'publish-test-4', 'publish4@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)
@@ -444,7 +449,8 @@ async fn publish_blocked_by_inflight_instance() {
 
     let graph = json!({
         "nodes": [
-            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
+            {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
@@ -473,6 +479,15 @@ async fn publish_blocked_by_inflight_instance() {
     )
     .await;
     assert!(resp.status().is_success());
+    // 首发批行数基线（图形态无关）——被拒发布不得改变它
+    let live_baseline: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl.zc_id_process_rr_operation rro
+           WHERE rro.ref_left = $1 AND rro.deleted_at IS NULL"#,
+    )
+    .bind(flow_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     // 制造在途实例（挂到已发布节点）
     // 2026-08-31 契约：单 start（event 驱动）图的 rr_event → 事件真叶表范例行
@@ -510,7 +525,7 @@ async fn publish_blocked_by_inflight_instance() {
     // 实例↔审批事件经 rr_event 桥（fk_approve 列已移除）
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(inflight_instance)
     .bind(node_id)
@@ -542,7 +557,7 @@ async fn publish_blocked_by_inflight_instance() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(live, 1, "被拒发布不得软删旧批");
+    assert_eq!(live, live_baseline, "被拒发布不得软删旧批");
 }
 
 /// refactor-flow-node-operation-model：review/action 动作节点物化
@@ -557,7 +572,7 @@ async fn publish_review_action_nodes_materialize_operation() {
         r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'ra-node', 'ra-node', 'ra@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)
@@ -740,7 +755,7 @@ async fn publish_unpublish_code_column_authority() {
         r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'status-sync', 'status-sync', 'status@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)

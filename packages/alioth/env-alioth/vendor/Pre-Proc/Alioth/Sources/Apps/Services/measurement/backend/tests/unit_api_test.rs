@@ -5,22 +5,12 @@
 use common::testing::{connect_test_db, setup_test_schema_light};
 use crud::AliothRepository;
 
-/// 清理计量表，消除 WZ/Alioth 共用测试库的顺序耦合（seed 幂等断言依赖空表起点）
+/// 测试池：共享测试库的计量族（zc_id_unit*/zc_id_rate*/zc_id_scal-price）承载模型级
+/// 种子（Framework/seed/seed-dimensions.sql）与跨 ns 消费——MUST NOT 通配清空
+/// （曾致单位全族 319→2，连锁破坏 SE 预算等用例）。用例断言均为包含式，无需空表起点。
 async fn setup_clean_pool() -> sqlx::PgPool {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
-    sqlx::query("DELETE FROM isahl.zc_id_unit*")
-        .execute(&pool)
-        .await
-        .expect("清理测试库计量表失败");
-    sqlx::query("DELETE FROM isahl.zc_id_rate*")
-        .execute(&pool)
-        .await
-        .expect("清理测试库计量表失败");
-    sqlx::query("DELETE FROM isahl.\"zc_id_scal-price\"")
-        .execute(&pool)
-        .await
-        .expect("清理测试库计量表失败");
     pool
 }
 

@@ -14,6 +14,15 @@
  */
 
 export const BLOCK_SHELL_CSS = `
+      /* ── 运行时注入变量缺省值 ──
+         --vfd-node-color 由生产端 FlowDesigner 逐节点以内联 style 注入
+         （hsl(var(--success)) / hsl(var(--muted-foreground)) / 自定义色）。standalone 原型
+         无该运行时，故在壳 :root 给出中立缺省值：既避免裸用 var(--vfd-node-color)
+         解析失败（元素透明），也满足 prototype-check 的「引用必须在 :root 有定义」判据。 */
+      :root {
+        --vfd-node-color: hsl(var(--primary));
+      }
+
       /* ── Skeleton loading ── */
       .skel {
         display: block;
@@ -328,6 +337,9 @@ export const MODULE_SHELL_CSS = `
         --topbar-height: 3.5rem;            /* 56px — h-14 */
         --sidebar-width: 15rem;             /* 240px — w-60 */
         --sidebar-collapsed-width: 4rem;    /* 64px — w-16 */
+        /* 运行时注入变量缺省值：生产端由 FlowDesigner 内联 style 覆盖，standalone 原型
+           无该运行时（裸用会解析失败且触发 prototype-check 未定义变量判据） */
+        --vfd-node-color: hsl(var(--primary));
       }
 
       /* ════════════════════════════════════════════════════════════════

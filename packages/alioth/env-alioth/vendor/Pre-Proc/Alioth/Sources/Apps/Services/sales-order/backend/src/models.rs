@@ -67,9 +67,6 @@ pub struct SalesOrder {
     #[sqlx(rename = "ck_cate-wh")]
     #[serde(with = "common::serde_zuid::opt", default)]
     pub ck_cate_wh: Option<i64>,
-    #[sqlx(rename = "sk_unit-working")]
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit_working: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_arrived: Option<i64>,
     #[sqlx(rename = "ck_cate-biz")]
@@ -102,7 +99,7 @@ impl AliothDbEntity for SalesOrder {
     }
 
     // fix-fk-approve-residual-consumers：fk_approve 物理列已移除——经 rr_event 桥派生
-    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, projection, _f_, _t_, dk_scene, dk_factor, dk_function, tpl_id, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, qk_work_duration, fk_operator, fk_subject, qk_period, "ck_cate-wh", "sk_unit-working", qk_arrived, "ck_cate-biz", (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe JOIN isahl."zc_id_even-approve" ea ON ea.id = oe.ref_right AND ea.deleted_at IS NULL WHERE oe.ref_left = e.id AND oe.deleted_at IS NULL ORDER BY oe.created_at LIMIT 1) AS fk_approve, qk_sla, lk_urgent, "ck_cate-proc_op""#;
+    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, projection, _f_, _t_, dk_scene, dk_factor, dk_function, tpl_id, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, qk_work_duration, fk_operator, fk_subject, qk_period, "ck_cate-wh", qk_arrived, "ck_cate-biz", (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe JOIN isahl."zc_id_even-approve" ea ON ea.id = oe.ref_right AND ea.deleted_at IS NULL WHERE oe.ref_left = e.id AND oe.deleted_at IS NULL ORDER BY oe.created_at LIMIT 1) AS fk_approve, qk_sla, lk_urgent, "ck_cate-proc_op""#;
     const ENTITY_NAME: &'static str = "sales_order";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -140,8 +137,6 @@ pub struct CreateSalesOrderRequest {
     pub qk_period: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub ck_cate_wh: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit_working: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_arrived: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -182,8 +177,6 @@ pub struct UpdateSalesOrderRequest {
     pub qk_period: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub ck_cate_wh: Option<i64>,
-    #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit_working: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub qk_arrived: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]

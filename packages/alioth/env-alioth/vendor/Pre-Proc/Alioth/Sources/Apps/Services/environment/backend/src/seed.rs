@@ -119,6 +119,30 @@ async fn ensure_status(
 ///
 /// 按 `code`（host）去重；已存在非删除记录则跳过，保证幂等。
 /// 会自动创建缺少的 `zc_id_status` 记录（healthy / warning / unknown）。
+/// 种子域清场（重播通道）：删除本种子 5 行及其状态桥——
+/// 桥表 ref_left 严格唯一索引不含 deleted_at 谓词，软删行仍占位 ⇒ 必须硬清再重播。
+/// 范围恒等于 `all_seed_environments()` 的 host 集合，不越界。
+pub async fn reset_seed_environments(pool: &PgPool) -> Result<(), AliothError> {
+    let hosts: Vec<String> = all_seed_environments()
+        .iter()
+        .map(|e| e.host.to_string())
+        .collect();
+    sqlx::query(
+        r#"DELETE FROM isahl."zc_id_lifecycle_r_primary-status"
+           WHERE ref_left IN (SELECT id FROM isahl."zc_id_prot-env_config" WHERE code = ANY($1))"#,
+    )
+    .bind(&hosts)
+    .execute(pool)
+    .await
+    .map_err(AliothError::from)?;
+    sqlx::query(r#"DELETE FROM isahl."zc_id_prot-env_config" WHERE code = ANY($1)"#)
+        .bind(&hosts)
+        .execute(pool)
+        .await
+        .map_err(AliothError::from)?;
+    Ok(())
+}
+
 pub async fn seed_environments(pool: &PgPool) -> Result<usize, AliothError> {
     let status_map = std::collections::HashMap::from([
         ("healthy", ("start", "正常运行状态")),
@@ -216,23 +240,50 @@ mod tests {
         let pool = connect_test_db().await;
         setup_test_schema_light(&pool).await.unwrap();
 
+        // 先按种子 code 域清场（共享测试库残留行会让 first=0 假挂）——
+        // 种子行所有权归本种子（按 host 去重幂等），清场范围即其 code 域
+        let hosts: Vec<String> = all_seed_environments()
+            .iter()
+            .map(|e| e.host.to_string())
+            .collect();
+        // 先清状态桥（ref_left 严格唯一索引，软删也占位——不先清则种子重建撞 23505）
+        sqlx::query(
+            r#"DELETE FROM isahl."zc_id_lifecycle_r_primary-status"
+               WHERE ref_left IN (SELECT id FROM isahl."zc_id_prot-env_config" WHERE code = ANY($1))"#,
+        )
+        .bind(&hosts)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(r#"DELETE FROM isahl."zc_id_prot-env_config" WHERE code = ANY($1)"#)
+            .bind(&hosts)
+            .execute(&pool)
+            .await
+            .unwrap();
+
         let first = seed_environments(&pool).await.unwrap();
         let second = seed_environments(&pool).await.unwrap();
 
         assert_eq!(first, 5, "should insert 5 environments on first run");
         assert_eq!(second, 0, "should be idempotent on second run");
 
+        // 收窄到本种子宿主集合——共享测试库并行会话/他测试会加行，全局计数必互踩
         let count: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM isahl."zc_id_prot-env_config" WHERE deleted_at IS NULL"#,
+            r#"SELECT COUNT(*) FROM isahl."zc_id_prot-env_config" WHERE deleted_at IS NULL AND code = ANY($1)"#,
         )
+        .bind(&hosts)
         .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(count, 5);
 
+        // 同上收窄：按本种子 5 行的 id 反查状态桥
         let rel_count: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM isahl."zc_id_lifecycle_r_primary-status" WHERE deleted_at IS NULL"#,
+            r#"SELECT COUNT(*) FROM isahl."zc_id_lifecycle_r_primary-status" ps
+               JOIN isahl."zc_id_prot-env_config" e ON e.id = ps.ref_left
+               WHERE ps.deleted_at IS NULL AND e.code = ANY($1)"#,
         )
+        .bind(&hosts)
         .fetch_one(&pool)
         .await
         .unwrap();

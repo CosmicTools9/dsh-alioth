@@ -87,7 +87,6 @@ impl VersionService {
             comments: Some(format!("Rollback from version {}", target_id)),
             tk_version: target.tk_version,
             tk_batch_no: target.tk_batch_no,
-            reversion: target.reversion,
             fk_previous: Some(target_id),
             ck_branch: target.ck_branch,
             tpl_id: target.tpl_id,

@@ -2,9 +2,29 @@
 
 use ::common::testing::connect_test_db;
 use crud::schema_repository::{AliothLeaf, Binding, SchemaRepository};
-use sqlx::AssertSqlSafe;
 
-const TEST_BIZ_LEAF: &str = "zc_id_agre-pricing";
+/// 夹具：`SchemaRepository` API 参数用表名 + 三条夹具语句同源（表名以 `$table:literal`
+/// 出现一次，`concat!` 编译期固化；运行期无表名插值）。
+macro_rules! biz_leaf_fixture {
+    ($table:literal) => {
+        /// 叶表名（`SchemaRepository` API 参数用值）。
+        const TEST_BIZ_LEAF: &str = $table;
+        /// 清场（按 notice）。
+        const CLEAN_FIXTURE_ROWS_SQL: &str =
+            concat!(r#"DELETE FROM isahl.""#, $table, r#"" WHERE notice = $1"#);
+        /// 断言坐标三元组已写入。
+        const LEAF_BINDING_SQL: &str = concat!(
+            r#"SELECT dk_scene, dk_factor, dk_function FROM isahl.""#,
+            $table,
+            r#"" WHERE id = $1"#
+        );
+        /// 清场（按 id）。
+        const DELETE_FIXTURE_ROW_SQL: &str =
+            concat!(r#"DELETE FROM isahl.""#, $table, r#"" WHERE id = $1"#);
+    };
+}
+
+biz_leaf_fixture!("zc_id_agre-pricing");
 
 #[tokio::test]
 async fn is_leaf_table_accepts_real_leaf() {
@@ -41,14 +61,11 @@ async fn create_in_leaf_persists_binding() {
     let pool = connect_test_db().await;
     let d = SchemaRepository::new(pool.clone());
     // Clean prior test data
-    sqlx::query(AssertSqlSafe(format!(
-        r#"DELETE FROM isahl."{}" WHERE notice = $1"#,
-        TEST_BIZ_LEAF
-    )))
-    .bind("__test_ontology_dispatcher__")
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(CLEAN_FIXTURE_ROWS_SQL)
+        .bind("__test_ontology_dispatcher__")
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let binding: Binding = (
         Some(111_111_111_111_111_111),
@@ -66,26 +83,20 @@ async fn create_in_leaf_persists_binding() {
         .expect("create");
     assert!(new_id > 0);
 
-    let row: (Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(AssertSqlSafe(format!(
-        r#"SELECT dk_scene, dk_factor, dk_function FROM isahl."{}" WHERE id = $1"#,
-        TEST_BIZ_LEAF
-    )))
-    .bind(new_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: (Option<i64>, Option<i64>, Option<i64>) = sqlx::query_as(LEAF_BINDING_SQL)
+        .bind(new_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(row.0, Some(111_111_111_111_111_111));
     assert_eq!(row.1, Some(222_222_222_222_222_222));
     assert_eq!(row.2, Some(333_333_333_333_333_333));
 
-    sqlx::query(AssertSqlSafe(format!(
-        r#"DELETE FROM isahl."{}" WHERE id = $1"#,
-        TEST_BIZ_LEAF
-    )))
-    .bind(new_id)
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query(DELETE_FIXTURE_ROW_SQL)
+        .bind(new_id)
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

@@ -515,7 +515,7 @@ async fn register_core(
                 })?;
                 sqlx::query(
                     "INSERT INTO isahl.zc_id_process_rr_operation (id, ref_left, ref_right, created_by_id)
-                     VALUES (isahl.gen_next_zuid(), $1, $2, $3)",
+                     VALUES (isahl.gen_next_uid(372), $1, $2, $3)",
                 )
                 .bind(flow_id)
                 .bind(new_id)
@@ -531,7 +531,7 @@ async fn register_core(
         };
         sqlx::query(
             "INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-             VALUES (isahl.gen_next_zuid(), $1, $2, $3)",
+             VALUES (isahl.gen_next_uid(267), $1, $2, $3)",
         )
         .bind(ctx_oper)
         .bind(event_id)
@@ -589,7 +589,7 @@ async fn register_core(
     // 实例↔事件关联（fk_approve 列已物理移除）→ operation_rr_event 桥
     sqlx::query(
         "INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-         VALUES (isahl.gen_next_zuid(), $1, $2, $3)",
+         VALUES (isahl.gen_next_uid(267), $1, $2, $3)",
     )
     .bind(instance_id)
     .bind(event_id)

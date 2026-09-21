@@ -1,6 +1,6 @@
 //! contract-writer 集成测试（真库：`common::testing::connect_test_db` → `*_test` 库）。
 //!
-//! 覆盖：主+镜像成对落库（相反叶表 / 合同方与主行**逐字段相同，甲/乙不互换** / `-R` 编号 / MIR 桥）、形态派生、
+//! 覆盖：主+镜像成对落库（相反叶表 / 甲乙互换 / `-R` 编号 / MIR 桥）、形态派生、
 //! 编号冲突拒绝、非法职能码拒绝、产品行双族、镜像级联软删。
 
 use sqlx::PgPool;
@@ -78,6 +78,9 @@ fn row_input<'a>(
         notice: "集成测试合约",
         comments: "",
         parties,
+        // 系统内部写（夹具未绑主体）：跳过「我」槽位与视角断言
+        actor: None,
+        require_view: None,
         fn_code: "↓.GG",
         scene_code: SCENE,
         factor_code: FACTOR,
@@ -133,6 +136,37 @@ async fn assert_request_leaf(pool: &PgPool) {
     );
 }
 
+/// NGAC 基线幂等自愈（对齐 contract 服务 `test_common::ensure_ngac_baseline` 范式）：
+/// `ngac_object_attribute.fk_policy_class` 非空 + 写件取 `LIMIT 1`、`created_by_id` FK 到
+/// `auth_users`——共享测试库被并行会话重置后两者 0 行 ⇒ 行级注册整段失败（warn 不阻断）、
+/// NGAC 断言红。缺行即补 `default` 类 + 测试账号 1，与 approval/contract 测试 harness 同款自愈。
+async fn ensure_ngac_policy_class(pool: &PgPool) {
+    let has: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM isahl_auth.ngac_policy_class)")
+            .fetch_one(pool)
+            .await
+            .expect("policy class probe");
+    if !has {
+        sqlx::query(
+            r#"INSERT INTO isahl_auth.ngac_policy_class (o_name, description)
+               VALUES ('default', 'contract-writer 测试默认策略类')"#,
+        )
+        .execute(pool)
+        .await
+        .expect("policy class seed");
+    }
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_users
+           (id, name, username, email, user_type, is_active, created_at, updated_at,
+            failed_login_attempts, notification_preferences)
+           VALUES (1, 'test-user-1', 'test-user-1', 'test-user-1@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           ON CONFLICT (id) DO NOTHING"#,
+    )
+    .execute(pool)
+    .await
+    .expect("auth user seed");
+}
+
 /// 测试残留清理（按编号前缀）。
 async fn purge(pool: &PgPool, prefix: &str) {
     let like = format!("{prefix}%");
@@ -182,8 +216,9 @@ async fn purge(pool: &PgPool, prefix: &str) {
 }
 
 #[tokio::test]
-async fn contract_pair_lands_opposite_leaves_with_identical_parties() {
+async fn contract_pair_lands_opposite_leaves_with_same_parties() {
     let pool = connect_test_db().await;
+    ensure_ngac_policy_class(&pool).await;
     let code = unique_code("PAIR");
     let a = ensure_subject(&pool, "T-CW-SUBJ-A").await;
     let b = ensure_subject(&pool, "T-CW-SUBJ-B").await;
@@ -208,7 +243,7 @@ async fn contract_pair_lands_opposite_leaves_with_identical_parties() {
         .await
         .expect("insert pair");
 
-    // 叶表相反 + 编号 +R
+    // 叶表配对（手建我方销售 → 客户诉求行）+ 编号 +R
     let main_leaf: (String, Option<String>, Option<String>) =
         sqlx::query_as(r#"SELECT code, "_f_", "_t_" FROM isahl."zc_id_cont-sales" WHERE id = $1"#)
             .bind(main_id)
@@ -222,14 +257,14 @@ async fn contract_pair_lands_opposite_leaves_with_identical_parties() {
     );
 
     let mirror_leaf: (String,) =
-        sqlx::query_as(r#"SELECT code FROM isahl."zc_id_cont-purchase" WHERE id = $1"#)
+        sqlx::query_as(r#"SELECT code FROM isahl."zc_id_cont-request" WHERE id = $1"#)
             .bind(mirror_id)
             .fetch_one(&pool)
             .await
             .expect("mirror row");
     assert_eq!(mirror_leaf.0, format!("{code}-R"));
 
-    // 合同方不互换：镜像 P1/P2 与主行逐字段相同（同主体、同角色序）
+    // 合同方同序（同交易双账本）：主 P1=A / P2=B；镜像同序
     let main_parties: Vec<(String, Option<i64>)> = sqlx::query_as(
         r#"SELECT code, ref_right FROM isahl."zc_id_contract_rr_party"
            WHERE ref_left = $1 AND deleted_at IS NULL ORDER BY code"#,
@@ -251,12 +286,16 @@ async fn contract_pair_lands_opposite_leaves_with_identical_parties() {
     .fetch_all(&pool)
     .await
     .expect("mirror parties");
-    assert_eq!(mirror_parties, vec![Some(a), Some(b)]);
+    assert_eq!(
+        mirror_parties,
+        vec![Some(a), Some(b)],
+        "同交易双账本：镜像合同方不互换"
+    );
 
-    // MIR 桥
+    // MIR 桥（方向 = 叶子语义：销售正本属供给性 → ref_right；诉求镜像属需求性 → ref_left）
     let bridge: Vec<(i64, i64, String)> = sqlx::query_as(
         r#"SELECT ref_left, ref_right, code FROM isahl."zc_id_contract_rr_symmetry"
-           WHERE ref_left = $1 AND deleted_at IS NULL"#,
+           WHERE (ref_left = $1 OR ref_right = $1) AND deleted_at IS NULL"#,
     )
     .bind(main_id)
     .fetch_all(&pool)
@@ -264,8 +303,22 @@ async fn contract_pair_lands_opposite_leaves_with_identical_parties() {
     .expect("bridge");
     assert_eq!(
         bridge,
-        vec![(main_id, mirror_id, format!("MIR-{main_id}-{mirror_id}"))]
+        vec![(mirror_id, main_id, format!("MIR-{main_id}-{mirror_id}"))]
     );
+
+    // 行级 NGAC：主 + 镜像合同行各 1 条对象属性（写件内单源注册，2026-09-14 裁决）
+    let ngac_rows: Vec<i64> = sqlx::query_scalar(
+        r#"SELECT fk_resource FROM isahl_auth.ngac_object_attribute
+           WHERE resource_type = 'contracts' AND fk_resource = ANY($1) AND deleted_at IS NULL
+           ORDER BY fk_resource"#,
+    )
+    .bind(vec![main_id, mirror_id])
+    .fetch_all(&pool)
+    .await
+    .expect("contract row ngac");
+    let mut expect_ngac = vec![main_id, mirror_id];
+    expect_ngac.sort_unstable();
+    assert_eq!(ngac_rows, expect_ngac, "主/镜像合同行均须有行级 NGAC");
 
     // 镜像草稿状态桥（字典在场时）
     if draft.is_some() {
@@ -349,19 +402,19 @@ async fn mirror_of_existing_contract_and_cascade_delete() {
         .await
         .expect("main row");
 
-    // 镜像（销售向，合同方与主行相同（不互换），编号 -R）
+    // 镜像（销售向，甲乙互换，编号 -R）
     let mirror_code = format!("{code}-R");
     let mirror = row_input(
         &mirror_code,
         ContractLeaf::Sales,
         vec![
             ContractParty {
-                subject_id: Some(a),
+                subject_id: Some(b),
                 name: "甲方".into(),
                 period_id: None,
             },
             ContractParty {
-                subject_id: Some(b),
+                subject_id: Some(a),
                 name: "乙方".into(),
                 period_id: None,
             },
@@ -482,7 +535,7 @@ async fn duplicate_code_conflicts_and_invalid_fn_code_rejected() {
     purge(&pool, "T-CW-DUP").await;
 }
 
-/// 产品对：主族 + 相反族 + `{code}-R`，各自 `fk_previous` 挂各自单据。
+/// 产品对：主族 + 相反族 + `{code}-R`，**镜像不互换买卖主体对**（同交易双账本，2026-09-17），各自 `fk_previous` 挂各自单据。
 #[tokio::test]
 async fn product_pair_lands_opposite_families() {
     let pool = connect_test_db().await;
@@ -535,10 +588,92 @@ async fn product_pair_lands_opposite_families() {
     .fetch_one(&pool)
     .await
     .expect("mirror product");
-    assert_eq!(mirror_row, (format!("{code}-R"), a, Some(8)));
+    assert_eq!(
+        mirror_row,
+        (format!("{code}-R"), a, Some(8)),
+        "同交易双账本：镜像产品 demand 与正本一致"
+    );
 
     drop(conn);
     purge(&pool, "T-CW-PAIRP").await;
+}
+/// 对称桥方向 = 叶子语义固化（用户裁决 2026-09-17「创建时逻辑恒为 需求侧→供给侧」
+/// 「先有语义判定再有位置判定」）：销售先建对 → `ref_left` = 采购叶镜像（需求性）、
+/// `ref_right` = 销售叶正本（供给性）；采购先建对 → 原序即语义序；
+/// code 恒 `MIR-{正本}-{镜像}`；对端解析双向（任一端取另一端）。
+#[tokio::test]
+async fn symmetry_bridge_direction_is_semantic() {
+    let pool = connect_test_db().await;
+    let a = ensure_subject(&pool, "T-CW-SUBJ-A").await;
+    let b = ensure_subject(&pool, "T-CW-SUBJ-B").await;
+    let mut conn = pool.acquire().await.expect("acquire");
+    let parties = vec![
+        ContractParty {
+            subject_id: Some(a),
+            name: "甲方".into(),
+            period_id: None,
+        },
+        ContractParty {
+            subject_id: Some(b),
+            name: "乙方".into(),
+            period_id: None,
+        },
+    ];
+
+    // ① 销售先建：正本 = 销售叶（供给性）→ 桥位翻转，code 保持正本序
+    let code_s = unique_code("SYMS");
+    let (main_s, mirror_p) = insert_contract_pair_tx(
+        &mut conn,
+        &row_input(&code_s, ContractLeaf::Sales, parties.clone(), None),
+    )
+    .await
+    .expect("pair sales-first");
+    let (l, r, mir_code): (i64, i64, String) = sqlx::query_as(
+        r#"SELECT ref_left, ref_right, code FROM isahl."zc_id_contract_rr_symmetry"
+           WHERE (ref_left = $1 OR ref_right = $1) AND code LIKE 'MIR-%' AND deleted_at IS NULL"#,
+    )
+    .bind(main_s)
+    .fetch_one(&pool)
+    .await
+    .expect("mir row sales-first");
+    assert_eq!(
+        (l, r),
+        (mirror_p, main_s),
+        "销售先建 → ref_left=采购镜像（需求性）/ ref_right=销售正本（供给性）"
+    );
+    assert_eq!(
+        mir_code,
+        format!("MIR-{main_s}-{mirror_p}"),
+        "code 恒正本序"
+    );
+
+    // ② 采购先建：正本 = 采购叶（需求性）→ 桥位即语义序
+    let code_p = unique_code("SYMP");
+    let (main_p, mirror_s) = insert_contract_pair_tx(
+        &mut conn,
+        &row_input(&code_p, ContractLeaf::Purchase, parties, None),
+    )
+    .await
+    .expect("pair purchase-first");
+    let (l2, r2): (i64, i64) = sqlx::query_as(
+        r#"SELECT ref_left, ref_right FROM isahl."zc_id_contract_rr_symmetry"
+           WHERE (ref_left = $1 OR ref_right = $1) AND code LIKE 'MIR-%' AND deleted_at IS NULL"#,
+    )
+    .bind(main_p)
+    .fetch_one(&pool)
+    .await
+    .expect("mir row purchase-first");
+    assert_eq!(
+        (l2, r2),
+        (main_p, mirror_s),
+        "采购先建 → ref_left=采购正本（需求性）/ ref_right=销售镜像（供给性）"
+    );
+
+    // ③ 对端解析双向：从镜像侧反查正本
+    let rev = resolve_mirror_ids_tx(&mut conn, mirror_p)
+        .await
+        .expect("reverse resolve");
+    assert_eq!(rev, vec![main_s], "镜像侧反查 MUST 命中正本");
 }
 
 /// 合同驱动产品组装：产品行 + 起讫桥 ×2 + 合同桥（销售 master → rr_goods）。
@@ -574,14 +709,14 @@ async fn contract_product_assembly_writes_stops_and_bridge() {
         &ContractProductInput {
             contract_id: main_id,
             is_sales: true,
-            is_single: false,
+            is_order: false,
             contract_code: &code,
             notice: "合同运输服务产品",
             comments: "自动化测试",
             demand_subject: a,
             provider_subject: b,
             line_id: 1,
-            vehicle_form_id: 1,
+            vehicle_form_id: Some(1),
             origin_place_id: 1,
             dest_place_id: 2,
             price_id: None,
@@ -700,7 +835,8 @@ async fn soft_delete_contract_cascades_main_side() {
     let mirror_live: (i64, i64) = sqlx::query_as(
         r#"SELECT
              (SELECT count(*) FROM isahl."zc_id_contract" WHERE id = $1 AND deleted_at IS NULL),
-             (SELECT count(*) FROM isahl."zc_id_contract_rr_symmetry" WHERE ref_right = $1 AND deleted_at IS NULL)"#,
+             (SELECT count(*) FROM isahl."zc_id_contract_rr_symmetry"
+              WHERE (ref_left = $1 OR ref_right = $1) AND deleted_at IS NULL)"#,
     )
     .bind(mirror_id)
     .fetch_one(&pool)
@@ -712,9 +848,11 @@ async fn soft_delete_contract_cascades_main_side() {
     purge(&pool, "T-CW-CASC").await;
 }
 
-/// 诉求叶（`zc_id_cont-request`）成对：镜像落**同表**（合同方与主行相同，甲/乙不互换）、编号 `-R`、MIR 桥一行。
+/// 客户诉求 ↔ 我方销售（用户裁决 2026-09-17「除了采购，客户诉求→我方销售」）：
+/// 诉求叶（需求性，`ref_left`）成对的镜像落**销售叶**（供给性，`ref_right`）——
+/// 两叶「我」同在 P2 → 合同方**不互换**（两份都是 甲=客户 / 乙=我）；编号 `-R`；MIR 桥一行。
 #[tokio::test]
-async fn request_leaf_pair_mirrors_in_place() {
+async fn request_leaf_pairs_with_sales() {
     let pool = connect_test_db().await;
     assert_request_leaf(&pool).await;
     let code = unique_code("REQ");
@@ -741,22 +879,28 @@ async fn request_leaf_pair_mirrors_in_place() {
     .await
     .expect("request pair");
 
-    // 主/镜像同表（诉求叶）+ 编号 -R
+    // 主落诉求叶（需求侧记录）、镜像落销售叶（供给侧记录，我方销售）
     assert_eq!(ContractLeaf::Request.table(), "zc_id_cont-request");
-    let rows: Vec<(i64, String)> = sqlx::query_as(
-        r#"SELECT id, code FROM isahl."zc_id_cont-request" WHERE id = ANY($1) ORDER BY code"#,
-    )
-    .bind(vec![main_id, mirror_id])
-    .fetch_all(&pool)
-    .await
-    .expect("request leaf rows");
+    let main_row: (i64, String) =
+        sqlx::query_as(r#"SELECT id, code FROM isahl."zc_id_cont-request" WHERE id = $1"#)
+            .bind(main_id)
+            .fetch_one(&pool)
+            .await
+            .expect("request leaf main row");
+    assert_eq!(main_row, (main_id, code.clone()));
+    let mirror_row: (i64, String) =
+        sqlx::query_as(r#"SELECT id, code FROM isahl."zc_id_cont-sales" WHERE id = $1"#)
+            .bind(mirror_id)
+            .fetch_one(&pool)
+            .await
+            .expect("sales leaf mirror row");
     assert_eq!(
-        rows,
-        vec![(main_id, code.clone()), (mirror_id, format!("{code}-R"))],
-        "诉求主/镜像须落同一叶表，且镜像编号 = 主编号 -R"
+        mirror_row,
+        (mirror_id, format!("{code}-R")),
+        "诉求的镜像 MUST 落销售叶（我方销售），编号 = 主编号 -R"
     );
 
-    // 合同方不互换：镜像 P1/P2 与主行逐字段相同（同主体、同角色序）
+    // 合同方不互换：主 P1=A / P2=B；镜像同序（诉求↔销售「我」同在 P2）
     let main_parties: Vec<Option<i64>> = sqlx::query_scalar(
         r#"SELECT ref_right FROM isahl."zc_id_contract_rr_party"
            WHERE ref_left = $1 AND deleted_at IS NULL ORDER BY code"#,
@@ -775,18 +919,25 @@ async fn request_leaf_pair_mirrors_in_place() {
     .fetch_all(&pool)
     .await
     .expect("mirror parties");
-    assert_eq!(mirror_parties, vec![Some(a), Some(b)]);
+    assert_eq!(
+        mirror_parties,
+        vec![Some(a), Some(b)],
+        "诉求↔销售同槽配对：合同方 MUST 不互换（两份都是 甲=客户 / 乙=我）"
+    );
 
-    // MIR 桥一行
-    let bridge: Vec<(i64, i64)> = sqlx::query_as(
-        r#"SELECT ref_left, ref_right FROM isahl."zc_id_contract_rr_symmetry"
-           WHERE ref_left = $1 AND deleted_at IS NULL"#,
+    // MIR 桥一行：诉求（需求性）→ ref_left、销售（供给性）→ ref_right；code 正本序
+    let bridge: Vec<(i64, i64, String)> = sqlx::query_as(
+        r#"SELECT ref_left, ref_right, code FROM isahl."zc_id_contract_rr_symmetry"
+           WHERE (ref_left = $1 OR ref_right = $1) AND deleted_at IS NULL"#,
     )
     .bind(main_id)
     .fetch_all(&pool)
     .await
     .expect("mirror bridge");
-    assert_eq!(bridge, vec![(main_id, mirror_id)]);
+    assert_eq!(
+        bridge,
+        vec![(main_id, mirror_id, format!("MIR-{main_id}-{mirror_id}"))]
+    );
 
     drop(conn);
     purge(&pool, "T-CW-REQ").await;

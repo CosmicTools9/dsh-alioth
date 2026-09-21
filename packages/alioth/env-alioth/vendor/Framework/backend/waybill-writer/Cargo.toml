@@ -12,6 +12,7 @@ common = { path = "../common" }
 ontology-binding = { path = "../ontology-binding" }
 trigger-registry = { path = "../trigger-registry" }
 consignment-writer = { path = "../consignment-writer" }
+status = { path = "../status" }
 rust_decimal = "1"
 chrono = { workspace = true }
 log = "0.4"

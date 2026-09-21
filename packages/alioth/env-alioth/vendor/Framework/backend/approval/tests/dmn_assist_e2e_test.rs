@@ -7,7 +7,6 @@
 
 use ::common::testing::connect_test_db;
 use actix_web::{dev::Service as _, test, web, App, HttpMessage};
-use approval;
 use serde_json::{json, Value};
 mod common;
 use common::setup_test_schema;

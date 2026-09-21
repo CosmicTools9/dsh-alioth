@@ -34,33 +34,72 @@ const SYMA: &[char] = &[
 
 /// 基于 TriggerTemplate 接口的维度自动编码实现。
 pub struct DimensionAutoCodeTemplate {
-    table: &'static str,
-    /// ck_category 指向的类目表（scene→cons-industry-cate 等）。
-    /// code/c_sort_ 从该类目表读取（父表 zc_id_category 无 c_sort_ 列，
-    /// 且父表加列会被子表本地同名列阻断——不能依赖父表视角查询）。
-    cate_table: &'static str,
+    /// 编译期固化的表名 + 三条语句（表名以字面量出现，运行期不拼串）
+    sql: &'static DimensionAutoCodeSql,
     prefix: &'static str,
 }
+
+/// 维度自动编码静态 SQL：目标表与类目表在**编译期**由 `concat!` 固化。
+///
+/// `cate_code`/`cate_sort` 从 `ck_category` 指向的类目表读取：父表
+/// `zc_id_category` 无 `c_sort_` 列，且父表加列会被子表本地同名列阻断
+/// ——不能依赖父表视角查询。
+struct DimensionAutoCodeSql {
+    /// 触发目标表（`applies_to` / 触发名后缀），如 `zc_id_scene`
+    table: &'static str,
+    /// 同 `ck_category` 下已占用的槽位
+    used_slots: &'static str,
+    /// 类目表 code
+    cate_code: &'static str,
+    /// 类目表 c_sort_
+    cate_sort: &'static str,
+}
+
+macro_rules! dimension_auto_code_sql {
+    ($table:literal, $cate_table:literal) => {
+        DimensionAutoCodeSql {
+            table: $table,
+            used_slots: concat!(
+                "SELECT c_sort_ & 63 FROM isahl.\"",
+                $table,
+                "\" WHERE ck_category = $1 AND c_sort_ IS NOT NULL"
+            ),
+            cate_code: concat!("SELECT code FROM isahl.\"", $cate_table, "\" WHERE id = $1"),
+            cate_sort: concat!(
+                "SELECT c_sort_ FROM isahl.\"",
+                $cate_table,
+                "\" WHERE id = $1"
+            ),
+        }
+    };
+}
+
+/// scene → `zc_id_scene` / `zc_id_cons-industry-cate`
+const DIMENSION_SCENE_SQL: DimensionAutoCodeSql =
+    dimension_auto_code_sql!("zc_id_scene", "zc_id_cons-industry-cate");
+/// factor → `zc_id_factor` / `zc_id_cons-factor-cate`
+const DIMENSION_FACTOR_SQL: DimensionAutoCodeSql =
+    dimension_auto_code_sql!("zc_id_factor", "zc_id_cons-factor-cate");
+/// function → `zc_id_function` / `zc_id_cons-function-cate`
+const DIMENSION_FUNCTION_SQL: DimensionAutoCodeSql =
+    dimension_auto_code_sql!("zc_id_function", "zc_id_cons-function-cate");
 
 impl DimensionAutoCodeTemplate {
     pub fn scene() -> Self {
         Self {
-            table: "zc_id_scene",
-            cate_table: "zc_id_cons-industry-cate",
+            sql: &DIMENSION_SCENE_SQL,
             prefix: "SC",
         }
     }
     pub fn factor() -> Self {
         Self {
-            table: "zc_id_factor",
-            cate_table: "zc_id_cons-factor-cate",
+            sql: &DIMENSION_FACTOR_SQL,
             prefix: "FC",
         }
     }
     pub fn function() -> Self {
         Self {
-            table: "zc_id_function",
-            cate_table: "zc_id_cons-function-cate",
+            sql: &DIMENSION_FUNCTION_SQL,
             prefix: "FN",
         }
     }
@@ -70,8 +109,8 @@ impl DimensionAutoCodeTemplate {
 impl TriggerTemplate for DimensionAutoCodeTemplate {
     fn metadata(&self) -> TriggerMetadata {
         TriggerMetadata {
-            name: format!("tf_bf_ups_on_{}", self.table),
-            applies_to: vec![self.table.to_string()],
+            name: format!("tf_bf_ups_on_{}", self.sql.table),
+            applies_to: vec![self.sql.table.to_string()],
             operations: vec![TriggerOperationDef::Insert, TriggerOperationDef::Update],
             timing: TriggerTimingDef::Before,
         }
@@ -118,12 +157,8 @@ impl TriggerTemplate for DimensionAutoCodeTemplate {
         }
 
         // 1. 查询已用 slots
-        let used_slots_sql = format!(
-            r#"SELECT c_sort_ & 63 FROM isahl."{}" WHERE ck_category = $1 AND c_sort_ IS NOT NULL"#,
-            self.table
-        );
         let slots: Vec<i64> = engine
-            .query_scalar_all(&used_slots_sql, vec![Value::Number(ck.into())])
+            .query_scalar_all(self.sql.used_slots, vec![Value::Number(ck.into())])
             .await?;
 
         let mut sidx: usize = 1;
@@ -140,22 +175,10 @@ impl TriggerTemplate for DimensionAutoCodeTemplate {
         // 2. 查询 ck 类目表的 code 和 c_sort_（各维度类目表固定：
         //    scene→cons-industry-cate、factor→cons-factor-cate、function→cons-function-cate）
         let cat_code: Option<String> = engine
-            .query_scalar(
-                &format!(
-                    "SELECT code FROM isahl.\"{}\" WHERE id = $1",
-                    self.cate_table
-                ),
-                vec![Value::Number(ck.into())],
-            )
+            .query_scalar(self.sql.cate_code, vec![Value::Number(ck.into())])
             .await?;
         let cat_sort: Option<i64> = engine
-            .query_scalar(
-                &format!(
-                    "SELECT c_sort_ FROM isahl.\"{}\" WHERE id = $1",
-                    self.cate_table
-                ),
-                vec![Value::Number(ck.into())],
-            )
+            .query_scalar(self.sql.cate_sort, vec![Value::Number(ck.into())])
             .await?;
 
         let code = format!("{}{}", cat_code.unwrap_or_default(), SYMA[sidx - 1]);
@@ -257,6 +280,30 @@ impl TriggerTemplate for TaskInitiatorTemplate {
 // Entity User Template
 // ============================================
 
+/// 应用容器用户表 upsert 语句（表名编译期固化；正文单一来源，运行期不拼串）
+macro_rules! app_user_upsert_sql {
+    ($table:literal) => {
+        concat!(
+            "INSERT INTO ",
+            $table,
+            " (created_by_id, updated_by_id, created_at, updated_at, ",
+            "username, nickname, app_lang, system_settings) ",
+            "VALUES ($1, $2, $3, $4, $5, $6, 'zh_CN', '{}') ",
+            "ON CONFLICT (username) DO UPDATE SET ",
+            "updated_by_id = EXCLUDED.updated_by_id, updated_at = EXCLUDED.updated_at ",
+            "RETURNING id"
+        )
+    };
+}
+
+/// 容器 → 用户表 upsert 静态语句（闭式枚举分派）。
+fn app_user_upsert_sql(container: crate::AppContainer) -> &'static str {
+    match container {
+        crate::AppContainer::Meta => app_user_upsert_sql!("isahl_meta.meta_user"),
+        crate::AppContainer::Gateway => app_user_upsert_sql!("isahl_auth.auth_users"),
+    }
+}
+
 pub struct EntityUserTemplate;
 
 #[async_trait]
@@ -312,29 +359,11 @@ impl TriggerTemplate for EntityUserTemplate {
         let username = notice.clone().unwrap_or_default();
         let nickname = notice.unwrap_or_else(|| username.clone());
 
-        let user_table = match ctx.app_container {
-            crate::AppContainer::Meta => "isahl_meta.meta_user",
-            crate::AppContainer::Gateway => "isahl_auth.auth_users",
-        };
-
-        let sql = format!(
-            r#"
-            INSERT INTO {} (
-                created_by_id, updated_by_id, created_at, updated_at,
-                username, nickname, app_lang, system_settings
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, 'zh_CN', '{{}}')
-            ON CONFLICT (username) DO UPDATE SET
-                updated_by_id = EXCLUDED.updated_by_id,
-                updated_at = EXCLUDED.updated_at
-            RETURNING id
-            "#,
-            user_table
-        );
+        let sql = app_user_upsert_sql(ctx.app_container);
 
         let user_id: i64 = engine
             .query_scalar(
-                &sql,
+                sql,
                 vec![
                     created_by_id
                         .map(|v| Value::Number(v.into()))
@@ -440,9 +469,9 @@ impl BusinessRegistryLoader {
             Arc::new(crate::product::ProdPNumberTemplate::made()),
         );
 
-        // BOM b_number template
+        // BOM b_number → code 同步模板（编号由前端生成写入 b_number，本模板复制到 code）
         self.inner
-            .register("builtin:bom", Arc::new(crate::bom::BomBNumberTemplate));
+            .register("builtin:bom", Arc::new(crate::bom::BomCodeSyncTemplate));
 
         // Operation / Process templates
         self.inner.register(

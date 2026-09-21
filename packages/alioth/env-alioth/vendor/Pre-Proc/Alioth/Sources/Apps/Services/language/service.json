@@ -30,9 +30,9 @@
         "table": "isahl.zc_id_prot-env_config",
         "inherits": "zc_id_lifecycle",
         "coordinates": {
-          "factor": "GEA",
+          "factor": "GEC",
           "function": "↑_DA",
-          "scene": "JC"
+          "scene": "JE"
         },
         "field_mappings": [
           {

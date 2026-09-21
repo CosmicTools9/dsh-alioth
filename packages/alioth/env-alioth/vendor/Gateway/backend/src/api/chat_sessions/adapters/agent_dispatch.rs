@@ -17,10 +17,6 @@ const REGISTRY_TTL: Duration = Duration::from_secs(60);
 pub struct AgentRouterAdapter {
     pool: PgPool,
     registry: Arc<RwLock<(AgentRegistry, Instant)>>,
-    /// per-user agent 实例池（add-agent-pool-user-memory）
-    agent_pool: ai_agent::pool::AgentPool,
-    /// 用户 memory 存储
-    memory_store: super::super::memory_store::UserMemoryStore,
 }
 
 impl AgentRouterAdapter {
@@ -31,8 +27,6 @@ impl AgentRouterAdapter {
                 AgentRegistry::new(),
                 Instant::now() - REGISTRY_TTL,
             ))),
-            agent_pool: ai_agent::pool::AgentPool::new(),
-            memory_store: super::super::memory_store::UserMemoryStore::new(pool),
         }
     }
 
@@ -62,34 +56,6 @@ impl AgentRouterAdapter {
     {
         let lock = self.registry.read().await;
         f(&lock.0)
-    }
-
-    /// 租用 per-user agent 实例（add-agent-pool-user-memory）：从 session 反查
-    /// owner，按 (user_id, agent_code) 建实例（池键隔离）。失败仅 warn——
-    /// 池实例只服务 memory 注入，不影响主链。
-    async fn rent_pool_instance(&self, session_id: i64, agent_code: &str) {
-        let session_owner: Option<i64> = sqlx::query_scalar(
-            r#"SELECT created_by_id FROM isahl."zc_id_thre-ai_session" WHERE id = $1"#,
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten();
-        if let Some(owner) = session_owner {
-            if self
-                .agent_pool
-                .get_or_create(owner, agent_code)
-                .await
-                .is_none()
-            {
-                common::telemetry::warn!(
-                    "agent pool: failed to create instance for user {} agent {}",
-                    owner,
-                    agent_code
-                );
-            }
-        }
     }
 }
 
@@ -121,7 +87,6 @@ impl AgentDispatchPort for AgentRouterAdapter {
             self.refresh_registry_if_needed().await;
             let exists = self.with_registry(|r| r.get(&code).is_some()).await;
             if exists {
-                self.rent_pool_instance(session_id, &code).await;
                 return Ok(code);
             }
         }
@@ -168,9 +133,6 @@ impl AgentDispatchPort for AgentRouterAdapter {
         .await
         .map_err(|e| format!("Failed to save routing state: {}", e))?;
 
-        self.rent_pool_instance(session_id, &decision.agent_code)
-            .await;
-
         Ok(decision.agent_code)
     }
 
@@ -190,22 +152,5 @@ impl AgentDispatchPort for AgentRouterAdapter {
         self.refresh_registry_if_needed().await;
         let lock = self.registry.read().await;
         Ok(lock.0.list_selectable())
-    }
-
-    async fn load_user_memory(&self, user_id: i64) -> Result<serde_json::Value, String> {
-        self.memory_store.load(user_id).await
-    }
-
-    async fn sync_user_memory(
-        &self,
-        user_id: i64,
-        agent_code: &str,
-        memory: serde_json::Value,
-    ) -> Result<(), String> {
-        // 池实例不存在（agent 非内置/未租用）→ 无实例可同步，主链不阻断
-        if let Some(inst) = self.agent_pool.get_or_create(user_id, agent_code).await {
-            inst.set_memory(memory).await;
-        }
-        Ok(())
     }
 }

@@ -187,8 +187,9 @@ async fn condition_exclusive_first_match_wins() {
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "c", "type": "condition", "label": "路由", "routing": "exclusive",
              "next": [{"to": 2, "cond": "1 == 1"}, {"to": 3, "cond": "1 == 1"}]},
-            {"id": "x", "type": "approval", "label": "首中分支", "mode": "or_sign"},
-            {"id": "y", "type": "approval", "label": "次分支", "mode": "or_sign"}
+            {"id": "x", "type": "approval", "label": "首中分支", "mode": "or_sign", "next": [{"to": 4}]},
+            {"id": "y", "type": "approval", "label": "次分支", "mode": "or_sign", "next": [{"to": 4}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let flow_id = create_flow(&pool, "Excl", Some(scope_id), &graph).await;
@@ -252,8 +253,9 @@ async fn condition_inclusive_all_matches_run_legacy() {
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "c", "type": "condition", "label": "路由",
              "next": [{"to": 2, "cond": "1 == 1"}, {"to": 3, "cond": "1 == 1"}]},
-            {"id": "x", "type": "approval", "label": "分支 X", "mode": "or_sign"},
-            {"id": "y", "type": "approval", "label": "分支 Y", "mode": "or_sign"}
+            {"id": "x", "type": "approval", "label": "分支 X", "mode": "or_sign", "next": [{"to": 4}]},
+            {"id": "y", "type": "approval", "label": "分支 Y", "mode": "or_sign", "next": [{"to": 4}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let flow_id = create_flow(&pool, "Incl", Some(scope_id), &graph).await;
@@ -295,7 +297,8 @@ async fn condition_invalid_routing_rejected() {
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "c", "type": "condition", "label": "路由", "routing": "random",
              "next": [{"to": 2, "cond": "1 == 1"}]},
-            {"id": "x", "type": "approval", "label": "分支", "mode": "or_sign"}
+            {"id": "x", "type": "approval", "label": "分支", "mode": "or_sign", "next": [{"to": 3}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let flow_id = create_flow(&pool, "BadRouting", Some(scope_id), &graph).await;
@@ -328,8 +331,9 @@ async fn branch_local_join_does_not_wait_other_region() {
             {"id": "j1", "type": "branch", "label": "区A汇聚", "joinRule": "all", "next": [{"to": 7}]},
             {"id": "p2", "type": "parallel", "label": "区B并行", "next": [{"to": 5}]},
             {"id": "b1", "type": "approval", "label": "区B审批", "mode": "or_sign", "next": [{"to": 6}]},
-            {"id": "j2", "type": "branch", "label": "区B汇聚", "joinRule": "all"},
-            {"id": "c1", "type": "approval", "label": "区A后续", "mode": "or_sign"}
+            {"id": "j2", "type": "branch", "label": "区B汇聚", "joinRule": "all", "next": [{"to": 8}]},
+            {"id": "c1", "type": "approval", "label": "区A后续", "mode": "or_sign", "next": [{"to": 8}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let flow_id = create_flow(&pool, "LocalJoin", Some(scope_id), &graph).await;

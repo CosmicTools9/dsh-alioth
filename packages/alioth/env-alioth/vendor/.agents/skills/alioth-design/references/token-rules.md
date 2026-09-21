@@ -11,3 +11,20 @@
 | **行高** | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6                                                                                                                         | 1.15, 1.35, 1.45, 1.7, 1.8                        |
 | **圆角** | 4px (sm), 8px (md), 12px (lg), 16px (xl)                                                                                                             | 6, 10, 14, 20, 24px                               |
 | **阴影** | `shadow-sm/md/lg/xl/2xl`（对应 `var(--shadow-*)`）                                                                                                   | 自定义 `box-shadow` 值                            |
+
+## 跨侧命名映射（原型别名 ↔ 权威基础 token ↔ 前端 Tailwind 别名）
+
+同一语义在三处有不同名字，**取值来源 MUST 唯一**（权威基础 token）。原型别名 MUST 以 `var()` 引用，MUST NOT 直写值复制
+（判据：`bun scripts/check/check-design-token-parity.ts --fail`）。
+
+| 权威基础 token（`DESIGN_TOKENS` §8） | 原型别名（`prototype-base.css`） | 前端 Tailwind `@theme` 别名（`theme-base.css`） |
+| --- | --- | --- |
+| `--background` | `--bg` | `--color-background` |
+| `--foreground` | `--text` | `--color-foreground` |
+| `--muted-foreground` | `--text2`、`--muted-fg` | `--color-muted-foreground` |
+| `--card` | `--surface` | `--color-card` |
+| `--sidebar` | `--sidebar-background` | （无，模块自定义） |
+| `--categorical-1..8` | `--chart-1..5`（别名指向 1..5） | `--color-*` 由 `@theme` 派生 |
+
+> 两侧别名写法不同属**机制差异**（原型直接别名；前端由 Tailwind v4 `@theme` 生成 `hsl(var(--x))`），不是漂移；
+> **漂移的判据是「取值来源不唯一」**（同一语义两处各带独立取值）。

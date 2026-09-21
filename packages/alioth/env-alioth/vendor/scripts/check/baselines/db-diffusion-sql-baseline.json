@@ -60,7 +60,6 @@
     "scripts/db/d3-flow-dag-cleanup.sql",
     "scripts/db/migrate-system-configs-to-live-db.sql",
     "scripts/db/migrate-tracking-event-type.sql",
-    "scripts/db/migrate-view-tags-to-post-rr-view.sql",
     "scripts/db/reassign-uid-codes.sql",
     "scripts/db/seed-ngac-test.sql",
     "scripts/db/seed-oauth-providers.sql",

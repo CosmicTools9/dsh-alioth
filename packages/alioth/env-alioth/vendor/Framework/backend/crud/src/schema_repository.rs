@@ -12,6 +12,7 @@
 //! - **created_by_id 自动注入**：create 时自动绑定 `created_by_id = user_id`
 
 use crate::fk_index;
+use crate::id_json;
 use common::AliothError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -196,7 +197,7 @@ impl SchemaRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(row.map(|(v,)| v))
+        Ok(id_json::stringify_row(row))
     }
 
     pub async fn list(
@@ -222,7 +223,7 @@ impl SchemaRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
+        Ok(id_json::stringify_rows(rows))
     }
 
     pub async fn list_with_refs(
@@ -249,7 +250,7 @@ impl SchemaRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
+        Ok(id_json::stringify_rows(rows))
     }
 
     /// List with optional row-level security filter.
@@ -331,7 +332,7 @@ impl SchemaRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
+        Ok(id_json::stringify_rows(rows))
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -388,30 +389,36 @@ impl SchemaRepository {
     /// - `Cascade` — 级联软删除所有子记录
     /// - `SetNull` — 将子记录的 FK 置为 NULL
     /// - `SetDefault` — 将子记录的 FK 设为默认值
+    ///
+    /// 反向条目元组 = `(source_table, ref_name, local_column)`（`FK_REVERSE` 语义，与
+    /// `FK_FORWARD` 的 `(field_name, target_table, local_key)` 同源）：**SQL 列名取第三元**
+    /// `local_column`，第二元 `ref_name` 只用于策略解析与报错文案。二者常不同名
+    /// （如 `category`/`ck_category`、`fence`/`qk_fence`），误用 ref_name 当列名会
+    /// 直接 `字段 "<ref>" 不存在` 报错。
     pub async fn delete(&self, table: &str, id: i64, user_id: i64) -> Result<(), AliothError> {
         use fk_index::CascadeStrategy;
         let back_refs = fk_index::lookup_reverse_fk(table);
-        for (source_table, field_name, _local_key) in back_refs {
-            let strategy = fk_index::resolve_cascade(source_table, field_name);
+        for (source_table, ref_name, local_column) in back_refs {
+            let strategy = fk_index::resolve_cascade(source_table, ref_name);
             match strategy {
                 CascadeStrategy::Restrict => {
-                    let exists = self.has_children(source_table, field_name, id).await?;
+                    let exists = self.has_children(source_table, local_column, id).await?;
                     if exists {
                         return Err(AliothError::BadRequest(format!(
                             "Cannot delete {}: {} still has related records in {} via {}",
-                            table, table, source_table, field_name
+                            table, table, source_table, ref_name
                         )));
                     }
                 }
                 CascadeStrategy::Cascade => {
-                    self.cascade_delete(source_table, field_name, id, user_id)
+                    self.cascade_delete(source_table, local_column, id, user_id)
                         .await?;
                 }
                 CascadeStrategy::SetNull => {
-                    self.set_null_fk(source_table, field_name, id).await?;
+                    self.set_null_fk(source_table, local_column, id).await?;
                 }
                 CascadeStrategy::SetDefault => {
-                    self.set_default_fk(source_table, field_name, id).await?;
+                    self.set_default_fk(source_table, local_column, id).await?;
                 }
             }
         }
@@ -561,11 +568,28 @@ impl SchemaRepository {
     ///
     /// 返回形如：`'fk_parent', (SELECT jsonb_build_object('notice', r0.notice) FROM isahl."target" r0 WHERE r0.id = t.fk_parent)`
     fn build_refs_sql(&self, table: &str) -> String {
+        let mut parts = Vec::new();
+        // rr_* 桥表：fk_index 不承载 ref_left/ref_right（非注册引用字段），但读径契约
+        // 要求双端宿主解析——键名取桥名两段（zc_id_event_rr_matter → event/matter），
+        // 宿主经全族祖先 zc_id_lifecycle 解析 notice（端点可指任意叶表行）
+        if let Some(pos) = table.find("_rr_") {
+            let left_key = &table["zc_id_".len()..pos];
+            let right_key = &table[pos + "_rr_".len()..];
+            parts.push(format!(
+                "'{left_key}', (SELECT jsonb_build_object('notice', rl.notice) FROM isahl.zc_id_lifecycle rl WHERE rl.id = t.ref_left), \
+                 '{right_key}', (SELECT jsonb_build_object('notice', rr.notice) FROM isahl.zc_id_lifecycle rr WHERE rr.id = t.ref_right)"
+            ));
+        }
+        // tpl_id → template：fk_index 同样不承载（tpl 为框架内建自引用列）。经 to_jsonb
+        // 动态取列（表无 tpl_id 列时 ->> 得 NULL，子查询落空安全）；范例宿主经全族祖先解析
+        parts.push(
+            "'template', (SELECT jsonb_build_object('notice', tp.notice) FROM isahl.zc_id_lifecycle tp WHERE tp.id = (to_jsonb(t)->>'tpl_id')::bigint)"
+                .to_string(),
+        );
         let refs = fk_index::lookup_forward_fk(table);
-        if refs.is_empty() {
+        if refs.is_empty() && parts.is_empty() {
             return String::new();
         }
-        let mut parts = Vec::new();
         for (i, (field_name, target_table, local_key)) in refs.iter().enumerate() {
             let alias = format!("r{}", i);
             let lk = if local_key.is_empty() {
@@ -592,9 +616,9 @@ impl SchemaRepository {
 
     /// 有子表的根/中间表（如 zc_id_lifecycle）返回 false，不可作为写入目标。
     ///
-    /// 复用 `isahl_meta.gf_query_leafs`（权威继承视图 `devv_inherits_view` 的
-    /// 叶查询函数，与 schema-info `leafs-of`、ontology baseline 刷新同源），
-    /// 不手写继承链。受管根：zc_id_lifecycle（业务实体）/ zc_id_scale（qk 标量）/
+    /// 复用 `isahl_meta.gf_query_leafs`（继承遍历函数，直接走 `pg_inherits`；
+    /// 与 schema-info `leafs-of`、ontology baseline 刷新同源），不手写继承链。
+    /// 受管根：zc_id_lifecycle（业务实体）/ zc_id_scale（qk 标量）/
     /// zc_id_object + zc_ad_scalar（sk/ck/tk 标量引用）/ zc_id_eval-comparable（lk 等级）。
     /// FUNC-017: `vw_` 前缀视图（只读投影，如 isahl.vw_requirement_flat）放行列表/详情读取；
     /// 写入路径（create_in_leaf / delete_leaf）仍拒绝视图。
@@ -783,7 +807,7 @@ impl SchemaRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
+        Ok(id_json::stringify_rows(rows))
     }
 
     /// 按 id 获取单条记录。
@@ -799,7 +823,7 @@ impl SchemaRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(row.map(|(v,)| v))
+        Ok(id_json::stringify_row(row))
     }
 
     /// 引用表存在性校验（DB 侧兜底，授权在 handler 层完成）。
@@ -850,7 +874,7 @@ impl SchemaRepository {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
+        Ok(id_json::stringify_rows(rows))
     }
 
     /// 只读引用详情（枚举下拉场景，按 id 取单条）。
@@ -865,7 +889,7 @@ impl SchemaRepository {
             .fetch_optional(&self.pool)
             .await
             .map_err(|e| AliothError::Database(e.to_string()))?;
-        Ok(row.map(|(v,)| v))
+        Ok(id_json::stringify_row(row))
     }
 }
 

@@ -1,0 +1,2990 @@
+{
+  "note": "合法动态表名/列位站点（开放集合 / 生成期模板 / 泛型单态化 / 运行期列位）：新增即失败；清理后请删条目。kind 枚举：table | column（缺省 table）。source 枚举：api-param | model-data | cli-arg | generator-template | generic-type | debt-enumerable | test-fixture。rule_reference 见同目录 JSON 顶层字段（docs/specs/SPEC_ENFORCEMENT_SUBSTRATE.md §基线卫生（R2）/§同源更新（R3））。",
+  "rule_reference": "docs/specs/SPEC_ENFORCEMENT_SUBSTRATE.md §基线卫生（R2）/§同源更新（R3）——基线只减不增、条目须有可核验 source+reason、判据与规约同源；条目语义（可枚举即静态化 / 运行期来源登记）见 openspec/specs/proc-align「运行时零 catalog 查询与静态 SQL」「动态表名门禁可执行且基线只减不增」。",
+  "sites": [
+    {
+      "file": "Framework/backend/common/src/dim_registry.rs",
+      "line": 189,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：维度注册表按配置 from 子句"
+    },
+    {
+      "file": "Framework/backend/common/src/dim_registry.rs",
+      "line": 200,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：维度注册表按配置 from 子句"
+    },
+    {
+      "file": "Framework/backend/common/src/dim_registry.rs",
+      "line": 159,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "维度注册表按配置 from 子句"
+    },
+    {
+      "file": "Framework/backend/common/src/dim_registry.rs",
+      "line": 168,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "维度注册表按配置 from 子句"
+    },
+    {
+      "file": "Framework/backend/common/src/dim_registry.rs",
+      "line": 189,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "维度注册表按配置 from 子句"
+    },
+    {
+      "file": "Framework/backend/common/src/dim_registry.rs",
+      "line": 200,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "维度注册表按配置 from 子句"
+    },
+    {
+      "file": "Framework/backend/crud/src/activity.rs",
+      "line": 116,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/activity.rs",
+      "line": 147,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/handler.rs",
+      "line": 37,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/ontology_handler.rs",
+      "line": 278,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "本体处理器按入参表名"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 299,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权驱动：列清单 = 实体常量字段清单 + build_sensitive_suffix::<E>(self.authorized_columns, …)（请求授权头驱动的敏感列裁剪）；语句后续以 push_str(where/order/limit) 运行期装配 ⇒ 非编译期可枚举。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 390,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权驱动：列清单 = 实体常量字段清单 + build_sensitive_suffix::<E>(self.authorized_columns, …)（请求授权头驱动的敏感列裁剪）；语句后续以 push_str(where/order/limit) 运行期装配 ⇒ 非编译期可枚举。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 620,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权驱动：列清单 = 实体常量字段清单 + build_sensitive_suffix::<E>(self.authorized_columns, …)（请求授权头驱动的敏感列裁剪）；语句后续以 push_str(where/order/limit) 运行期装配 ⇒ 非编译期可枚举。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 672,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权驱动：列清单 = 实体常量字段清单 + build_sensitive_suffix::<E>(self.authorized_columns, …)（请求授权头驱动的敏感列裁剪）；语句后续以 push_str(where/order/limit) 运行期装配 ⇒ 非编译期可枚举。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 299,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 328,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 390,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 443,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 451,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 526,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 534,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 620,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/query_builder.rs",
+      "line": 672,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/reference.rs",
+      "line": 466,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "描述符通道（列位）：`_refs` 投影表达式由 `build_refs_select_suffix::<E>()` 依据实体描述符 `HasReferenceJoins::render(i).select_suffix` 渲染（静态 str，126 处实现 / 41 文件）；本文件渲染器无法枚举实体声明面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/reference.rs",
+      "line": 239,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "描述符通道：目标表名 / 桥表名来自实体声明点注入的描述符字段（&'static str，126 处 HasReferenceJoins 实现 / 41 文件）；本文件渲染器无法枚举实体声明面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/reference.rs",
+      "line": 271,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "描述符通道：目标表名 / 桥表名来自实体声明点注入的描述符字段（&'static str，126 处 HasReferenceJoins 实现 / 41 文件）；本文件渲染器无法枚举实体声明面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/reference.rs",
+      "line": 342,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "描述符通道：目标表名 / 桥表名来自实体声明点注入的描述符字段（&'static str，126 处 HasReferenceJoins 实现 / 41 文件）；本文件渲染器无法枚举实体声明面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/reference.rs",
+      "line": 401,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "描述符通道：目标表名 / 桥表名来自实体声明点注入的描述符字段（&'static str，126 处 HasReferenceJoins 实现 / 41 文件）；本文件渲染器无法枚举实体声明面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/reference.rs",
+      "line": 518,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "描述符通道：目标表名 / 桥表名来自实体声明点注入的描述符字段（&'static str，126 处 HasReferenceJoins 实现 / 41 文件）；本文件渲染器无法枚举实体声明面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 362,
+      "kind": "column",
+      "placeholder": "{set}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 560,
+      "kind": "column",
+      "placeholder": "{cols}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 189,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 212,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 239,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 277,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 294,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 310,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 362,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 426,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 451,
+      "kind": "table",
+      "placeholder": "{source}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 471,
+      "kind": "table",
+      "placeholder": "{source}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 492,
+      "kind": "table",
+      "placeholder": "{source}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 514,
+      "kind": "table",
+      "placeholder": "{source}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 560,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 601,
+      "kind": "table",
+      "placeholder": "{target}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 798,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 818,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 865,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/schema_repository.rs",
+      "line": 884,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "Meta schema 层通用仓储：`table: &str`/`field: &str` 入参"
+    },
+    {
+      "file": "Framework/backend/crud/src/subject.rs",
+      "line": 352,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：列清单 = 实体类型常量 E::SELECT_FIELDS（每实体 impl 提供的编译期字面量），表名 = E::table_name()；框架单一代码路径服务 N 实体，本文件内不可枚举、不可闭合，但两者均非运行期输入（无授权裁剪后缀）。"
+    },
+    {
+      "file": "Framework/backend/crud/src/subject.rs",
+      "line": 408,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：列清单 = 实体类型常量 E::SELECT_FIELDS（每实体 impl 提供的编译期字面量），表名 = E::table_name()；框架单一代码路径服务 N 实体，本文件内不可枚举、不可闭合，但两者均非运行期输入（无授权裁剪后缀）。"
+    },
+    {
+      "file": "Framework/backend/crud/src/subject.rs",
+      "line": 352,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/subject.rs",
+      "line": 408,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架泛型通道：表名来自实体类型常量（每个实体 impl 提供的编译期字面量）；框架单一代码路径服务 N 个实体，调用点无法枚举 ⇒ 本文件内不可闭合。语句其余部分（where/limit）为运行期装配，但表名本身无注入面。"
+    },
+    {
+      "file": "Framework/backend/crud/src/trigger.rs",
+      "line": 469,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器执行通道：表名来自触发器定义（经 API 注册，`qualified_table_name` 经 `quote_identifier` 校验），列清单由运行期记录字典拼装（`quoted_columns`/`set_clauses`）——与 `Framework/backend/crud/src/trigger.rs` 同族，非编译期可枚举"
+    },
+    {
+      "file": "Framework/backend/crud/src/trigger.rs",
+      "line": 159,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器执行通道：表名来自触发器定义（经 API 注册，`qualified_table_name` 经 `quote_identifier` 校验），列清单由运行期记录字典拼装（`quoted_columns`/`set_clauses`）——与 `Framework/backend/crud/src/trigger.rs` 同族，非编译期可枚举"
+    },
+    {
+      "file": "Framework/backend/crud/src/trigger.rs",
+      "line": 359,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器执行通道：表名来自触发器定义（经 API 注册，`qualified_table_name` 经 `quote_identifier` 校验），列清单由运行期记录字典拼装（`quoted_columns`/`set_clauses`）——与 `Framework/backend/crud/src/trigger.rs` 同族，非编译期可枚举"
+    },
+    {
+      "file": "Framework/backend/crud/src/trigger.rs",
+      "line": 469,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器执行通道：表名来自触发器定义（经 API 注册，`qualified_table_name` 经 `quote_identifier` 校验），列清单由运行期记录字典拼装（`quoted_columns`/`set_clauses`）——与 `Framework/backend/crud/src/trigger.rs` 同族，非编译期可枚举"
+    },
+    {
+      "file": "Framework/backend/crud/src/trigger.rs",
+      "line": 533,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器执行通道：表名来自触发器定义（经 API 注册，`qualified_table_name` 经 `quote_identifier` 校验），列清单由运行期记录字典拼装（`quoted_columns`/`set_clauses`）——与 `Framework/backend/crud/src/trigger.rs` 同族，非编译期可枚举"
+    },
+    {
+      "file": "Framework/backend/dict/src/handler.rs",
+      "line": 464,
+      "kind": "column",
+      "placeholder": "{cols}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：字典端点：URL path 表名（前缀白名单族）"
+    },
+    {
+      "file": "Framework/backend/dict/src/handler.rs",
+      "line": 534,
+      "kind": "column",
+      "placeholder": "{set}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：字典端点：URL path 表名（前缀白名单族）"
+    },
+    {
+      "file": "Framework/backend/dict/src/handler.rs",
+      "line": 464,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "字典端点：URL path 表名（前缀白名单族）"
+    },
+    {
+      "file": "Framework/backend/dict/src/handler.rs",
+      "line": 534,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "api-param",
+      "reason": "字典端点：URL path 表名（前缀白名单族）"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
+      "line": 79,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "实体常量 + 框架构建器：表名 = ContactsEntity::table_name() 编译期常量，投影后缀 = 框架 build_refs_select_suffix::<ContactsEntity>()（由实体引用声明产出）——两者均非运行期输入，但本文件不得重复实现框架构建逻辑。"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
+      "line": 147,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "实体常量 + 框架构建器：表名 = ContactsEntity::table_name() 编译期常量，投影后缀 = 框架 build_refs_select_suffix::<ContactsEntity>()（由实体引用声明产出）——两者均非运行期输入，但本文件不得重复实现框架构建逻辑。"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
+      "line": 164,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "实体常量 + 框架构建器：表名 = ContactsEntity::table_name() 编译期常量，投影后缀 = 框架 build_refs_select_suffix::<ContactsEntity>()（由实体引用声明产出）——两者均非运行期输入，但本文件不得重复实现框架构建逻辑。"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/handlers/org_tree.rs",
+      "line": 333,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "组织树端点：按入参表名"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/handlers/org_tree.rs",
+      "line": 344,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "组织树端点：按入参表名"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/bill_check.rs",
+      "line": 134,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/consignment.rs",
+      "line": 170,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/contract.rs",
+      "line": 104,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/deta_bill_check.rs",
+      "line": 135,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/environment.rs",
+      "line": 108,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/fence.rs",
+      "line": 254,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/freight_product.rs",
+      "line": 120,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/identity.rs",
+      "line": 303,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：身份仓储：按调用方表名"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/identity.rs",
+      "line": 244,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "身份仓储：按调用方表名"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/inventory_sales.rs",
+      "line": 167,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "PATCH 式部分更新：SET 子句由请求可选字段集合拼装（开放集合，2^N 组合不可枚举）；列名均来自本函数内 &str 字面量，仅占位符序号运行期生成"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/invoice_detail.rs",
+      "line": 148,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/invoice.rs",
+      "line": 125,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/license.rs",
+      "line": 107,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/natural_person.rs",
+      "line": 136,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/payment.rs",
+      "line": 146,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/pricing_agreement.rs",
+      "line": 117,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/settlement_bank.rs",
+      "line": 121,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/settlement_cash.rs",
+      "line": 113,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/settlement_channel.rs",
+      "line": 123,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/trade_order.rs",
+      "line": 151,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/transit_route.rs",
+      "line": 182,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/transport_tracking.rs",
+      "line": 171,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/repository/vehicle.rs",
+      "line": 375,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/identity-org/src/service/org_write.rs",
+      "line": 865,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "组织写路：按调用方表名"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 91,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 112,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 152,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 200,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 241,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 278,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 327,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 384,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profile/engine.rs",
+      "line": 446,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 332,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 338,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 357,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 363,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 390,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 411,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 459,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 489,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 525,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 544,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 551,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 680,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 684,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/profiler.rs",
+      "line": 688,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/report/mod.rs",
+      "line": 267,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源（质量规则配置驱动）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 1192,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 328,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 396,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 418,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 500,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 663,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 704,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 790,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 846,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 883,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 911,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 939,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 968,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 997,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 1033,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 1091,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/quality/src/rules/engine.rs",
+      "line": 1192,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
+    },
+    {
+      "file": "Framework/backend/status/src/repository.rs",
+      "line": 133,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/category.rs",
+      "line": 78,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "同上（类目排序原语）"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/category.rs",
+      "line": 99,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "同上（类目排序原语）"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 105,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 114,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 162,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 177,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 105,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 114,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 125,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 162,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 177,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/executor.rs",
+      "line": 190,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "触发器定义（DB/注册表）驱动：表名与列集合来自运行期触发器定义"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/lifecycle.rs",
+      "line": 391,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "同上（生命周期原语）"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/lifecycle.rs",
+      "line": 409,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "同上（生命周期原语）"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/lifecycle.rs",
+      "line": 506,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "同上（生命周期原语）"
+    },
+    {
+      "file": "Framework/backend/trigger-registry/src/loader.rs",
+      "line": 207,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器加载器：注册表项自带表名"
+    },
+    {
+      "file": "Gateway/backend/src/api/chat_sessions/adapters/tool_bridge.rs",
+      "line": 365,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "table 来自 AI 工具调用入参（params.get(\"table\")），经 ctx.allowed_schemas 白名单校验后拼装 SQL；开放集合（工具参数），非编译期可枚举。"
+    },
+    {
+      "file": "Gateway/backend/src/namespace_schema.rs",
+      "line": 254,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "命名空间 schema 同步：`ALTER TABLE \"{}\".\"{}\" ADD COLUMN …` 由 pg_dump 结构差集生成（参考库 → ns 库），表名/schema 名随参考库结构变化。"
+    },
+    {
+      "file": "Gateway/backend/src/seed/ns_seed.rs",
+      "line": 158,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "ns 种子写入前的物理表准备：`CREATE UNIQUE INDEX … ON ONLY isahl.\"{}\"`，表名来自模型物理表解析。"
+    },
+    {
+      "file": "Gateway/backend/src/trigger_crud.rs",
+      "line": 359,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "与同字面量表位同源：触发器 CRUD 端点：按入参表名"
+    },
+    {
+      "file": "Gateway/backend/src/trigger_crud.rs",
+      "line": 279,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器 CRUD 端点：按入参表名"
+    },
+    {
+      "file": "Gateway/backend/src/trigger_crud.rs",
+      "line": 359,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器 CRUD 端点：按入参表名"
+    },
+    {
+      "file": "Gateway/backend/src/trigger_crud.rs",
+      "line": 423,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器 CRUD 端点：按入参表名"
+    },
+    {
+      "file": "Gateway/backend/src/trigger_crud.rs",
+      "line": 438,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "触发器 CRUD 端点：按入参表名"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/docgen/markdown.rs",
+      "line": 52,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/api/paths.rs",
+      "line": 268,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/api/paths.rs",
+      "line": 342,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/module/api.rs",
+      "line": 707,
+      "kind": "column",
+      "placeholder": "{cols}",
+      "source": "generator-template",
+      "reason": "代码生成器模板常量（_SQL_INSERT_ITEM/_SQL_UPDATE_ITEM 族）：模板正文里的表名/列清单占位由**生成期**调用点以字面量注入，生成物落为静态 SQL（见 ffc91e87a4 列位口径与 proc-align 技能）——运行期无拼装，属生成期模板面，非可枚举运行期表名"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/module/api.rs",
+      "line": 707,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "代码生成器模板常量（_SQL_INSERT_ITEM/_SQL_UPDATE_ITEM 族）：模板正文里的表名/列清单占位由**生成期**调用点以字面量注入，生成物落为静态 SQL（见 ffc91e87a4 列位口径与 proc-align 技能）——运行期无拼装，属生成期模板面，非可枚举运行期表名"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 197,
+      "kind": "column",
+      "placeholder": "{column}",
+      "source": "generator-template",
+      "reason": "与同字面量表位同源：generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 218,
+      "kind": "column",
+      "placeholder": "{column}",
+      "source": "generator-template",
+      "reason": "与同字面量表位同源：generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 241,
+      "kind": "column",
+      "placeholder": "{column}",
+      "source": "generator-template",
+      "reason": "与同字面量表位同源：generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 330,
+      "kind": "column",
+      "placeholder": "{column}",
+      "source": "generator-template",
+      "reason": "与同字面量表位同源：generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 456,
+      "kind": "column",
+      "placeholder": "{columns}",
+      "source": "generator-template",
+      "reason": "与同字面量表位同源：generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 474,
+      "kind": "column",
+      "placeholder": "{column}",
+      "source": "generator-template",
+      "reason": "与同字面量表位同源：generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 90,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 178,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 197,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 218,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 241,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 270,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 303,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 330,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 437,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 456,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 474,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 497,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/db_checker.rs",
+      "line": 513,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/engine.rs",
+      "line": 471,
+      "kind": "table",
+      "placeholder": "{table_name}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/quality/engine.rs",
+      "line": 525,
+      "kind": "table",
+      "placeholder": "{table_name}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/repository/mod.rs",
+      "line": 40,
+      "kind": "table",
+      "placeholder": "{entity_plural}",
+      "source": "generator-template",
+      "reason": "generator crate 产出代码的表名模板（生成物已静态）"
+    },
+    {
+      "file": "Meta/backend/alioth-gen/src/generator/repository/shared.rs",
+      "line": 233,
+      "kind": "table",
+      "placeholder": "{entity_plural}",
+      "source": "generator-template",
+      "reason": "生成期模板：`{entity_plural}` 由模型元数据在生成器内填充（产出代码的源文本，非运行时 SQL）——与同目录其它生成器站点同族"
+    },
+    {
+      "file": "Meta/backend/app-agent/src/tool_registry/mod.rs",
+      "line": 744,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "CodeIntelTool SQLite 路径：表名由 `sqlite3 <file> .tables` 运行期枚举（任意 SQLite 文件的表清单），逐表预览 `SELECT * FROM \"{}\" LIMIT {}`；表名以标识符双引号转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 193,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 86,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 193,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 224,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 266,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 307,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/graph.rs",
+      "line": 360,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "链路线索遍历任意表（表名来自遍历请求/模型数据）"
+    },
+    {
+      "file": "Meta/backend/chain-lineage/src/handlers.rs",
+      "line": 167,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "维度切片表名为 API 入参（SituationQuery.dim）；状态目标表经 crud::fk_index::lookup_forward_fk（模型元数据 fk_index）解析，非任意表；两值按标识符引号转义后插值"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 370,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 2370,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3291,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3301,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3320,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3362,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3378,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3573,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3606,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3624,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3750,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3759,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3977,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 3983,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 4033,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 4088,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 4093,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
+      "line": 4251,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "db_sync 模型驱动 DDL：表名/物理表名由集合元数据解析（`isahl_meta` 集合 + 继承链 → 物理表名）后拼 DDL，随模型演进变化；标识符按 PG 引号规则转义（`\"` 翻倍）。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
+      "line": 270,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "同 db_sync：`ALTER TABLE ONLY … ALTER COLUMN id SET DEFAULT` 形态（uid 分配列装配），表名来自集合元数据解析结果。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
+      "line": 368,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "UID 同步遍历集合表（表名来自集合元数据）"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
+      "line": 608,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "UID 同步遍历集合表（表名来自集合元数据）"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
+      "line": 886,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "同 db_sync：`ALTER TABLE ONLY … ALTER COLUMN id SET DEFAULT` 形态（uid 分配列装配），表名来自集合元数据解析结果。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/inheritance.rs",
+      "line": 587,
+      "kind": "table",
+      "placeholder": "{schema}",
+      "source": "model-data",
+      "reason": "继承链 DDL：`ALTER TABLE IF EXISTS {schema}.\"{child}\" (NO) INHERIT {schema}.\"{parent}\"`，表名来自集合继承关系解析。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/inheritance.rs",
+      "line": 599,
+      "kind": "table",
+      "placeholder": "{schema}",
+      "source": "model-data",
+      "reason": "继承链 DDL：`ALTER TABLE IF EXISTS {schema}.\"{child}\" (NO) INHERIT {schema}.\"{parent}\"`，表名来自集合继承关系解析。"
+    },
+    {
+      "file": "Meta/backend/collection/src/repository/mod.rs",
+      "line": 654,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "集合删除路径：`DROP TABLE IF EXISTS {schema}.\"{phys}\" CASCADE`，表名来自集合元数据解析结果。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/common/mod.rs",
+      "line": 93,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/common/mod.rs",
+      "line": 102,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/common/mod.rs",
+      "line": 157,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 1759,
+      "kind": "table",
+      "placeholder": "{parent}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 2009,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 2016,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3513,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3529,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3700,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3737,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3829,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3836,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3843,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3850,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3857,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3919,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3926,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3933,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 3940,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 4007,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 4079,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 4086,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 4098,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：测试内动态建表/插值（`INSERT INTO isahl.{} (data)` 等，集合名逐次运行生成），无生产注入面"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 4209,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：测试内动态建表/插值（`INSERT INTO isahl.{} (data)` 等，集合名逐次运行生成），无生产注入面"
+    },
+    {
+      "file": "Meta/backend/collection/tests/repository_tests.rs",
+      "line": 4217,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：测试内动态建表/插值（`INSERT INTO isahl.{} (data)` 等，集合名逐次运行生成），无生产注入面"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 138,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 232,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 238,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 268,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 290,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 437,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/src/repository.rs",
+      "line": 492,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "字段 DDL：`ALTER TABLE isahl.\"{table}\" ADD/DROP/ALTER COLUMN …` 与列建删，表名与列名来自字段元数据（`isahl_meta` 字段模型），随模型演进变化。"
+    },
+    {
+      "file": "Meta/backend/field/tests/common/mod.rs",
+      "line": 72,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/field/tests/repository_tests.rs",
+      "line": 1101,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "test-fixture",
+      "reason": "测试夹具：按用例运行期生成的表名建/删测试表（`CREATE TABLE isahl.{t}` / `DROP TABLE … CASCADE` / `ALTER TABLE isahl.{t} …`），驱动被测 DDL 与 CRUD 路径。"
+    },
+    {
+      "file": "Meta/backend/lineage/src/import/sql_parser.rs",
+      "line": 160,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "外部 DDL 导入：表名来自被解析的 DDL"
+    },
+    {
+      "file": "Meta/backend/lineage/src/import/sql_parser.rs",
+      "line": 221,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "外部 DDL 导入：表名来自被解析的 DDL"
+    },
+    {
+      "file": "Meta/backend/meta-model/src/version/compat.rs",
+      "line": 157,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generator-template",
+      "reason": "模型版本兼容迁移生成：`MigrationStep.sql` 由 old/new 模型 diff 生成（表名/字段名取自实体与字段模型），作为**待执行**迁移语句产出而非直接执行。"
+    },
+    {
+      "file": "Meta/backend/meta-model/src/version/compat.rs",
+      "line": 190,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generator-template",
+      "reason": "模型版本兼容迁移生成：`MigrationStep.sql` 由 old/new 模型 diff 生成（表名/字段名取自实体与字段模型），作为**待执行**迁移语句产出而非直接执行。"
+    },
+    {
+      "file": "Meta/backend/meta-model/src/version/compat.rs",
+      "line": 209,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "generator-template",
+      "reason": "模型版本兼容迁移生成：`MigrationStep.sql` 由 old/new 模型 diff 生成（表名/字段名取自实体与字段模型），作为**待执行**迁移语句产出而非直接执行。"
+    },
+    {
+      "file": "Meta/backend/ontology-mapping/src/gen_tests.rs",
+      "line": 38,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "generator-template",
+      "reason": "测试生成器模板"
+    },
+    {
+      "file": "Meta/backend/ontology-mapping/src/generator.rs",
+      "line": 100,
+      "kind": "column",
+      "placeholder": "{1}",
+      "source": "generator-template",
+      "reason": "生成期模板：按本体模型生成 Service 代码文本，列清单在生成期展开"
+    },
+    {
+      "file": "Meta/backend/ontology-mapping/src/generator.rs",
+      "line": 106,
+      "kind": "column",
+      "placeholder": "{1}",
+      "source": "generator-template",
+      "reason": "生成期模板：按本体模型生成 Service 代码文本，列清单在生成期展开"
+    },
+    {
+      "file": "Meta/backend/ontology-mapping/src/generator.rs",
+      "line": 112,
+      "kind": "column",
+      "placeholder": "{3}",
+      "source": "generator-template",
+      "reason": "生成期模板：按本体模型生成 Service 代码文本，列清单在生成期展开"
+    },
+    {
+      "file": "Meta/backend/ontology-mapping/src/generator.rs",
+      "line": 124,
+      "kind": "column",
+      "placeholder": "{3}",
+      "source": "generator-template",
+      "reason": "生成期模板：按本体模型生成 Service 代码文本，列清单在生成期展开"
+    },
+    {
+      "file": "Meta/backend/src/bin/fix-o-number.rs",
+      "line": 22,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "cli-arg",
+      "reason": "CLI 工具按参数接受表名（运维/诊断入口）"
+    },
+    {
+      "file": "Meta/backend/src/bin/fix-o-number.rs",
+      "line": 33,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "cli-arg",
+      "reason": "CLI 工具按参数接受表名（运维/诊断入口）"
+    },
+    {
+      "file": "Meta/backend/src/bin/schema_info.rs",
+      "line": 151,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "cli-arg",
+      "reason": "与同字面量表位同源：CLI 工具按参数接受表名（运维/诊断入口）"
+    },
+    {
+      "file": "Meta/backend/src/bin/schema_info.rs",
+      "line": 910,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "cli-arg",
+      "reason": "CLI 工具按参数接受表名（运维/诊断入口）"
+    },
+    {
+      "file": "Meta/backend/src/bin/schema_info.rs",
+      "line": 920,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "cli-arg",
+      "reason": "CLI 工具按参数接受表名（运维/诊断入口）"
+    },
+    {
+      "file": "Meta/backend/src/bin/setup-readonly-user.rs",
+      "line": 123,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "只读权限验证探针：目标表由 pg_tables 按 isahl.zc_id_lifecycle% 运行期枚举（模型数据族，随模型演进增长），非任意表；语句只读"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 251,
+      "kind": "table",
+      "placeholder": "{leaf}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 271,
+      "kind": "table",
+      "placeholder": "{base}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 351,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 385,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 447,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 504,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 513,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 580,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 594,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 631,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 639,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 668,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 678,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 698,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 723,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 749,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 784,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 789,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 796,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 884,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 911,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 921,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 933,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 942,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/categories.rs",
+      "line": 985,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "维度/类目端点：表名来自维度元数据"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 344,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 376,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 504,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 513,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 523,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 527,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 536,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 684,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 721,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 清理端点预览（`preview_soft_deleted(&self, table)`）：表名由请求参数给入，集合开放不可编译期枚举；经 `validate_pg_ident` 校验后拼 `isahl.\"{}\"`。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 733,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 清理端点删除（`hard_delete_soft_deleted(&self, table)`）：同 721 的请求参数表名，集合开放不可编译期枚举；经 `validate_pg_ident` 校验后拼 `isahl.\"{}\"`。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 772,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 815,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 882,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/devtools/repository.rs",
+      "line": 884,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
+    },
+    {
+      "file": "Meta/backend/src/evo_agent/tests.rs",
+      "line": 347,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "EvoAgent 链路探测任意表"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/seeds.rs",
+      "line": 52,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "发布链按集合表名回放种子"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/seeds.rs",
+      "line": 112,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "发布链按集合表名回放种子"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/seeds.rs",
+      "line": 1072,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "发布链按集合表名回放种子"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/verify.rs",
+      "line": 515,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "表名来自发布产物 seed-dimensions.meta.json 的键集（覆盖面=产物声明面，随模型演进、仓库不持名单），按 UNION ALL 动态拼装计数 SQL；开放集合（模型数据驱动），非编译期可枚举。"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/verify.rs",
+      "line": 520,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "表名来自发布产物 seed-dimensions.meta.json 的键集（覆盖面=产物声明面，随模型演进、仓库不持名单），按 UNION ALL 动态拼装计数 SQL；开放集合（模型数据驱动），非编译期可枚举。"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 425,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 482,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 527,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 585,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 638,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 714,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 758,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 824,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 884,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 982,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 425,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 456,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 482,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 527,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 585,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 631,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 638,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 714,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 758,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 824,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/quality_adapter.rs",
+      "line": 884,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "质量检查配置（DB）驱动：表名/列名经 `quote_pg_ident` 校验后拼装"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 641,
+      "kind": "column",
+      "placeholder": "{ref_col}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 673,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 716,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 601,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 618,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 641,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 673,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/bundles.rs",
+      "line": 716,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/csv.rs",
+      "line": 222,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/csv.rs",
+      "line": 243,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/csv.rs",
+      "line": 203,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/csv.rs",
+      "line": 222,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/csv.rs",
+      "line": 243,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 509,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 589,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "与同字面量表位同源：Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 205,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 389,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 396,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 444,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 509,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 529,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 589,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 611,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Meta/backend/src/table_data/mod.rs",
+      "line": 635,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "Meta 表数据浏览器：任意集合数据端点"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/airworthiness/backend/tests/cert_status_bridge_resolution_test.rs",
+      "line": 111,
+      "kind": "column",
+      "placeholder": "{status_code_expr}",
+      "source": "test-fixture",
+      "reason": "测试夹具：测试内拼装的状态表达式（夹具局部构造，无生产注入面）"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend/src/repositories/mod.rs",
+      "line": 84,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权裁剪列集合来自请求（`material_projection(authorized)` 按授权组装敏感列）"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend/src/repositories/mod.rs",
+      "line": 113,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权裁剪列集合来自请求（`material_projection(authorized)` 按授权组装敏感列）"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend/src/repositories/mod.rs",
+      "line": 161,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "授权裁剪列集合来自请求（`material_projection(authorized)` 按授权组装敏感列）"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend/src/repositories/mod.rs",
+      "line": 204,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架构建器通道：敏感列后缀由 `crud::reference::build_sensitive_suffix`（框架唯一实现）产出，本文件不可枚举；固定段/库存段为文件内常量但无法与框架段拼接为编译期字面量 ⇒ 投影整体不可在本文件内静态化"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend/src/repositories/mod.rs",
+      "line": 231,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架构建器通道：敏感列后缀由 `crud::reference::build_sensitive_suffix`（框架唯一实现）产出，本文件不可枚举；固定段/库存段为文件内常量但无法与框架段拼接为编译期字面量 ⇒ 投影整体不可在本文件内静态化"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/metrology/backend/src/repositories/mod.rs",
+      "line": 277,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "generic-type",
+      "reason": "框架构建器通道：敏感列后缀由 `crud::reference::build_sensitive_suffix`（框架唯一实现）产出，本文件不可枚举；固定段/库存段为文件内常量但无法与框架段拼接为编译期字面量 ⇒ 投影整体不可在本文件内静态化"
+    },
+    {
+      "file": "Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend/src/repositories/task.rs",
+      "line": 260,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "Pre-Proc/WZ/Sources/Apps/Services/contract/backend/src/repositories/contract_query.rs",
+      "line": 1128,
+      "kind": "column",
+      "placeholder": "{where_sql}",
+      "source": "api-param",
+      "reason": "请求条件驱动的运行期谓词拼装：`where_sql = conds.join(\" AND \")`，conds 由请求参数（search/status/nature/kind）push/format! 运行期构造，$n 序号随 binds 数派生 ⇒ 非编译期可枚举（同族先例 `Framework/backend/crud/src/trigger.rs`）"
+    },
+    {
+      "file": "Pre-Proc/WZ/Sources/Apps/Services/contract/backend/src/repositories/contract_query.rs",
+      "line": 1140,
+      "kind": "column",
+      "placeholder": "{where_sql}",
+      "source": "api-param",
+      "reason": "请求条件驱动的运行期谓词拼装：`where_sql = conds.join(\" AND \")`，conds 由请求参数（search/status/nature/kind）push/format! 运行期构造，$n 序号随 binds 数派生 ⇒ 非编译期可枚举（同族先例 `Framework/backend/crud/src/trigger.rs`）"
+    },
+    {
+      "file": "SSO/backend/src/admin/handlers/providers.rs",
+      "line": 185,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "SSO/backend/src/admin/handlers/users.rs",
+      "line": 312,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "SSO/backend/src/admin/oidc_clients.rs",
+      "line": 279,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    },
+    {
+      "file": "SSO/backend/src/auth/profile.rs",
+      "line": 75,
+      "kind": "column",
+      "placeholder": "{}",
+      "source": "api-param",
+      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
+    }
+  ]
+}

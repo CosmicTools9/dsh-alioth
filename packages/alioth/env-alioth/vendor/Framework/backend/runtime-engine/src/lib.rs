@@ -11,6 +11,7 @@ pub mod context;
 pub mod engine;
 pub mod expression;
 pub mod extension;
+pub mod extension_surface;
 pub mod swrl;
 
 // 重新导出运行时契约类型（保持向后兼容）
@@ -32,6 +33,10 @@ pub use engine::rule::{BusinessRuleConfig, RuleEngine, RuleExecution, RuleExecut
 
 // 重新导出扩展运行时类型
 pub use extension::{AppExtensionRegistry, ExtensionLoader, ExtensionRuntimeError};
+pub use extension_surface::{
+    ConstraintDecl, DeclarationInventory, ExtensionSurface, RuleDecl, StateMachineDecl,
+    TransitionDecl, WorkflowDecl,
+};
 
 // 重新导出求值器和解析器
 pub use expression::evaluator::ExpressionEvaluator;

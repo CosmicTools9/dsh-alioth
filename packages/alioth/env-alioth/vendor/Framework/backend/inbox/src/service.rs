@@ -165,7 +165,7 @@ impl InboxService {
         }
 
         sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_stus-message" (code, notice, enable) VALUES ('read', '已读', true) RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_stus-message" (code, notice, enable, flag) VALUES ('read', '已读', true, 'doing') RETURNING id"#,
         )
         .fetch_one(pool)
         .await
@@ -203,7 +203,7 @@ impl InboxService {
 
         // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
         let (dk_scene, dk_factor, dk_function) =
-            match ontology_binding::resolve_conn(&mut *tx, ("JB", "GHC", "↓_KC")).await {
+            match ontology_binding::resolve_conn(&mut tx, ("JB", "GHC", "↓_KC")).await {
                 Ok(v) => v,
                 Err(e) => {
                     let _ = tx.rollback().await;

@@ -44,6 +44,7 @@ pub struct DepartmentDto {
     pub(crate) code: String,
     pub(crate) comments: String,
     /// 父部门 id（org_rr_subordinate 桥派生；根部门为 null）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub(crate) parent_id: Option<i64>,
 }
@@ -105,10 +106,12 @@ pub struct PositionDto {
     code: String,
     comments: String,
     /// fk_user → userId（经 JOIN zc_id_entity 解析任职人名称）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     user_id: Option<i64>,
     user_name: Option<String>,
     /// 上级岗位 ID
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     parent_id: Option<i64>,
     /// 岗位分类
@@ -255,10 +258,12 @@ pub struct DeptPositionItem {
     code: String,
     comments: String,
     /// fk_user → userId（经 JOIN zc_id_entity 解析任职人名称）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     user_id: Option<i64>,
     user_name: Option<String>,
     /// 上级岗位 ID
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     parent_id: Option<i64>,
     /// 岗位分类
@@ -875,7 +880,7 @@ pub async fn instantiate_position_template(
 
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
-        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+        ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG"))
             .await
             .map_err(ApiError::from_sqlx)?;
     let instance_id: i64 = sqlx::query_scalar(
@@ -1643,6 +1648,7 @@ pub struct SubjectAssignmentItem {
     #[serde(with = "common::serde_zuid")]
     position_id: i64,
     position_name: String,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     org_id: Option<i64>,
     #[serde(default)]

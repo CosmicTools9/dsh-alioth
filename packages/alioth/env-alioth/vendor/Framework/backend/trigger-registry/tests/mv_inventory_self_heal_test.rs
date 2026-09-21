@@ -21,16 +21,18 @@ async fn ensure_mv_inventory_self_heals() {
         }
     };
 
-    // 基表存在性前置：视图依赖 zc_id_file_rr_url（dev/test 基准模型）
+    // 基表存在性前置：夹具/写径依赖库存关系载体 `zc_id_prod-payload_rr_stor-container`
+    // （⊂ `zc_id_production_rr_storage`；mv_inventory 的 FROM 是父表，经 PG 继承覆盖子表行。
+    //  载体迁移依据：用户裁决 2026-09-21——原载体声明语义 = 关联-文件↔URL，库存/履约实例属挪用。）
     let base: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables \
-         WHERE table_schema = 'isahl' AND table_name = 'zc_id_file_rr_url')",
+         WHERE table_schema = 'isahl' AND table_name = 'zc_id_prod-payload_rr_stor-container')",
     )
     .fetch_one(&pool)
     .await
     .expect("基表探测");
     if !base {
-        eprintln!("skipped: test 库无 zc_id_file_rr_url（基表缺失降级场景）");
+        eprintln!("skipped: test 库无 zc_id_prod-payload_rr_stor-container（基表缺失降级场景）");
         return;
     }
 
@@ -104,7 +106,7 @@ async fn mv_inventory_multi_metric_materializes() {
     // fixture：rr_storage 行 + 四计量标量（scal-common ×3 + scal-amount ×1）
     let qty_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, 'MM', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, 'MM', $2::numeric, 1) RETURNING id"#,
     )
     .bind("MM-QTY")
     .bind(10)
@@ -113,7 +115,7 @@ async fn mv_inventory_multi_metric_materializes() {
     .expect("qty");
     let w_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, 'MM', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, 'MM', $2::numeric, 1) RETURNING id"#,
     )
     .bind("MM-W")
     .bind(20)
@@ -122,7 +124,7 @@ async fn mv_inventory_multi_metric_materializes() {
     .expect("w");
     let v_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, 'MM', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, 'MM', $2::numeric, 1) RETURNING id"#,
     )
     .bind("MM-V")
     .bind(30)
@@ -131,15 +133,15 @@ async fn mv_inventory_multi_metric_materializes() {
     .expect("v");
     let amt_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-amount" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'MM-AMT', 'MM', 40::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(416), 'MM-AMT', 'MM', 40::numeric, 1) RETURNING id"#,
     )
     .fetch_one(&mut *tx)
     .await
     .expect("amount");
     let row_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_file_rr_url"
+        r#"INSERT INTO isahl."zc_id_prod-payload_rr_stor-container"
            (id, code, notice, ref_left, ref_right, qk_qty, qk_w_qty, qk_v_qty, qk_amount, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'MM-ROW', 'MM多计量', 900001, 900002, $1, $2, $3, $4, 1)
+           VALUES (isahl.gen_next_uid(517), 'MM-ROW', 'MM多计量', 900001, 900002, $1, $2, $3, $4, 1)
            RETURNING id"#,
     )
     .bind(qty_s).bind(w_s).bind(v_s).bind(amt_s)
@@ -179,18 +181,19 @@ async fn mv_inventory_multi_metric_materializes() {
     tx.rollback().await.expect("rollback");
 
     // 回滚后无残留（无物化行）
-    let leftover: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM isahl.\"zc_id_file_rr_url\" WHERE code = 'MM-ROW'")
-            .fetch_one(&pool)
-            .await
-            .expect("leftover");
+    let leftover: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM isahl.\"zc_id_prod-payload_rr_stor-container\" WHERE code = 'MM-ROW'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("leftover");
     assert_eq!(leftover.0, 0, "事务回滚后不得残留物化行");
 
     // 重新提交路径：独立事务内四维度累加后 REFRESH 读视图
     let mut tx2 = pool.begin().await.expect("begin tx2");
     let qty_s2: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, 'MM', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, 'MM', $2::numeric, 1) RETURNING id"#,
     )
     .bind("MM-QTY2")
     .bind(10)
@@ -199,7 +202,7 @@ async fn mv_inventory_multi_metric_materializes() {
     .expect("qty2");
     let w_s2: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, 'MM', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, 'MM', $2::numeric, 1) RETURNING id"#,
     )
     .bind("MM-W2")
     .bind(20)
@@ -208,7 +211,7 @@ async fn mv_inventory_multi_metric_materializes() {
     .expect("w2");
     let v_s2: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, 'MM', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, 'MM', $2::numeric, 1) RETURNING id"#,
     )
     .bind("MM-V2")
     .bind(30)
@@ -217,15 +220,15 @@ async fn mv_inventory_multi_metric_materializes() {
     .expect("v2");
     let amt_s2: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-amount" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'MM-AMT2', 'MM', 40::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(416), 'MM-AMT2', 'MM', 40::numeric, 1) RETURNING id"#,
     )
     .fetch_one(&mut *tx2)
     .await
     .expect("amt2");
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_file_rr_url"
+        r#"INSERT INTO isahl."zc_id_prod-payload_rr_stor-container"
            (id, code, notice, ref_left, ref_right, qk_qty, qk_w_qty, qk_v_qty, qk_amount, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'MM-ROW2', 'MM多计量2', 900003, 900004, $1, $2, $3, $4, 1)"#,
+           VALUES (isahl.gen_next_uid(517), 'MM-ROW2', 'MM多计量2', 900003, 900004, $1, $2, $3, $4, 1)"#,
     )
     .bind(qty_s2).bind(w_s2).bind(v_s2).bind(amt_s2)
     .execute(&mut *tx2).await.expect("row2");
@@ -268,7 +271,7 @@ async fn mv_inventory_multi_metric_materializes() {
 
     // 清理
     for sql in [
-        r#"DELETE FROM isahl."zc_id_file_rr_url" WHERE code LIKE 'MM-ROW%'"#,
+        r#"DELETE FROM isahl."zc_id_prod-payload_rr_stor-container" WHERE code LIKE 'MM-ROW%'"#,
         r#"DELETE FROM isahl."zc_id_scal-common" WHERE code LIKE 'MM-%'"#,
         r#"DELETE FROM isahl."zc_id_scal-amount" WHERE code LIKE 'MM-%'"#,
     ] {

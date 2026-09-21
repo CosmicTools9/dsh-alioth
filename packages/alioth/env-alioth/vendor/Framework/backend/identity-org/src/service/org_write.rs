@@ -330,6 +330,7 @@ pub async fn delete_position(
 ) -> Result<HttpResponse, ApiError> {
     // 单事务：主表软删 → 四类岗位桥行级联软删（org_rr_position / post_rr_subordinate /
     // post_rr_view / post_rr_employee，alive 行；ref 方向见各 UPDATE WHERE）
+    // + 视角标签行（宿主 = post_rr_view 关联行）级联软删
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
 
     // _f_ IS NULL：真实岗位视图；编制范例行删除（含实例守卫）暂无删除端点
@@ -372,6 +373,20 @@ pub async fn delete_position(
             r#"UPDATE "isahl"."zc_id_subj-post_rr_view"
                SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
                WHERE ref_left = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::from_sqlx)?;
+        // 视角标签（宿主 = 视角关联行）：关联行软删时同事务级联软删其标签行，
+        // 避免遗留指向已删关联行的悬空标签（读路径 join 虽已过滤，行级卫生仍需收敛）
+        sqlx::query(
+            r#"UPDATE "isahl"."zc_id_relation-post_view_r_tags"
+               SET deleted_at = now(), deleted_by_id = $2, updated_at = now()
+               WHERE deleted_at IS NULL
+                 AND ref_left IN (SELECT v.id FROM "isahl"."zc_id_subj-post_rr_view" v
+                                  WHERE v.ref_left = $1)"#,
         )
         .bind(id)
         .bind(user_id)

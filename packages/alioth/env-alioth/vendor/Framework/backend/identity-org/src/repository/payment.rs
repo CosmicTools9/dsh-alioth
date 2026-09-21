@@ -73,7 +73,7 @@ impl AliothRepository<Payment, CreatePaymentRequest, UpdatePaymentRequest, ApiEr
         if let Some(ev) = req.fk_approve {
             sqlx::query(
                 r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-                   SELECT isahl.gen_next_zuid(), $1, $2, $3
+                   SELECT isahl.gen_next_uid(267), $1, $2, $3
                    WHERE NOT EXISTS (
                        SELECT 1 FROM isahl.zc_id_operation_rr_event rr
                        WHERE rr.ref_left = $1 AND rr.ref_right = $2 AND rr.deleted_at IS NULL
@@ -190,7 +190,7 @@ impl AliothRepository<Payment, CreatePaymentRequest, UpdatePaymentRequest, ApiEr
                 .map_err(ApiError::from)?;
                 sqlx::query(
                     r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-                       VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                       VALUES (isahl.gen_next_uid(267), $1, $2, $3)"#,
                 )
                 .bind(id)
                 .bind(ev)

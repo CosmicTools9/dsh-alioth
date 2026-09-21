@@ -1,4 +1,5 @@
 pub mod access_request;
+pub mod age_projection;
 pub mod audit_writer;
 pub mod binding_request;
 pub mod delegation;

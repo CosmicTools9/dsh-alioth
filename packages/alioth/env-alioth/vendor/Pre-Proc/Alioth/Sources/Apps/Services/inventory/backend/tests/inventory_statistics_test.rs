@@ -229,6 +229,15 @@ async fn counting_detail_auto_calibrates_via_voucher() {
         .await
         .expect("create counting");
 
+    // 回归守卫基线：借桥 `zc_id_order_rr_contract`（声明语义=关联-订单↔合约）行数——
+    // 模型缺「校准凭证↔盘点明细」桥（§R4），写径已移除，校准期间该表行数 MUST NOT 增长。
+    let bridge_before: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl."zc_id_order_rr_contract" WHERE deleted_at IS NULL"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count bridge baseline");
+
     let d = d_svc
         .create(
             CreateCountingDetailRequest {
@@ -255,28 +264,46 @@ async fn counting_detail_auto_calibrates_via_voucher() {
     assert_eq!(actual, 8.0, "明细实盘数（截止值）应=8");
 
     // 自动校准：生成校准凭证（盘亏 → outgo=2），物化更新 = 实盘 8
-    let calib: (i64,) = sqlx::query_as(
-        r#"SELECT id FROM isahl."zc_id_stat-sto-voucher"
-           WHERE notice = '盘点校准' AND fk_production = $1
-             AND "fk_subj-storage" = $2 AND deleted_at IS NULL
-           ORDER BY id DESC LIMIT 1"#,
-    )
-    .bind(TEST_PRODUCT)
-    .bind(s1)
-    .fetch_one(&pool)
-    .await
-    .expect("calibration voucher exists");
+    // 「物」列随模型演进（新 fk_payload / 旧 fk_production）——与写径同源探测
+    let title_col = trigger_registry::stock_materialization::voucher_title_column(&pool)
+        .await
+        .expect("凭证「物」列探测");
+    // 静态二分：列名探测结果映射到两条静态 SQL（列位插值 ⇒ 编译期静态分发，dynamic-table-name 门禁口径）
+    let calib_sql: &'static str = match title_col {
+        "fk_payload" => {
+            r#"SELECT id FROM isahl."zc_id_stat-sto-voucher"
+               WHERE notice = '盘点校准' AND "fk_payload" = $1
+                 AND "fk_subj-storage" = $2 AND deleted_at IS NULL
+               ORDER BY id DESC LIMIT 1"#
+        }
+        "fk_production" => {
+            r#"SELECT id FROM isahl."zc_id_stat-sto-voucher"
+               WHERE notice = '盘点校准' AND "fk_production" = $1
+                 AND "fk_subj-storage" = $2 AND deleted_at IS NULL
+               ORDER BY id DESC LIMIT 1"#
+        }
+        other => panic!("凭证「物」列探测返回未登记列名: {other}"),
+    };
+    let calib: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(calib_sql.to_string()))
+        .bind(TEST_PRODUCT)
+        .bind(s1)
+        .fetch_one(&pool)
+        .await
+        .expect("calibration voucher exists");
 
-    // 溯源：statement_rr_reason（ref_left=校准凭证 / ref_right=盘点明细）
-    let _traced: i64 = sqlx::query_scalar(
-        r#"SELECT ref_right FROM isahl."zc_id_statement_rr_reason"
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
+    // 回归守卫（§8.5.10「缺桥必须报缺，MUST NOT 借用他桥」）：借桥写径已移除，
+    // 校准 MUST NOT 向 `zc_id_order_rr_contract`（声明语义=关联-订单↔合约）落任何行；
+    // 溯源申请单 = `Pre-Proc/WZ/model-center-requests.md` §R4（专叶就位前溯源不可用）。
+    let bridge_after: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl."zc_id_order_rr_contract" WHERE deleted_at IS NULL"#,
     )
-    .bind(calib.0)
-    .bind(d.id)
     .fetch_one(&pool)
     .await
-    .expect("calibration traceable to detail");
+    .expect("count bridge after calibration");
+    assert_eq!(
+        bridge_after, bridge_before,
+        "借桥写径已移除：盘点校准 MUST NOT 向 zc_id_order_rr_contract 落行（缺桥见 §R4）"
+    );
 
     let stats = stat
         .statistics(&StockStatQuery {

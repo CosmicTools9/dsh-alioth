@@ -234,6 +234,18 @@ impl NgacEnforcer {
         // 客户端（ngac_client=None），持有有效 JWT 即放行；此前构造空 URL 客户端使
         // decide/list 必网络失败 → fail-close 全量 403，standalone fail-open 失效。
         let has_pdp_endpoint = !sso_service_url.trim().is_empty();
+        // dev 降级开关显式化（flag-dev-ngac-fail-open）：NGAC_FAIL_OPEN=true 时
+        // PEP 完全跳过 PDP 且注入全量列授权 ⇒ **本进程 NGAC 授权不生效**。
+        // 启动即告警一次（构造点 = 进程级单例），避免把 dev 语义误读为生产越权
+        // （2026-09-15 WZ 验证实证：外部账号可读平台端点的唯一原因是该开关）。
+        if std::env::var("NGAC_FAIL_OPEN")
+            .unwrap_or_default()
+            .eq_ignore_ascii_case("true")
+        {
+            warn!(
+                "NGAC_FAIL_OPEN=true — PEP 跳过 PDP 并注入全量列授权：本进程 NGAC 授权不生效（dev 语义）；生产环境 MUST NOT 启用"
+            );
+        }
         // tighten-pdp-decision-surface B：探针 pool 直查（与 self.pool 同源）
         let probe_pool = pool.clone();
         Self {

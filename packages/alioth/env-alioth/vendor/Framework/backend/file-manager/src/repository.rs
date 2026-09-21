@@ -68,14 +68,6 @@ impl SqlxFileRepository {
         Self { pool }
     }
 
-    /// 单文件行 SELECT 投影（行级授权列 + 本体维度）。
-    /// encoding 为 PG 枚举（zc_id_prod_file_encoding_enum）→ ::text cast 供 sqlx 解码。
-    const FILE_FIELDS: &'static str = r#"
-        f.id, f.created_at, f.created_by_id, f.notice, f.code, f.encoding::text AS encoding,
-        f.dk_scene, f.dk_factor, f.dk_function, f.ck_category,
-        f.ak_benefit_user, f.ak_permit_user, f.ak_access_user
-    "#;
-
     /// 行级授权谓词片段（绑定 $user）。
     const ROW_AUTH: &'static str = r#"
         AND (f.created_by_id = $USER
@@ -117,11 +109,8 @@ impl SqlxFileRepository {
         let Some(kind) = self.resolve_kind(id).await? else {
             return Ok(None);
         };
-        let base = format!(
-            r#"SELECT {fields} FROM {table} f WHERE f.id = $1 AND f.deleted_at IS NULL"#,
-            fields = Self::FILE_FIELDS,
-            table = kind.table_name(),
-        );
+        // 静态 SQL 主体（表名编译期固化）；行级授权片段仍由运行期拼接（参数位置不在本表范围）
+        let base = kind.sql().base_select;
 
         let row = if let Some(uid) = user {
             // 行级授权谓词（$USER 从 $2 起）
@@ -132,7 +121,7 @@ impl SqlxFileRepository {
                 .fetch_optional(&self.pool)
                 .await?
         } else {
-            sqlx::query_as::<_, FileRow>(sqlx::AssertSqlSafe(base.as_str()))
+            sqlx::query_as::<_, FileRow>(sqlx::AssertSqlSafe(base))
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?
@@ -194,14 +183,7 @@ impl SqlxFileRepository {
         let checksum = notice.and_then(|n| n.strip_prefix("sha256:").map(str::to_string));
 
         // qk_size → zc_id_scal-data.mark（标量真值；缺失返回 NULL，不把 ID 当值）
-        let size_sql = format!(
-            r#"SELECT sd.mark::bigint
-               FROM {table} f
-               JOIN isahl."zc_id_scal-data" sd ON sd.id = f.qk_size
-               WHERE f.id = $1 AND f.deleted_at IS NULL"#,
-            table = kind.table_name(),
-        );
-        let size: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(size_sql.as_str()))
+        let size: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(kind.sql().size_select))
             .bind(file_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -281,13 +263,7 @@ impl FileRepository for SqlxFileRepository {
             return Ok(false);
         };
         let now = chrono::Utc::now();
-        let update_sql = format!(
-            r#"UPDATE {table}
-               SET deleted_at = $1, deleted_by_id = $2
-               WHERE id = $3 AND deleted_at IS NULL"#,
-            table = kind.table_name(),
-        );
-        let result = sqlx::query(sqlx::AssertSqlSafe(update_sql.as_str()))
+        let result = sqlx::query(sqlx::AssertSqlSafe(kind.sql().update))
             .bind(now)
             .bind(deleted_by_id)
             .bind(id)
@@ -309,13 +285,12 @@ impl FileRepository for SqlxFileRepository {
     ) -> Result<(Vec<FileRecord>, i64), FileError> {
         // 显式 $N 占位符（sqlx 0.9 QueryBuilder 惰性 `?` 与 postgres $N append 冲突；
         // 与 fetch_file 同款模式：$USER 重复引用同一参数编号）
-        let table = table_kind.table_name();
+        let sql = table_kind.sql();
         let (where_sql, param_count) =
             Self::list_where_clause(user, namespace, dk_scene, dk_factor, dk_function);
 
-        // total：同过滤条件计数（无 ORDER/LIMIT）
-        let count_sql =
-            format!("SELECT COUNT(*) FROM {table} f WHERE f.deleted_at IS NULL{where_sql}");
+        // total：同过滤条件计数（无 ORDER/LIMIT）；静态前缀 + 运行期 WHERE 片段
+        let count_sql = format!("{}{where_sql}", sql.count);
         let mut count_q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
         if let Some(uid) = user {
             count_q = count_q.bind(uid);
@@ -331,9 +306,8 @@ impl FileRepository for SqlxFileRepository {
         // 分页查询
         let (limit_idx, offset_idx) = (param_count + 1, param_count + 2);
         let list_sql = format!(
-            "SELECT {fields} FROM {table} f WHERE f.deleted_at IS NULL{where_sql} \
-             ORDER BY f.created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}",
-            fields = Self::FILE_FIELDS,
+            "{head}{where_sql} ORDER BY f.created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}",
+            head = sql.list_select,
         );
         let mut q = sqlx::query_as::<_, FileRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
         if let Some(uid) = user {

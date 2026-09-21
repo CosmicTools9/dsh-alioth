@@ -48,9 +48,9 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
         let id: i64 = sqlx::query_scalar(
             // 坐标三元组（§6.12）：oper-* 族 = JE/FTA/↓_EZ（家族既有写入同值；禁硬编码 ZUID）
             r#"INSERT INTO isahl."zc_id_oper-sales_order"
-               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, qk_work_duration, fk_operator, fk_subject, qk_period, "ck_cate-wh", "sk_unit-working", qk_arrived, "ck_cate-biz", qk_sla, lk_urgent, "ck_cate-proc_op", created_by_id,
+               (notice, code, comments, ak_source, tk_version, tk_batch_no, fk_previous, ck_branch, qk_work_duration, fk_operator, fk_subject, qk_period, "ck_cate-wh", qk_arrived, "ck_cate-biz", qk_sla, lk_urgent, "ck_cate-proc_op", created_by_id,
                 dk_scene, dk_factor, dk_function)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19,
                        (SELECT id FROM isahl.zc_id_scene    WHERE code = 'JE'   AND deleted_at IS NULL LIMIT 1),
                        (SELECT id FROM isahl.zc_id_factor   WHERE code = 'FTA'  AND deleted_at IS NULL LIMIT 1),
                        (SELECT id FROM isahl.zc_id_function WHERE code = '↓_EZ' AND deleted_at IS NULL LIMIT 1))
@@ -69,7 +69,6 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
         .bind(req.fk_subject)
         .bind(req.qk_period)
         .bind(req.ck_cate_wh)
-        .bind(req.sk_unit_working)
         .bind(req.qk_arrived)
         .bind(req.ck_cate_biz)
         .bind(req.qk_sla)
@@ -83,7 +82,7 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
         if let Some(ev) = req.fk_approve {
             sqlx::query(
                 r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-                   SELECT isahl.gen_next_zuid(), $1, $2, $3
+                   SELECT isahl.gen_next_uid(267), $1, $2, $3
                    WHERE NOT EXISTS (
                        SELECT 1 FROM isahl.zc_id_operation_rr_event rr
                        WHERE rr.ref_left = $1 AND rr.ref_right = $2 AND rr.deleted_at IS NULL
@@ -127,14 +126,13 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
                    fk_subject = COALESCE($11, fk_subject),
                    qk_period = COALESCE($12, qk_period),
                    "ck_cate-wh" = COALESCE($13, "ck_cate-wh"),
-                   "sk_unit-working" = COALESCE($14, "sk_unit-working"),
-                   qk_arrived = COALESCE($15, qk_arrived),
-                   "ck_cate-biz" = COALESCE($16, "ck_cate-biz"),
-                   qk_sla = COALESCE($17, qk_sla),
-                   lk_urgent = COALESCE($18, lk_urgent),
-                   "ck_cate-proc_op" = COALESCE($19, "ck_cate-proc_op"),
-                   updated_by_id = $20
-               WHERE id = $21 AND deleted_at IS NULL"#,
+                   qk_arrived = COALESCE($14, qk_arrived),
+                   "ck_cate-biz" = COALESCE($15, "ck_cate-biz"),
+                   qk_sla = COALESCE($16, qk_sla),
+                   lk_urgent = COALESCE($17, lk_urgent),
+                   "ck_cate-proc_op" = COALESCE($18, "ck_cate-proc_op"),
+                   updated_by_id = $19
+               WHERE id = $20 AND deleted_at IS NULL"#,
         )
         .bind(&req.notice)
         .bind(&req.code)
@@ -149,7 +147,6 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
         .bind(req.fk_subject)
         .bind(req.qk_period)
         .bind(req.ck_cate_wh)
-        .bind(req.sk_unit_working)
         .bind(req.qk_arrived)
         .bind(req.ck_cate_biz)
         .bind(req.qk_sla)
@@ -177,7 +174,7 @@ impl AliothRepository<SalesOrder, CreateSalesOrderRequest, UpdateSalesOrderReque
             .map_err(ApiError::from)?;
             sqlx::query(
                 r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                   VALUES (isahl.gen_next_uid(267), $1, $2, $3)"#,
             )
             .bind(id)
             .bind(ev)

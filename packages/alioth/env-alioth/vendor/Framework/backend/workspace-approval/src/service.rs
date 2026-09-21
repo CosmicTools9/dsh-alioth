@@ -71,11 +71,12 @@ impl ApprovalService {
                     _ => status_code,
                 };
                 match sqlx::query_scalar::<_, i64>(
-                    r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice)
-                       VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+                    r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice, flag)
+                       VALUES (isahl.gen_next_uid(73), $1, $2, $3::isahl.status_flag) RETURNING id"#,
                 )
                 .bind(status_code)
                 .bind(label)
+                .bind(common::status::flag_for_status_code(status_code))
                 .fetch_one(pool)
                 .await
                 {
@@ -137,7 +138,7 @@ impl ApprovalService {
             }
             None => sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-                       VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+                       VALUES (isahl.gen_next_uid(260), $1, $2)"#,
             )
             .bind(approval_id)
             .bind(status_id)
@@ -182,7 +183,7 @@ impl ApprovalService {
             };
             // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
             let (dk_scene, dk_factor, dk_function) =
-                match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↓_NC")).await {
+                match ontology_binding::resolve_conn(&mut tx, ("JC", "FTA", "↓_NC")).await {
                     Ok(v) => v,
                     Err(e) => {
                         let _ = tx.rollback().await;

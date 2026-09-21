@@ -18,7 +18,7 @@ futures-util = { workspace = true }
 sqlx = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
-sqlparser = "0.62"
+sqlparser = "0.63"
 
 approval = { path = "../approval" }
 llm = { path = "../llm" }

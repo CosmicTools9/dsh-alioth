@@ -48,10 +48,12 @@ pub struct RequestContext {
     pub is_superuser: bool,
     /// 用户组织ID（可选）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     #[serde(with = "crate::serde_zuid::opt")]
     pub org_id: Option<i64>,
     /// 租户ID（可选，用于多租户场景）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     #[serde(with = "crate::serde_zuid::opt")]
     pub tenant_id: Option<i64>,
     /// NGAC 可见资源 ID 集合（行级安全 RLS）

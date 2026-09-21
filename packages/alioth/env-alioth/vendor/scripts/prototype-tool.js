@@ -6,7 +6,25 @@ import { createRequire } from 'module';
 import { globSync } from 'fs';
 import { execSync } from 'child_process';
 import { js } from './lib/parsers.ts';
+import { readJsonBigIntSafe, writeJsonBigIntSafe } from './lib/json-bigint-safe.ts';
 const _require = createRequire(import.meta.url);
+
+/* ───────────────────────────────────────────
+   大整数（id）安全 JSON 读写
+
+   Alioth 维度行 id 为 17 位（>2^53），`JSON.parse→stringify` 往返会静默舍入
+   （ID_JSON_PRECISION 类缺陷；production-order 块评审 P1 即此）。读写一律走这两个
+   choke point——禁止绕过它们直接 JSON.parse / JSON.stringify 读写
+   block.json / module.json / app.json（哨兵全局唯一，写盘路径与读取路径不同名也可还原）。
+   ─────────────────────────────────────────── */
+/** 读 JSON（大整数以哨兵保护） */
+function readJson(path) {
+  return readJsonBigIntSafe(path);
+}
+/** 写 JSON（2 空格缩进 + 尾换行，与既有写法一致；自动还原大整数） */
+function writeJson(path, value) {
+  writeJsonBigIntSafe(path, value);
+}
 
 /* ───────────────────────────────────────────
    Parser-based extraction helpers
@@ -409,7 +427,7 @@ function injectCSS(fp, css) {
 }
 
 function cmdBuildUtilityCSS(args) {
-  const u = JSON.parse(readFileSync(UTILITIES_JSON, 'utf-8'));
+  const u = readJson(UTILITIES_JSON);
   const css = genCSS(u);
   let targets =
     args.length > 0
@@ -433,7 +451,7 @@ function cmdBuildUtilityCSS(args) {
 }
 
 function cmdListUtilities() {
-  const u = JSON.parse(readFileSync(UTILITIES_JSON, 'utf-8'));
+  const u = readJson(UTILITIES_JSON);
   for (const g of Object.values(u.groups)) {
     for (const name of Object.keys(g)) {
       if (name === '$pseudo') continue;
@@ -447,7 +465,7 @@ function resolveBlockToModule(ns, blockId) {
   var sj = join(sourcesKindDir(ns, 'Blocks'), blockId, 'block.json');
   if (!existsSync(sj)) return null;
   try {
-    var sc = JSON.parse(readFileSync(sj, 'utf-8'));
+    var sc = readJson(sj);
     var owner = sc.sharing && sc.sharing.ownerModule;
     if (owner && typeof owner === 'string') {
       var parts = owner.split('/');
@@ -486,7 +504,7 @@ function cmdGenerateMocks(args) {
   const mockJsonPath = join(protoRoot, 'llm-tsx', 'mock.json');
   if (existsSync(mockJsonPath)) {
     try {
-      JSON.parse(readFileSync(mockJsonPath, 'utf-8'));
+      readJson(mockJsonPath);
       console.log('✓ llm-tsx/mock.json is valid JSON');
     } catch (e) {
       console.error('✗ llm-tsx/mock.json is invalid JSON: ' + e.message);
@@ -514,7 +532,7 @@ function cmdSyncServices(args) {
     console.error('module.json not found: ' + modPath);
     exit(1);
   }
-  const mod = JSON.parse(readFileSync(modPath, 'utf-8'));
+  const mod = readJson(modPath);
   const sa = mod.blockAssembly || {};
   const scenes = sa.blocks || [];
   if (!scenes.length) {
@@ -529,7 +547,7 @@ function cmdSyncServices(args) {
       console.log('  Skipped (no block.json): ' + sc.id);
       continue;
     }
-    const sj = JSON.parse(readFileSync(sjPath, 'utf-8'));
+    const sj = readJson(sjPath);
     const factors = sj.services || [];
     for (const f of factors) {
       if (!bindings[f]) bindings[f] = { blockIds: [] };
@@ -571,7 +589,7 @@ function cmdSyncServices(args) {
 
   mod.blockAssembly.serviceBindings = bindings;
   var tmpPath = modPath + '.tmp';
-  writeFileSync(tmpPath, JSON.stringify(mod, null, 2) + '\n', 'utf-8');
+  writeJson(tmpPath, mod);
   renameSync(tmpPath, modPath);
   console.log(
     'Updated serviceBindings: ' +
@@ -714,7 +732,7 @@ function findModulesByBlock(ns, blockId) {
   var modsDir = sourcesKindDir(ns, 'Modules');
   var files = globSync(join(modsDir, '*', 'module.json'));
   files.forEach(function (fp) {
-    var mod = JSON.parse(readFileSync(fp, 'utf-8'));
+    var mod = readJson(fp);
     // blockAssembly.blocks 唯一真相源（remove-compat-degrades：legacy 顶层 blocks[] 已全仓清除）
     var blocks = (mod.blockAssembly && mod.blockAssembly.blocks) || [];
     if (
@@ -734,7 +752,7 @@ function findAppsByModule(ns, moduleName) {
   if (!existsSync(appsDir)) return found;
   var files = globSync(join(appsDir, '*', 'app.json'));
   files.forEach(function (fp) {
-    var app = JSON.parse(readFileSync(fp, 'utf-8'));
+    var app = readJson(fp);
     if (app.config && app.config.modules && app.config.modules.indexOf(moduleName) >= 0) {
       found.push({ code: app.code });
     }
@@ -1060,7 +1078,7 @@ async function buildBlock(blockDir, blockId, ns, ver) {
 
   // auto-inject data-testid into block.tsx (idempotent, dry-run by default)
   try {
-    var blockJson = JSON.parse(readFileSync(join(blockDir, 'block.json'), 'utf-8'));
+    var blockJson = readJson(join(blockDir, 'block.json'));
     var entity = (blockJson.services || []).join('-').replace(/[^a-z0-9-]/g, '');
     if (!entity) entity = blockId.replace(/[^a-z0-9-]/g, '');
     var tsx = readFileSync(srcFile, 'utf-8');
@@ -1156,10 +1174,10 @@ async function buildBlock(blockDir, blockId, ns, ver) {
       if (existsSync(srcPv)) pvPath = srcPv;
     }
     if (existsSync(pvPath)) {
-      var pvJson = JSON.parse(readFileSync(pvPath, 'utf-8'));
+      var pvJson = readJson(pvPath);
       if (pvJson.prototypeVersion !== 'b-v' + ver) {
         pvJson.prototypeVersion = 'b-v' + ver;
-        writeFileSync(pvPath, JSON.stringify(pvJson, null, 2) + '\n', 'utf-8');
+        writeJson(pvPath, pvJson);
         console.log('  prototypeVersion -> b-v' + ver);
       }
     }
@@ -1249,10 +1267,10 @@ async function buildModule(moduleDir, moduleName, ns, sceneRefs) {
       if (existsSync(srcPv)) pvPath = srcPv;
     }
     if (existsSync(pvPath)) {
-      var pvJson = JSON.parse(readFileSync(pvPath, 'utf-8'));
+      var pvJson = readJson(pvPath);
       if (pvJson.prototypeVersion !== 'm-v' + ver) {
         pvJson.prototypeVersion = 'm-v' + ver;
-        writeFileSync(pvPath, JSON.stringify(pvJson, null, 2) + '\n', 'utf-8');
+        writeJson(pvPath, pvJson);
         console.log('  prototypeVersion -> m-v' + ver);
       }
     }
@@ -1365,7 +1383,7 @@ function cmdPrepareBlockDistribution(args) {
     console.error('module.json not found: ' + modJsonPath);
     exit(1);
   }
-  const mod = JSON.parse(readFileSync(modJsonPath, 'utf-8'));
+  const mod = readJson(modJsonPath);
   var sceneAssembly = (mod.blockAssembly && mod.blockAssembly.blocks) || [];
   if (sceneAssembly.length === 0) {
     console.error('No scenes in module.json');
@@ -1376,7 +1394,7 @@ function cmdPrepareBlockDistribution(args) {
   console.log('  Mode: ' + mode + ' (llm-tsx/module.tsx ESM pipeline)');
   var briefs = {};
   if (briefsFile) {
-    briefs = JSON.parse(readFileSync(briefsFile, 'utf-8'));
+    briefs = readJson(briefsFile);
     console.log('  Scene briefs loaded: ' + Object.keys(briefs).length);
   }
   const scenes = [];
@@ -1392,7 +1410,7 @@ function cmdPrepareBlockDistribution(args) {
     const hasBrief = existsSync(briefPath);
     if (briefs[sid]) {
       mkdirSync(srcDir, { recursive: true });
-      writeFileSync(briefPath + '.tmp', JSON.stringify(briefs[sid], null, 2) + '\n', 'utf-8');
+      writeJson(briefPath + '.tmp', briefs[sid]);
       renameSync(briefPath + '.tmp', briefPath);
     }
     if (!existsSync(blockJsonPath) || !hasProto) {
@@ -1404,13 +1422,16 @@ function cmdPrepareBlockDistribution(args) {
           id: sid,
           name: entry.name || sid,
           namespace: ns,
+          // aliothVersion 是 block.json 的 REQUIRED 键（BLOCK_SCHEMA §1，check-block-json R2）——
+          // 取值口径与 scripts/ontology/auto-fix-versions.ts 一致：MODEL_VERSION env，默认 10.0.0
+          aliothVersion: process.env.MODEL_VERSION || '10.0.0',
           factors: [],
           flows: [{ id: sid + '-browse', name: entry.name || sid, steps: 1 }],
           workbenchPosts: [],
           version: '0.1.0',
           sharing: { mode: 'single', ownerModule: ns + '/' + name, consumers: [] },
         };
-        writeFileSync(blockJsonPath + '.tmp', JSON.stringify(scJson, null, 2) + '\n', 'utf-8');
+        writeJson(blockJsonPath + '.tmp', scJson);
         renameSync(blockJsonPath + '.tmp', blockJsonPath);
         console.log('  ✓ block.json: ' + blockJsonPath);
       }
@@ -1450,7 +1471,7 @@ function cmdPrepareBlockDistribution(args) {
     scenes: Object.fromEntries(scenes.map((s) => [s.id, { status: s.status, name: s.name }])),
     allReady: needsSubagent === 0 && needsScaffold === 0,
   };
-  writeFileSync(distPath + '.tmp', JSON.stringify(state, null, 2) + '\n', 'utf-8');
+  writeJson(distPath + '.tmp', state);
   renameSync(distPath + '.tmp', distPath);
   // Output summary
   console.log('\n═══ Distribution Status ═══');
@@ -1506,10 +1527,10 @@ async function cmdCollectBlockResults(args) {
   var mode = 'esm';
   var state = {};
   if (existsSync(distPath)) {
-    state = JSON.parse(readFileSync(distPath, 'utf-8'));
+    state = readJson(distPath);
   }
 
-  const mod = JSON.parse(readFileSync(modJsonPath, 'utf-8'));
+  const mod = readJson(modJsonPath);
   var sceneAssembly = (mod.blockAssembly && mod.blockAssembly.blocks) || [];
   var failures = 0,
     success = 0;
@@ -1544,7 +1565,7 @@ async function cmdCollectBlockResults(args) {
   state.collectedAt = new Date().toISOString();
   state.allReady = true;
   state.mode = mode;
-  writeFileSync(distPath + '.tmp', JSON.stringify(state, null, 2) + '\n', 'utf-8');
+  writeJson(distPath + '.tmp', state);
   renameSync(distPath + '.tmp', distPath);
 }
 
@@ -1623,7 +1644,7 @@ async function cmdBuild(args) {
       var modJsonPath = join(sourcesKindDir(ns, 'Modules'), moduleName, 'module.json');
       var modSceneRefs = '';
       try {
-        var modJson = JSON.parse(readFileSync(modJsonPath, 'utf-8'));
+        var modJson = readJson(modJsonPath);
         var modBlocks =
           (modJson.blockAssembly && modJson.blockAssembly.blocks) || [];
         modSceneRefs = modBlocks
@@ -1703,7 +1724,7 @@ async function buildAll(modPath) {
     console.error('module.json not found');
     exit(1);
   }
-  var modJson = JSON.parse(readFileSync(modJsonPath, 'utf-8'));
+  var modJson = readJson(modJsonPath);
   // blockAssembly.blocks[] 单一真相源（legacy 顶层 blocks[] 已全仓清除，remove-compat-degrades）
   var scenes = (modJson.blockAssembly && modJson.blockAssembly.blocks) || [];
   console.log('\\nBuilding all ' + scenes.length + ' scenes for ' + modName);
@@ -1997,7 +2018,7 @@ async function cmdCheck(args) {
     console.error('module.json not found: ' + modJsonPath);
     exit(1);
   }
-  var modJson = JSON.parse(readFileSync(modJsonPath, 'utf-8'));
+  var modJson = readJson(modJsonPath);
   // blockAssembly.blocks 单一真相源（legacy 顶层 blocks[] 已全仓清除，remove-compat-degrades）
   var scenes = (modJson.blockAssembly && modJson.blockAssembly.blocks) || [];
   var assembly = modJson.blockAssembly || {};
@@ -2198,7 +2219,7 @@ function cmdScaffold(args) {
 
   function writeJson(p, obj) {
     mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
+    writeJsonBigIntSafe(p, obj);
   }
 
   if (level === 'app') {

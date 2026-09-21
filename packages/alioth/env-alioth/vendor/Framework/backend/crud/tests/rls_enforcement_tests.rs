@@ -32,7 +32,7 @@ impl AliothDbEntity for StatusEntity {
 /// 插入一行测试数据并返回 id；测试结束由 cleanup_status 硬删除。
 async fn insert_status(pool: &PgPool, tag: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO isahl."zc_id_stus-project" (notice) VALUES ($1) RETURNING id"#,
+        r#"INSERT INTO isahl."zc_id_stus-project" (notice, flag) VALUES ($1, 'doing') RETURNING id"#,
     )
     .bind(tag)
     .fetch_one(pool)
@@ -256,7 +256,7 @@ async fn update_invisible_row_returns_not_found() {
     let req = test::TestRequest::put()
         .uri(&format!("/u/{}", id))
         .insert_header(("X-Visible-Ids", "999999"))
-        .set_json(&serde_json::json!({ "notice": "hacked" }))
+        .set_json(serde_json::json!({ "notice": "hacked" }))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 404, "不可见行更新必须 404");
@@ -355,7 +355,7 @@ async fn update_visible_row_passes_precheck() {
     let req = test::TestRequest::put()
         .uri(&format!("/u/{}", id))
         .insert_header(("X-Visible-Ids", id.to_string()))
-        .set_json(&serde_json::json!({ "notice": "ok" }))
+        .set_json(serde_json::json!({ "notice": "ok" }))
         .to_request();
     let resp = test::call_service(&app, req).await;
     // 预检放行后走到 update_with_rls（只读 repo 默认 → NotImplemented 500）

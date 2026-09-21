@@ -686,6 +686,26 @@
       "SEMI-PRESIDENTIAL-REPUBLIC": "Semi-Presidential Republic",
       "THEOCRACY": "Theocracy",
       "TRANSITIONAL-GOVERNMENT": "Transitional Government"
+    },
+    "zc_id_tags-post_view": {
+      "VIEW-BIZ": "Business Entity",
+      "VIEW-CANDIDATE": "Candidate",
+      "VIEW-CONTRACT": "Contract-based",
+      "VIEW-CPARTY": "Channel Partner",
+      "VIEW-CUST": "Customer",
+      "VIEW-DISPATCH": "Labor Dispatch",
+      "VIEW-EMPLOYEE": "Employee",
+      "VIEW-EMPLOYER": "Employer",
+      "VIEW-FLEXIBLE": "Flexible Staffing",
+      "VIEW-FULLTIME": "Full-time",
+      "VIEW-GOV": "Government Agency",
+      "VIEW-INTERN": "Internship",
+      "VIEW-MEDIA": "Media",
+      "VIEW-OUTSOURCE": "Outsourced Labor",
+      "VIEW-PARTTIME": "Part-time",
+      "VIEW-REGULATOR": "Regulator",
+      "VIEW-SUPP": "Supplier",
+      "VIEW-TEMP": "Temporary Staffing"
     }
   }
 }

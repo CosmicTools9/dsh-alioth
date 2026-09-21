@@ -122,6 +122,15 @@ Gateway 的 Navigation 组件渲染：
 
 原型实现使用 `.gl-gateway-sidebar` + `.gl-main-nav` + `.gl-nav-section` + `.gl-nav-item` + `.gl-sidebar-foot` + `.gl-collapse-btn`，与 `gateway-shell.tsx` 保持一致。
 
+#### 导航菜单模式变体（原型壳扩展）
+
+`gateway-shell.tsx` 的 `GatewayShell` 另提供 `menuMode`（`sidebar` / `category` / `dual` / `top` / `grouped` / `topDual`，默认 `grouped` = 上文单列分组侧栏）与 `collapsedShowText`（仅作用于二级导航列），并附 `MenuModePicker` 设置页选择器。各模式的 DOM / 尺寸 / 折叠 / 选择器契约统一见 [menu-modes.md](menu-modes.md)（能力单一事实源）。
+
+- 上文描述的单列分组侧栏 = `menuMode="grouped"`（默认，零回归）；`hideNavigation={true}` 对所有模式优先。
+- 模式只改变导航**呈现方式**，不改变 `navGroups` 数据契约；`top` / `topDual` 无导航列（项内联顶栏 / 顶栏第二行 `h-11` 导航条）。
+- 主侧栏折叠尺寸仍受 `docs/specs/MODULE_SPEC.md` §11.11.3 Token 约束（240px ↔ 64px 仅图标）；本变体不松动该 Token。
+- **生产未采用**：生产 Gateway 仍为单列侧栏；本变体服务于原型表达与设计探索。
+
 #### WorkspaceDock 结构
 
 Gateway 的右侧面板在工作区激活时展开：

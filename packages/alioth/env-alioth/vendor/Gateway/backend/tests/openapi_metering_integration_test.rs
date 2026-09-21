@@ -597,10 +597,15 @@ async fn metering_007_openapi_oa_seed_idempotent() {
     assert_eq!(assoc.len(), 2, "admin UA 应恰好两条 openapi 关联");
     assert_eq!(
         assoc[0].1,
-        vec!["admin", "create", "delete", "read", "update", "write"],
+        // read:* = 列级授权通配（NGAC_SPEC §5.5.2 种子演进，同 metering_008）
+        vec!["admin", "create", "delete", "read", "read:*", "update", "write"],
         "openapi_admin 全权（缺一则写操作 403，R4）"
     );
-    assert_eq!(assoc[1].1, vec!["read"], "openapi_analytics 只读");
+    assert_eq!(
+        assoc[1].1,
+        vec!["read", "read:*"],
+        "openapi_analytics 只读（read:* 列级通配随行）"
+    );
 
     // 策略版本非空（空表插首行/否则 +1）
     let versions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM isahl_auth.ngac_policy_version")
@@ -671,7 +676,8 @@ async fn metering_008_openapi_product_oa_seed_idempotent() {
     for (entity, rights) in &assoc {
         assert_eq!(
             rights,
-            &vec!["admin", "create", "delete", "read", "update", "write"],
+            // read:* = 列级授权通配（NGAC_SPEC §5.5.2，seed-avic-ngac-resources.sql:395 引入）
+            &vec!["admin", "create", "delete", "read", "read:*", "update", "write"],
             "产品 OA {} 全权（缺一则写操作 403）",
             entity
         );

@@ -1,61 +1,136 @@
 use async_trait::async_trait;
-use sqlx::{AssertSqlSafe, Error, PgPool};
+use sqlx::{Error, PgPool};
 use system_config::{
     CreateSystemConfigRequest, SystemConfig, SystemConfigRepository, UpdateSystemConfigRequest,
 };
 
-/// 前端请求分类（`_f_` 请求参数，业务枚举 llm/email/...）→ 目标表名。
+/// 前端请求分类（`_f_` 请求参数，业务枚举 llm/email/...）→ 目标表。
 /// 注意：这是「请求参数 → 表」的翻译，与物理 `_f_` 列无关——活库
 /// `zc_id_prot-*_config` 的 `_f_`/`_t_` 列由 `dk_function.code` 前缀自动派生
 /// （ALIOTH_ONTOLOGY_SPEC §4.3），业务层禁止显式赋值。
 /// 未知分类返回 None（由 service validate_request 兜底）。
-fn table_for(category: &str) -> Option<&'static str> {
-    match category {
-        "llm" => Some("zc_id_prot-llm_config"),
-        "email" => Some("zc_id_prot-email_config"),
-        "im" => Some("zc_id_prot-im_config"),
-        "webhook" => Some("zc_id_prot-webhook_config"),
-        "storage" => Some("zc_id_prot-oss_config"),
-        "sms" => Some("zc_id_prot-sms_config"),
-        _ => None,
-    }
+///
+/// 单族配置表投影（`_f_` 由分类字面量派生；正文单一来源）
+macro_rules! live_fields {
+    ($category:literal) => {
+        concat!(
+            "id, notice, code, '",
+            $category,
+            "' AS \"_f_\", settings->>'provider' AS \"_t_\", comments, \
+             enc_fields AS credentials, settings, \
+             COALESCE((settings->>'enabled')::boolean, false) AS enabled, \
+             COALESCE((settings->>'is_default')::boolean, false) AS is_default, \
+             settings->>'domain_' AS domain_, \
+             COALESCE((settings->>'public')::boolean, false) AS public, \
+             created_at, updated_at, created_by_id, updated_by_id, deleted_at"
+        )
+    };
 }
 
-/// 分类 code → DTO `_f_` 值（表名推导，与物理列无关）。
-fn category_of_table(table: &str) -> &'static str {
-    match table {
-        "zc_id_prot-llm_config" => "llm",
-        "zc_id_prot-email_config" => "email",
-        "zc_id_prot-im_config" => "im",
-        "zc_id_prot-webhook_config" => "webhook",
-        "zc_id_prot-oss_config" => "storage",
-        "zc_id_prot-sms_config" => "sms",
-        _ => "unknown",
-    }
+/// 六族配置表 → 分类 + 编译期 SQL（表名与投影同源；新增族 = 加一行）
+///
+/// 投影语义（见 [`live_fields`]）：`_f_` 由分类字面量派生（勿读物理列）；
+/// `_t_`（provider）读 `settings->>'provider'`；enc_fields → credentials；
+/// settings 内嵌 enabled/is_default/domain_/public。
+struct ConfigFamilySql {
+    category: &'static str,
+    select_by_code: &'static str,
+    select_by_id: &'static str,
+    insert_sql: &'static str,
+    update_sql: &'static str,
+    soft_delete_sql: &'static str,
 }
 
-/// 六族表探测常量（分类, 表名）。
-const FAMILY_TABLES: [(&str, &str); 6] = [
-    ("llm", "zc_id_prot-llm_config"),
-    ("email", "zc_id_prot-email_config"),
-    ("im", "zc_id_prot-im_config"),
-    ("webhook", "zc_id_prot-webhook_config"),
-    ("storage", "zc_id_prot-oss_config"),
-    ("sms", "zc_id_prot-sms_config"),
+macro_rules! config_family {
+    ($category:literal, $table:literal) => {
+        ConfigFamilySql {
+            category: $category,
+            select_by_code: concat!(
+                "SELECT ",
+                live_fields!($category),
+                " FROM isahl.\"",
+                $table,
+                "\" WHERE code = $1 AND deleted_at IS NULL LIMIT 1"
+            ),
+            select_by_id: concat!(
+                "SELECT ",
+                live_fields!($category),
+                " FROM isahl.\"",
+                $table,
+                "\" WHERE id = $1 AND deleted_at IS NULL LIMIT 1"
+            ),
+            insert_sql: concat!(
+                "INSERT INTO isahl.\"",
+                $table,
+                "\" \
+                 (notice, code, comments, enc_fields, settings, created_by_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING ",
+                live_fields!($category)
+            ),
+            update_sql: concat!(
+                "UPDATE isahl.\"",
+                $table,
+                "\" SET \
+                 notice = COALESCE($2, notice), code = COALESCE($3, code), \
+                 comments = COALESCE($4, comments), enc_fields = COALESCE($5, enc_fields), \
+                 settings = $6, updated_at = NOW() \
+                 WHERE id = $1 AND deleted_at IS NULL RETURNING ",
+                live_fields!($category)
+            ),
+            soft_delete_sql: concat!(
+                "UPDATE isahl.\"",
+                $table,
+                "\" \
+                 SET deleted_at = NOW(), updated_at = NOW() \
+                 WHERE id = $1 AND deleted_at IS NULL"
+            ),
+        }
+    };
+}
+
+const CONFIG_FAMILIES: &[ConfigFamilySql] = &[
+    config_family!("llm", "zc_id_prot-llm_config"),
+    config_family!("email", "zc_id_prot-email_config"),
+    config_family!("im", "zc_id_prot-im_config"),
+    config_family!("webhook", "zc_id_prot-webhook_config"),
+    config_family!("storage", "zc_id_prot-oss_config"),
+    config_family!("sms", "zc_id_prot-sms_config"),
 ];
 
-/// 活库族表 SELECT 投影 → SystemConfig。
-/// - `_f_` 由表名派生（`{category}` 占位，勿读物理列）；
-/// - `_t_`（provider）读 `settings->>'provider'`（勿读物理列）；
-/// - enc_fields → credentials，settings 内嵌 enabled/is_default/domain_/public。
-const LIVE_FIELDS: &str = r#"
-    id, notice, code, '{category}' AS "_f_", settings->>'provider' AS "_t_", comments,
-    enc_fields AS credentials, settings,
-    COALESCE((settings->>'enabled')::boolean, false) AS enabled,
-    COALESCE((settings->>'is_default')::boolean, false) AS is_default,
-    settings->>'domain_' AS domain_, COALESCE((settings->>'public')::boolean, false) AS public,
-    created_at, updated_at, created_by_id, updated_by_id, deleted_at
-"#;
+/// 六族全量 UNION 列表 SQL（编译期固化；族成员与投影同源）
+macro_rules! live_config_union_sql {
+    ($first_c:literal, $first_t:literal $(, $c:literal, $t:literal)* $(,)?) => {
+        concat!(
+            "SELECT * FROM (SELECT ", live_fields!($first_c), " FROM isahl.\"", $first_t,
+            "\" WHERE deleted_at IS NULL",
+            $(
+                " UNION ALL SELECT ", live_fields!($c), " FROM isahl.\"", $t,
+                "\" WHERE deleted_at IS NULL"
+            ),*
+            , ") c ORDER BY updated_at DESC LIMIT $1 OFFSET $2"
+        )
+    };
+}
+
+const CONFIG_LIST_SQL: &str = live_config_union_sql!(
+    "llm",
+    "zc_id_prot-llm_config",
+    "email",
+    "zc_id_prot-email_config",
+    "im",
+    "zc_id_prot-im_config",
+    "webhook",
+    "zc_id_prot-webhook_config",
+    "storage",
+    "zc_id_prot-oss_config",
+    "sms",
+    "zc_id_prot-sms_config",
+);
+
+/// 分类 code → 族（`_f_` 值域）
+fn family_of_category(category: &str) -> Option<&'static ConfigFamilySql> {
+    CONFIG_FAMILIES.iter().find(|f| f.category == category)
+}
 
 /// 从请求合并 provider/enabled/is_default/public/domain_ 进 settings。
 /// `_t_` 请求字段（provider 业务枚举）并入 settings，不写物理 `_t_` 列。
@@ -97,20 +172,13 @@ impl SystemConfigRepo {
 impl SystemConfigRepository for SystemConfigRepo {
     async fn find_by_code(&self, code: &str) -> Result<Option<SystemConfig>, Error> {
         // 跨全族表查找（未知 code 时逐表探测；通常行数极少）
-        for (category, table) in FAMILY_TABLES {
-            let fields = LIVE_FIELDS.replace("{category}", category);
-            let sql = format!(
-                r#"SELECT {fields} FROM isahl."{table}"
-                   WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
-                fields = fields,
-                table = table
-            );
-            let row = sqlx::query_as::<_, SystemConfig>(AssertSqlSafe(sql.as_str()))
+        for fam in CONFIG_FAMILIES {
+            let row = sqlx::query_as::<_, SystemConfig>(fam.select_by_code)
                 .bind(code)
                 .fetch_optional(&self.pool)
                 .await?;
             if let Some(mut cfg) = row {
-                cfg._f_ = Some(category.to_string());
+                cfg._f_ = Some(fam.category.to_string());
                 return Ok(Some(cfg));
             }
         }
@@ -118,7 +186,7 @@ impl SystemConfigRepository for SystemConfigRepo {
     }
 
     async fn insert(&self, req: &CreateSystemConfigRequest) -> Result<SystemConfig, Error> {
-        let Some(table) = req._f_.as_deref().and_then(table_for) else {
+        let Some(fam) = req._f_.as_deref().and_then(family_of_category) else {
             return Err(Error::Protocol(format!("不支持的配置分类: {:?}", req._f_)));
         };
         let mut settings = req
@@ -134,16 +202,7 @@ impl SystemConfigRepository for SystemConfigRepo {
             req.domain_.as_deref(),
         );
         // 不写 `_f_`/`_t_` 物理列（lifecycle 自动维度，业务禁止赋值）。
-        let fields = LIVE_FIELDS.replace("{category}", category_of_table(table));
-        let sql = format!(
-            r#"INSERT INTO isahl."{table}" (
-                notice, code, comments, enc_fields, settings, created_by_id
-            ) VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING {fields}"#,
-            table = table,
-            fields = fields
-        );
-        sqlx::query_as::<_, SystemConfig>(AssertSqlSafe(sql.as_str()))
+        sqlx::query_as::<_, SystemConfig>(fam.insert_sql)
             .bind(&req.notice)
             .bind(&req.code)
             .bind(&req.comments)
@@ -156,20 +215,13 @@ impl SystemConfigRepository for SystemConfigRepo {
 
     async fn find_by_id(&self, id: i64) -> Result<Option<SystemConfig>, Error> {
         // id 跨族表探测（id 为全局 ZUID，可跨表）
-        for (category, table) in FAMILY_TABLES {
-            let fields = LIVE_FIELDS.replace("{category}", category);
-            let sql = format!(
-                r#"SELECT {fields} FROM isahl."{table}"
-                   WHERE id = $1 AND deleted_at IS NULL LIMIT 1"#,
-                fields = fields,
-                table = table
-            );
-            let row = sqlx::query_as::<_, SystemConfig>(AssertSqlSafe(sql.as_str()))
+        for fam in CONFIG_FAMILIES {
+            let row = sqlx::query_as::<_, SystemConfig>(fam.select_by_id)
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
             if let Some(mut cfg) = row {
-                cfg._f_ = Some(category.to_string());
+                cfg._f_ = Some(fam.category.to_string());
                 return Ok(Some(cfg));
             }
         }
@@ -177,25 +229,8 @@ impl SystemConfigRepository for SystemConfigRepo {
     }
 
     async fn list(&self, limit: i64, offset: i64) -> Result<Vec<SystemConfig>, Error> {
-        // UNION ALL 六族表（分类 = 表名常量；provider 读 settings->>'provider'）
-        let mut sql = String::from("SELECT * FROM (");
-        for (i, (category, table)) in FAMILY_TABLES.iter().enumerate() {
-            if i > 0 {
-                sql.push_str(" UNION ALL ");
-            }
-            let fields = LIVE_FIELDS.replace("{category}", category);
-            sql.push_str(&format!(
-                r#"SELECT {fields} FROM isahl."{table}" WHERE deleted_at IS NULL"#,
-                fields = fields,
-                table = table
-            ));
-        }
-        sql.push_str(
-            r#") c
-            ORDER BY updated_at DESC
-            LIMIT $1 OFFSET $2"#,
-        );
-        sqlx::query_as::<_, SystemConfig>(AssertSqlSafe(sql.as_str()))
+        // 六族全量 UNION ALL（分类 = 编译期字面量；provider 读 settings->>'provider'）
+        sqlx::query_as::<_, SystemConfig>(CONFIG_LIST_SQL)
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.pool)
@@ -210,7 +245,7 @@ impl SystemConfigRepository for SystemConfigRepo {
         let Some(f) = req._f_.as_deref() else {
             return Err(Error::Protocol("更新请求缺少 _f_ 分类".into()));
         };
-        let Some(table) = table_for(f) else {
+        let Some(fam) = family_of_category(f) else {
             return Err(Error::Protocol(format!("不支持的配置分类: {}", f)));
         };
         // 现有行（取回 settings 以合并标志/provider）
@@ -250,21 +285,7 @@ impl SystemConfigRepository for SystemConfigRepo {
                 obj.insert("public".into(), serde_json::json!(p));
             }
         }
-        let fields = LIVE_FIELDS.replace("{category}", category_of_table(table));
-        let sql = format!(
-            r#"UPDATE isahl."{table}" SET
-                notice = COALESCE($2, notice),
-                code = COALESCE($3, code),
-                comments = COALESCE($4, comments),
-                enc_fields = COALESCE($5, enc_fields),
-                settings = $6,
-                updated_at = NOW()
-            WHERE id = $1 AND deleted_at IS NULL
-            RETURNING {fields}"#,
-            table = table,
-            fields = fields
-        );
-        let row = sqlx::query_as::<_, SystemConfig>(AssertSqlSafe(sql.as_str()))
+        let row = sqlx::query_as::<_, SystemConfig>(fam.update_sql)
             .bind(id)
             .bind(&req.notice)
             .bind(&req.code)
@@ -274,7 +295,7 @@ impl SystemConfigRepository for SystemConfigRepo {
             .fetch_optional(&self.pool)
             .await?;
         if let Some(mut cfg) = row {
-            cfg._f_ = Some(f.to_string());
+            cfg._f_ = Some(fam.category.to_string());
             Ok(Some(cfg))
         } else {
             Ok(None)
@@ -283,13 +304,8 @@ impl SystemConfigRepository for SystemConfigRepo {
 
     async fn soft_delete(&self, id: i64) -> Result<u64, Error> {
         // 逐族表尝试软删（命中的表返回 1）
-        for (_, table) in FAMILY_TABLES {
-            let sql = format!(
-                r#"UPDATE isahl."{table}"
-                   SET deleted_at = NOW(), updated_at = NOW()
-                   WHERE id = $1 AND deleted_at IS NULL"#
-            );
-            let n = sqlx::query(AssertSqlSafe(sql.as_str()))
+        for fam in CONFIG_FAMILIES {
+            let n = sqlx::query(fam.soft_delete_sql)
                 .bind(id)
                 .execute(&self.pool)
                 .await?

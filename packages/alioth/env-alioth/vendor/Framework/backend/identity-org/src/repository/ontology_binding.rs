@@ -23,7 +23,11 @@ pub fn coords_for_entity(entity: &str) -> Result<Coords, ApiError> {
         "SettlementBank" => Ok(("TX", "FJA", "↓_EV")),
         "SettlementCash" => Ok(("TX", "FJA", "↓_EV")),
         "SettlementChannel" => Ok(("TX", "FJA", "↓_EV")),
-        "TrafficLine" => Ok(("GC", "FJA", "↑_GG")),
+        // 运营线路 = 操作执行 `↓_GG`（实现·实例）：与 seed-wz-routes-places.sql 种子的
+        // 6 条运营干线同态。原值 `↑_GG`（操作方案 / 设计·实例）令界面新建线路落设计态，
+        // 与种子运营线路同名并列成「重复」，且本表无设计→实现类转换原语（无推进路径）。
+        // scene/factor code 沿用既有取值（实测 dk_scene/dk_factor 与种子行落同一 id）。
+        "TrafficLine" => Ok(("GC", "FJA", "↓_GG")),
         "FreightProduct" => Ok(("GC", "FJA", "↓_GG")),
         "PricingAgreement" => Ok(("GC", "FJA", "↓_GG")),
         "Contract" => Ok(("GC", "FJA", "↓_GG")),

@@ -31,7 +31,9 @@ async fn validate_rejects_event_start_without_event_leaf() {
         ]
     });
     let app = test::init_service(
-        App::new().service(web::scope("/test").configure(handlers::validate::register)),
+        App::new()
+            .app_data(actix_web::web::Data::new(pool.clone()))
+            .service(web::scope("/test").configure(handlers::validate::register)),
     )
     .await;
     let resp = test::call_service(
@@ -42,10 +44,13 @@ async fn validate_rejects_event_start_without_event_leaf() {
             .to_request(),
     )
     .await;
+    let st = resp.status();
+    let body = test::read_body(resp).await;
     assert_eq!(
-        resp.status(),
+        st,
         actix_web::http::StatusCode::BAD_REQUEST,
-        "event 驱动 start 缺 eventLeaf 必须拒绝（此前漏检）"
+        "event 驱动 start 缺 eventLeaf 必须拒绝（此前漏检）: {}",
+        String::from_utf8_lossy(&body)
     );
 }
 
@@ -63,7 +68,9 @@ async fn validate_rejects_event_leaf_outside_whitelist() {
         ]
     });
     let app = test::init_service(
-        App::new().service(web::scope("/test").configure(handlers::validate::register)),
+        App::new()
+            .app_data(actix_web::web::Data::new(pool.clone()))
+            .service(web::scope("/test").configure(handlers::validate::register)),
     )
     .await;
     let resp = test::call_service(
@@ -95,7 +102,9 @@ async fn validate_rejects_task_start_without_task_leaf() {
         ]
     });
     let app = test::init_service(
-        App::new().service(web::scope("/test").configure(handlers::validate::register)),
+        App::new()
+            .app_data(actix_web::web::Data::new(pool.clone()))
+            .service(web::scope("/test").configure(handlers::validate::register)),
     )
     .await;
     let resp = test::call_service(
@@ -121,7 +130,8 @@ async fn publish_materializes_event_leaf_exemplar_with_class() {
     let graph = json!({
         "version": 1,
         "nodes": [
-            {"id": "s", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident"},
+            {"id": "s", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "e", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });
     let user_id = 424248;
@@ -130,7 +140,7 @@ async fn publish_materializes_event_leaf_exemplar_with_class() {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'leaf-contract', 'leaf-contract', 'leaf-contract@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .execute(&pool)
@@ -247,7 +257,7 @@ async fn scope_options_event_leaves_include_approval_subtree() {
     let has_appr = event.iter().any(|i| {
         i["table"]
             .as_str()
-            .map_or(false, |t| t.starts_with("zc_id_appr-"))
+            .is_some_and(|t| t.starts_with("zc_id_appr-"))
     });
     assert!(
         has_appr,
@@ -258,7 +268,7 @@ async fn scope_options_event_leaves_include_approval_subtree() {
         .filter(|i| {
             i["table"]
                 .as_str()
-                .map_or(false, |t| t.starts_with("zc_id_even-"))
+                .is_some_and(|t| t.starts_with("zc_id_even-"))
         })
         .count();
     assert_eq!(even, 8, "even 直叶 8 项");

@@ -53,7 +53,7 @@ async fn seed_design(pool: &sqlx::PgPool, notice: &str, code: &str) -> i64 {
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'flow-lifecycle-test', 'flow-lifecycle-test', 'flow-lifecycle@test.local',
                    'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -97,7 +97,7 @@ async fn seed_design(pool: &sqlx::PgPool, notice: &str, code: &str) -> i64 {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-           VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+           VALUES (isahl.gen_next_uid(260), $1, $2)"#,
     )
     .bind(design_id)
     .bind(status_id)
@@ -423,6 +423,16 @@ async fn crud_created_flow_visible_in_design_list() {
 async fn save_flow_updates_comments_via_crud_put() {
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
+    // 行级 NGAC：crud PUT 走 require_resource_access（update）——测试用户须显式授权
+    // （grant_user_access 授 admin UA，与其他 approval 测试先例一致）
+    common::grant_user_access(
+        &pool,
+        424242,
+        "approval_flows",
+        &["create", "read", "update"],
+    )
+    .await
+    .expect("grant approval_flows access");
     let app = test_app!(pool.clone(), true);
 
     // 1. crud 创建
@@ -460,7 +470,10 @@ async fn save_flow_updates_comments_via_crud_put() {
             .to_request(),
     )
     .await;
-    assert_eq!(resp.status(), 200, "PUT 保存应成功");
+    let status = resp.status();
+    let raw_put = test::read_body(resp).await;
+    let body_put: Value = serde_json::from_slice(&raw_put).unwrap_or(Value::Null);
+    assert_eq!(status, 200, "PUT 保存应成功: {body_put}");
 
     // 3. 持久化断言：设计图 meta jsonb + 类标记不回退 + mermaid 自动生成
     let row: (Option<Value>, Option<String>, Option<String>) =
@@ -491,7 +504,7 @@ async fn save_flow_updates_comments_via_crud_put() {
             .uri("/test/approval-flows/validate")
             .set_json(json!({
                 "nodes": [
-                    {"id": "n0", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident"},
+                    {"id": "n0", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
                     {"id": "n1", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-appeal"}
                 ]
             }))

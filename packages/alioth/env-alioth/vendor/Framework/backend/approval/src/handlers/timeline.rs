@@ -3,7 +3,7 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::error::AliothError;
-use common::permissions::require_resource_access;
+use common::permissions::require_row_or_collection_access;
 use serde::Serialize;
 use sqlx::PgPool;
 
@@ -45,7 +45,7 @@ pub async fn get_timeline(
 ) -> Result<HttpResponse, AliothError> {
     let user_id = common::context::require_auth(&req)?;
     let instance_id = path.into_inner();
-    require_resource_access(
+    require_row_or_collection_access(
         pool.get_ref(),
         user_id,
         "approval-instances",

@@ -9,7 +9,8 @@
 //! - 五个内置专用 Agent + 一个通用回退 Agent
 
 pub mod agents;
-pub mod pool;
+// pool 模块已删除（refactor-chat-ai-subject-identity-memory D9：AgentInstance.memory()
+// 全仓零调用 ⇒ 只写不读的死路径；记忆读写只经 isahl_auth 双层 store）。
 pub mod registry;
 pub mod router;
 pub mod tools;

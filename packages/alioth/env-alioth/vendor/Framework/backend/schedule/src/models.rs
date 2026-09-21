@@ -11,6 +11,36 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 // ============================================
+// 列清单宏（编译期字面量的唯一来源）
+// ============================================
+//
+// 列位插值 MUST 静态：站点一律 `concat!(... , <宏>!(), ...)`，宏体即列清单字面量；
+// 关联常量 `SELECT_FIELDS` 退化为 `concat!(宏!())`，供泛型通道（QueryBuilder 等）复用。
+
+/// `DateSegm::SELECT_FIELDS` 的列清单
+macro_rules! date_segm_select_fields {
+    () => {
+        r#"id, notice, date_st, date_ed, time_st, time_ed"#
+    };
+}
+
+/// `Plan::SELECT_FIELDS` 的列清单
+macro_rules! plan_select_fields {
+    () => {
+        r#"id, notice, code, _f_, _t_, comments, to_jsonb(cron) AS cron, exclude, sort, "qk_date-segm" AS qk_date_segm, "qk_time-segm" AS qk_time_segm, created_at, updated_at, deleted_at"#
+    };
+}
+
+/// `Event::SELECT_FIELDS` 的列清单
+macro_rules! event_select_fields {
+    () => {
+        r#"id, notice, _f_, _t_, qk_date, fk_place, fk_subject, created_at, updated_at, deleted_at"#
+    };
+}
+
+pub(crate) use {date_segm_select_fields, event_select_fields, plan_select_fields};
+
+// ============================================
 // Core Entities (映射真实表)
 // ============================================
 
@@ -27,7 +57,7 @@ pub struct DateSegm {
 }
 
 impl DateSegm {
-    pub const SELECT_FIELDS: &'static str = "id, notice, date_st, date_ed, time_st, time_ed";
+    pub const SELECT_FIELDS: &'static str = concat!(date_segm_select_fields!());
 }
 
 /// 日程计划实体（zc_id_plan）
@@ -45,11 +75,14 @@ pub struct Plan {
     pub cron: Option<serde_json::Value>,
     pub exclude: Option<serde_json::Value>,
     // 排序
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sort: Option<i64>,
     // 外键
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date_segm: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_time_segm: Option<i64>,
     // 审计字段
@@ -67,7 +100,7 @@ impl crud::Identifiable for Plan {
 impl Plan {
     // cron 列在库中为 TEXT（dev/test 均如此），模型为 JSON — 用 to_jsonb 包装保证解码兼容；
     // qk_* 物理列带连字符，需别名对齐 Rust 字段名
-    pub const SELECT_FIELDS: &'static str = r#"id, notice, code, _f_, _t_, comments, to_jsonb(cron) AS cron, exclude, sort, "qk_date-segm" AS qk_date_segm, "qk_time-segm" AS qk_time_segm, created_at, updated_at, deleted_at"#;
+    pub const SELECT_FIELDS: &'static str = concat!(plan_select_fields!());
 }
 
 /// 日程事件实体（zc_id_event）
@@ -79,11 +112,14 @@ pub struct Event {
     pub _f_: Option<String>,
     pub _t_: Option<String>,
     // 日期
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date: Option<i64>,
     // 外键
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_place: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>,
     // 审计字段
@@ -99,7 +135,7 @@ impl crud::Identifiable for Event {
 }
 
 impl Event {
-    pub const SELECT_FIELDS: &'static str = r#"id, notice, _f_, _t_, qk_date, fk_place, fk_subject, created_at, updated_at, deleted_at"#;
+    pub const SELECT_FIELDS: &'static str = concat!(event_select_fields!());
 }
 
 /// 审批事件实体（zc_id_even-approve，继承 zc_id_event）
@@ -192,12 +228,15 @@ pub struct CreatePlanRequest {
     /// 业务类型代码（meeting/sync/client/development/team/review/personal/other）
     /// 写入 zc_id_plan-personal.code 或 zc_id_thre-meeting.code
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date_segm: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_time_segm: Option<i64>,
     pub cron: Option<serde_json::Value>,
     pub exclude: Option<serde_json::Value>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sort: Option<i64>,
     // ── 前端 QuickAdd 友好字段（workspace-dock 契约，serde default 兼容）──
@@ -229,12 +268,15 @@ pub struct CreatePlanRequest {
 pub struct UpdatePlanRequest {
     pub notice: Option<String>,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date_segm: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_time_segm: Option<i64>,
     pub cron: Option<serde_json::Value>,
     pub exclude: Option<serde_json::Value>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sort: Option<i64>,
     /// 提醒提前分钟数（0/5/15/30/60/1440；0=清除，缺省=不修改）。\n    /// 承载：预警事件（`zc_id_even-alert.code='schedule-reminder'`）`qk_date` = 计划起始 − N 分钟\n    #[serde(default)]
@@ -245,10 +287,13 @@ pub struct UpdatePlanRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateEventRequest {
     pub notice: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_place: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date: Option<i64>,
 }
@@ -257,10 +302,13 @@ pub struct CreateEventRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateEventRequest {
     pub notice: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_place: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date: Option<i64>,
 }
@@ -377,12 +425,15 @@ pub struct ScheduleOverviewResponse {
 #[derive(Debug, Deserialize)]
 pub struct ScheduleListQuery {
     /// 起始日期段 ID（含）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub start_date_segm: Option<i64>,
     /// 截止日期段 ID（含）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub end_date_segm: Option<i64>,
     /// 精确日期段 ID
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date_segm: Option<i64>,
     /// 业务类型过滤（新: code 字段; 旧: _t_ 字段，alias 兼容）
@@ -403,8 +454,10 @@ pub struct ScheduleListQuery {
 /// 待办列表查询参数
 #[derive(Debug, Deserialize)]
 pub struct TodoListQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub limit: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub offset: Option<i64>,
 }

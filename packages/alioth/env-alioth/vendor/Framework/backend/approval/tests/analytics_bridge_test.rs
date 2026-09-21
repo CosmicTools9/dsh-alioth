@@ -28,7 +28,7 @@ async fn seed_approver(pool: &sqlx::PgPool, id: i64, username: &str) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(id)
     .bind(username)
@@ -50,8 +50,8 @@ async fn status_id(pool: &sqlx::PgPool, code: &str, notice: &str) -> i64 {
     {
         Some(id) => id,
         None => sqlx::query_scalar::<_, i64>(
-            r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice)
-               VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice, flag)
+               VALUES (isahl.gen_next_uid(73), $1, $2, 'end') RETURNING id"#,
         )
         .bind(code)
         .bind(notice)
@@ -84,7 +84,7 @@ async fn mark_terminal(pool: &sqlx::PgPool, instance_id: i64, code: &str) {
     let sid = status_id(pool, code, "测试终态").await;
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-           VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+           VALUES (isahl.gen_next_uid(260), $1, $2)"#,
     )
     .bind(instance_id)
     .bind(sid)

@@ -5,6 +5,7 @@ edition = "2021"
 default-run = "alioth-gateway"
 
 [dependencies]
+openssl-sys = { version = "0.9.117", features = ["vendored"] }
 actix-web = "4.13"
 actix-multipart = "0.8"
 awc = "3"
@@ -36,6 +37,13 @@ base32 = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
 
+# 附件文档解析（chat 附件：pdf / xlsx / docx）
+pdf-extract = { workspace = true }
+lopdf = { workspace = true }
+calamine = { workspace = true }
+quick-xml = { workspace = true }
+zip = { workspace = true }
+
 # TOTP and QR code
 totp-rs = { workspace = true }
 
@@ -47,6 +55,7 @@ dashmap = { workspace = true }
 
 # JWT
 jsonwebtoken = { workspace = true }
+p256 = { workspace = true, features = ["pkcs8"] }
 
 # CORS 支持
 actix-cors = { workspace = true }
@@ -85,11 +94,13 @@ rust_decimal = { workspace = true }
 
 # Framework modules (local paths)
 common = { path = "../../Framework/backend/common" }
+audit-writer = { path = "../../Framework/backend/audit-writer" }
 # NGAC 主体/组织/身份共享内核（岗位任职桥写归口，M226/ADR A-3）
 identity-org = { path = "../../Framework/backend/identity-org" }
 outbound-client = { path = "../../Framework/backend/outbound-client" }
 i18n = { path = "../../Framework/backend/i18n" }
 llm = { path = "../../Framework/backend/llm" }
+doc-recognition = { path = "../../Framework/backend/doc-recognition" }
 ai-agent = { path = "../../Framework/backend/ai-agent" }
 version = { path = "../../Framework/backend/version" }
 quality = { path = "../../Framework/backend/quality" }
@@ -145,6 +156,7 @@ wz-service-invoice-sync = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/invo
 wz-service-receipt-sync = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/receipt-sync/backend", optional = true }
 wz-service-contract = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/contract/backend", optional = true }
 wz-service-approval = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/approval/backend", optional = true }
+wz-service-authority = { path = "../../Pre-Proc/WZ/Sources/Apps/Services/authority/backend", optional = true }
 # Cosmic-Tools factors
 cosmic-tools-service-ct-git = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/ct-git/backend", optional = true }
 # SE factors
@@ -170,6 +182,23 @@ cosmic-tools-service-zc-id-plan-material-service = { path = "../../Pre-Proc/Cosm
 cosmic-tools-service-inventory_balance = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/inventory_balance/backend", package = "cosmic-tools-service-inventory-balance", optional = true }
 cosmic-tools-service-inventory_document = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/inventory_document/backend", package = "cosmic-tools-service-inventory-document", optional = true }
 cosmic-tools-service-production-order = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/production-order/backend", optional = true }
+alioth-service-todo-service = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/todo-service/backend", optional = true }
+alioth-service-todo-min-service = { path = "../../Pre-Proc/Alioth/Sources/Apps/Services/todo-min-service/backend", optional = true }
+# Cosmic-Tools bv-local（上门服务订单管理：服务项目/服务人员/预约/服务订单/微信支付结算）
+cosmic-tools-service-bv-local-catalog = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/bv-local-catalog/backend", optional = true }
+cosmic-tools-service-bv-local-technician = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/bv-local-technician/backend", optional = true }
+cosmic-tools-service-bv-local-appointment = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/bv-local-appointment/backend", optional = true }
+cosmic-tools-service-bv-local-order = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/bv-local-order/backend", optional = true }
+cosmic-tools-service-bv-local-payment = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/bv-local-payment/backend", optional = true }
+
+cosmic-tools-service-region-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/region-service/backend", optional = true }
+cosmic-tools-service-contractor-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/contractor-service/backend", optional = true }
+cosmic-tools-service-order-item-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/order-item-service/backend", optional = true }
+cosmic-tools-service-fulfillment-task-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/fulfillment-task-service/backend", optional = true }
+cosmic-tools-service-logistics-order-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/logistics-order-service/backend", optional = true }
+cosmic-tools-service-logistics-trace-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/logistics-trace-service/backend", optional = true }
+cosmic-tools-service-settlement-bill-service = { path = "../../Pre-Proc/Cosmic-Tools/Sources/Apps/Services/settlement-bill-service/backend", optional = true }
+wechat-pay-adapter = { path = "../../Ext-adapter/wechat-pay/backend", optional = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
@@ -180,10 +209,10 @@ tempfile = { workspace = true }
 sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "uuid", "json", "macros"] }
 
 [features]
-alioth = ["alioth-service-isahl-db", "alioth-service-measurement", "alioth-service-status", "alioth-service-environment", "alioth-service-license", "alioth-service-language", "alioth-service-version", "alioth-service-approval", "alioth-service-inventory-balance", "alioth-service-authority", "alioth-service-inventory", "alioth-service-demand", "alioth-service-customer", "alioth-service-inbound-order", "alioth-service-ledger-entry", "alioth-service-sales-order", "alioth-service-stock-count", "alioth-service-warehouse", "alioth-service-openapi"]
+alioth = ["alioth-service-isahl-db", "alioth-service-measurement", "alioth-service-status", "alioth-service-environment", "alioth-service-license", "alioth-service-language", "alioth-service-version", "alioth-service-approval", "alioth-service-inventory-balance", "alioth-service-authority", "alioth-service-inventory", "alioth-service-demand", "alioth-service-customer", "alioth-service-inbound-order", "alioth-service-ledger-entry", "alioth-service-sales-order", "alioth-service-stock-count", "alioth-service-warehouse", "alioth-service-openapi", "alioth-service-todo-service", "alioth-service-todo-min-service"]
 # preproc-proxy：Pre-Proc 未认证透明反代（/preproc/*、/api/pre_proc/*）——dev 形态默认开启；
 # 生产构建（scripts/build-ns.sh --no-default-features）不含 → 生产二进制无此路由（404）。
-default = ["alioth", "sso", "preproc-proxy"]
+cosmic-tools = ["alioth", "cosmic-tools-service-ct-git", "cosmic-tools-service-zc-id-plan-material-service", "cosmic-tools-service-inventory_balance", "cosmic-tools-service-inventory_document", "cosmic-tools-service-production-order", "cosmic-tools-service-bv-local-catalog", "cosmic-tools-service-bv-local-technician", "cosmic-tools-service-bv-local-appointment", "cosmic-tools-service-bv-local-order", "cosmic-tools-service-bv-local-payment", "cosmic-tools-service-region-service", "cosmic-tools-service-contractor-service", "cosmic-tools-service-order-item-service", "cosmic-tools-service-fulfillment-task-service", "cosmic-tools-service-logistics-order-service", "cosmic-tools-service-logistics-trace-service", "cosmic-tools-service-settlement-bill-service", "wechat-pay-adapter"]
 # Cosmic-Tools：ai-erp 走 Alioth service 组（别名）+ 自有 ct-git service
 wz = [
     "wz-service-isahl-db",
@@ -200,6 +229,7 @@ wz = [
     "wz-service-receipt-sync",
     "wz-service-contract",
     "wz-service-approval",
+    "wz-service-authority",
     "wz-service-wz-yy-wms-service",
     "wz-service-openapi",
 ]
@@ -258,6 +288,7 @@ wz-service-accounts-receivable = ["dep:wz-service-accounts-receivable"]
 wz-service-invoice-sync = ["dep:wz-service-invoice-sync"]
 wz-service-receipt-sync = ["dep:wz-service-receipt-sync"]
 wz-service-contract = ["dep:wz-service-contract"]
+wz-service-authority = ["dep:wz-service-authority"]
 wz-service-approval = ["dep:wz-service-approval"]
 # SE factor features
 se-service-rd-project = ["dep:se-service-rd-project"]
@@ -294,3 +325,5 @@ cosmic-tools-service-zc-id-plan-material-service = ["dep:cosmic-tools-service-zc
 cosmic-tools-service-inventory_balance = ["dep:cosmic-tools-service-inventory_balance"]
 cosmic-tools-service-inventory_document = ["dep:cosmic-tools-service-inventory_document"]
 cosmic-tools-service-production-order = ["dep:cosmic-tools-service-production-order"]
+alioth-service-todo-service = ["dep:alioth-service-todo-service"]
+alioth-service-todo-min-service = ["dep:alioth-service-todo-min-service"]

@@ -171,15 +171,30 @@ fn default_domain() -> String {
 
 const CLASS_STATES: [&str; 4] = ["draft", "in_review", "active", "retired"];
 
-const CLASS_COLUMNS: &str = "id, code, notice, state, version, scope, ua_template, label_code, \
+/// class 列清单（编译期字面量；`concat!` 静态 SQL 的唯一来源）
+macro_rules! class_columns {
+    () => {
+        "id, code, notice, state, version, scope, ua_template, label_code, \
      prohibition_template, audit_required, effective_from, effective_until, comments, \
-     created_at, updated_at, created_by_id, updated_by_id";
+     created_at, updated_at, created_by_id, updated_by_id"
+    };
+}
 
-const RULE_COLUMNS: &str = "id, policy_class_id, subject_code, resource_type, actions, condition, \
-     obligation, label_code, state, version, created_at, updated_at, created_by_id, updated_by_id";
+/// rule 列清单（编译期字面量；`concat!` 静态 SQL 的唯一来源）
+macro_rules! rule_columns {
+    () => {
+        "id, policy_class_id, subject_code, resource_type, actions, condition, \
+     obligation, label_code, state, version, created_at, updated_at, created_by_id, updated_by_id"
+    };
+}
 
-const LABEL_COLUMNS: &str = "code, rank, domain, notice, is_active, created_at, updated_at, \
-     created_by_id, updated_by_id";
+/// label 列清单（编译期字面量；`concat!` 静态 SQL 的唯一来源）
+macro_rules! label_columns {
+    () => {
+        "code, rank, domain, notice, is_active, created_at, updated_at, \
+     created_by_id, updated_by_id"
+    };
+}
 
 // ─────────────────────────── 服务层 ───────────────────────────
 
@@ -213,13 +228,14 @@ pub async fn create_org_policy_class(
     .fetch_one(pool)
     .await?;
 
-    let row = sqlx::query_as::<_, OrgPolicyClass>(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, OrgPolicyClass>(concat!(
         "INSERT INTO isahl_auth.org_policy_class \
          (code, notice, scope, ua_template, label_code, prohibition_template, audit_required, \
           effective_from, effective_until, comments, version, state, created_by_id, updated_by_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'draft', $12, $12) \
-         RETURNING {CLASS_COLUMNS}"
-    )))
+         RETURNING ",
+        class_columns!()
+    ))
     .bind(&input.code)
     .bind(&input.notice)
     .bind(input.scope.unwrap_or_else(|| serde_json::json!({})))
@@ -283,10 +299,12 @@ pub async fn get_org_policy_class(
     pool: &PgPool,
     class_id: i64,
 ) -> Result<OrgPolicyClass, AliothError> {
-    let row = sqlx::query_as::<_, OrgPolicyClass>(sqlx::AssertSqlSafe(format!(
-        "SELECT {CLASS_COLUMNS} FROM isahl_auth.org_policy_class \
+    let row = sqlx::query_as::<_, OrgPolicyClass>(concat!(
+        "SELECT ",
+        class_columns!(),
+        " FROM isahl_auth.org_policy_class \
          WHERE id = $1 AND deleted_at IS NULL"
-    )))
+    ))
     .bind(class_id)
     .fetch_optional(pool)
     .await?;
@@ -304,12 +322,14 @@ pub async fn list_org_policy_classes(
     // 避免 08P01（语句要求 3 个参数但只 bind 2 个）。
     let filtered = state.map(|s| CLASS_STATES.contains(&s)).unwrap_or(false);
     let bound_state = if filtered { state } else { None };
-    let sql = format!(
-        "SELECT {CLASS_COLUMNS} FROM isahl_auth.org_policy_class \
+    let sql = concat!(
+        "SELECT ",
+        class_columns!(),
+        " FROM isahl_auth.org_policy_class \
          WHERE deleted_at IS NULL AND ($1 IS NULL OR state = $1) \
          ORDER BY id DESC LIMIT $2 OFFSET $3"
     );
-    let rows = sqlx::query_as::<_, OrgPolicyClass>(sqlx::AssertSqlSafe(sql.as_str()))
+    let rows = sqlx::query_as::<_, OrgPolicyClass>(sql)
         .bind(bound_state)
         .bind(limit)
         .bind(offset)
@@ -359,10 +379,12 @@ pub async fn update_org_policy_class(
     input: UpdateOrgPolicyClass,
 ) -> Result<OrgPolicyClass, AliothError> {
     let mut tx = pool.begin().await?;
-    let base = sqlx::query_as::<_, OrgPolicyClass>(sqlx::AssertSqlSafe(format!(
-        "SELECT {CLASS_COLUMNS} FROM isahl_auth.org_policy_class \
+    let base = sqlx::query_as::<_, OrgPolicyClass>(concat!(
+        "SELECT ",
+        class_columns!(),
+        " FROM isahl_auth.org_policy_class \
          WHERE id = $1 AND deleted_at IS NULL FOR UPDATE"
-    )))
+    ))
     .bind(class_id)
     .fetch_optional(&mut *tx)
     .await?
@@ -407,11 +429,12 @@ async fn transition_class_state(
     next: &str,
     operation: &str,
 ) -> Result<OrgPolicyClass, AliothError> {
-    let row = sqlx::query_as::<_, OrgPolicyClass>(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, OrgPolicyClass>(concat!(
         "UPDATE isahl_auth.org_policy_class SET state=$2, updated_at=NOW(), updated_by_id=$3 \
          WHERE id=$1 AND deleted_at IS NULL AND state=$4 \
-         RETURNING {CLASS_COLUMNS}"
-    )))
+         RETURNING ",
+        class_columns!()
+    ))
     .bind(class_id)
     .bind(next)
     .bind(actor_id)
@@ -528,13 +551,14 @@ pub async fn create_org_policy_rule(
             )))
         }
     }
-    let row = sqlx::query_as::<_, OrgPolicyRule>(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, OrgPolicyRule>(concat!(
         "INSERT INTO isahl_auth.org_policy_rule \
          (policy_class_id, subject_code, resource_type, actions, condition, obligation, \
           label_code, state, version, created_by_id, updated_by_id) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', 1, $8, $8) \
-         RETURNING {RULE_COLUMNS}"
-    )))
+         RETURNING ",
+        rule_columns!()
+    ))
     .bind(input.policy_class_id)
     .bind(input.subject_code)
     .bind(input.resource_type)
@@ -621,10 +645,12 @@ pub async fn update_org_policy_rule(
     input: UpdateOrgPolicyRule,
 ) -> Result<OrgPolicyRule, AliothError> {
     let mut tx = pool.begin().await?;
-    let base = sqlx::query_as::<_, OrgPolicyRule>(sqlx::AssertSqlSafe(format!(
-        "SELECT {RULE_COLUMNS} FROM isahl_auth.org_policy_rule \
+    let base = sqlx::query_as::<_, OrgPolicyRule>(concat!(
+        "SELECT ",
+        rule_columns!(),
+        " FROM isahl_auth.org_policy_rule \
          WHERE id = $1 AND deleted_at IS NULL FOR UPDATE"
-    )))
+    ))
     .bind(rule_id)
     .fetch_optional(&mut *tx)
     .await?
@@ -666,19 +692,22 @@ pub async fn delete_org_policy_rule(
     rule_id: i64,
 ) -> Result<OrgPolicyRule, AliothError> {
     let mut tx = pool.begin().await?;
-    let base = sqlx::query_as::<_, OrgPolicyRule>(sqlx::AssertSqlSafe(format!(
-        "SELECT {RULE_COLUMNS} FROM isahl_auth.org_policy_rule \
+    let base = sqlx::query_as::<_, OrgPolicyRule>(concat!(
+        "SELECT ",
+        rule_columns!(),
+        " FROM isahl_auth.org_policy_rule \
          WHERE id = $1 AND deleted_at IS NULL FOR UPDATE"
-    )))
+    ))
     .bind(rule_id)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AliothError::NotFound(format!("org_policy_rule {rule_id} 不存在")))?;
     ensure_rule_class_editable(&mut tx, base.policy_class_id).await?;
-    let row = sqlx::query_as::<_, OrgPolicyRule>(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, OrgPolicyRule>(concat!(
         "UPDATE isahl_auth.org_policy_rule SET deleted_at=NOW(), deleted_by_id=$2 \
-         WHERE id=$1 AND deleted_at IS NULL RETURNING {RULE_COLUMNS}"
-    )))
+         WHERE id=$1 AND deleted_at IS NULL RETURNING ",
+        rule_columns!()
+    ))
     .bind(rule_id)
     .bind(actor_id)
     .fetch_one(&mut *tx)
@@ -700,10 +729,12 @@ pub async fn list_org_policy_rules(
     pool: &PgPool,
     class_id: i64,
 ) -> Result<Vec<OrgPolicyRule>, AliothError> {
-    let rows = sqlx::query_as::<_, OrgPolicyRule>(sqlx::AssertSqlSafe(format!(
-        "SELECT {RULE_COLUMNS} FROM isahl_auth.org_policy_rule \
+    let rows = sqlx::query_as::<_, OrgPolicyRule>(concat!(
+        "SELECT ",
+        rule_columns!(),
+        " FROM isahl_auth.org_policy_rule \
          WHERE policy_class_id = $1 AND deleted_at IS NULL ORDER BY id"
-    )))
+    ))
     .bind(class_id)
     .fetch_all(pool)
     .await?;
@@ -717,11 +748,12 @@ pub async fn create_org_policy_label(
     actor_email: &str,
     input: CreateOrgPolicyLabel,
 ) -> Result<OrgPolicyLabel, AliothError> {
-    let row = sqlx::query_as::<_, OrgPolicyLabel>(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, OrgPolicyLabel>(concat!(
         "INSERT INTO isahl_auth.org_policy_label (code, rank, domain, notice, created_by_id, updated_by_id) \
          VALUES ($1, $2, $3, $4, $5, $5) \
-         RETURNING {LABEL_COLUMNS}"
-    )))
+         RETURNING ",
+        label_columns!()
+    ))
     .bind(&input.code)
     .bind(input.rank)
     .bind(input.domain)
@@ -763,10 +795,12 @@ pub async fn update_org_policy_label(
     input: UpdateOrgPolicyLabel,
 ) -> Result<OrgPolicyLabel, AliothError> {
     let mut tx = pool.begin().await?;
-    let base = sqlx::query_as::<_, OrgPolicyLabel>(sqlx::AssertSqlSafe(format!(
-        "SELECT {LABEL_COLUMNS} FROM isahl_auth.org_policy_label \
+    let base = sqlx::query_as::<_, OrgPolicyLabel>(concat!(
+        "SELECT ",
+        label_columns!(),
+        " FROM isahl_auth.org_policy_label \
          WHERE code = $1 AND deleted_at IS NULL FOR UPDATE"
-    )))
+    ))
     .bind(code)
     .fetch_optional(&mut *tx)
     .await?
@@ -803,10 +837,11 @@ pub async fn delete_org_policy_label(
     code: &str,
 ) -> Result<OrgPolicyLabel, AliothError> {
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as::<_, OrgPolicyLabel>(sqlx::AssertSqlSafe(format!(
+    let row = sqlx::query_as::<_, OrgPolicyLabel>(concat!(
         "UPDATE isahl_auth.org_policy_label SET deleted_at=NOW(), deleted_by_id=$2 \
-         WHERE code=$1 AND deleted_at IS NULL RETURNING {LABEL_COLUMNS}"
-    )))
+         WHERE code=$1 AND deleted_at IS NULL RETURNING ",
+        label_columns!()
+    ))
     .bind(code)
     .bind(actor_id)
     .fetch_optional(&mut *tx)
@@ -830,10 +865,12 @@ pub async fn list_org_policy_labels(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<OrgPolicyLabel>, AliothError> {
-    let rows = sqlx::query_as::<_, OrgPolicyLabel>(sqlx::AssertSqlSafe(format!(
-        "SELECT {LABEL_COLUMNS} FROM isahl_auth.org_policy_label \
+    let rows = sqlx::query_as::<_, OrgPolicyLabel>(concat!(
+        "SELECT ",
+        label_columns!(),
+        " FROM isahl_auth.org_policy_label \
          WHERE deleted_at IS NULL ORDER BY rank, code LIMIT $1 OFFSET $2"
-    )))
+    ))
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)

@@ -37,7 +37,7 @@ const PURCHASE_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_cont-transport-purch
            $13, $14, $15, $15, ARRAY[$16]::bigint[], ARRAY[$16]::bigint[])
    RETURNING id"#;
 
-/// 诉求叶表（列清单与 `cont-sales` 同构；镜像落**同表**，合同方与主行相同）。
+/// 诉求叶表（列清单与 `cont-sales` 同构；镜像落**同表**、主体互换）。
 const REQUEST_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_cont-request"
    (id, code, notice, comments, o_number, projection, qk_date, "qk_valid-segm", tpl_id, lk_health,
     dk_scene, dk_factor, dk_function, "_f_", "_t_", created_by_id, updated_by_id)
@@ -77,11 +77,67 @@ async fn ensure_contract_code_unique(
     Ok(())
 }
 
-/// 单张合约行落库 + 合同方行（+ 可选草稿状态桥）。返回合约 id。
+/// 「我」槽位不变量（2026-09-14 裁决 + 2026-09-17 双账本细化）：
+/// - 采购叶（我方采购账）「我」MUST 在甲（P1）；诉求叶（客户诉求账）「我」MUST 在乙（P2）；
+/// - 销售叶双承载：我方销售「我」在乙（P2）、他方销售（采购对的同序镜像）「我」在甲（P1）
+///   —— 故销售叶断言放宽为「我」MUST 在甲或乙（缺任一即违约）；
+/// - 配对一律**不互换**主体序（2026-09-17 裁决「我方采购 配对 他方销售」同交易双账本，
+///   取代 2026-09-14「甲/乙互换」）：镜像行 = 同一交易的对方账本，甲乙角色与正本一致。
+fn ensure_actor_slot(input: &ContractRowInput<'_>) -> Result<(), AliothError> {
+    let Some(actor) = input.actor.as_ref() else {
+        return Ok(());
+    };
+    // 槽位序（0-based）：采购叶「我」在甲（P1）；诉求叶在乙（P2）；销售叶双承载（P1 或 P2）
+    let match_slot = match input.leaf {
+        ContractLeaf::Purchase => input
+            .parties
+            .first()
+            .and_then(|p| p.subject_id)
+            .map(|s| s == actor.subject_id)
+            .unwrap_or(false),
+        ContractLeaf::Sales => input
+            .parties
+            .iter()
+            .take(2)
+            .any(|p| p.subject_id == Some(actor.subject_id)),
+        ContractLeaf::Request => input
+            .parties
+            .get(1)
+            .and_then(|p| p.subject_id)
+            .map(|s| s == actor.subject_id)
+            .unwrap_or(false),
+    };
+    if !match_slot {
+        return Err(AliothError::Validation {
+            field: "parties".into(),
+            message: format!(
+                "ACTOR_SLOT_MISMATCH: {} 叶的「我」槽位不匹配（主体 {}，实际 {:?}）——采购叶须甲=我、诉求叶须乙=我、销售叶甲或乙=我",
+                input.leaf.table(),
+                actor.subject_id,
+                input.parties.iter().take(2).map(|p| p.subject_id).collect::<Vec<_>>()
+            ),
+        });
+    }
+    if let Some(required) = input.require_view {
+        if !actor.has_view(required) {
+            return Err(AliothError::Validation {
+                field: "actor".into(),
+                message: format!(
+                    "ACTOR_VIEW_MISSING: 主体 {} 缺岗位视角 {}（现有 {:?}）",
+                    actor.subject_id, required, actor.view_tags
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// 单张合约行落库 + 合同方行（+ 可选草稿状态桥）+ **行级 NGAC 注册**。返回合约 id。
 pub async fn insert_contract_row_tx(
     conn: &mut PgConnection,
     input: &ContractRowInput<'_>,
 ) -> Result<i64, AliothError> {
+    ensure_actor_slot(input)?;
     let (form, tier) = derive_form(input.fn_code)?;
     ensure_contract_code_unique(conn, input.code).await?;
 
@@ -132,7 +188,40 @@ pub async fn insert_contract_row_tx(
         .map_err(AliothError::from_sqlx)?;
     }
 
+    // 行级 NGAC：本 crate 单源注册（所有经本写件的合同行——主/镜像、各 ns 各链——天然覆盖）。
+    // 失败**不阻断**写链（对齐下沉前服务侧语义：`warn` 留痕 + 继续），避免为共享 crate 引入新的失败面。
+    if let Err(e) = crate::ngac::register_contract_row_ngac_tx(&mut *conn, id, input.user_id).await
+    {
+        common::telemetry::warn!("合同行级 NGAC 注册失败（contract {id}）: {e}");
+    }
+
     Ok(id)
+}
+
+/// 合同方名称解析（主体 id → `zc_id_subjects.notice`，单源）——批注 be104c08：
+/// `zc_id_contract_rr_party.notice` 是**主体名快照**（读侧「甲方/乙方」列直取该列），
+/// 角色语义只由 `code`（P1/P2）与 `ck_contract_role` 承载，禁把「甲方/乙方/采购方」等角色词当名字落库。
+///
+/// 单次批量查（`= ANY` IN 列表，保序）；主体缺行（悬空引用）→ `None`，调用方自行兜底。
+pub async fn resolve_party_names(
+    conn: &mut PgConnection,
+    ids: &[i64],
+) -> Result<Vec<Option<String>>, AliothError> {
+    let rows: Vec<(i64, Option<String>)> = sqlx::query_as(
+        r#"SELECT id, notice FROM "isahl"."zc_id_subjects"
+           WHERE id = ANY($1) AND deleted_at IS NULL"#,
+    )
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(AliothError::from_sqlx)?;
+    let mut out = vec![None; ids.len()];
+    for (id, name) in rows {
+        if let Some(pos) = ids.iter().position(|x| *x == id) {
+            out[pos] = name.filter(|n| !n.trim().is_empty());
+        }
+    }
+    Ok(out)
 }
 
 /// 合同方行（`code` = `P{序号}`；主体缺省仅登记名称）。
@@ -171,22 +260,35 @@ pub async fn insert_parties_tx(
 }
 
 /// 一式两份互链桥（叶桥 `zc_id_contract_rr_symmetry`；逐行业务编号，禁类型常量比较）。
+///
+/// 方向 = 叶子语义固化（用户裁决 2026-09-17，先语义判定再有位置判定）：需求性合约
+/// （我方采购=采购叶、客户诉求=诉求叶）恒落 `ref_left`，供给性合约（我方销售=销售叶）
+/// 恒落 `ref_right`，与创建顺序解耦；两条配对轴 = 采购↔销售、诉求↔销售（同日裁决
+/// 「除了采购，客户诉求→我方销售」——诉求对镜像落销售叶，不再同表）。
 async fn insert_symmetry_bridge_tx(
     conn: &mut PgConnection,
     main_id: i64,
     mirror_id: i64,
+    main_leaf: ContractLeaf,
     user_id: i64,
 ) -> Result<(), AliothError> {
+    let (left_id, right_id) = if main_leaf.is_supply_nature() {
+        (mirror_id, main_id)
+    } else {
+        (main_id, mirror_id)
+    };
     sqlx::query(
         r#"INSERT INTO "isahl"."zc_id_contract_rr_symmetry"
            (id, ref_left, ref_right, notice, code, comments, created_by_id)
            VALUES (isahl.gen_next_uid($1), $2, $3, '一式两份', $4, $5, $6)"#,
     )
     .bind(SYMMETRY_TABLE_CODE)
-    .bind(main_id)
-    .bind(mirror_id)
+    .bind(left_id)
+    .bind(right_id)
     .bind(format!("MIR-{main_id}-{mirror_id}"))
-    .bind(format!("镜像单据：主合同 {main_id} ↔ 反向合同 {mirror_id}"))
+    .bind(format!(
+        "对称合约：需求侧 {left_id} ↔ 供给侧 {right_id}（正本 {main_id}，镜像 {mirror_id}）"
+    ))
     .bind(user_id)
     .execute(&mut *conn)
     .await
@@ -194,23 +296,27 @@ async fn insert_symmetry_bridge_tx(
     Ok(())
 }
 
-/// 主 + 镜像成对落库（镜像叶 = `leaf.mirrored()`；合同方与主合同**逐字段相同**；`code = {主code}-R`；MIR 桥）。
+/// 主 + 镜像成对落库（镜像叶 = `leaf.mirrored()`；`code = {主code}-R`；MIR 桥）。
+/// **同交易双账本（2026-09-17 裁决）：合同方一律不互换**——镜像行 = 同一交易的对方账本
+/// （我方采购↔他方销售 / 客户诉求↔我方销售 / 手建我方销售↔客户诉求行），甲乙角色与正本一致；
+/// 取代 2026-09-14「甲/乙互换」口径。
 /// 返回 `(主, 镜像)`。
-///
-/// 甲/乙方**不互换**（用户裁决 2026-09-13）：镜像 = 同一单据的对方账副本（同主体/同角色/同结算方），
-/// 双边性由镜像行自身的**属权**表达（行级 NGAC 注册；见调用方），不靠主体对调。
 pub async fn insert_contract_pair_tx(
     conn: &mut PgConnection,
     main: &ContractRowInput<'_>,
 ) -> Result<(i64, i64), AliothError> {
     let main_id = insert_contract_row_tx(conn, main).await?;
     let mirror_code = main.mirrored_code();
+    let mirror_leaf = main.leaf.mirrored();
+    let mirror_parties = main.parties.clone();
     let mirror_input = ContractRowInput {
-        leaf: main.leaf.mirrored(),
+        leaf: mirror_leaf,
         code: &mirror_code,
         notice: main.notice,
         comments: main.comments,
-        parties: main.parties.clone(),
+        parties: mirror_parties,
+        actor: main.actor.clone(),
+        require_view: main.require_view,
         fn_code: main.fn_code,
         scene_code: main.scene_code,
         factor_code: main.factor_code,
@@ -224,21 +330,27 @@ pub async fn insert_contract_pair_tx(
         user_id: main.user_id,
     };
     let mirror_id = insert_contract_row_tx(conn, &mirror_input).await?;
-    insert_symmetry_bridge_tx(conn, main_id, mirror_id, main.user_id).await?;
+    insert_symmetry_bridge_tx(conn, main_id, mirror_id, main.leaf, main.user_id).await?;
     Ok((main_id, mirror_id))
 }
 
-/// 为既有主合约补建镜像（`mirror` 入参自带目标叶/编号/合同方）+ MIR 桥。
+/// 为既有主合约补建镜像（`mirror` 入参自带方向/编号/合同方顺序）+ MIR 桥。
 ///
-/// 合同方 MUST 与主合同**逐字段相同**（甲/乙不互换、`ref_right`/角色码/结算方一致）——
-/// 入参构造由调用方持有（本函数只落库，不改变语义），便于续约/分单等非对称路径复用同一写件。
-/// 双边性由镜像行属权（行级 NGAC 注册）表达，调用方负责注册。
+/// 调用方负责「甲/乙互换 + `code = {主code}-R`」的入参构造——语义由调用点显式持有，
+/// 便于续约/分单等非对称路径复用同一写件。
 pub async fn insert_mirror_of_contract_tx(
     conn: &mut PgConnection,
     main_id: i64,
     mirror: &ContractRowInput<'_>,
 ) -> Result<i64, AliothError> {
     let mirror_id = insert_contract_row_tx(conn, mirror).await?;
-    insert_symmetry_bridge_tx(conn, main_id, mirror_id, mirror.user_id).await?;
+    insert_symmetry_bridge_tx(
+        conn,
+        main_id,
+        mirror_id,
+        mirror.leaf.mirrored(),
+        mirror.user_id,
+    )
+    .await?;
     Ok(mirror_id)
 }

@@ -1,0 +1,12 @@
+
+name: mini-readonly
+description: 最小只读技能（测试）
+version: "1.0"
+tracks:
+  - name: 唯一轨道
+    steps:
+      - id: "1.1"
+        instruction: "确认目标产物当前内容，然后声明 completed: true"
+        tools: [read_file]
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Prototypes/{module}/demo.txt"

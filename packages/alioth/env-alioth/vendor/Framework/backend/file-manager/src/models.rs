@@ -39,14 +39,17 @@ pub enum FileTableKind {
 }
 
 impl FileTableKind {
-    /// 活库表名（information_schema 实证：仅这 5 张 + 无 zc_id_file 基表）。
-    pub fn table_name(&self) -> &'static str {
+    /// 静态 SQL 集（表名与正文均为**编译期字面量**——`file_table_sql!` + `concat!`
+    /// 固化，运行期无表名拼接）。活库表集合 = 本枚举闭式 5 变体
+    /// （information_schema 实证：仅这 5 张 + 无 zc_id_file 基表），无未知表回退路径；
+    /// 新增 kind = 枚举变体 + 一个 `file_table_sql!` 静态各一行。
+    pub fn sql(&self) -> &'static FileTableSql {
         match self {
-            Self::Document => r#"isahl."zc_id_file-document""#,
-            Self::Image => r#"isahl."zc_id_file-image""#,
-            Self::Avatar => r#"isahl."zc_id_file-avatar""#,
-            Self::Package => r#"isahl."zc_id_file-package""#,
-            Self::Versioned => r#"isahl."zc_id_file-ver_ctrl""#,
+            Self::Document => &FILE_TABLE_DOCUMENT,
+            Self::Image => &FILE_TABLE_IMAGE,
+            Self::Avatar => &FILE_TABLE_AVATAR,
+            Self::Package => &FILE_TABLE_PACKAGE,
+            Self::Versioned => &FILE_TABLE_VERSIONED,
         }
     }
 
@@ -77,7 +80,10 @@ impl FileTableKind {
     pub fn allowed_extensions(&self) -> &'static [&'static str] {
         match self {
             Self::Document => &[
-                "pdf", "png", "jpg", "jpeg", "doc", "docx", "xls", "xlsx", "txt",
+                // 文档族（chat 附件契约 chat-attachment-multi-format：txt/md/csv/json/pdf/docx/xlsx
+                // 及同类文本/办公格式；其余由 validate_magic 按扩展名校验）
+                "pdf", "png", "jpg", "jpeg", "doc", "docx", "ods", "xls", "xlsx", "xlsm", "txt",
+                "md", "markdown", "csv", "tsv", "json", "log", "yaml", "yml", "xml",
             ],
             Self::Image | Self::Avatar => &["png", "jpg", "jpeg"],
             Self::Package | Self::Versioned => &["zip"],
@@ -85,12 +91,106 @@ impl FileTableKind {
     }
 }
 
+/// 单张 `zc_id_file-*` 表的静态 SQL 集（**编译期固化**：表名为 `$table:literal`，
+/// 经 `concat!` 在编译期拼接——运行期零表名插值）。正文单一来源 = `file_table_sql!` 宏体，
+/// 族成员新增 = 调用处一行表名。
+///
+/// `count` / `list_select` 为**前缀**：尾部由调用方接运行期 WHERE 片段与分页占位符
+/// （谓词片段、参数位置编号、行级授权片段 `ROW_AUTH` 均不在本表范围）；其余字段为完整语句。
+pub struct FileTableSql {
+    /// 单行投影 SELECT（列清单 + 表名 + id/deleted 谓词）
+    pub base_select: &'static str,
+    /// `qk_size → zc_id_scal-data.mark` 大小查询
+    pub size_select: &'static str,
+    /// 软删除 UPDATE（deleted_at / deleted_by_id）
+    pub update: &'static str,
+    /// 投影更新前缀 `UPDATE <table> SET notice = $2`（其余 SET 项由调用方追加）
+    pub update_notice: &'static str,
+    /// 列表计数前缀 `SELECT COUNT(*) FROM <table> f WHERE f.deleted_at IS NULL`
+    pub count: &'static str,
+    /// 列表分页 SELECT 前缀（列清单 + 表名 + deleted 谓词）
+    pub list_select: &'static str,
+    /// 建行 INSERT（12 列全参数化）
+    pub insert: &'static str,
+}
+
+/// 文件行投影（列清单单一来源；编译期字面量，供 `concat!` 展开）。
+macro_rules! file_fields {
+    () => {
+        r#"
+        f.id, f.created_at, f.created_by_id, f.notice, f.code, f.encoding::text AS encoding,
+        f.dk_scene, f.dk_factor, f.dk_function, f.ck_category,
+        f.ak_benefit_user, f.ak_permit_user, f.ak_access_user
+    "#
+    };
+}
+
+/// 单表静态 SQL 集构造：表名为 `$table:literal`，正文在编译期由 `concat!` 拼接
+/// （多行字面量的缩进即 SQL 正文，勿重排）。
+macro_rules! file_table_sql {
+    ($table:literal) => {
+        FileTableSql {
+            base_select: concat!(
+                "SELECT ",
+                file_fields!(),
+                " FROM isahl.\"",
+                $table,
+                "\" f WHERE f.id = $1 AND f.deleted_at IS NULL"
+            ),
+            size_select: concat!(
+                "SELECT sd.mark::bigint
+               FROM isahl.\"",
+                $table,
+                "\" f
+               JOIN isahl.\"zc_id_scal-data\" sd ON sd.id = f.qk_size
+               WHERE f.id = $1 AND f.deleted_at IS NULL"
+            ),
+            update: concat!(
+                "UPDATE isahl.\"",
+                $table,
+                "\"
+               SET deleted_at = $1, deleted_by_id = $2
+               WHERE id = $3 AND deleted_at IS NULL"
+            ),
+            update_notice: concat!("UPDATE isahl.\"", $table, "\" SET notice = $2"),
+            count: concat!(
+                "SELECT COUNT(*) FROM isahl.\"",
+                $table,
+                "\" f WHERE f.deleted_at IS NULL"
+            ),
+            list_select: concat!(
+                "SELECT ",
+                file_fields!(),
+                " FROM isahl.\"",
+                $table,
+                "\" f WHERE f.deleted_at IS NULL"
+            ),
+            insert: concat!(
+                "INSERT INTO isahl.\"",
+                $table,
+                "\"
+               (id, notice, code, qk_size, created_by_id,
+                dk_scene, dk_factor, dk_function, ck_category,
+                ak_benefit_user, ak_permit_user, ak_access_user)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
+            ),
+        }
+    };
+}
+
+static FILE_TABLE_DOCUMENT: FileTableSql = file_table_sql!("zc_id_file-document");
+static FILE_TABLE_IMAGE: FileTableSql = file_table_sql!("zc_id_file-image");
+static FILE_TABLE_AVATAR: FileTableSql = file_table_sql!("zc_id_file-avatar");
+static FILE_TABLE_PACKAGE: FileTableSql = file_table_sql!("zc_id_file-package");
+static FILE_TABLE_VERSIONED: FileTableSql = file_table_sql!("zc_id_file-ver_ctrl");
+
 /// DB record for a file (maps to live `zc_id_file-*` columns).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRecord {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub created_at: DateTime<Utc>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub created_by_id: Option<i64>,
     /// 文件名（物理列 notice）
@@ -102,10 +202,13 @@ pub struct FileRecord {
     /// 文件大小（解析 `qk_size → zc_id_scal-data.mark`，字节数）
     pub size: Option<i64>,
     /// 本体维度（dk_scene/dk_factor/dk_function）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_scene: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_factor: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_function: Option<i64>,
     /// 文件分类（ck_category，可选）

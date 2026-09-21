@@ -62,6 +62,7 @@ pub struct ApprovalItem {
     /// 我发起的审批（created_by_id = 当前用户）
     pub mine: bool,
     /// 当前处理人（fk_operator）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub operator_id: Option<i64>,
 }
@@ -150,13 +151,16 @@ async fn fetch_pending_approvals(
                     ELSE 'active'
                 END AS status,
                 CASE
-                    WHEN i.tableoid::regclass::text LIKE '%zc_id_appr%' THEN split_part(i.tableoid::regclass::text, '_', 3)
+                    WHEN lf.leaf LIKE '%zc_id_appr%' THEN split_part(lf.leaf, '_', 3)
                     ELSE ''
                 END AS dept,
                 TO_CHAR(i.created_at, 'MM-DD HH24:MI') AS time,
                 i.fk_operator,
                 COALESCE(i.created_by_id = $1, false) AS mine
             FROM isahl."zc_id_oper-approve" i
+            CROSS JOIN LATERAL (
+                SELECT (SELECT relname FROM pg_class WHERE oid = i.tableoid) AS leaf
+            ) lf
             LEFT JOIN LATERAL (
                 SELECT o.notice FROM isahl."zc_id_deta-opinion" o
                 WHERE o.fk_list = i.id AND o.deleted_at IS NULL
@@ -275,7 +279,7 @@ async fn fetch_recent_messages(pool: &sqlx::PgPool, user_id: Option<i64>) -> Vec
             END AS unread,
             CASE
                 WHEN m.tableoid = 'isahl.zc_id_message'::regclass THEN 'system'
-                ELSE replace(replace(m.tableoid::regclass::text, '"zc_id_msgs-', ''), '"', '')
+                ELSE replace((SELECT relname FROM pg_class WHERE oid = m.tableoid), 'zc_id_msgs-', '')
             END AS msg_type
         FROM isahl.zc_id_message m
         LEFT JOIN isahl."zc_id_message_rr_contact-info" ci

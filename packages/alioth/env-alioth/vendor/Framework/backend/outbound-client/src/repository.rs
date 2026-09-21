@@ -58,9 +58,9 @@ impl OutboundRepository {
                         "code": code,
                         "provider": provider,
                         "baseUrl": base_url,
-                        "appId": app_id,
-                        "tenantId": tenant_id,
-                        "accountId": account_id,
+                        "appId": app_id, // id-json-ok（Option<String>，非 i64 id）
+                        "tenantId": tenant_id, // id-json-ok（Option<String>，非 i64 id）
+                        "accountId": account_id, // id-json-ok（Option<String>，非 i64 id）
                         "hasSecret": true,
                         "enabled": enabled,
                         "version": version,

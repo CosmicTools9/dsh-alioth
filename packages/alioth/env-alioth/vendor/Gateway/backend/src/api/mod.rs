@@ -7,12 +7,17 @@ pub mod profile;
 
 pub mod approval_formula;
 pub mod approvals;
+pub mod business_audit;
+pub mod business_audit_csv;
 pub mod chat_sessions;
 pub mod dashboard;
+pub mod doc_recognition;
 pub mod entity_binding;
 pub mod files;
 pub mod global_overview;
 pub mod inbox;
+pub mod knowledge;
+pub mod knowledge_expand;
 pub mod legal_search;
 pub mod standard_search;
 pub mod system_config_llm_test;

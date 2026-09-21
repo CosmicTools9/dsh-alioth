@@ -25,6 +25,7 @@ pub struct ApprovalFlow {
     pub mermaid: Option<String>,
     /// 流程输入范畴（桥派生只读：zc_id_process_rr_context 最早活跃桥行 ref_right →
     /// zc_id_proc-context 族行；物理列已由模型中心移除）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_context: Option<i64>,
     /// 实际落位叶表（tableoid 派生，如 zc_id_proc-approve）
@@ -56,17 +57,20 @@ impl AliothDbEntity for ApprovalFlow {
     fn table_name() -> &'static str {
         "isahl.zc_id_process"
     }
-    const SELECT_FIELDS: &'static str =
+    const SELECT_FIELDS: &'static str = concat!(
         "id, notice AS name, code, t_color_, comments, meta, mermaid, \
          (SELECT rc.ref_right FROM isahl.\"zc_id_process_rr_context\" rc \
           WHERE rc.ref_left = e.id AND rc.deleted_at IS NULL \
-          ORDER BY rc.id LIMIT 1) AS fk_context, \
-         e.tableoid::regclass::text AS branch, \
+          ORDER BY rc.id LIMIT 1) AS fk_context, ",
+        common::leaf_relname!(e),
+        " AS branch, \
          (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
           JOIN isahl.\"zc_id_process_rr_context\" rc2 ON rc2.ref_right = c.id AND rc2.deleted_at IS NULL \
           WHERE rc2.ref_left = e.id AND rc2.deleted_at IS NULL AND c.deleted_at IS NULL \
           ORDER BY rc2.id LIMIT 1) AS context_concept, \
-         (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
+         (SELECT ",
+        common::leaf_relname!(c),
+        " FROM isahl.\"zc_id_proc-context\" c \
           JOIN isahl.\"zc_id_process_rr_context\" rc3 ON rc3.ref_right = c.id AND rc3.deleted_at IS NULL \
           WHERE rc3.ref_left = e.id AND rc3.deleted_at IS NULL AND c.deleted_at IS NULL \
           ORDER BY rc3.id LIMIT 1) AS context_leaf, \
@@ -74,7 +78,8 @@ impl AliothDbEntity for ApprovalFlow {
           JOIN isahl.\"zc_id_stus-process\" s ON s.id = ls.ref_right \
           WHERE ls.ref_left = e.id AND ls.deleted_at IS NULL) AS status, \
          e.meta->>'managed' AS managed_by, \
-         created_at, updated_at, deleted_at";
+         created_at, updated_at, deleted_at"
+    );
     const ENTITY_NAME: &'static str = "approval-flow";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -123,8 +128,10 @@ pub struct ApprovalInstance {
     pub id: i64,
     pub node_name: String, // notice = 当前节点名称
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_approve: Option<i64>, // → zc_id_even-approve
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>, // 申请人
     pub comments: Option<String>, // 表单数据 JSON
@@ -171,10 +178,13 @@ pub struct ApprovalAction {
     pub summary: String,         // notice
     pub opinion: Option<String>, // comments
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_list: Option<i64>, // → zc_id_oper-approve 审批实例（fk_index 契约）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_biller: Option<i64>, // 审批人（zc_id_deta-opinion 无 fk_subject 列，实际列为 fk_biller）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_date: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -209,8 +219,10 @@ impl AliothDbEntity for ApprovalAction {
 // ApprovalFlow requests
 #[derive(Debug, Deserialize)]
 pub struct ListApprovalFlowsQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page_size: Option<i64>,
     pub search: Option<String>,
@@ -256,8 +268,10 @@ pub struct UpdateApprovalFlowRequest {
 // FlowNode requests
 #[derive(Debug, Deserialize)]
 pub struct ListFlowNodesQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page_size: Option<i64>,
     pub search: Option<String>,
@@ -278,8 +292,10 @@ pub struct UpdateFlowNodeRequest {
 // ApprovalInstance requests
 #[derive(Debug, Deserialize)]
 pub struct ListApprovalInstancesQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page_size: Option<i64>,
     pub search: Option<String>,
@@ -289,6 +305,7 @@ pub struct ListApprovalInstancesQuery {
 pub struct CreateApprovalInstanceRequest {
     pub node_name: String,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_approve: Option<i64>,
     pub comments: Option<String>, // 表单数据 JSON
@@ -304,8 +321,10 @@ pub struct UpdateApprovalInstanceRequest {
 // ApprovalAction requests
 #[derive(Debug, Deserialize)]
 pub struct ListApprovalActionsQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page_size: Option<i64>,
     pub search: Option<String>,
@@ -316,6 +335,7 @@ pub struct CreateApprovalActionRequest {
     pub summary: String,
     pub code: Option<String>,
     /// 关联审批实例（fk_index 契约：fk_list → zc_id_oper-approve.id）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_list: Option<i64>,
 }
@@ -335,12 +355,15 @@ pub struct DelegationRule {
     pub id: i64,
     pub name: String, // notice
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>, // 委托人（委托发起人）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_operator: Option<i64>, // 受托人（被委托代审人）
     pub comments: Option<String>, // JSON 时间窗：{"validFrom","validUntil"}（RFC3339）
     /// 起止时间标量引用（zc_id_segm-date：date_st/date_ed/time_st/time_ed）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub qk_period: Option<i64>,
     pub created_at: chrono::DateTime<Utc>,
@@ -462,8 +485,10 @@ impl HasReferenceJoins for ApprovalAction {
 // DelegationRule requests
 #[derive(Debug, Deserialize)]
 pub struct ListDelegationRulesQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page_size: Option<i64>,
 }
@@ -472,8 +497,10 @@ pub struct ListDelegationRulesQuery {
 pub struct CreateDelegationRuleRequest {
     pub name: String,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>, // 委托人
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_operator: Option<i64>, // 受托人
     pub comments: Option<String>, // JSON 时间窗：{"validFrom","validUntil"}
@@ -485,8 +512,10 @@ pub struct CreateDelegationRuleRequest {
 pub struct UpdateDelegationRuleRequest {
     pub name: Option<String>,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>, // 委托人
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_operator: Option<i64>, // 受托人
     pub comments: Option<String>, // JSON 时间窗：{"validFrom","validUntil"}

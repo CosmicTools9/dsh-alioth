@@ -9,7 +9,7 @@ use common::data::{ListQuery, PaginatedResponse};
 use common::AliothError as ApiError;
 use crud::repository::AliothRepository;
 use crud::GenericRepository;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 use crate::models::{CreateTrafficLineRequest, TrafficLine, UpdateTrafficLineRequest};
 
@@ -134,6 +134,37 @@ pub(crate) fn normalize_circle_point(val: &serde_json::Value) -> Result<(f64, f6
     })
 }
 
+/// 几何列形态前置断言：运行时支持形态 = PostGIS `geometry(…,4326)`。
+///
+/// 用户裁决 2026-09-21（ADR `D-028` §7）：运行时**仅**支持 PostGIS 形态库；发布产物的
+/// PG 原生几何形态（`point`/`path`/`polygon`）仅用于开源模型分发。非支持形态下 MUST
+/// fail-loud 点名报错（实际列类型 + 整改指引），MUST NOT 透出底层方言错误
+/// （原生形态下富化 SQL 会在计划期报 `函数 decode(point, unknown) 不存在`）。
+///
+/// 探测走 `information_schema.columns`（无需行数据，空表亦可判定）；判据 = `udt_schema`
+/// 为 `postgis`（实测运行时形态 `postgis.geometry` / 发布形态 `pg_catalog.point`）。
+async fn require_postgis_geometry_form(pool: &PgPool) -> Result<(), ApiError> {
+    let udt: Option<String> = sqlx::query_scalar(
+        r#"SELECT udt_schema || '.' || udt_name
+           FROM information_schema.columns
+           WHERE table_schema = 'isahl'
+             AND table_name = 'zc_id_geom-coordinate'
+             AND column_name = 'point'"#,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    match udt.as_deref() {
+        Some(t) if t.starts_with("postgis.") => Ok(()),
+        other => Err(ApiError::Internal(format!(
+            "几何列形态不受支持：isahl.\"zc_id_geom-coordinate\".point 期望 postgis.geometry(Point,4326)，实际 {}。\
+             所连库是「零 PostGIS」发布形态（仅用于开源模型分发，见 ADR D-028 §7）；\
+             运行时几何读径需要 PostGIS 形态库。",
+            other.unwrap_or("（列不存在）")
+        ))),
+    }
+}
+
 async fn enrich_qk_path_ak_nodes(pool: &PgPool, items: &mut [TrafficLine]) -> Result<(), ApiError> {
     let path_ids: Vec<i64> = items
         .iter()
@@ -144,15 +175,20 @@ async fn enrich_qk_path_ak_nodes(pool: &PgPool, items: &mut [TrafficLine]) -> Re
     if path_ids.is_empty() {
         return Ok(());
     }
+    // 形态断言只在真正要走几何读径时执行（`qk_path` 全空的常规列表路径零额外查询）
+    require_postgis_geometry_form(pool).await?;
     let rows: Vec<(i64, serde_json::Value)> = sqlx::query_as(
         // zc_id_geom-coordinate 经纬度在 point 列（EWKB hex，schema 迁移替代 mark_axis0/1）——
         // 批注：traffic-lines 500 根因（c.mark_axis0 不存在）——postgis 解码
         r#"SELECT gp.id,
                COALESCE(
+                 -- ID_JSON_PRECISION §规约：`id` 为 id 语义键，MUST 字符串化输出——
+                 -- 坐标行 id 量级 10^17 > 2^53，jsonb number 直出经前端 JSON.parse 静默截断
+                 -- （实测：同路径两条节点解析成同一值）
                  (SELECT jsonb_agg(
-                    jsonb_build_object('id', c.id, 'name', c.notice,
-                                       'lng', ST_X(ST_GeomFromEWKB(decode(c.point, 'hex'))),
-                                       'lat', ST_Y(ST_GeomFromEWKB(decode(c.point, 'hex'))))
+                    jsonb_build_object('id', c.id::text, 'name', c.notice,
+                                       'lng', postgis.ST_X(postgis.ST_GeomFromEWKB(decode(c.point, 'hex'))),
+                                       'lat', postgis.ST_Y(postgis.ST_GeomFromEWKB(decode(c.point, 'hex'))))
                     ORDER BY n.ord)
                   FROM unnest(gp.ak_nodes) WITH ORDINALITY AS n(id, ord)
                   LEFT JOIN "isahl"."zc_id_geom-coordinate" c
@@ -180,6 +216,18 @@ async fn enrich_qk_path_ak_nodes(pool: &PgPool, items: &mut [TrafficLine]) -> Re
     Ok(())
 }
 
+/// 线路目录读径谓词 = 运营态（功能阶段「实现」）。
+///
+/// 「线路有重复的」根因：本表同时存在 实现·实例（运营线路，种子 `TL-ROUTE-*`）与
+/// 设计·实例（线路方案/运力池归属锚点）两类行，二者在列表里同名并列 ⇒ 同一线路出现两次。
+/// 运营目录只列运营态行；设计态行**不删不丢**（`get`/`update` 仍按 id 可达，
+/// 并被运力池产品 `fk_line` 引用），只是不进运营线路列表。
+///
+/// 谓词取 `_f_`（`dk_function.code` 前缀派生列，ALIOTH_ONTOLOGY_SPEC §4.3.1）——
+/// 类谓词消费者是派生列的合法用法；`_f_`/`_t_` 仍禁止出现在 DTO 中（§4.3）。
+/// 静态字面量、无绑定占位符（`crud::entity::ROW_FILTER` 的拼接纪律）。
+const OPERATIONAL_LINE_FILTER: &str = r#""_f_" = '实现'"#;
+
 impl From<PgPool> for TrafficLineRepository {
     fn from(pool: PgPool) -> Self {
         Self::new(pool.clone())
@@ -191,7 +239,11 @@ impl AliothRepository<TrafficLine, CreateTrafficLineRequest, UpdateTrafficLineRe
     for TrafficLineRepository
 {
     async fn list(&self, query: &ListQuery) -> Result<PaginatedResponse<TrafficLine>, ApiError> {
-        let mut page = self.generic.list_refs(query).await?;
+        let pg = &self.pool;
+        let mut page = crud::query_builder::QueryBuilder::<TrafficLine>::from_list_query(pg, query)
+            .raw_filter(OPERATIONAL_LINE_FILTER.to_string())
+            .fetch_refs(query.page, query.page_size)
+            .await?;
         // 批注（用户要求真实途经点）：qk_path.ak_nodes 从 id 数组替换为坐标对象数组
         // （{id,name,lng,lat}）——前端路线管理直接解析真实途经点名称
         enrich_qk_path_ak_nodes(&self.pool, &mut page.items).await?;
@@ -211,18 +263,30 @@ impl AliothRepository<TrafficLine, CreateTrafficLineRequest, UpdateTrafficLineRe
         req: CreateTrafficLineRequest,
         user_id: i64,
     ) -> Result<TrafficLine, ApiError> {
+        let coords = ontology_binding::coords_for_entity("TrafficLine")?;
         let (dk_scene, dk_factor, dk_function) =
             ontology_binding::resolve(&self.pool, "TrafficLine").await?;
+        // `_f_`/`_t_` 单一派生源：`dk_function.code` 前缀（ALIOTH_ONTOLOGY_SPEC §4.3.3 形态 1）。
+        // 本仓储是裸 SQL 写路径（不经 GenericRepository + LifecycleBizTemplate），故与
+        // consignment-writer / contract-writer / waybill-writer 同款——取值后参数绑定；
+        // **禁字面量对**、**禁客户端传入**（DTO 已移除该两列）。
+        let (form, tier) =
+            trigger_registry::lifecycle::derive_form_type(coords.2).ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "TrafficLine 职能码 {} 无法派生 _f_/_t_（须为 !./!_/↑./↑_/↓./↓_ 六前缀之一）",
+                    coords.2
+                ))
+            })?;
         sqlx::query_as::<_, TrafficLine>(
             r#"INSERT INTO "isahl"."zc_id_stor-traffic_line" (code, notice, comments, "_f_", "_t_", fk_trustee, qk_path, created_by_id, dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-               RETURNING id, code, notice, comments, "_f_", "_t_", fk_trustee, qk_path, created_at, updated_at, deleted_at"#,
+               RETURNING id, code, notice, comments, fk_trustee, qk_path, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.code)
         .bind(&req.notice)
         .bind(&req.comments)
-        .bind(&req._f_)
-        .bind(&req._t_)
+        .bind(form)
+        .bind(tier)
         .bind(req.fk_trustee)
         .bind(req.qk_path)
         .bind(user_id)
@@ -240,80 +304,40 @@ impl AliothRepository<TrafficLine, CreateTrafficLineRequest, UpdateTrafficLineRe
         req: UpdateTrafficLineRequest,
         _user_id: i64,
     ) -> Result<Option<TrafficLine>, ApiError> {
-        let mut sets = Vec::new();
-        let mut idx: usize = 0;
-
-        if req.code.is_some() {
-            idx += 1;
-            sets.push(format!("code = ${}", idx));
-        }
-        if req.notice.is_some() {
-            idx += 1;
-            sets.push(format!("notice = ${}", idx));
-        }
-        if req.comments.is_some() {
-            idx += 1;
-            sets.push(format!("comments = ${}", idx));
-        }
-        if req._f_.is_some() {
-            idx += 1;
-            sets.push(format!("\"_f_\" = ${}", idx));
-        }
-        if req._t_.is_some() {
-            idx += 1;
-            sets.push(format!("\"_t_\" = ${}", idx));
-        }
-        if req.fk_trustee.is_some() {
-            idx += 1;
-            sets.push(format!("fk_trustee = ${}", idx));
-        }
-        if req.qk_path.is_some() {
-            idx += 1;
-            sets.push(format!("qk_path = ${}", idx));
-        }
-
-        if sets.is_empty() {
+        // 全静态 SQL：表名/列名编译期固定（表位+列位零 `format!` 插值）。
+        // 缺省字段沿用既有值（`None` = 不改动该列，与旧动态 `SET` 逐条等价）——由 SQL 侧
+        // `COALESCE($n, col)` 承担，故**单条语句**即可，无需读—改—写，且返回形态与旧实现
+        // 一致（`RETURNING` 原始行列，不经 `get` 的 `_refs`/坐标节点回读）。
+        // `_f_`/`_t_` 不接受写入（§4.3/§4.3.3）：生命周期轴随 dk_function 派生，改形态须走类转换原语。
+        if req.code.is_none()
+            && req.notice.is_none()
+            && req.comments.is_none()
+            && req.fk_trustee.is_none()
+            && req.qk_path.is_none()
+        {
+            // 无字段改动：保持旧行为（不写库、不推进 updated_at/updated_by_id）
             return self.get(id).await;
         }
 
-        sets.push("updated_at = NOW()".into());
-        idx += 1;
-        sets.push(format!("updated_by_id = ${}", idx));
-        let id_param = idx + 1;
-
-        let sql = format!(
-            r#"UPDATE "isahl"."zc_id_stor-traffic_line" SET {} WHERE id = ${} AND deleted_at IS NULL
-               RETURNING id, code, notice, comments, "_f_", "_t_", fk_trustee, qk_path, created_at, updated_at, deleted_at"#,
-            sets.join(", "),
-            id_param
-        );
-
-        let mut q = sqlx::query_as::<_, TrafficLine>(AssertSqlSafe(sql.as_str()));
-        if let Some(v) = &req.code {
-            q = q.bind(v);
-        }
-        if let Some(v) = &req.notice {
-            q = q.bind(v);
-        }
-        if let Some(v) = &req.comments {
-            q = q.bind(v);
-        }
-        if let Some(v) = &req._f_ {
-            q = q.bind(v);
-        }
-        if let Some(v) = &req._t_ {
-            q = q.bind(v);
-        }
-        if let Some(v) = &req.fk_trustee {
-            q = q.bind(v);
-        }
-        if let Some(v) = &req.qk_path {
-            q = q.bind(v);
-        }
-        q = q.bind(_user_id);
-        q = q.bind(id);
-
-        q.fetch_optional(&self.pool).await.map_err(ApiError::from)
+        sqlx::query_as::<_, TrafficLine>(
+            r#"UPDATE "isahl"."zc_id_stor-traffic_line"
+               SET code = COALESCE($1, code), notice = COALESCE($2, notice),
+                   comments = COALESCE($3, comments), fk_trustee = COALESCE($4, fk_trustee),
+                   qk_path = COALESCE($5, qk_path),
+                   updated_at = NOW(), updated_by_id = $6
+               WHERE id = $7 AND deleted_at IS NULL
+               RETURNING id, code, notice, comments, fk_trustee, qk_path, created_at, updated_at, deleted_at"#,
+        )
+        .bind(req.code)
+        .bind(req.notice)
+        .bind(req.comments)
+        .bind(req.fk_trustee)
+        .bind(req.qk_path)
+        .bind(_user_id)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(ApiError::from)
     }
 
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), ApiError> {

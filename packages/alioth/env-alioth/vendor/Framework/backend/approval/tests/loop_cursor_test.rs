@@ -44,7 +44,7 @@ async fn test_user(pool: &sqlx::PgPool) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'lp-test', 'lp-test', 'lp@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)

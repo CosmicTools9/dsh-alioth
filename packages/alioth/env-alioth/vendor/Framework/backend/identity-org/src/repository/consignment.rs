@@ -101,98 +101,16 @@ impl AliothRepository<Consignment, CreateConsignmentRequest, UpdateConsignmentRe
     ) -> Result<Option<Consignment>, ApiError> {
         let mut sets = Vec::new();
         let mut idx: usize = 0;
-        // 批注 2026-08-21：编辑货量（volume 数值吨）→ 更新 deta-trade_order.qk_w_qty 指向的标量真值。
-        // 两段式独立语句（不参与下方 sets 占位符编号）——旧实现把新建标量 id 推入
-        // sets 头部却在绑定尾部追加，占位符与绑定序错位（新建标量+其他字段并存必 500）
-        if let Some(v) = req.volume {
-            let cur_qk: Option<i64> = sqlx::query_scalar(
-                r#"SELECT qk_w_qty FROM "isahl"."zc_id_deta-trade_order"
-                   WHERE fk_list = $1 AND deleted_at IS NULL LIMIT 1"#,
-            )
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-            match cur_qk {
-                Some(scale_id) => {
-                    // 批注 2026-08-21：重量/货量存储约束为整数——ROUND 兜底
-                    sqlx::query(
-                        r#"UPDATE "isahl"."zc_id_scal-weight" SET mark = ROUND($1::numeric), notice = $2 WHERE id = $3"#,
-                    )
-                    .bind(v)
-                    .bind(format!("{}吨", v))
-                    .bind(scale_id)
-                    .execute(&self.pool)
-                    .await?;
-                }
-                None => {
-                    let scale_id: i64 = sqlx::query_scalar(
-                        r#"INSERT INTO "isahl"."zc_id_scal-weight" (id, code, notice, mark, created_by_id)
-                           VALUES (isahl.gen_next_uid(), $1, $2, ROUND($3::numeric), $4) RETURNING id"#,
-                    )
-                    .bind(format!("WT-{}", chrono::Utc::now().timestamp()))
-                    .bind(format!("{}吨", v))
-                    .bind(v)
-                    .bind(user_id)
-                    .fetch_one(&self.pool)
-                    .await?;
-                    sqlx::query(
-                        r#"UPDATE "isahl"."zc_id_deta-trade_order" SET qk_w_qty = $1, updated_by_id = $2, updated_at = NOW()
-                           WHERE fk_list = $3 AND deleted_at IS NULL"#,
-                    )
-                    .bind(scale_id)
-                    .bind(user_id)
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await?;
-                }
-            }
-        }
-        // 批注 a2bd97b6：编辑运费（amount 数值）→ 更新 qk_amount 指向的 scal-amount
-        // 标量真值（金额保留小数，不 ROUND）；qk_amount 为空则新建标量并回挂
-        if let Some(v) = req.amount {
-            let cur_qk: Option<i64> = sqlx::query_scalar(
-                r#"SELECT qk_amount FROM "isahl"."zc_id_deta-trade_order"
-                   WHERE fk_list = $1 AND deleted_at IS NULL LIMIT 1"#,
-            )
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?
-            .flatten();
-            match cur_qk {
-                Some(scale_id) => {
-                    sqlx::query(
-                        r#"UPDATE "isahl"."zc_id_scal-amount" SET mark = ROUND($1::numeric, 2), notice = $2 WHERE id = $3"#,
-                    )
-                    .bind(v)
-                    .bind(format!("{}元", v))
-                    .bind(scale_id)
-                    .execute(&self.pool)
-                    .await?;
-                }
-                None => {
-                    let scale_id: i64 = sqlx::query_scalar(
-                        r#"INSERT INTO "isahl"."zc_id_scal-amount" (id, code, notice, mark, created_by_id)
-                           VALUES (isahl.gen_next_uid(), $1, $2, ROUND($3::numeric, 2), $4) RETURNING id"#,
-                    )
-                    .bind(format!("AMT-{}", chrono::Utc::now().timestamp()))
-                    .bind(format!("{}元", v))
-                    .bind(v)
-                    .bind(user_id)
-                    .fetch_one(&self.pool)
-                    .await?;
-                    sqlx::query(
-                        r#"UPDATE "isahl"."zc_id_deta-trade_order" SET qk_amount = $1, updated_by_id = $2, updated_at = NOW()
-                           WHERE fk_list = $3 AND deleted_at IS NULL"#,
-                    )
-                    .bind(scale_id)
-                    .bind(user_id)
-                    .bind(id)
-                    .execute(&self.pool)
-                    .await?;
-                }
-            }
-        }
+        // 货量/金额（volume/amount）已并入结构写路单一实现：
+        // `consignment_writer::update_consignment_structures_tx`（本函数下方 apply_structured_update 调用）。
+        // MUST NOT 在本处再写 `zc_id_scal-weight` / `zc_id_scal-amount`（旁路 + 货量 ROUND 缺陷）。
+
+        // ── 结构化写路（change: migrate-consignment-fields-to-structures T10）──────────────
+        // 读侧已切结构（明细/停靠/时段/标量），`comments` 摘要不再被解析——业务字段若只并进
+        // comments，编辑保存即"写进无人读的列"（功能性回归）。写件单一实现在
+        // `consignment-writer::update_consignment_structures_tx`（白名单写件），本处仅薄调用。
+        super::consignment_structures::apply_structured_update(&self.pool, id, user_id, &req)
+            .await?;
 
         if req.code.is_some() {
             idx += 1;

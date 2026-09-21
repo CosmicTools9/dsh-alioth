@@ -30,10 +30,9 @@ use ai_agent::tools::{ToolCall, ToolContext, ToolResult};
 
 use common::messaging::MessagingService;
 use framework_workspace_approval::{ApprovalActor, ApprovalService};
-use i18n::Locale;
 
 use crate::api::chat_sessions::orchestrator::TurnStreamEvent;
-use crate::api::chat_sessions::ports::{AIContactPort, MessageStorePort};
+use crate::api::chat_sessions::ports::MessageStorePort;
 use crate::notification::db_messaging::DbMessagingService;
 
 /// M1 ToolStreamEvent → Gateway TurnStreamEvent（D2.3/D2.10）：M1 事件语义与
@@ -61,6 +60,30 @@ pub fn map_tool_stream_event(ev: ToolStreamEvent) -> Option<TurnStreamEvent> {
 /// 无工具路径形态同构）。
 pub fn tool_result_usage(result: &ToolRunResult) -> Option<Value> {
     serde_json::to_value(&result.usage).ok()
+}
+
+/// E7（upgrade-chat-ai-tool-surface）：本轮工具调用记录 → 落 `chat_message_meta.tool_calls`。
+/// 每项含 `name` / `arguments` / `success` / `output`（按既有 4000 字符口径截断）；
+/// 无工具调用 → None（不落该列）。落库供追溯与审计；读取侧由历史重建渲染
+/// **有界注记**（单调用 ≤300 / 单条 ≤600 字符；批 ④ `tool-trace-cross-turn`），
+/// MUST NOT 整体回灌原始输出。
+pub fn tool_calls_json(result: &ToolRunResult) -> Option<Value> {
+    if result.tool_calls.is_empty() {
+        return None;
+    }
+    let calls: Vec<Value> = result
+        .tool_calls
+        .iter()
+        .map(|c| {
+            json!({
+                "name": c.name,
+                "arguments": c.arguments,
+                "success": c.success,
+                "output": truncate_tool_output(&c.output),
+            })
+        })
+        .collect();
+    Some(Value::Array(calls))
 }
 
 // ============================================
@@ -121,12 +144,11 @@ pub(crate) async fn resolve_user_email(pool: &PgPool, user_id: i64) -> String {
 /// ToolContext.action_handler）共用本实现——单实现无 HTTP 自调用。
 pub struct GatewayActionHandler {
     pool: PgPool,
-    i18n: crate::i18n::I18nManagerRef,
 }
 
 impl GatewayActionHandler {
-    pub fn new(pool: PgPool, i18n: crate::i18n::I18nManagerRef) -> Self {
-        Self { pool, i18n }
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
     }
 
     /// HTTP 直接执行入口（orchestrator.execute_action 调用）：
@@ -404,17 +426,14 @@ impl GatewayActionHandler {
             }
         );
 
-        // AI contact（经既有 adapter 解析/自建——code 固定 llm-agent，i18n 兜底
-        // 命名；复用其进程级缓存与建行逻辑，避免本文件重复 INSERT 走绕基线）
-        let contact_adapter =
-            crate::api::chat_sessions::adapters::db_ai_contact::DbAIContactAdapter::new(
-                self.pool.clone(),
-                self.i18n.clone(),
-            );
-        let sender = contact_adapter
-            .resolve_ai_contact_id(&Locale::new("zh-CN"))
-            .await?
-            .ok_or("AI_CONTACT_UNAVAILABLE")?;
+        // 消息发送方 = 会话当前智能体主体的联系方式（D-3：每主体独立联系方式，
+        // 无共享 llm-agent 兜底；未 materialize ⇒ 显式失败）
+        let sender = crate::api::chat_sessions::memory_scope::session_agent_contact_id(
+            &self.pool,
+            ctx.session_id,
+        )
+        .await?
+        .ok_or("AGENT_CONTACT_MISSING: 会话当前智能体无独立联系方式")?;
 
         // 草稿以 assistant 消息落库（经 MessageStorePort 适配器——叶表写入
         // 归口既有 db_message.rs 基线，不在本文件重复裸 INSERT）
@@ -422,7 +441,7 @@ impl GatewayActionHandler {
             self.pool.clone(),
         );
         let row = msg_store
-            .add_message(ctx.session_id, &content, Some(sender))
+            .add_message(ctx.session_id, &content, Some(sender), &[])
             .await?;
 
         Ok(json!({
@@ -553,6 +572,8 @@ impl ToolExecutionPort for GatewayToolPort {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ai_agent::agents::tool_orchestrator::ExecutedToolCall;
+    use ai_agent::agents::TokenUsage;
 
     fn result_with(output: Value) -> ToolResult {
         ToolResult {
@@ -564,7 +585,50 @@ mod tests {
         }
     }
 
+    fn tool_run_with(calls: Vec<ExecutedToolCall>) -> ToolRunResult {
+        ToolRunResult {
+            final_text: String::new(),
+            tool_calls: calls,
+            steps_taken: 0,
+            truncated: false,
+            usage: TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            },
+        }
+    }
+
     // ── C3 工具结果截断（fix-chat-ai-capability-gaps D2.2）────────────
+
+    #[test]
+    fn test_tool_calls_json_records_fields_and_truncates_output() {
+        // 空调用 → None（无工具轮次 meta 保持 NULL）
+        assert!(tool_calls_json(&tool_run_with(Vec::new())).is_none());
+
+        let result = tool_run_with(vec![ExecutedToolCall {
+            id: "call-1".to_string(),
+            name: "query_sql".to_string(),
+            arguments: json!({ "query": "SELECT 1" }),
+            success: true,
+            output: "z".repeat(5000),
+        }]);
+        let stored = tool_calls_json(&result).expect("记录非空");
+        let first = &stored[0];
+        assert_eq!(first["name"], "query_sql");
+        assert_eq!(first["arguments"]["query"], "SELECT 1");
+        assert_eq!(first["success"], true);
+        let output = first["output"].as_str().expect("output 为字符串");
+        assert!(
+            output.ends_with("…[结果截断，共 1 行 / 共 5000 字符]"),
+            "留存输出 MUST 按 4000 字符口径截断: {output}"
+        );
+        assert_eq!(
+            first.as_object().expect("对象").len(),
+            4,
+            "字段集固定为 4 项"
+        );
+    }
 
     #[test]
     fn test_truncate_under_cap_unchanged() {

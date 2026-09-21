@@ -57,7 +57,7 @@ async fn test_user(pool: &PgPool) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'rt-test', 'rt-test', 'rt@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -144,14 +144,21 @@ async fn validate_endpoint_accepts_and_rejects() {
     let (s, b): (u16, Value) = post_json!(
         &app,
         "/test/approval-flows/validate",
-        json!({"nodes": [{"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident"}]})
+        json!({"nodes": [
+            {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "e", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"}
+        ]})
     );
     assert_eq!(s, 200, "合法图应 200: {b}");
 
     let (s, b) = post_json!(
         &app,
         "/test/approval-flows/validate",
-        json!({"nodes": [{"id": "x", "type": "subflow", "label": "子流程", "target": "AF-OTHER"}]})
+        json!({"nodes": [
+            {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "x", "type": "subflow", "label": "子流程", "target": "AF-OTHER", "next": [{"to": 2}]},
+            {"id": "e", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"}
+        ]})
     );
     // 2026-09-01 能力补齐：subflow 放行白名单（validate 不查 target 存在性——
     // publish 物化时校验 target 引用存在且已发布）
@@ -183,8 +190,8 @@ async fn initiate_creates_chain_with_entity_binding_and_condition() {
             {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-cond", "type": "condition", "label": "VIP 判断",
              "next": [{"to": 2, "cond": "code == 'VIP'"}, {"to": 3}]},
-            {"id": "n-a", "type": "approve", "label": "VIP 审批"},
-            {"id": "n-b", "type": "approve", "label": "普通审批"},
+            {"id": "n-a", "type": "approve", "label": "VIP 审批", "next": [{"to": 4}]},
+            {"id": "n-b", "type": "approve", "label": "普通审批", "next": [{"to": 4}]},
             {"id": "n-end", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });
@@ -301,8 +308,8 @@ async fn restore_republishes_snapshot_and_rejects_legacy() {
 
     let graph_v1 = json!({
         "nodes": [
-            {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident"},
-            {"id": "a", "type": "approve", "label": "V1审批"},
+            {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
+            {"id": "a", "type": "approve", "label": "V1审批", "next": [{"to": 2}]},
             {"id": "e", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });
@@ -369,7 +376,7 @@ async fn entity_created_auto_initiates_bound_flow() {
     let graph = json!({
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
-            {"id": "a", "type": "approve", "label": "自动触发审批"},
+            {"id": "a", "type": "approve", "label": "自动触发审批", "next": [{"to": 2}]},
             {"id": "e", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });
@@ -393,16 +400,18 @@ async fn entity_created_auto_initiates_bound_flow() {
     .await
     .expect("maybe_auto_initiate");
 
+    // 2026-08-31 契约：实例桥与节点模板桥共享同一「事件真叶表范例行」——
+    // 不经 even-approve 载体（已废除），直接按 ref_right 同一性对齐
     let created: bool = sqlx::query_scalar(
         r#"SELECT EXISTS(
              SELECT 1 FROM isahl."zc_id_oper-approve" oa
              JOIN isahl.zc_id_operation_rr_event oe ON oe.ref_left = oa.id AND oe.deleted_at IS NULL
-             JOIN isahl."zc_id_even-approve" ea ON ea.id = oe.ref_right AND ea.deleted_at IS NULL
              WHERE oa.tpl_id IS NOT NULL AND oa.fk_subject = $2
                AND EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_event oe2
                            JOIN isahl.zc_id_process_rr_operation rro2
                              ON rro2.ref_right = oe2.ref_left AND rro2.deleted_at IS NULL
-                           WHERE oe2.ref_right = ea.id AND oe2.deleted_at IS NULL
+                           WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL
+                             AND oe2.ref_left <> oe.ref_left
                              AND rro2.ref_left = $1))"#,
     )
     .bind(flow_id)
@@ -547,7 +556,7 @@ async fn cc_node_publishes_event_on_advance() {
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "c", "type": "cc", "label": "抄送财务", "recipients": "role:finance", "next": [{"to": 2}]},
-            {"id": "a", "type": "approve", "label": "审批"},
+            {"id": "a", "type": "approve", "label": "审批", "next": [{"to": 3}]},
             {"id": "e", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });

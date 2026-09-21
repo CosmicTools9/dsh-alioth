@@ -8,6 +8,12 @@
 
 use framework_contacts::ContactsService;
 use sqlx::PgPool;
+use std::sync::LazyLock;
+
+/// 固定 id 夹具（-1/-10/…）在**同二进制内并行**会互踩（重复键 / 互删残留）——
+/// 以进程级异步锁把用夹具的用例串行化（断言按 id -1，参数化会牵动断言语义）。
+static FIXTURE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 async fn connect() -> PgPool {
     let url =
@@ -174,10 +180,15 @@ async fn cleanup_fixture(pool: &PgPool) {
 
 #[tokio::test]
 async fn test_b1_fix_infos_include_all_types() {
+    let _serial = FIXTURE_LOCK.lock().await;
     let pool = connect().await;
     insert_fixture(&pool).await;
 
-    let (contacts, total) = ContactsService::list_contacts(&pool, 1, 10)
+    // 共享测试库残留（他轮/他用例行）会挤占首页——先取 total 再取全量页定位夹具
+    let (_, total_probe) = ContactsService::list_contacts(&pool, 1, 1)
+        .await
+        .expect("probe total");
+    let (contacts, total) = ContactsService::list_contacts(&pool, 1, total_probe.max(10))
         .await
         .expect("list contacts should succeed");
 
@@ -212,6 +223,7 @@ async fn test_b1_fix_infos_include_all_types() {
 
 #[tokio::test]
 async fn test_default_info_respected() {
+    let _serial = FIXTURE_LOCK.lock().await;
     let pool = connect().await;
     insert_fixture(&pool).await;
 

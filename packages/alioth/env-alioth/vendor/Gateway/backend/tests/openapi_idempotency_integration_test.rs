@@ -87,11 +87,14 @@ async fn create_test_client(pool: &PgPool, suffix: &str) -> (String, i64) {
     .await
     .expect("create client");
 
-    let plan_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.api_plans WHERE code = 'free'")
-            .fetch_one(pool)
-            .await
-            .expect("find free plan");
+    // 夹具自备：ns 种子链在 Gateway 测试段之后才跑（test-all 段序），free 计划幂等自备
+    let plan_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl_auth.api_plans (code) VALUES ('free') \
+         ON CONFLICT (code) DO UPDATE SET code = EXCLUDED.code RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("ensure free plan");
 
     sqlx::query(
         "INSERT INTO isahl_auth.api_subscriptions (fk_client, fk_plan, status) \

@@ -45,7 +45,7 @@ async fn test_user(pool: &sqlx::PgPool) -> i64 {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'tguard', 'tguard', 'tguard@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -110,7 +110,7 @@ async fn insert_instance(pool: &sqlx::PgPool, notice: &str, event_id: i64, subje
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(event_id)
@@ -133,8 +133,8 @@ async fn status_id(pool: &sqlx::PgPool, code: &str, notice: &str) -> i64 {
     {
         Some(id) => id,
         None => sqlx::query_scalar::<_, i64>(
-            r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice)
-               VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice, flag)
+               VALUES (isahl.gen_next_uid(73), $1, $2, 'end') RETURNING id"#,
         )
         .bind(code)
         .bind(notice)
@@ -149,7 +149,7 @@ async fn set_bridge(pool: &sqlx::PgPool, instance_id: i64, code: &str, notice: &
     let sid = status_id(pool, code, notice).await;
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-           VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+           VALUES (isahl.gen_next_uid(260), $1, $2)"#,
     )
     .bind(instance_id)
     .bind(sid)
@@ -287,7 +287,7 @@ async fn sla_check_skips_withdrawn_instance() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(event_id)

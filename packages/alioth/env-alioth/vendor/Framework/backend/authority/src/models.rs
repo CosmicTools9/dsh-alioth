@@ -11,12 +11,16 @@ pub struct Employee {
     pub id: i64,
     pub name: String,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub ck_category: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_unit: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -118,8 +122,10 @@ pub struct Approver {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub name: String,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub ck_category: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
     pub description: Option<String>,
@@ -148,8 +154,10 @@ impl AliothDbEntity for Approver {
 
 #[derive(Debug, Deserialize)]
 pub struct ListEmployeesQuery {
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub page_size: Option<i64>,
     pub search: Option<String>,
@@ -159,12 +167,16 @@ pub struct ListEmployeesQuery {
 pub struct CreateEmployeeRequest {
     pub name: String,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub role: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub team: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
 }
@@ -173,12 +185,16 @@ pub struct CreateEmployeeRequest {
 pub struct UpdateEmployeeRequest {
     pub name: Option<String>,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub role: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub team: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_user: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sk_currency: Option<i64>,
 }
@@ -202,6 +218,7 @@ pub struct UpdateSkillTagRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateApprovalRoleRequest {
     pub name: String,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub role: Option<i64>,
 }
@@ -209,6 +226,7 @@ pub struct CreateApprovalRoleRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateApprovalRoleRequest {
     pub name: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub role: Option<i64>,
 }
@@ -217,6 +235,7 @@ pub struct UpdateApprovalRoleRequest {
 #[derive(Debug, Deserialize)]
 pub struct CreateApproverRequest {
     pub name: String,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub role: Option<i64>,
     pub description: Option<String>,
@@ -225,6 +244,7 @@ pub struct CreateApproverRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateApproverRequest {
     pub name: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub role: Option<i64>,
     pub description: Option<String>,

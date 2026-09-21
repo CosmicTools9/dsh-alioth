@@ -61,7 +61,7 @@ async fn test_user(pool: &PgPool) {
            (id, name, username, email, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'tl-test', 'tl-test', 'tl@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)
@@ -217,7 +217,7 @@ async fn task_template_node_materializes_task() {
     let graph = json!({
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
-            {"id": "a", "type": "approve", "label": "设计评审"},
+            {"id": "a", "type": "approve", "label": "设计评审", "next": [{"to": 2}]},
             {"id": "e", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     });

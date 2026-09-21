@@ -159,6 +159,55 @@ mod tests {
     }
 
     #[test]
+    fn post_view_exact_keys_cover_the_view_tag_dict() {
+        // 关系视角字典（zc_id_tags-post_view）18 行的 en 显示名 MUST 走精确键——
+        // 缺键会退化为 code 可读化（VIEW FLEXIBLE），那是「界面英文」而非英文名。
+        let table = en_dict()
+            .get("zc_id_tags-post_view")
+            .expect("en.json MUST 收录 zc_id_tags-post_view 表");
+        assert_eq!(
+            table.len(),
+            18,
+            "键数 MUST 等于字典 18 行（增行须同步补键）"
+        );
+        for (code, en) in table {
+            assert_ne!(
+                en,
+                &humanize_code(code).unwrap_or_default(),
+                "{code} 的 en 显示名 MUST 为真实英文名，MUST NOT 等于 code 可读化形态"
+            );
+        }
+        assert_eq!(
+            localize_notice(
+                "zc_id_tags-post_view",
+                Some("VIEW-FLEXIBLE"),
+                Some("灵活用工"),
+                true
+            ),
+            Some("Flexible Staffing".to_string())
+        );
+        assert_eq!(
+            localize_notice(
+                "zc_id_tags-post_view",
+                Some("VIEW-CUST"),
+                Some("客户"),
+                true
+            ),
+            Some("Customer".to_string())
+        );
+        // zh 请求不受影响
+        assert_eq!(
+            localize_notice(
+                "zc_id_tags-post_view",
+                Some("VIEW-FLEXIBLE"),
+                Some("灵活用工"),
+                false
+            ),
+            Some("灵活用工".to_string())
+        );
+    }
+
+    #[test]
     fn accept_header_parsing() {
         assert!(accept_is_en(Some("en")));
         assert!(accept_is_en(Some("en-US,en;q=0.9")));

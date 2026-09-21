@@ -1,5 +1,10 @@
 {
-  "updated_at": "2026-09-12T18:15:59.440Z",
-  "note": "block.json 形状/引用存量欠债基线（check-block-json.ts）；新增违规不得落入此文件",
-  "violations": []
+  "updated_at": "2026-09-19T07:14:39.147Z",
+  "note": "block.json 形状/引用存量欠债基线（check-block-json.ts）；新增违规不得落入此文件。基线项 MUST 在 docs/specs/BLOCK_READY_UNWIRED_REGISTRY.md 有对应条目（基线 = 登记册镜像，非逃生舱）。",
+  "violations": [
+    "Alioth|Pre-Proc/Alioth/Sources/Apps/Blocks/block-counting/block.json|R9|ownerModule='Alioth/inventory' 未在 blockAssembly.blocks[] 登记 'block-counting'（该块在 Gateway Navigator 不可达；登记面 = 实现模块）",
+    "Alioth|Pre-Proc/Alioth/Sources/Apps/Blocks/block-list-inventory/block.json|R9|ownerModule='Alioth/inventory' 未在 blockAssembly.blocks[] 登记 'block-list-inventory'（该块在 Gateway Navigator 不可达；登记面 = 实现模块）",
+    "Alioth|Pre-Proc/Alioth/Sources/Apps/Blocks/block-stock-stat/block.json|R9|ownerModule='Alioth/inventory' 未在 blockAssembly.blocks[] 登记 'block-stock-stat'（该块在 Gateway Navigator 不可达；登记面 = 实现模块）",
+    "Alioth|Pre-Proc/Alioth/Sources/Apps/Blocks/block-voucher/block.json|R9|ownerModule='Alioth/inventory' 未在 blockAssembly.blocks[] 登记 'block-voucher'（该块在 Gateway Navigator 不可达；登记面 = 实现模块）"
+  ]
 }

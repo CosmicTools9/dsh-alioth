@@ -1,0 +1,22 @@
+{
+  "id": "todo-min-service",
+  "namespace": "Alioth",
+  "version": "0.1.0",
+  "domain": "任务（最简）",
+  "layer": 1,
+  "hasBackend": true,
+  "hasFrontend": false,
+  "factors": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "detail"
+    ],
+    "refs": [
+      "TodoMin"
+    ]
+  },
+  "publishes": [],
+  "subscribes": []
+}

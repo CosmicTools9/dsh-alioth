@@ -53,16 +53,89 @@ async fn validate_key_rejects_path_traversal() {
         backend.put("", vec![1], "text/plain").await,
         Err(FileError::InvalidKey(_))
     ));
-    // 非法字符（空格）
+    // 反斜杠（另一分隔符约定）→ 拒绝
     assert!(matches!(
-        backend.put("Alioth/a b", vec![1], "text/plain").await,
+        backend.put("Alioth/a\\b", vec![1], "text/plain").await,
         Err(FileError::InvalidKey(_))
     ));
+    // 控制字符（NUL）→ 拒绝
+    assert!(matches!(
+        backend.put("Alioth/a\u{0}b", vec![1], "text/plain").await,
+        Err(FileError::InvalidKey(_))
+    ));
+    // 空格等标点 → **放行**：谓词只守路径边界，不再做字符集白名单
+    // （批注 cc97d23f：白名单会让已持久化的键读不回来——见下方 legacy 用例）
+    assert!(backend
+        .put("Alioth/a b", vec![1], "text/plain")
+        .await
+        .is_ok());
     // 合法 key 放行
     assert!(backend
         .put("WZ/document/2001/合同.pdf", vec![1], "application/pdf")
         .await
         .is_ok());
+}
+
+/// 批注 cc97d23f 自愈：已被 DB 持久化的键（含空格/中文——S3 后端写入或历史写入路径
+/// 产出）在本地后端 MUST 仍可等价访问，不得因字符集谓词读失败。
+#[tokio::test]
+async fn legacy_unsafe_chars_key_stays_accessible() {
+    let root = tmp_root();
+    let backend = LocalBackend::new(root.path(), "/files");
+    let key = "WZ/document/342036009056134/杭州热联-华畅 2026年协.pdf";
+
+    backend
+        .put(key, b"%PDF-1.4 legacy".to_vec(), "application/pdf")
+        .await
+        .expect("历史键写入");
+    assert_eq!(
+        backend.get(key).await.expect("历史键读取"),
+        b"%PDF-1.4 legacy"
+    );
+    assert_eq!(
+        backend.get_range(key, 0, 3).await.expect("历史键区间读取"),
+        b"%PDF"
+    );
+    assert!(backend
+        .presigned_url(key, 60)
+        .await
+        .expect("历史键 presign")
+        .ends_with("杭州热联-华畅 2026年协.pdf"));
+    backend.delete(key).await.expect("历史键删除");
+    assert!(matches!(
+        backend.get(key).await,
+        Err(FileError::NotFound(_))
+    ));
+}
+
+/// 写入侧净化：原名中的非键安全字符（空格/括号/引号/分隔符）逐字符替换为 `_`，
+/// 中文与扩展名原样保留（键段只作定位，原名存文件行 `notice`）。
+#[test]
+fn key_safe_filename_normalizes_unsafe_chars() {
+    use framework_file_manager::service::key_safe_filename;
+
+    // 批注 cc97d23f 实况：空格 → `_`，其余不变
+    assert_eq!(
+        key_safe_filename("杭州热联-华畅 2026年协.pdf"),
+        "杭州热联-华畅_2026年协.pdf"
+    );
+    // 标点族全量替换；扩展名保留
+    assert_eq!(
+        key_safe_filename("(1) 报价+确认&函.pdf"),
+        "_1__报价_确认_函.pdf"
+    );
+    // 分隔符不得进入键段（HTTP 层已拒，服务层直调亦须安全）
+    assert_eq!(key_safe_filename("a/b\\c.pdf"), "a_b_c.pdf");
+    // 连续点折叠 + 前导点剥除：绝不产出 `..` / 隐藏文件形态
+    assert_eq!(key_safe_filename("..pdf"), "pdf");
+    assert_eq!(key_safe_filename("a..b.pdf"), "a.b.pdf");
+    assert_eq!(key_safe_filename(".hidden.pdf"), "hidden.pdf");
+    // 纯符号原名 → 占位段（键只需合法）
+    assert_eq!(key_safe_filename("..."), "_");
+    // 已安全的原名不变（历史键零漂移）
+    for name in ["photo.png", "合同.pdf", "a-b_c.txt", "REPORT.XLSX"] {
+        assert_eq!(key_safe_filename(name), name);
+    }
 }
 
 #[tokio::test]

@@ -1,3 +1,5 @@
-[test]
-# DB 集成测试共享 aliothstudio_test 测试库，必须串行避免 TRUNCATE/数据污染互踩
-test-threads = 1
+[env]
+# DB 集成测试共享 aliothstudio_test 测试库，必须串行避免 TRUNCATE/数据污染互踩。
+# 机制：RUST_TEST_THREADS=1（libtest 读取）。**不得**写 `[test] test-threads`——
+# cargo 配置面没有 `[test]` 段，该写法被静默忽略（实测：同目录下仍并行 → 用例互踩）。
+RUST_TEST_THREADS = "1"

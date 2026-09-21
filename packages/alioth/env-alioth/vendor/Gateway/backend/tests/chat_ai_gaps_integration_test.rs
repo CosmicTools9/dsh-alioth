@@ -18,7 +18,6 @@ use ai_agent::tools::ToolContext;
 use alioth_gateway::api::chat_sessions::adapters::db_session::SqlxSessionAdapter;
 use alioth_gateway::api::chat_sessions::adapters::tool_bridge::GatewayActionHandler;
 use alioth_gateway::api::chat_sessions::ports::SessionStorePort;
-use alioth_gateway::i18n::init_i18n_manager;
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -107,8 +106,7 @@ async fn handler_execute(
     action_type: &str,
     params: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let handler: Arc<dyn ActionHandler> =
-        Arc::new(GatewayActionHandler::new(pool.clone(), init_i18n_manager()));
+    let handler: Arc<dyn ActionHandler> = Arc::new(GatewayActionHandler::new(pool.clone()));
     let ctx = ToolContext {
         session_id,
         user_id: Some(user_id),

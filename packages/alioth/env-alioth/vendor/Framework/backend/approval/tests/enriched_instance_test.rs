@@ -76,7 +76,7 @@ async fn insert_instance(
     if let Some(ev) = event_id {
         sqlx::query(
             r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+               VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
         )
         .bind(instance_id)
         .bind(ev)

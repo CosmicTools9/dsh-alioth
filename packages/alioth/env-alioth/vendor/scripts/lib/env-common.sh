@@ -41,12 +41,17 @@ free_port() {
 }
 
 # ── 从 .mise.toml 解析 SERVER_ADDR ─────────────────────────
+# 解析工具 MUST 为 POSIX（BSD grep 无 -P：/usr/bin/grep -oP 报 `invalid option -- P`，
+# 真机 macOS 上原实现恒失败 ⇒ 端口静默回落默认值）。
 parse_mise_server_addr() {
     local dir="${1:-}"
     [ -z "$dir" ] && return 1
     local toml="${dir}/.mise.toml"
     [ ! -f "$toml" ] && return 1
-    grep -oP 'SERVER_ADDR\s*=\s*"\K[^"]+' "$toml" 2>/dev/null || return 1
+    local addr
+    addr="$(sed -n -E 's/^[[:space:]]*SERVER_ADDR[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$toml" 2>/dev/null | head -1)"
+    [ -n "$addr" ] || return 1
+    printf '%s' "$addr"
 }
 
 # ── 从 vite.config.ts 解析端口 ─────────────────────────────
@@ -56,35 +61,40 @@ parse_vite_port() {
     local config="${dir}/vite.config.ts"
     [ ! -f "$config" ] && config="${dir}/vite.config.js"
     [ ! -f "$config" ] && return 1
-    grep -oP 'port:\s*\K\d+' "$config" 2>/dev/null | head -1 || return 1
+    local port
+    port="$(sed -n -E 's/.*port:[[:space:]]*([0-9]+).*/\1/p' "$config" 2>/dev/null | head -1)"
+    [ -n "$port" ] || return 1
+    printf '%s' "$port"
 }
 
 # ── 构建所有后端（--release） ──────────────────────────────
+# 目标目录一律经映射（scripts/lib/cargo-target-dirs.sh）：Framework/SSO 是 root workspace
+# 成员 ⇒ 用途 check；Meta 独立 workspace ⇒ 用途 meta。MUST NOT 依赖 cwd 默认推导。
 build_all_backends() {
     log "构建所有后端服务（release 模式）..."
     log "Framework/backend..."
-    (cd "${PROJECT_ROOT}/Framework/backend" && cargo build --workspace --release) || {
+    (cd "${PROJECT_ROOT}/Framework/backend" && env CARGO_TARGET_DIR="$(bash "${PROJECT_ROOT}/scripts/cargo-target.sh" check)" cargo build --workspace --release) || {
         err "Framework/backend 构建失败"
         exit 1
     }
     log "Meta/backend..."
-    (cd "${PROJECT_ROOT}/Meta/backend" && cargo build --release --bin meta-backend) || {
+    (cd "${PROJECT_ROOT}/Meta/backend" && env CARGO_TARGET_DIR="$(bash "${PROJECT_ROOT}/scripts/cargo-target.sh" meta)" cargo build --release --bin meta-backend) || {
         err "Meta/backend 构建失败"
         exit 1
     }
     log "SSO/backend..."
-    (cd "${PROJECT_ROOT}/SSO/backend" && cargo build --release) || {
+    (cd "${PROJECT_ROOT}/SSO/backend" && env CARGO_TARGET_DIR="$(bash "${PROJECT_ROOT}/scripts/cargo-target.sh" check)" cargo build --release) || {
         err "SSO/backend 构建失败"
         exit 1
     }
     log "Gateway/backend..."
-    # 生产口径构建：--no-default-features + {ns},sso（对齐 scripts/build-ns.sh）。
-    # preproc-proxy（未认证反代 /preproc/*、/api/pre_proc/*）不在此路径提供——
-    # dev 形态需显式追加该 feature（mise run -C Gateway/backend dev）。
-    # NS 环境变量透传（默认 alioth）；cargo feature 名全小写（Cargo.toml [features]），
-    # 显式 NS=WZ/AVIC-CAASEC 等大写值时需归一（对齐 scripts/build-ns.sh 的 NS_LOWER）。
-    NS_LOWER="$(echo "${NS:-alioth}" | tr '[:upper:]' '[:lower:]')"
-    (cd "${PROJECT_ROOT}/Gateway/backend" && cargo build --release -p alioth-gateway --no-default-features --features "${NS_LOWER},sso") || {
+    # canonical 入口（compilation capability `release-build-via-script`）：target 隔离
+    # （--target-dir Deploy/{ns}/target）、feature 门控（--no-default-features --features
+    # {ns},sso）、macOS 签名单点实现——三者只在 scripts/build-ns.sh 一处，本行不内联 cargo。
+    # 生产口径不含 preproc-proxy（未认证反代 /preproc/*、/api/pre_proc/*）——该 feature
+    # 仅 dev 形态需要，由 dev 任务显式追加（mise run -C Gateway/backend dev）。
+    # NS 未设时默认 alioth（build-ns.sh 侧已做大小写归一，统一落 Deploy/Alioth/）。
+    bash "${PROJECT_ROOT}/scripts/build-ns.sh" "${NS:-alioth}" release || {
         err "Gateway/backend 构建失败"
         exit 1
     }

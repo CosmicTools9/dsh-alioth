@@ -571,7 +571,7 @@ impl TriggerTemplate for LifecycleRelationUpdateTemplate {
 /// | `↓_`  | 实现     | 实例     |
 ///
 /// 若显式传入了非空值则保留，不覆盖。
-
+///
 ///
 /// `LifecycleBizTemplate` 与裸 SQL 写路径（WZ Service 落库）共用本函数——
 /// `_f_`/`_t_` 禁止字面量直写，一律由 `dk_function.code` 前缀派生。

@@ -24,11 +24,11 @@
 //! 系统不设独立的「物权所属」实体登记——**物权以库存的方式表达**（维度字典：
 //! 库存 = 实体对象「对各种可数货的持有物权的统计」）：
 //! 1. **初始物权 = 编制入库凭证**：货的权属起点是一张单边 IN 入库凭证
-//!    （`qk_income` + `fk_obj-storage`=库位 + `fk_production`=货 + 基类
+//!    （`qk_income` + `fk_obj-storage`=库位 + 交易对象列=货 + 基类
 //!    `fk_subject`=物权人、`ck_sto-title`=物权类别），落库即经本模块原语物化
 //!    → 库存自动计算——物权确立与库存记账为同一动作，不另设登记通道
 //! 2. **物权快速查看 = 库存相关视图**：`isahl.mv_title_ownership` 物化视图按
-//!    (物权人 `fk_subject`, 物 `fk_production`) 粒度聚合凭证净变
+//!    (物权人 `fk_subject`, 物 = 交易对象列) 粒度聚合凭证净变
 //!    （Σincome − Σoutgo，标量真值），快速检索主体与物的属权关系——
 //!    Rust 自愈落地（`ensure_mv_title_ownership`）+ 周期刷新，只读不另建账
 //!
@@ -61,8 +61,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// - 过滤 deleted_at + qk_period 时空伴随（`zc_id_segm-date` 生效期覆盖 now()）
 /// - 物化为快照（REFRESH 时点求值）；读侧 StockStat 仍实时 JOIN（视图为可选读优化载体）
 ///
-/// 冻结边界（ENVIRONMENT_SPEC §11）：isahl schema 冻结规则为「CREATE VIEW 允许 /
-/// ALTER TABLE 禁止」（实证：`scripts/db/vw_capacity_available.sql:9` 先例），
+/// 冻结边界（`db-schema-boundary.isahl-schema-frozen` + `ALIOTH_ONTOLOGY_SPEC §8.1`）：
+/// isahl schema 允许「CREATE VIEW / MATERIALIZED VIEW / FUNCTION / INDEX」，禁止
+/// 「CREATE TABLE 族 / DROP TABLE / ALTER TABLE 加列、删列、列改类型、改名」，
 /// 本 DDL 仅创建物化视图与索引，合规。
 pub const MV_INVENTORY_DDL: &[&str] = &[
     r#"CREATE MATERIALIZED VIEW IF NOT EXISTS isahl.mv_inventory AS
@@ -111,19 +112,20 @@ pub const MV_INVENTORY_DDL: &[&str] = &[
 /// `isahl.mv_title_ownership` 物化视图 DDL（幂等——单源防漂移，2026-09-07 用户定稿）。
 ///
 /// 主体×物属权关系快速检索载体（物权语义第 2 条读径落点）：
-/// - 粒度 `(fk_subject, fk_production)`——「谁拥有什么」；「货在哪」由 mv_inventory
-///   回答，两视图正交
+/// - 粒度 `(fk_subject, fk_payload)`——「谁拥有什么」；「货在哪」由 mv_inventory
+///   回答，两视图正交。`fk_payload` = 凭证「交易对象」（货 = 卖方销售产品，
+///   声明目标 `zc_id_prod-sales` 销售子树，见 [`voucher_title_column`]）
 /// - 源 = `zc_id_stat-sto-voucher` 父表查询（PG 继承覆盖全部叶表 + 父表直插行）
 /// - 净属权 = Σ(income 标量真值) − Σ(outgo 标量真值)；标量解析统一 JOIN 父表
 ///   `zc_id_scale`（子表查询对父表直插行不可见——同 MV_INVENTORY_DDL 实测坑）
-/// - 过滤：deleted_at 为空 + fk_subject/fk_production 均非空（无主体凭证 = 库存
+/// - 过滤：deleted_at 为空 + fk_subject/fk_payload 均非空（无主体凭证 = 库存
 ///   位移，非属权关系）；净额为零行保留（历史属权可追溯，同 mv_inventory 口径）
 /// - 冻结边界同 mv_inventory：仅视图/索引 DDL，经 Rust 自愈执行（非手工 DDL 通道）
 pub const MV_TITLE_OWNERSHIP_DDL: &[&str] = &[
     r#"CREATE MATERIALIZED VIEW IF NOT EXISTS isahl.mv_title_ownership AS
         SELECT
             v.fk_subject AS subject_id,
-            v.fk_production AS production_id,
+            v.fk_payload AS production_id,
             COALESCE(SUM(COALESCE(im.mark, 0)), 0) AS income_total,
             COALESCE(SUM(COALESCE(om.mark, 0)), 0) AS outgo_total,
             COALESCE(SUM(COALESCE(im.mark, 0)), 0)
@@ -137,13 +139,57 @@ pub const MV_TITLE_OWNERSHIP_DDL: &[&str] = &[
         LEFT JOIN isahl."zc_id_scale" om ON om.id = v.qk_outgo
         WHERE v.deleted_at IS NULL
           AND v.fk_subject IS NOT NULL
-          AND v.fk_production IS NOT NULL
-        GROUP BY v.fk_subject, v.fk_production"#,
+          AND v.fk_payload IS NOT NULL
+        GROUP BY v.fk_subject, v.fk_payload"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_title_ownership_subj_prod
        ON isahl.mv_title_ownership (subject_id, production_id)"#,
     r#"CREATE INDEX IF NOT EXISTS idx_mv_title_ownership_prod
        ON isahl.mv_title_ownership (production_id)"#,
 ];
+
+/// 凭证「物」（交易对象 = 货）列的库内实际列名——物权写径与视图自愈共用，保证读/写同列。
+///
+/// 模型侧 `zc_id_stat-sto-voucher` 的「交易对象」列 = `fk_payload`——货（卖方销售产品），
+/// 声明目标 `zc_id_prod-sales` 销售子树；模型未同步的库仍是 `fk_production`。按库内实际列选择，
+/// 探测方式同 [`voucher_balance_table_tx`]（按凭证 id 探测族表）——列名恒为本函数枚举
+/// 的两个编译期字面量（非用户输入），拼接结果仍经 `AssertSqlSafe` 执行。
+///
+/// ## 调用方统一模式（凭证族「物/货」列，全仓一致）
+///
+/// 1. 取列名：池上 `voucher_title_column(&pool)`；事务内 `voucher_title_column(&mut *tx)`。
+/// 2. 静态 SQL 写 `{title_col}` 占位，运行期 `sql.replace("{title_col}", col)` 后
+///    `sqlx::query(sqlx::AssertSqlSafe(sql))`（`query_scalar`/`query_as` 同型）。
+/// 3. 以物理列名构造给物化原语的 `HashMap` 记录：键用探测列名；物化侧
+///    `get_title_id` 同时识别 `fk_payload` / `fk_production` 两键。
+/// 4. 延迟执行路径（`SideEffect::RawSql`，无 pool 的纯函数）：SQL 里写 `{title_col}`，
+///    由 `executor::SideEffectExecutor` 在执行时解析。
+///
+/// 仅适用于凭证族（`zc_id_stat-sto-voucher` 及其 `whs/com/tsp/slf/bok/smt` 子表）；
+/// 其它表的同名 `fk_production` 列（如 `zc_id_deta-counting`、`zc_id_stat-smt-bank`）
+/// 语义不同，MUST NOT 套用。
+pub async fn voucher_title_column<'e, E>(ex: E) -> Result<&'static str, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let has_payload: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pg_attribute a \
+         JOIN pg_class c ON c.oid = a.attrelid \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         WHERE n.nspname = 'isahl' AND c.relname = 'zc_id_stat-sto-voucher' \
+           AND a.attname = 'fk_payload' AND a.attnum > 0 AND NOT a.attisdropped)",
+    )
+    .fetch_one(ex)
+    .await
+    .map_err(|e| format!("凭证「物」列探测失败: {e}"))?;
+    Ok(if has_payload {
+        "fk_payload"
+    } else {
+        "fk_production"
+    })
+}
+
+/// [`MV_TITLE_OWNERSHIP_DDL`] 的「物」列名取值（新模型）——自愈只在库内含该列时创建/重建。
+const TITLE_COLUMN_CURRENT: &str = "fk_payload";
 
 // ============================================
 // 辅助：祖先链（存在型嵌套，深度防护）
@@ -231,8 +277,12 @@ pub async fn ensure_stock_row(pool: &PgPool, prod: i64, storage: i64) -> Result<
     let (rel_id, scalar_id) = match rel {
         Some(r) => r,
         None => {
+            // 载体迁移（用户裁决 2026-09-21，报缺产物 R6）：库存/履约实例（产品↔储元）原写在
+            // 声明语义「关联-文件↔URL」的桥表上 = **挪用**；合法载体 =
+            // `zc_id_prod-payload_rr_stor-container`（关联-载荷↔容器），实测 ⊂ `zc_id_production_rr_storage`
+            // ⇒ mv_inventory（FROM 父表）经 PG 继承照常可见，故本函数对父表的 SELECT/UPDATE 保持不动。
             let id: i64 = sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_file_rr_url" (ref_left, ref_right)
+                r#"INSERT INTO isahl."zc_id_prod-payload_rr_stor-container" (ref_left, ref_right)
                    VALUES ($1, $2) RETURNING id"#,
             )
             .bind(prod)
@@ -401,7 +451,7 @@ pub async fn apply_voucher(
     new: Option<&HashMap<String, Value>>,
 ) -> Result<(), String> {
     if let Some(old) = old {
-        if let Some(prod) = get_id(old, "fk_production") {
+        if let Some(prod) = get_title_id(old) {
             // qk_income/qk_outgo/qk_qty 为标量引用（bigint 存标量 ID）——读真值
             let income = match get_id(old, "qk_income").or_else(|| get_id(old, "qk_qty")) {
                 Some(sid) => scalar_mark(pool, sid).await?,
@@ -420,7 +470,7 @@ pub async fn apply_voucher(
         }
     }
     if let Some(new) = new {
-        if let Some(prod) = get_id(new, "fk_production") {
+        if let Some(prod) = get_title_id(new) {
             let income = match get_id(new, "qk_income").or_else(|| get_id(new, "qk_qty")) {
                 Some(sid) => scalar_mark(pool, sid).await?,
                 None => 0.0,
@@ -449,10 +499,8 @@ pub async fn apply_voucher(
                         .acquire()
                         .await
                         .map_err(|e| format!("balance backfill acquire: {e}"))?;
-                    backfill_voucher_balance_tx(
-                        &mut *conn, prod, storage, id, income, outgo, after,
-                    )
-                    .await?;
+                    backfill_voucher_balance_tx(&mut conn, prod, storage, id, income, outgo, after)
+                        .await?;
                 }
             }
         }
@@ -484,24 +532,76 @@ pub enum StockDim {
 }
 
 impl StockDim {
+    /// 计量维度 → 静态 SQL 集（编译期固化：表名与列名均为字面量，正文单一来源）
+    pub fn sql(self) -> &'static StockDimSql {
+        match self {
+            StockDim::Qty => &DIM_QTY,
+            StockDim::Weight => &DIM_WEIGHT,
+            StockDim::Volume => &DIM_VOLUME,
+            StockDim::Amount => &DIM_AMOUNT,
+        }
+    }
+
     /// rr_storage 目标列名（静态白名单）
     pub fn column(self) -> &'static str {
-        match self {
-            StockDim::Qty => "qk_qty",
-            StockDim::Weight => "qk_w_qty",
-            StockDim::Volume => "qk_v_qty",
-            StockDim::Amount => "qk_amount",
-        }
+        self.sql().column
     }
 }
 
-/// 维度 → 标量族（金额落 scal-amount，其余落 scal-common；两者均为 zc_id_scale 子表）
-fn scalar_table(dim: StockDim) -> &'static str {
-    match dim {
-        StockDim::Amount => "isahl.\"zc_id_scal-amount\"",
-        _ => "isahl.\"zc_id_scal-common\"",
-    }
+/// 单计量维度的静态 SQL 集：金额维度落 `zc_id_scal-amount`，其余落 `zc_id_scal-common`
+/// （两者均为 `zc_id_scale` 子表）；维度集合 = [`StockDim`] 闭式枚举。
+pub struct StockDimSql {
+    pub column: &'static str,
+    select_rel: &'static str,
+    insert_scalar: &'static str,
+    backfill_rel: &'static str,
+    add_delta: &'static str,
+    mark: &'static str,
 }
+
+macro_rules! stock_dim_sql {
+    ($scal_table:literal, $col:literal) => {
+        StockDimSql {
+            column: $col,
+            select_rel: concat!(
+                "SELECT id, ",
+                $col,
+                " FROM isahl.\"zc_id_production_rr_storage\" \
+                 WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL FOR UPDATE"
+            ),
+            insert_scalar: concat!(
+                "INSERT INTO isahl.\"",
+                $scal_table,
+                "\" (mark) VALUES (0) RETURNING id"
+            ),
+            backfill_rel: concat!(
+                "UPDATE isahl.\"zc_id_production_rr_storage\" SET ",
+                $col,
+                " = $1 WHERE id = $2"
+            ),
+            add_delta: concat!(
+                "UPDATE isahl.\"",
+                $scal_table,
+                "\" SET mark = COALESCE(mark, 0) + $1 WHERE id = $2"
+            ),
+            mark: concat!(
+                "SELECT CAST(COALESCE(sm.mark, 0) AS float8) \
+                 FROM isahl.\"zc_id_production_rr_storage\" r \
+                 LEFT JOIN isahl.\"",
+                $scal_table,
+                "\" sm ON sm.id = r.",
+                $col,
+                " \
+                 WHERE r.ref_left = $1 AND r.ref_right = $2 AND r.deleted_at IS NULL"
+            ),
+        }
+    };
+}
+
+const DIM_QTY: StockDimSql = stock_dim_sql!("zc_id_scal-common", "qk_qty");
+const DIM_WEIGHT: StockDimSql = stock_dim_sql!("zc_id_scal-common", "qk_w_qty");
+const DIM_VOLUME: StockDimSql = stock_dim_sql!("zc_id_scal-common", "qk_v_qty");
+const DIM_AMOUNT: StockDimSql = stock_dim_sql!("zc_id_scal-amount", "qk_amount");
 
 /// 事务版：储元当前祖先链（行存在=置入；depth<50 防环）
 pub async fn storage_ancestors_tx(
@@ -540,13 +640,8 @@ pub async fn ensure_stock_row_dim_tx(
     storage: i64,
     dim: StockDim,
 ) -> Result<i64, String> {
-    let col = dim.column();
-    let sql = format!(
-        r#"SELECT id, {col} FROM isahl."zc_id_production_rr_storage"
-           WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL
-           FOR UPDATE"#
-    );
-    let rel: Option<(i64, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+    let dim_sql = dim.sql();
+    let rel: Option<(i64, Option<i64>)> = sqlx::query_as(dim_sql.select_rel)
         .bind(prod)
         .bind(storage)
         .fetch_optional(&mut *conn)
@@ -556,8 +651,11 @@ pub async fn ensure_stock_row_dim_tx(
     let (rel_id, scalar_id) = match rel {
         Some(r) => r,
         None => {
+            // 载体迁移（2026-09-21 裁决，同 `ensure_stock_row`）：库存/履约实例原落声明语义
+            // 「关联-文件↔URL」的桥表（挪用）→ 改落 `zc_id_prod-payload_rr_stor-container`
+            // （⊂ `zc_id_production_rr_storage`），父表读/写径经 PG 继承照常覆盖。
             let id: i64 = sqlx::query_scalar(
-                r#"INSERT INTO isahl."zc_id_file_rr_url" (ref_left, ref_right)
+                r#"INSERT INTO isahl."zc_id_prod-payload_rr_stor-container" (ref_left, ref_right)
                    VALUES ($1, $2) RETURNING id"#,
             )
             .bind(prod)
@@ -573,22 +671,17 @@ pub async fn ensure_stock_row_dim_tx(
         return Ok(sid);
     }
 
-    let tbl = scalar_table(dim);
-    let sid: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "INSERT INTO {tbl} (mark) VALUES (0) RETURNING id"
-    )))
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(|e| format!("insert scalar dim tx: {}", e))?;
+    let sid: i64 = sqlx::query_scalar(dim_sql.insert_scalar)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| format!("insert scalar dim tx: {}", e))?;
 
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        r#"UPDATE isahl."zc_id_production_rr_storage" SET {col} = $1 WHERE id = $2"#
-    )))
-    .bind(sid)
-    .bind(rel_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| format!("backfill scalar dim tx: {}", e))?;
+    sqlx::query(dim_sql.backfill_rel)
+        .bind(sid)
+        .bind(rel_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("backfill scalar dim tx: {}", e))?;
 
     Ok(sid)
 }
@@ -617,17 +710,15 @@ pub async fn apply_stock_delta_dim_tx(
     let mut targets = vec![storage];
     targets.extend(storage_ancestors_tx(conn, storage).await?);
 
-    let tbl = scalar_table(dim);
+    let dim_sql = dim.sql();
     for s in targets {
         let sid = ensure_stock_row_dim_tx(conn, prod, s, dim).await?;
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            r#"UPDATE {tbl} SET mark = COALESCE(mark, 0) + $1 WHERE id = $2"#
-        )))
-        .bind(rust_decimal::Decimal::from_f64(delta).unwrap_or_default())
-        .bind(sid)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| format!("apply delta dim tx: {}", e))?;
+        sqlx::query(dim_sql.add_delta)
+            .bind(rust_decimal::Decimal::from_f64(delta).unwrap_or_default())
+            .bind(sid)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| format!("apply delta dim tx: {}", e))?;
     }
     Ok(())
 }
@@ -649,15 +740,8 @@ pub async fn stock_mark_dim_tx(
     storage: i64,
     dim: StockDim,
 ) -> Result<f64, String> {
-    let col = dim.column();
-    let tbl = scalar_table(dim);
-    let sql = format!(
-        r#"SELECT CAST(COALESCE(sm.mark, 0) AS float8)
-           FROM isahl."zc_id_production_rr_storage" r
-           LEFT JOIN {tbl} sm ON sm.id = r.{col}
-           WHERE r.ref_left = $1 AND r.ref_right = $2 AND r.deleted_at IS NULL"#
-    );
-    let mark: Option<f64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+    let sql = dim.sql().mark;
+    let mark: Option<f64> = sqlx::query_scalar(sql)
         .bind(prod)
         .bind(storage)
         .fetch_optional(&mut *conn)
@@ -717,7 +801,7 @@ pub async fn apply_voucher_tx(
     new: Option<&HashMap<String, Value>>,
 ) -> Result<(), String> {
     if let Some(old) = old {
-        if let Some(prod) = get_id(old, "fk_production") {
+        if let Some(prod) = get_title_id(old) {
             let income = match get_id(old, "qk_income").or_else(|| get_id(old, "qk_qty")) {
                 Some(sid) => scalar_mark_tx(conn, sid).await?,
                 None => 0.0,
@@ -735,7 +819,7 @@ pub async fn apply_voucher_tx(
         }
     }
     if let Some(new) = new {
-        if let Some(prod) = get_id(new, "fk_production") {
+        if let Some(prod) = get_title_id(new) {
             let income = match get_id(new, "qk_income").or_else(|| get_id(new, "qk_qty")) {
                 Some(sid) => scalar_mark_tx(conn, sid).await?,
                 None => 0.0,
@@ -764,29 +848,84 @@ pub async fn apply_voucher_tx(
     Ok(())
 }
 
+/// 凭证族表静态 SQL 集（编译期固化：表名是字面量，正文单一来源）。
+/// 族成员新增 = 在此加一行；`chain_tail` 保留 `{title_col}` 列占位
+/// （凭证族统一列占位模式，见 [`voucher_title_column`]——列名亦为编译期枚举的字面量）。
+struct VoucherFamilySql {
+    probe: &'static str,
+    backfill: &'static str,
+    dup_code: &'static str,
+    soft_delete: &'static str,
+    chain_tail: &'static str,
+}
+
+macro_rules! voucher_family_sql {
+    ($table:literal) => {
+        VoucherFamilySql {
+            probe: concat!(
+                "SELECT EXISTS (SELECT 1 FROM isahl.\"",
+                $table,
+                "\" WHERE id = $1)"
+            ),
+            backfill: concat!(
+                "UPDATE isahl.\"",
+                $table,
+                "\" \
+                 SET qk_pre_balance = $1, qk_balance = $2, updated_at = NOW() WHERE id = $3"
+            ),
+            dup_code: concat!(
+                "SELECT EXISTS (SELECT 1 FROM isahl.\"",
+                $table,
+                "\" v \
+                 WHERE v.code = $1 AND v.deleted_at IS NULL \
+                   AND ($2::bigint IS NULL OR v.id <> $2))"
+            ),
+            soft_delete: concat!(
+                "UPDATE isahl.\"",
+                $table,
+                "\" \
+                 SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1"
+            ),
+            chain_tail: concat!(
+                "SELECT CAST(COALESCE(sm.mark, 0) AS float8) \
+                 FROM isahl.\"",
+                $table,
+                "\" v \
+                 JOIN isahl.\"zc_id_scale\" sm ON sm.id = v.qk_balance \
+                 WHERE v.{title_col} = $1 \
+                   AND (v.\"fk_obj-storage\" = $2 OR v.\"fk_subj-storage\" = $2) \
+                   AND v.qk_balance IS NOT NULL AND v.deleted_at IS NULL \
+                 ORDER BY v.id DESC LIMIT 1"
+            ),
+        }
+    };
+}
+
+const VOUCHER_FAMILIES: &[VoucherFamilySql] = &[
+    voucher_family_sql!("zc_id_stat-sto-voucher"),
+    voucher_family_sql!("zc_id_stat-com-voucher"),
+    voucher_family_sql!("zc_id_stat-tsp-voucher"),
+    voucher_family_sql!("zc_id_stat-slf-voucher"),
+];
+
+/// 缺省族（探测未命中 / 调用方未传 id 时的既有回落口径 = sto）
+const DEFAULT_VOUCHER_FAMILY: &VoucherFamilySql = &VOUCHER_FAMILIES[0];
+
 /// 凭证余额回填目标表探测（fix-wz-capacity-calculation：余额链表感知）——
-/// 返回持有该凭证 id 的凭证族表名（静态白名单内动态选择，无注入面）。
+/// 返回持有该凭证 id 的凭证族（编译期固化 SQL 集内匹配，无注入面）。
 /// 此前硬编码 stat-sto-voucher：对 com/tsp/slf 凭证恒 0 行匹配，余额链静默失明。
 async fn voucher_balance_table_tx(
     conn: &mut sqlx::PgConnection,
     id: i64,
-) -> Result<Option<&'static str>, String> {
-    const VOUCHER_TABLES: [&str; 4] = [
-        "zc_id_stat-sto-voucher",
-        "zc_id_stat-com-voucher",
-        "zc_id_stat-tsp-voucher",
-        "zc_id_stat-slf-voucher",
-    ];
-    for table in VOUCHER_TABLES {
-        let hit: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            r#"SELECT EXISTS (SELECT 1 FROM isahl."{table}" WHERE id = $1)"#
-        )))
-        .bind(id)
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|e| format!("voucher table probe: {e}"))?;
+) -> Result<Option<&'static VoucherFamilySql>, String> {
+    for fam in VOUCHER_FAMILIES {
+        let hit: bool = sqlx::query_scalar(fam.probe)
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| format!("voucher table probe: {e}"))?;
         if hit {
-            return Ok(Some(table));
+            return Ok(Some(fam));
         }
     }
     Ok(None)
@@ -804,7 +943,7 @@ async fn backfill_voucher_balance_tx(
     outgo: f64,
     after: f64,
 ) -> Result<(), String> {
-    let Some(table) = voucher_balance_table_tx(conn, voucher_id).await? else {
+    let Some(fam) = voucher_balance_table_tx(conn, voucher_id).await? else {
         return Ok(()); // 凭证 id 不在四族表——诚实跳过，不伪造余额
     };
     // fix-wz-capacity-concurrency：期初统一反推 before = after − income + outgo——
@@ -814,17 +953,13 @@ async fn backfill_voucher_balance_tx(
     let before = after - income + outgo;
     let pre_id = ensure_scalar_tx(conn, before).await?;
     let bal_id = ensure_scalar_tx(conn, after).await?;
-    sqlx::query(sqlx::AssertSqlSafe(format!(
-        r#"UPDATE isahl."{table}"
-           SET qk_pre_balance = $1, qk_balance = $2, updated_at = NOW()
-           WHERE id = $3"#
-    )))
-    .bind(pre_id)
-    .bind(bal_id)
-    .bind(voucher_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| format!("balance backfill tx: {e}"))?;
+    sqlx::query(fam.backfill)
+        .bind(pre_id)
+        .bind(bal_id)
+        .bind(voucher_id)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| format!("balance backfill tx: {e}"))?;
     Ok(())
 }
 
@@ -932,6 +1067,13 @@ fn get_id(record: &HashMap<String, Value>, field: &str) -> Option<i64> {
         Value::String(s) => s.parse().ok(),
         _ => None,
     })
+}
+
+/// 从凭证记录取「物/交易对象」列值（列名随模型演进：`fk_payload` 优先，旧调用方
+/// 仍传 `fk_production`）——调用方以自己落库时的物理列名构造 HashMap，两种键都识别，
+/// 两态（模型同步前后）调用方无需同步升级即可正确物化。
+fn get_title_id(record: &HashMap<String, Value>) -> Option<i64> {
+    get_id(record, TITLE_COLUMN_CURRENT).or_else(|| get_id(record, "fk_production"))
 }
 
 // ============================================
@@ -1049,7 +1191,30 @@ pub async fn ensure_mv_inventory(pool: &PgPool) -> Result<(), String> {
 /// 刷新覆盖快照滞后）；定义漂移 → DROP 后按内嵌 DDL 重建；基表
 /// `zc_id_stat-sto-voucher` 缺失（pre/prod 旧模型）→ 降级 `log::warn` 返回 Ok
 /// 不阻断启动；其余失败返回 Err（调用方 fail-fast）。
+///
+/// 「物」列就位判据（[`voucher_title_column`]）：库内无 `fk_payload`（模型未同步）时，
+/// 内嵌 DDL 既不能创建也不能重建——既有视图定义原样保留，仅照常刷新
+/// （物权写径后的补刷依赖此分支）。
 pub async fn ensure_mv_title_ownership(pool: &PgPool) -> Result<(), String> {
+    // 1. 基表探测：无 zc_id_stat-sto-voucher → 降级跳过（不阻断启动）
+    let base: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'isahl' AND table_name = 'zc_id_stat-sto-voucher')",
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|e| format!("mv_title_ownership 基表探测失败: {e}"))?;
+    if !base {
+        log::warn!(
+            "isahl.zc_id_stat-sto-voucher 不存在——mv_title_ownership 自愈跳过（环境模型未含凭证基表）"
+        );
+        return Ok(());
+    }
+
+    // 2. 「物」列探测：库内是否已同步到当前模型列（fk_payload）
+    let title_col = voucher_title_column(pool).await?;
+    let current_model = title_col == TITLE_COLUMN_CURRENT;
+
+    // 3. 视图就绪判据：net_qty 列就绪 ∧ 定义引用当前「物」列
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'isahl' AND matviewname = 'mv_title_ownership')",
     )
@@ -1066,53 +1231,44 @@ pub async fn ensure_mv_title_ownership(pool: &PgPool) -> Result<(), String> {
         .fetch_one(pool)
         .await
         .map_err(|e| format!("mv_title_ownership 列校验失败: {e}"))?;
-        if has_net {
-            // 启动补刷：未填充（schema 重放仅建不填）先非并发初始 REFRESH，
-            // 已填充才 CONCURRENTLY（批注 555ca3ab 复现链，同 ensure_mv_inventory）
-            let populated: bool = sqlx::query_scalar(
-                "SELECT ispopulated FROM pg_matviews WHERE schemaname = 'isahl' AND matviewname = 'mv_title_ownership'",
+        // 定义引用判据：既有定义必须引用当前「物」列（引用旧列 fk_production → 漂移重建）
+        let def_current: bool = has_net
+            && sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_matviews WHERE schemaname = 'isahl' \
+                 AND matviewname = 'mv_title_ownership' AND definition LIKE '%' || $1 || '%')",
             )
+            .bind(TITLE_COLUMN_CURRENT)
             .fetch_one(pool)
             .await
-            .unwrap_or(false);
-            if populated {
-                if let Err(e) =
-                    sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY isahl.mv_title_ownership")
-                        .execute(pool)
-                        .await
-                {
-                    log::warn!(
-                        "isahl.mv_title_ownership 启动 CONCURRENTLY 刷新失败（周期任务兜底）: {e}"
-                    );
-                }
-            } else if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW isahl.mv_title_ownership")
-                .execute(pool)
-                .await
-            {
-                log::warn!("isahl.mv_title_ownership 启动初始 REFRESH 失败（周期任务兜底）: {e}");
-            }
-            return Ok(()); // 定义就绪——幂等返回
+            .map_err(|e| format!("mv_title_ownership 定义判据失败: {e}"))?;
+        if def_current {
+            refresh_existing_title_matview(pool).await?;
+            return Ok(()); // 定义就绪——刷新后幂等返回
         }
-        // 定义漂移：旧版视图缺 net_qty 列 → DROP 重建（后续走自愈 DDL）
-        log::warn!("isahl.mv_title_ownership 定义漂移（缺 net_qty 列）——重建视图");
+        if !current_model {
+            // 旧模型：既有定义即其模型定义（不判漂移）→ 保持定义，仅刷新
+            log::warn!(
+                "isahl.mv_title_ownership 库内「物」列 = {}（模型未同步）——保持既有视图定义并刷新",
+                title_col
+            );
+            refresh_existing_title_matview(pool).await?;
+            return Ok(());
+        }
+        // 定义漂移：旧版缺 net_qty 列，或定义未引用当前「物」列 → DROP 重建（后续走自愈 DDL）
+        log::warn!(
+            "isahl.mv_title_ownership 定义漂移（缺 net_qty 列或未引用 {}）——重建视图",
+            TITLE_COLUMN_CURRENT
+        );
         sqlx::query(sqlx::AssertSqlSafe(
             "DROP MATERIALIZED VIEW IF EXISTS isahl.mv_title_ownership CASCADE",
         ))
         .execute(pool)
         .await
         .map_err(|e| format!("mv_title_ownership 漂移重建 DROP 失败: {e}"))?;
-    }
-
-    // 基表探测：pre/prod 无 zc_id_stat-sto-voucher → 降级跳过（不阻断启动）
-    let base: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'isahl' AND table_name = 'zc_id_stat-sto-voucher')",
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("mv_title_ownership 基表探测失败: {e}"))?;
-    if !base {
+    } else if !current_model {
         log::warn!(
-            "isahl.zc_id_stat-sto-voucher 不存在——mv_title_ownership 自愈跳过（环境模型未含凭证基表）"
+            "isahl.mv_title_ownership 缺失且库内「物」列 = {}（模型未同步）——无法按当前模型列创建，跳过",
+            title_col
         );
         return Ok(());
     }
@@ -1134,15 +1290,55 @@ pub async fn ensure_mv_title_ownership(pool: &PgPool) -> Result<(), String> {
     Ok(())
 }
 
+/// 既有 `isahl.mv_title_ownership` 刷新（启动补刷与物权写径后补刷共用）。
+///
+/// 未填充（schema 重放仅建不填）→ 非并发初始 REFRESH；已填充 → `CONCURRENTLY`
+/// （批注 555ca3ab 复现链，同 `ensure_mv_inventory`）。刷新失败仅 warn
+/// （周期任务 `mv-inventory-refresh` 兜底）。
+async fn refresh_existing_title_matview(pool: &PgPool) -> Result<(), String> {
+    let populated: bool = sqlx::query_scalar(
+        "SELECT ispopulated FROM pg_matviews WHERE schemaname = 'isahl' AND matviewname = 'mv_title_ownership'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+    if populated {
+        if let Err(e) =
+            sqlx::query("REFRESH MATERIALIZED VIEW CONCURRENTLY isahl.mv_title_ownership")
+                .execute(pool)
+                .await
+        {
+            log::warn!("isahl.mv_title_ownership 启动 CONCURRENTLY 刷新失败（周期任务兜底）: {e}");
+        }
+    } else if let Err(e) = sqlx::query("REFRESH MATERIALIZED VIEW isahl.mv_title_ownership")
+        .execute(pool)
+        .await
+    {
+        log::warn!("isahl.mv_title_ownership 启动初始 REFRESH 失败（周期任务兜底）: {e}");
+    }
+    Ok(())
+}
+
 // ═══════════════════════════════════════════════════════
 // 初始物权凭证原语（add-subject-certificate-title）
 // ═══════════════════════════════════════════════════════
 
+/// 初始物权凭证 INSERT 模板：`{title_col}` = 库内当前「物」列（[`voucher_title_column`]）。
+///
+/// 占位替换值恒为该函数的两个编译期字面量之一，替换结果经 `AssertSqlSafe` 执行
+/// （同 [`voucher_balance_table_tx`] 表感知分支的既有写法）。
+const TITLE_VOUCHER_INSERT_SQL: &str = r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
+           (id, code, notice, fk_subject, {title_col}, qk_income,
+            dk_scene, dk_factor, dk_function, created_by_id)
+           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id"#;
+
 /// 编制初始物权凭证（主体取得物）——事务内库函数。
 ///
-/// 物权语义写径原语：主体（`fk_subject`）取得物（`fk_production`，如证书实体）时
+/// 物权语义写径原语：主体（`fk_subject`）取得物（交易对象列，如证书实体）时
 /// 编制单边 IN 凭证（落仓储凭证叶 `zc_id_stat-whs-voucher`，标量 `qk_income`=份数），
 /// `mv_title_ownership` 刷新后自动生成 (主体, 物) 关联项。授权/资产取得同构复用。
+/// 物列取库内当前「物」列（[`voucher_title_column`]），与视图读列同源。
 ///
 /// - 幂等：同 `code` 未删除凭证已存在 → 跳过返回 `Ok(None)`
 /// - 类列形态 1（§4.3.3）：`dk_*` 由调用方经 `ontology_binding::resolve` 解析传入，
@@ -1174,7 +1370,7 @@ pub async fn create_title_voucher_tx(
     // 份数标量行（qk_income 标量引用）
     let scalar_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, '物权份数', $2::numeric, $3) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, '物权份数', $2::numeric, $3) RETURNING id"#,
     )
     .bind(code)
     .bind(rust_decimal::Decimal::from_f64(qty).unwrap_or_default())
@@ -1183,28 +1379,25 @@ pub async fn create_title_voucher_tx(
     .await
     .map_err(|e| format!("title voucher 标量行失败: {e}"))?;
 
-    // 单边 IN 凭证（dk 派生形态——类列由触发器推导）
-    let voucher_id: i64 = sqlx::query_scalar(
-        r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
-           (id, code, notice, fk_subject, fk_production, qk_income,
-            dk_scene, dk_factor, dk_function, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id"#,
-    )
-    .bind(code)
-    .bind(format!(
-        "主体物权取得 subject={subject_id} production={production_id}"
-    ))
-    .bind(subject_id)
-    .bind(production_id)
-    .bind(scalar_id)
-    .bind(dk.0)
-    .bind(dk.1)
-    .bind(dk.2)
-    .bind(user_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| format!("title voucher 凭证落库失败: {e}"))?;
+    // 单边 IN 凭证：交易对象列 = 库内当前「物」列（与 mv_title_ownership 读列同源，
+    // 模型同步前后两态一致）；dk 派生形态——类列由触发器推导
+    let title_col = voucher_title_column(&mut *tx).await?;
+    let insert_sql = TITLE_VOUCHER_INSERT_SQL.replace("{title_col}", title_col);
+    let voucher_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql))
+        .bind(code)
+        .bind(format!(
+            "主体物权取得 subject={subject_id} production={production_id}"
+        ))
+        .bind(subject_id)
+        .bind(production_id)
+        .bind(scalar_id)
+        .bind(dk.0)
+        .bind(dk.1)
+        .bind(dk.2)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| format!("title voucher 凭证落库失败: {e}"))?;
     Ok(Some(voucher_id))
 }
 
@@ -1313,8 +1506,8 @@ pub async fn apply_guarded_voucher_tx(
     let min = get_f64(rec, "__min");
     let max = get_f64(rec, "__max");
 
-    let prod = get_id(rec, "fk_production")
-        .ok_or_else(|| GuardError::Db("guarded voucher: fk_production 缺失".to_string()))?;
+    let prod = get_title_id(rec)
+        .ok_or_else(|| GuardError::Db("guarded voucher: 交易对象列缺失".to_string()))?;
     let storage = get_id(rec, "fk_obj-storage")
         .or_else(|| get_id(rec, "fk_subj-storage"))
         .ok_or_else(|| {
@@ -1340,59 +1533,46 @@ pub async fn apply_guarded_voucher_tx(
     // fix-wz-capacity-concurrency：判定侧表跟随——dup/软删/链尾三处查询此前写死
     // stat-sto-voucher，对 com/tsp/slf 凭证族恒空转（dup 仅靠 INSERT 唯一索引兜底、
     // 软删恒 no-op、链尾恒 None 退物化 mark）。按凭证 id 探测族表，缺省回落 sto。
-    let voucher_table: &str = match self_id {
+    let family: &'static VoucherFamilySql = match self_id {
         Some(id) => voucher_balance_table_tx(conn, id)
             .await
             .map_err(GuardError::Db)?
-            .unwrap_or("zc_id_stat-sto-voucher"),
-        None => "zc_id_stat-sto-voucher",
+            .unwrap_or(DEFAULT_VOUCHER_FAMILY),
+        None => DEFAULT_VOUCHER_FAMILY,
     };
 
     // 2. code 幂等检查（同 code 非本次凭证已存在 → 重放/并发重提，幂等跳过）
-    let dup: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        r#"SELECT EXISTS (
-               SELECT 1 FROM isahl."{voucher_table}" v
-               WHERE v.code = $1 AND v.deleted_at IS NULL
-                 AND ($2::bigint IS NULL OR v.id <> $2)
-           )"#
-    )))
-    .bind(&code)
-    .bind(self_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(|e| GuardError::Db(format!("guarded voucher code 幂等检查失败: {e}")))?;
+    let dup: bool = sqlx::query_scalar(family.dup_code)
+        .bind(&code)
+        .bind(self_id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| GuardError::Db(format!("guarded voucher code 幂等检查失败: {e}")))?;
     if dup {
         // 本次凭证（调用方已 INSERT）为重复——软删清理（审计事实不留重复行）；
         // 调用方未传 id 时无法软删，仅返回跳过（凭证残留由调用方负责）。
         if let Some(self_id) = self_id {
-            sqlx::query(sqlx::AssertSqlSafe(format!(
-                r#"UPDATE isahl."{voucher_table}"
-                   SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1"#
-            )))
-            .bind(self_id)
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| GuardError::Db(format!("guarded voucher 重复凭证软删失败: {e}")))?;
+            sqlx::query(family.soft_delete)
+                .bind(self_id)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| GuardError::Db(format!("guarded voucher 重复凭证软删失败: {e}")))?;
         }
         return Ok(VoucherApply::SkippedDuplicate);
     }
 
-    // 3. 链尾余额判定（表感知 + OUT 方向入链：fk_obj-storage OR fk_subj-storage——
+    // 3. 链尾余额判定（表感知 + 交易对象列感知 + OUT 方向入链：fk_obj-storage OR fk_subj-storage——
     // 单方向凭证（如 COM-OUT 只有 subj 储元）此前即使表对了也进不了链）
-    let chain_tail: Option<f64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        r#"SELECT CAST(COALESCE(sm.mark, 0) AS float8)
-           FROM isahl."{voucher_table}" v
-           JOIN isahl."zc_id_scale" sm ON sm.id = v.qk_balance
-           WHERE v.fk_production = $1
-             AND (v."fk_obj-storage" = $2 OR v."fk_subj-storage" = $2)
-             AND v.qk_balance IS NOT NULL AND v.deleted_at IS NULL
-           ORDER BY v.id DESC LIMIT 1"#
-    )))
-    .bind(prod)
-    .bind(storage)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(|e| GuardError::Db(format!("guarded voucher 链尾判定失败: {e}")))?;
+    let title_col = voucher_title_column(&mut *conn)
+        .await
+        .map_err(GuardError::Db)?;
+    let chain_tail_sql = family.chain_tail.replace("{title_col}", title_col);
+    let chain_tail: Option<f64> = sqlx::query_scalar(sqlx::AssertSqlSafe(chain_tail_sql))
+        .bind(prod)
+        .bind(storage)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|e| GuardError::Db(format!("guarded voucher 链尾判定失败: {e}")))?;
 
     let cur = match chain_tail {
         Some(b) => b,

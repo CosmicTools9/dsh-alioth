@@ -1,11 +1,13 @@
-//! BOM B-Number Trigger Template
+//! BOM 编号同步模板：`b_number`（结构化规范输入）→ `code`（最终承载列）。
 //!
-//! BEFORE INSERT/UPDATE 时生成 BOM 编号。
+//! 域主裁定（2026-09-16）：`b_number` 是结构化规范输入，由**前端**负责自动生成；
+//! `code` 是 BOM 编号的最终承载列。写入 `b_number`（非空）时 `code` 复制其值；
+//! 未写入 `b_number` 时 `code` 由应用直写（本模板不动它）。
+//! 后端只做同步、不再自动计算编号（原 `BomBNumberTemplate` 已随
+//! `remove-bom-bnumber-autocompute-trigger` 移除）。
 
 use crate::{
-    template::{
-        TemplateEngine, TriggerMetadata, TriggerOperationDef, TriggerTemplate, TriggerTimingDef,
-    },
+    template::{TriggerMetadata, TriggerOperationDef, TriggerTemplate, TriggerTimingDef},
     utils::*,
     TriggerContext, TriggerError, TriggerResult,
 };
@@ -13,16 +15,16 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// BOM 编号生成模板
+/// bom 族 `b_number → code` 同步。
 ///
-/// 适用表：`zc_id_bom`、`zc_id_bom-assemble`
-pub struct BomBNumberTemplate;
+/// 适用表：`zc_id_bom`、`zc_id_bom-assemble`（父表注册，经 pg_catalog 继承图覆盖全部 bom 子孙表）。
+pub struct BomCodeSyncTemplate;
 
 #[async_trait]
-impl TriggerTemplate for BomBNumberTemplate {
+impl TriggerTemplate for BomCodeSyncTemplate {
     fn metadata(&self) -> TriggerMetadata {
         TriggerMetadata {
-            name: "tf_bf_ups_81_on_zc_id_bom".to_string(),
+            name: "tf_bf_ups_82_on_zc_id_bom_code_sync".to_string(),
             applies_to: vec!["zc_id_bom".to_string(), "zc_id_bom-assemble".to_string()],
             operations: vec![TriggerOperationDef::Insert, TriggerOperationDef::Update],
             timing: TriggerTimingDef::Before,
@@ -31,89 +33,69 @@ impl TriggerTemplate for BomBNumberTemplate {
 
     async fn execute(
         &self,
-        ctx: &TriggerContext,
+        _ctx: &TriggerContext,
         _old_record: Option<&HashMap<String, Value>>,
         new_record: Option<&HashMap<String, Value>>,
     ) -> Result<TriggerResult, TriggerError> {
-        let new = new_record
-            .ok_or_else(|| TriggerError::ExecutionFailed("New record required".to_string()))?;
-
-        let engine = TemplateEngine::new(ctx.pool.clone());
-
-        if ctx.pool.is_none() {
-            let id: i64 = get_field(new, "id").unwrap_or(0);
-            let notice: Option<String> = get_field(new, "notice");
-            let b_number = format!(
-                "BOM-{}-{}",
-                ctx.timestamp.format("%Y%m%d"),
-                crc32_hex(&format!("{}-{}", id, notice.unwrap_or_default()))
-            );
-            return Ok(
-                TriggerResult::new().with_modified_field("b_number", Value::String(b_number))
-            );
+        let Some(new) = new_record else {
+            return Ok(TriggerResult::new());
+        };
+        // 写入 `b_number`（非空）⇒ `code` 复制其值；`b_number` 缺省/为空 ⇒ 不动 `code`（应用直写）。
+        match get_field::<String>(new, "b_number") {
+            Some(bn) if !bn.is_empty() => {
+                Ok(TriggerResult::new().with_modified_field("code", Value::String(bn)))
+            }
+            _ => Ok(TriggerResult::new()),
         }
+    }
+}
 
-        let notice: Option<String> = get_field(new, "notice");
-        let _f_: Option<String> = get_field(new, "_f_");
-        let _t_: Option<String> = get_field(new, "_t_");
-        let typ: Option<String> = get_field(new, "type");
-        let tk_version: Option<i64> = get_field(new, "tk_version");
-        let tk_batch_no: Option<i64> = get_field(new, "tk_batch_no");
-        let fk_editor: Option<i64> = get_field(new, "fk_editor");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TriggerOperation;
 
-        let version = match tk_version {
-            Some(id) => engine.resolve_variable_notice(id).await?,
-            None => None,
-        };
-        let batch = match tk_batch_no {
-            Some(id) => engine.resolve_variable_notice(id).await?,
-            None => None,
-        };
-        let ecode = match fk_editor {
-            Some(id) => engine.resolve_variable_code_notice(id).await?,
-            None => None,
-        };
+    #[tokio::test]
+    async fn copies_b_number_to_code_when_present() {
+        let tpl = BomCodeSyncTemplate;
+        let mut new_record = HashMap::new();
+        new_record.insert(
+            "b_number".to_string(),
+            Value::String("BOM-01-02".to_string()),
+        );
+        let ctx = TriggerContext::new("zc_id_bom", TriggerOperation::Insert);
+        let result = tpl.execute(&ctx, None, Some(&new_record)).await.unwrap();
+        assert_eq!(
+            result.modified_fields.get("code"),
+            Some(&Value::String("BOM-01-02".to_string())),
+            "写入 b_number ⇒ code MUST 复制其值"
+        );
+    }
 
-        let form = _f_.as_deref().unwrap_or("");
-        let btyp = _t_.as_deref().unwrap_or("");
-        let base = notice.unwrap_or_default();
-        let type_ = typ.as_deref().unwrap_or("");
-        let ver = version.as_deref().unwrap_or("");
-        let bat = batch.as_deref().unwrap_or("");
-        let ec = ecode.as_deref().unwrap_or("");
+    #[tokio::test]
+    async fn leaves_code_untouched_when_b_number_absent() {
+        let tpl = BomCodeSyncTemplate;
+        let mut new_record = HashMap::new();
+        new_record.insert("code".to_string(), Value::String("直写码".to_string()));
+        let ctx = TriggerContext::new("zc_id_bom", TriggerOperation::Insert);
+        let result = tpl.execute(&ctx, None, Some(&new_record)).await.unwrap();
+        assert!(
+            !result.modified_fields.contains_key("code"),
+            "未写 b_number ⇒ code MUST NOT 被同步模板改写（由应用直写）"
+        );
+    }
 
-        let b_number = match (form, btyp) {
-            ("创意", "范例") if !type_.is_empty() => {
-                format!("{}{}", base, type_)
-            }
-            ("创意", "实例") if !type_.is_empty() && !ec.is_empty() && !ver.is_empty() => {
-                format!("{}{}-{{{}}}[{}]", base, type_, ec, ver)
-            }
-            ("设计", "范例") if !type_.is_empty() && !ec.is_empty() && !ver.is_empty() => {
-                format!("{}{}-{{{}}}[{}]", base, type_, ec, ver)
-            }
-            ("设计", "实例") if !type_.is_empty() && !ec.is_empty() && !ver.is_empty() => {
-                format!("{}{}-{{{}}}[{}]", base, type_, ec, ver)
-            }
-            ("实现", "范例") if !type_.is_empty() && !ec.is_empty() && !ver.is_empty() => {
-                format!("{}{}-{{{}}}[{}]", base, type_, ec, ver)
-            }
-            ("实现", "实例")
-                if !type_.is_empty() && !ec.is_empty() && !ver.is_empty() && !bat.is_empty() =>
-            {
-                format!("{}{}-{{{}}}[{}]#{}", base, type_, ec, ver, bat)
-            }
-            _ => {
-                return Err(TriggerError::ValidationFailed(format!(
-                    "BOM编号生成失败, _f_={}, _t_={}, notice={}, type={}, fk_editor={}, tk_version={}, tk_batch_no={}",
-                    form, btyp, base, type_,
-                    fk_editor.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string()),
-                    tk_version.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string()),
-                    tk_batch_no.map(|v| v.to_string()).unwrap_or_else(|| "NULL".to_string())
-                )));
-            }
-        };
-
-        Ok(TriggerResult::new().with_modified_field("b_number", Value::String(b_number)))
+    #[tokio::test]
+    async fn leaves_code_untouched_when_b_number_empty() {
+        let tpl = BomCodeSyncTemplate;
+        let mut new_record = HashMap::new();
+        new_record.insert("b_number".to_string(), Value::String(String::new()));
+        new_record.insert("code".to_string(), Value::String("直写码".to_string()));
+        let ctx = TriggerContext::new("zc_id_bom", TriggerOperation::Insert);
+        let result = tpl.execute(&ctx, None, Some(&new_record)).await.unwrap();
+        assert!(
+            !result.modified_fields.contains_key("code"),
+            "b_number 为空串 ⇒ 视为未写入 ⇒ code MUST NOT 被覆盖"
+        );
     }
 }

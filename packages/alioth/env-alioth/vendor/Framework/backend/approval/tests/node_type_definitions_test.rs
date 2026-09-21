@@ -307,8 +307,9 @@ async fn parallel_forks_all_branches_ignoring_cond() {
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "p", "type": "parallel", "label": "并行分支", "next": [{"to": 2, "cond": "false"}, {"to": 3}]},
-            {"id": "a1", "type": "approval", "label": "分支 A", "mode": "or_sign"},
-            {"id": "a2", "type": "approval", "label": "分支 B", "mode": "or_sign"}
+            {"id": "a1", "type": "approval", "label": "分支 A", "mode": "or_sign", "next": [{"to": 4}]},
+            {"id": "a2", "type": "approval", "label": "分支 B", "mode": "or_sign", "next": [{"to": 4}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let flow_id = create_flow(&pool, "Parallel", Some(scope_id), &graph).await;

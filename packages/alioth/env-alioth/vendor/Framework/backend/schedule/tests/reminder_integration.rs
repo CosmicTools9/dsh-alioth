@@ -393,6 +393,9 @@ async fn reminder_handler_sends_message_for_due_plan() {
     .bind("reminder-due-test")
     .bind(&code)
     .bind(segm_id)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert plan");
@@ -461,6 +464,9 @@ async fn toggle_plan_done_writes_execution_instance() {
     )
     .bind("p5-toggle-test")
     .bind(&code)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
     .fetch_one(&pool)
     .await
     .expect("insert plan");

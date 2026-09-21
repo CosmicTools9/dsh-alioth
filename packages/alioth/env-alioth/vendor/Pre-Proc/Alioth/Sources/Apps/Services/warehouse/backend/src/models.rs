@@ -132,7 +132,7 @@ pub struct WarehouseLocation {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_address: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
+    pub sk_currency: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -158,7 +158,7 @@ impl AliothDbEntity for WarehouseLocation {
         r#"isahl."zc_id_stor-plc-warehouse""#
     }
 
-    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, projection, _f_, _t_, dk_scene, dk_factor, dk_function, tpl_id, ak_source, fk_address, sk_unit, fk_trustee, qk_capacity, fk_parent, qk_fence"#;
+    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, projection, _f_, _t_, dk_scene, dk_factor, dk_function, tpl_id, ak_source, fk_address, sk_currency, fk_trustee, qk_capacity, fk_parent, qk_fence"#;
     const ENTITY_NAME: &'static str = "warehouse_location";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -181,7 +181,7 @@ pub struct CreateWarehouseLocationRequest {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_address: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
+    pub sk_currency: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -203,7 +203,7 @@ pub struct UpdateWarehouseLocationRequest {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_address: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
+    pub sk_currency: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]

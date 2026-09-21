@@ -8,6 +8,7 @@
 
 pub mod bill_check;
 pub mod consignment;
+pub mod consignment_structures;
 pub mod contract;
 pub mod deta_bill_check;
 mod drift_guard;

@@ -9,7 +9,9 @@ use crud::AliothRepository;
 async fn version_crud_and_chain_maintenance() {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
-    sqlx::query("DELETE FROM isahl.zc_id_version")
+    // ONLY：zc_id_version 是模型继承族之根（384 表，含 zc_id_law/stan-*）——
+    // 不带 ONLY 的清场会连坐删除全族行（模型级种子数据）
+    sqlx::query("DELETE FROM ONLY isahl.zc_id_version")
         .execute(&pool)
         .await
         .unwrap();
@@ -22,7 +24,6 @@ async fn version_crud_and_chain_maintenance() {
             version::entity::CreateVersionRequest {
                 tpl_id: Some(1),
                 tk_version: Some(1),
-                reversion: Some(0),
                 notice: None,
                 code: None,
                 comments: None,
@@ -43,7 +44,6 @@ async fn version_crud_and_chain_maintenance() {
             version::entity::CreateVersionRequest {
                 tpl_id: Some(1),
                 tk_version: Some(2),
-                reversion: Some(0),
                 notice: None,
                 code: None,
                 comments: None,
@@ -69,10 +69,9 @@ async fn version_crud_and_chain_maintenance() {
             version::entity::UpdateVersionRequest {
                 tpl_id: None,
                 tk_version: None,
-                reversion: Some(5),
+                comments: Some("rev-5".into()),
                 notice: None,
                 code: None,
-                comments: None,
                 tk_batch_no: None,
                 ck_branch: None,
                 fk_previous: None,
@@ -82,7 +81,7 @@ async fn version_crud_and_chain_maintenance() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(updated.reversion, Some(5));
+    assert_eq!(updated.comments.as_deref(), Some("rev-5"));
 
     let list = repo
         .list(&common::data::ListQuery {
@@ -106,18 +105,38 @@ async fn version_crud_and_chain_maintenance() {
 async fn seed_versions_is_idempotent() {
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
-    sqlx::query("DELETE FROM isahl.zc_id_version")
+    // ONLY：zc_id_version 是模型继承族之根（384 表，含 zc_id_law/stan-*）——
+    // 不带 ONLY 的清场会连坐删除全族行（模型级种子数据）
+    sqlx::query("DELETE FROM ONLY isahl.zc_id_version")
         .execute(&pool)
         .await
         .unwrap();
+    // 精确清本种子自有行（叶表 zc_id_bom-file）：不动族内模型级行
+    sqlx::query(
+        r#"DELETE FROM isahl."zc_id_bom-file"
+           WHERE (tpl_id, tk_version) IN ((1,1), (1,2), (1,3), (2,1), (2,2))"#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
-    let first = alioth_service_version::seed::seed_versions(&pool)
+    let _first = alioth_service_version::seed::seed_versions(&pool)
         .await
         .expect("first seed should succeed");
     let second = alioth_service_version::seed::seed_versions(&pool)
         .await
         .expect("second seed should succeed");
 
+    // 共享测试库可能已有同 (tpl_id, tk_version) 行（幂等即跳过），故断言包含式：
+    // 5 组种子版本全部在册 + 二次调用零新增
     assert_eq!(second, 0, "re-seeding should be idempotent");
-    assert!(first >= 5, "should seed at least 5 versions");
+    let seeded: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl."zc_id_bom-file"
+           WHERE deleted_at IS NULL
+             AND (tpl_id, tk_version) IN ((1,1), (1,2), (1,3), (2,1), (2,2))"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count seeded versions");
+    assert_eq!(seeded, 5, "种子 5 组版本应全部在册");
 }

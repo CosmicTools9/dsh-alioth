@@ -21,11 +21,12 @@ pub async fn save_meta(
     usage: Option<&Value>,
     attachments: Option<&Value>,
     knowledge_refs: Option<&Value>,
+    tool_calls: Option<&Value>,
 ) -> Result<(), String> {
     sqlx::query(
         r#"INSERT INTO isahl_auth.chat_message_meta
-               (msg_id, session_id, agent_code, structured, usage, attachments, knowledge_refs)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (msg_id, session_id, agent_code, structured, usage, attachments, knowledge_refs, tool_calls)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (msg_id) DO UPDATE SET
                session_id = EXCLUDED.session_id,
                agent_code = CASE WHEN EXCLUDED.agent_code <> '' THEN EXCLUDED.agent_code
@@ -33,7 +34,8 @@ pub async fn save_meta(
                structured = COALESCE(EXCLUDED.structured, isahl_auth.chat_message_meta.structured),
                usage = COALESCE(EXCLUDED.usage, isahl_auth.chat_message_meta.usage),
                attachments = COALESCE(EXCLUDED.attachments, isahl_auth.chat_message_meta.attachments),
-               knowledge_refs = COALESCE(EXCLUDED.knowledge_refs, isahl_auth.chat_message_meta.knowledge_refs)"#,
+               knowledge_refs = COALESCE(EXCLUDED.knowledge_refs, isahl_auth.chat_message_meta.knowledge_refs),
+               tool_calls = COALESCE(EXCLUDED.tool_calls, isahl_auth.chat_message_meta.tool_calls)"#,
     )
     .bind(msg_id)
     .bind(session_id)
@@ -42,6 +44,7 @@ pub async fn save_meta(
     .bind(usage)
     .bind(attachments)
     .bind(knowledge_refs)
+    .bind(tool_calls)
     .execute(pool)
     .await
     .map_err(|e| format!("save message meta failed: {}", e))?;
@@ -140,18 +143,28 @@ pub async fn soft_delete(pool: &PgPool, msg_id: i64) -> Result<bool, String> {
 
 /// regenerate 用：软删某 session 最后一条 assistant 消息并清其 meta 行。
 /// 返回被删消息 id（无 assistant 消息 → None）。
+///
+/// assistant 侧判定 = 发送方为智能体侧联系方式（`agent-<code>` 前缀 ∪ 历史 `llm-agent`），
+/// 与 `memory_scope::agent_contact_id_set` 同口径（refactor-chat-ai-subject-identity-memory E1）。
 pub async fn soft_delete_last_assistant(
     pool: &PgPool,
     session_id: i64,
-    ai_contact_id: i64,
 ) -> Result<Option<i64>, String> {
     let msg_id: Option<i64> = sqlx::query_scalar(
         r#"SELECT m.id FROM isahl."zc_id_msgs-chat_ai" m
-           WHERE m.fk_thread = $1 AND m."fk_sender-addr" = $2 AND m.deleted_at IS NULL
-           ORDER BY m.created_at DESC LIMIT 1"#,
+           WHERE m.fk_thread = $1
+             AND m.deleted_at IS NULL
+             AND EXISTS (
+                 SELECT 1 FROM isahl.zc_id_contact_infos ci
+                  WHERE ci.id = m."fk_sender-addr"
+                    AND ci.deleted_at IS NULL
+                    AND (ci.code LIKE $2 OR ci.code = $3)
+             )
+           ORDER BY m.created_at DESC, m.id DESC LIMIT 1"#,
     )
     .bind(session_id)
-    .bind(ai_contact_id)
+    .bind(super::super::memory_scope::subject_contact_code_prefix_like())
+    .bind(super::super::memory_scope::LEGACY_SHARED_AI_CONTACT_CODE)
     .fetch_optional(pool)
     .await
     .map_err(|e| format!("last assistant lookup failed: {}", e))?;

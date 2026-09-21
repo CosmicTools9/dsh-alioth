@@ -9,7 +9,7 @@ use common::data::{ListQuery, PaginatedResponse};
 use common::error::AliothError;
 use crud::AliothRepository;
 use rust_decimal::Decimal;
-use sqlx::{AssertSqlSafe, FromRow, PgPool, Postgres, Transaction};
+use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 // ── 许可证 License Repository ────────────────────────────────────────────
 // 完整实现 ontology 映射：
@@ -35,8 +35,10 @@ impl From<PgPool> for LicenseRepository {
     }
 }
 
-/// 用于 list/get 的 JOIN 查询字段列表。
-const LICENSE_SELECT_FIELDS: &str = r#"
+/// 用于 list/get 的 JOIN 查询字段列表（编译期字面量——站点一律 `concat!` 展开）。
+macro_rules! license_select_fields {
+    () => {
+        r#"
 l.id, l.notice AS name, l.code AS key,
 l."fk_subj-provider" AS vendor, l.ck_category AS kind,
 sc.mark AS seats,
@@ -48,7 +50,9 @@ jsonb_build_object(
     'type', jsonb_build_object('notice', cate.notice, 'code', cate.code),
     'status', jsonb_build_object('notice', st.notice, 'code', st.code)
 ) AS _refs,
-l.created_at, l.updated_at, l.deleted_at"#;
+l.created_at, l.updated_at, l.deleted_at"#
+    };
+}
 /// 插入或更新 scalar-common，返回 ID。
 async fn ensure_common_scalar(
     tx: &mut Transaction<'_, Postgres>,
@@ -209,8 +213,10 @@ impl
         let page_size = query.page_size.max(1);
         let offset = (page - 1) * page_size;
 
-        let items_sql = format!(
-            r#"SELECT {} FROM isahl."zc_id_prod-license-purchase" l
+        let items: Vec<models::License> = sqlx::query_as::<_, models::License>(concat!(
+            r#"SELECT "#,
+            license_select_fields!(),
+            r#" FROM isahl."zc_id_prod-license-purchase" l
                LEFT JOIN isahl."zc_id_scal-common" sc ON sc.id = l.qk_capacity AND sc.deleted_at IS NULL
                LEFT JOIN LATERAL (
                    SELECT dto.qk_date FROM isahl."zc_id_deta-trade_order" dto
@@ -227,16 +233,13 @@ impl
                LEFT JOIN isahl.zc_id_category cate ON cate.id = l.ck_category AND cate.deleted_at IS NULL
                LEFT JOIN isahl.zc_id_status st ON st.id = rps.ref_right AND st.deleted_at IS NULL
                WHERE l.deleted_at IS NULL
-               ORDER BY l.id DESC LIMIT $1 OFFSET $2"#,
-            LICENSE_SELECT_FIELDS
-        );
-        let items: Vec<models::License> =
-            sqlx::query_as::<_, models::License>(AssertSqlSafe(items_sql))
-                .bind(page_size)
-                .bind(offset)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(AliothError::from)?;
+               ORDER BY l.id DESC LIMIT $1 OFFSET $2"#
+        ))
+        .bind(page_size)
+        .bind(offset)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AliothError::from)?;
 
         let count_sql = r#"SELECT COUNT(*) FROM isahl."zc_id_prod-license-purchase" l WHERE l.deleted_at IS NULL"#;
         let (total,) = sqlx::query_as::<_, (i64,)>(count_sql)
@@ -253,8 +256,10 @@ impl
     }
 
     async fn get(&self, id: i64) -> Result<Option<models::License>, AliothError> {
-        let sql = format!(
-            r#"SELECT {} FROM isahl."zc_id_prod-license-purchase" l
+        sqlx::query_as::<_, models::License>(concat!(
+            r#"SELECT "#,
+            license_select_fields!(),
+            r#" FROM isahl."zc_id_prod-license-purchase" l
                LEFT JOIN isahl."zc_id_scal-common" sc ON sc.id = l.qk_capacity AND sc.deleted_at IS NULL
                LEFT JOIN LATERAL (
                    SELECT dto.qk_date FROM isahl."zc_id_deta-trade_order" dto
@@ -270,14 +275,12 @@ impl
                LEFT JOIN isahl.zc_id_subjects subj ON subj.id = l."fk_subj-provider" AND subj.deleted_at IS NULL
                LEFT JOIN isahl.zc_id_category cate ON cate.id = l.ck_category AND cate.deleted_at IS NULL
                LEFT JOIN isahl.zc_id_status st ON st.id = rps.ref_right AND st.deleted_at IS NULL
-               WHERE l.id = $1 AND l.deleted_at IS NULL"#,
-            LICENSE_SELECT_FIELDS
-        );
-        sqlx::query_as::<_, models::License>(AssertSqlSafe(sql.as_str()))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(AliothError::from)
+               WHERE l.id = $1 AND l.deleted_at IS NULL"#
+        ))
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(AliothError::from)
     }
 
     async fn create(
@@ -360,8 +363,13 @@ impl
 
         if let Some(status_id) = req.status {
             sqlx::query(
-                r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (ref_left, ref_right, created_by_id)
-                   VALUES ($1, $2, $3)"#,
+                r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status"
+                       (ref_left, ref_right, created_by_id)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (ref_left) DO UPDATE
+                     SET ref_right = EXCLUDED.ref_right,
+                         deleted_at = NULL, deleted_by_id = NULL,
+                         updated_by_id = EXCLUDED.created_by_id, updated_at = NOW()"#,
             )
             .bind(license_id)
             .bind(status_id)
@@ -475,19 +483,16 @@ impl
         .map_err(AliothError::from)?;
 
         if let Some(status_id) = req.status {
+            // 一行一状态：唯一索引 ref_left 无软删谓词（软删行仍占键）——就地 upsert，
+            // 形态同 AVIC airworthiness 先例（ON CONFLICT (ref_left) DO UPDATE）
             sqlx::query(
-                r#"UPDATE isahl."zc_id_lifecycle_r_primary-status" SET deleted_at = NOW(), updated_by_id = $3
-                   WHERE ref_left = $1 AND deleted_at IS NULL"#,
-            )
-            .bind(id)
-            .bind(user_id)
-            .bind(user_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(AliothError::from)?;
-            sqlx::query(
-                r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (ref_left, ref_right, created_by_id)
-                   VALUES ($1, $2, $3)"#,
+                r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status"
+                       (ref_left, ref_right, created_by_id)
+                   VALUES ($1, $2, $3)
+                   ON CONFLICT (ref_left) DO UPDATE
+                     SET ref_right = EXCLUDED.ref_right,
+                         deleted_at = NULL, deleted_by_id = NULL,
+                         updated_by_id = EXCLUDED.created_by_id, updated_at = NOW()"#,
             )
             .bind(id)
             .bind(status_id)

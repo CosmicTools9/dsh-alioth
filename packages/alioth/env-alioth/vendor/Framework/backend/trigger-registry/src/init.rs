@@ -48,16 +48,6 @@ pub fn init_trigger_registry() -> TriggerRegistry {
         crate::category::CategoryCSortTemplate,
     )));
 
-    // Consensus-level v_sort trigger
-    registry.register(TriggerHandle::from_template(Arc::new(
-        crate::sort::ConsensusVSortTemplate,
-    )));
-
-    // Dimension-level v_sort trigger
-    registry.register(TriggerHandle::from_template(Arc::new(
-        crate::sort::DimensionVSortTemplate,
-    )));
-
     // Consensus code auto-generation trigger
     registry.register(TriggerHandle::from_template(Arc::new(
         crate::sort::ConsensusCodeTemplate,
@@ -230,7 +220,7 @@ pub fn register_all_triggers(registry: &mut SmartTriggerRegistry, container: cra
     );
     registry.register_on_parent(
         "zc_id_bom",
-        TriggerHandle::from_template(Arc::new(crate::bom::BomBNumberTemplate)),
+        TriggerHandle::from_template(Arc::new(crate::bom::BomCodeSyncTemplate)),
     );
 
     // Operation/Process triggers
@@ -259,22 +249,6 @@ pub fn register_all_triggers(registry: &mut SmartTriggerRegistry, container: cra
     registry.register_on_parent(
         "zc_id_category",
         TriggerHandle::from_template(Arc::new(crate::category::CategoryCSortTemplate)),
-    );
-
-    // ============================================
-    // Consensus v_sort Triggers
-    // ============================================
-    registry.register_on_parent(
-        "zc_id_consensus",
-        TriggerHandle::from_template(Arc::new(crate::sort::ConsensusVSortTemplate)),
-    );
-
-    // ============================================
-    // Dimension v_sort Triggers
-    // ============================================
-    registry.register_on_parent(
-        "zc_ad_dimension",
-        TriggerHandle::from_template(Arc::new(crate::sort::DimensionVSortTemplate)),
     );
 
     // ============================================
@@ -403,6 +377,26 @@ pub async fn refresh_smart_registry_from_db(pool: &PgPool) -> Result<(), String>
 
     let mut registry = registry_arc.write().await;
     registry.set_inheritance(graph);
+
+    Ok(())
+}
+
+/// Refresh the global SmartTriggerRegistry inheritance graph from `pg_catalog.pg_inherits`.
+///
+/// **Gateway 容器专用**：其 DB 访问面限 `isahl` + `isahl_auth`，MUST NOT 读 `isahl_meta`；
+/// Meta 容器用 `refresh_smart_registry_from_db`（读 `meta_collections.config.inherits`）。
+///
+/// 启动时调用，使运行时触发面 = 数据库真实继承树。
+pub async fn refresh_smart_registry_from_pg_catalog(pool: &PgPool) -> Result<(), String> {
+    let Some(registry_arc) = get_smart_registry() else {
+        return Err("SmartTriggerRegistry not initialized".to_string());
+    };
+
+    let graph = crate::inheritance::InheritanceGraph::from_pg_catalog(pool)
+        .await
+        .map_err(|e| format!("Failed to load inheritance graph from pg_catalog: {}", e))?;
+
+    registry_arc.write().await.set_inheritance(graph);
 
     Ok(())
 }

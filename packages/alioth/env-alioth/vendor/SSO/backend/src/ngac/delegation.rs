@@ -204,17 +204,22 @@ pub async fn list_my_delegations(
     };
     let limit = query.limit.unwrap_or(50).clamp(1, 200);
     let offset = query.offset.unwrap_or(0).max(0);
-    let (col, _) = match query.direction.as_deref() {
-        Some("in") => ("fk_delegatee", "in"),
-        _ => ("fk_delegator", "out"),
-    };
-    let sql = format!(
-        "SELECT id, fk_delegator, fk_delegatee, fk_user_attribute, date_st, date_ed, status, created_at \
+    // 方向闭集（in → fk_delegatee / 其余 → fk_delegator）⇒ 查询文本编译期固化
+    let sql = match query.direction.as_deref() {
+        Some("in") => {
+            "SELECT id, fk_delegator, fk_delegatee, fk_user_attribute, date_st, date_ed, status, created_at \
          FROM isahl_auth.ngac_delegation \
-         WHERE {col} = $1 AND deleted_at IS NULL \
+         WHERE fk_delegatee = $1 AND deleted_at IS NULL \
          ORDER BY id DESC LIMIT $2 OFFSET $3"
-    );
-    let rows = sqlx::query_as::<_, DelegationRow>(sqlx::AssertSqlSafe(sql.as_str()))
+        }
+        _ => {
+            "SELECT id, fk_delegator, fk_delegatee, fk_user_attribute, date_st, date_ed, status, created_at \
+         FROM isahl_auth.ngac_delegation \
+         WHERE fk_delegator = $1 AND deleted_at IS NULL \
+         ORDER BY id DESC LIMIT $2 OFFSET $3"
+        }
+    };
+    let rows = sqlx::query_as::<_, DelegationRow>(sql)
         .bind(user_id)
         .bind(limit)
         .bind(offset)

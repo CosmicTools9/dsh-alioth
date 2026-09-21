@@ -55,6 +55,13 @@ fn ordered_to_one_with_sort_and_junction_fields() {
     assert!(suffix.contains("DESC"));
     assert!(suffix.contains("NULLS LAST"));
     assert!(suffix.contains("LIMIT 1"));
+    // 软删过滤：桥接行 + 目标行都必须排除软删行（否则软删后重插会在 `_refs` 累积，
+    // 表现为「修改变新增」——同一联系方式出现多份）
+    assert!(
+        suffix.contains("jt0.\"deleted_at\" IS NULL")
+            && suffix.contains("t0.\"deleted_at\" IS NULL"),
+        "junction and target rows must be filtered by deleted_at: {suffix}"
+    );
 }
 
 #[derive(sqlx::FromRow, serde::Serialize)]
@@ -100,6 +107,7 @@ impl HasReferenceJoins for TestOrderedToMany {
 #[test]
 fn ordered_to_many_includes_coalesce_and_junction_fields() {
     let suffix = build_refs_select_suffix::<TestOrderedToMany>();
+    println!("GENERATED_SUFFIX={}", suffix);
     assert!(!suffix.is_empty());
     assert!(
         suffix.contains("COALESCE"),
@@ -118,6 +126,12 @@ fn ordered_to_many_includes_coalesce_and_junction_fields() {
     assert!(
         suffix.contains("'[]'::jsonb"),
         "should have empty array fallback"
+    );
+    // 软删过滤同 ToOne（桥接行 + 目标行）
+    assert!(
+        suffix.contains("jt0.\"deleted_at\" IS NULL")
+            && suffix.contains("t0.\"deleted_at\" IS NULL"),
+        "junction and target rows must be filtered by deleted_at: {suffix}"
     );
 }
 

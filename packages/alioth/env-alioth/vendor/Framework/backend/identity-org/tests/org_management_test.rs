@@ -41,7 +41,7 @@ async fn ensure_org(pool: &PgPool, id: i64, notice: &str) {
         .expect("resolve org coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_orga-department" (id, notice, code, dk_scene, dk_factor, dk_function)
-           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING"#,
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING"#,
     )
     .bind(id)
     .bind(notice)
@@ -61,7 +61,7 @@ async fn ensure_position(pool: &PgPool, id: i64, notice: &str, parent_id: Option
         .expect("resolve position coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, fk_parent, dk_scene, dk_factor, dk_function)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING"#,
+           VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING"#,
     )
     .bind(id)
     .bind(notice)
@@ -75,13 +75,39 @@ async fn ensure_position(pool: &PgPool, id: i64, notice: &str, parent_id: Option
     .expect("ensure position");
 }
 
+/// 桥表幂等挂接 SQL（表名编译期固化；夹具多处复用）
+macro_rules! bridge_insert_sql {
+    ($t:literal) => {
+        concat!(
+            r#"INSERT INTO isahl.""#,
+            $t,
+            r#"" (ref_left, ref_right) VALUES ($1, $2) ON CONFLICT DO NOTHING"#
+        )
+    };
+}
+
 /// 桥行计数（未删除）
 async fn bridge_count(pool: &PgPool, table: &str, left: i64, right: i64) -> i64 {
-    let sql = format!(
-        r#"SELECT COUNT(*) FROM isahl."{}" WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#,
-        table
-    );
-    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.as_str()))
+    // 桥表静态计数 SQL（白名单闭式：夹具仅用这 6 张桥表；表名编译期固化）
+    macro_rules! count_sql {
+        ($t:literal) => {
+            concat!(
+                r#"SELECT COUNT(*) FROM isahl.""#,
+                $t,
+                r#"" WHERE ref_left = $1 AND ref_right = $2 AND deleted_at IS NULL"#
+            )
+        };
+    }
+    let sql = match table {
+        "zc_id_subj-post_rr_subordinate" => count_sql!("zc_id_subj-post_rr_subordinate"),
+        "zc_id_subj-org_rr_position" => count_sql!("zc_id_subj-org_rr_position"),
+        "zc_id_subj-org_rr_subordinate" => count_sql!("zc_id_subj-org_rr_subordinate"),
+        "zc_id_subj-post_rr_employee" => count_sql!("zc_id_subj-post_rr_employee"),
+        "zc_id_subj-org_rr_employee" => count_sql!("zc_id_subj-org_rr_employee"),
+        "zc_id_subj-group_rr_member" => count_sql!("zc_id_subj-group_rr_member"),
+        other => panic!("未知桥表: {other}"),
+    };
+    sqlx::query_scalar(sql)
         .bind(left)
         .bind(right)
         .fetch_one(pool)
@@ -380,7 +406,7 @@ async fn employment_subject_routing_and_bridge() {
             .expect("resolve natural coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(natural)
     .bind("自然人")
@@ -398,7 +424,7 @@ async fn employment_subject_routing_and_bridge() {
             .expect("resolve agent coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_empl-agent" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(agent)
     .bind("智能体")
@@ -439,22 +465,16 @@ async fn employment_subject_routing_and_bridge() {
     assert!(in_agent, "智能体在 empl-agent 命中");
 
     // 桥挂接：岗位任职 + 组织雇员
-    for (table, left) in [
-        ("zc_id_subj-post_rr_employee", pos),
-        ("zc_id_subj-org_rr_employee", org),
+    for (sql, left) in [
+        (bridge_insert_sql!("zc_id_subj-post_rr_employee"), pos),
+        (bridge_insert_sql!("zc_id_subj-org_rr_employee"), org),
     ] {
-        sqlx::query(sqlx::AssertSqlSafe(
-            format!(
-                r#"INSERT INTO isahl."{}" (ref_left, ref_right) VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
-                table
-            )
-            .as_str(),
-        ))
-        .bind(left)
-        .bind(natural)
-        .execute(&pool)
-        .await
-        .expect("insert employment bridge");
+        sqlx::query(sql)
+            .bind(left)
+            .bind(natural)
+            .execute(&pool)
+            .await
+            .expect("insert employment bridge");
     }
     assert_eq!(
         bridge_count(&pool, "zc_id_subj-post_rr_employee", pos, natural).await,
@@ -508,7 +528,7 @@ async fn employment_subject_routing_and_bridge() {
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_contacts (id, notice, code, dk_scene, dk_factor, dk_function)
            VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(contact)
     .bind("通讯录员工")
@@ -527,22 +547,16 @@ async fn employment_subject_routing_and_bridge() {
     .await
     .expect("contact check");
     assert!(in_contact, "联系人在 zc_id_contacts 命中");
-    for (table, left) in [
-        ("zc_id_subj-post_rr_employee", pos),
-        ("zc_id_subj-org_rr_employee", org),
+    for (sql, left) in [
+        (bridge_insert_sql!("zc_id_subj-post_rr_employee"), pos),
+        (bridge_insert_sql!("zc_id_subj-org_rr_employee"), org),
     ] {
-        sqlx::query(sqlx::AssertSqlSafe(
-            format!(
-                r#"INSERT INTO isahl."{}" (ref_left, ref_right) VALUES ($1, $2) ON CONFLICT DO NOTHING"#,
-                table
-            )
-            .as_str(),
-        ))
-        .bind(left)
-        .bind(contact)
-        .execute(&pool)
-        .await
-        .expect("insert contact employment bridge");
+        sqlx::query(sql)
+            .bind(left)
+            .bind(contact)
+            .execute(&pool)
+            .await
+            .expect("insert contact employment bridge");
     }
     assert_eq!(
         bridge_count(&pool, "zc_id_subj-post_rr_employee", pos, contact).await,
@@ -568,7 +582,7 @@ async fn group_member_bridge_attach_and_detach() {
             .expect("resolve group coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_subj-group" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(group)
     .bind("测试群组")
@@ -586,7 +600,7 @@ async fn group_member_bridge_attach_and_detach() {
             .expect("resolve member coords");
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_empl-natural" (id, notice, code, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(member)
     .bind("群成员")
@@ -628,83 +642,94 @@ async fn group_member_bridge_attach_and_detach() {
 }
 
 /// 岗位类型显示回归（fix-avic-position-category-display）：
-/// ck_category 解析 = 类目-岗位 code → zc_id_category（父表跨子族）notice → ''，
-/// 绝不外泄 ck_category::text 数字 id（用户报告岗位列表显示 2251799813685249）。
-/// 直接执行与 org_tree.rs POSITION_SELECT 相同的 COALESCE 语义（handler 字段私有，
-/// SQL 即 handler 行为）。
+/// `ck_category` 两级解析 = 类目-岗位叶表 `code` → 父表 `zc_id_category`（跨子族）`notice` → `''`，
+/// 绝不外泄 `ck_category::text` 数字 id（用户报告岗位列表显示 2251799813685249）。
+/// 表达式与 org_tree.rs POSITION_SELECT 同构（handler 常量含全列，此处只镜像该解析式）。
+const CATEGORY_SQL: &str = r#"SELECT COALESCE(
+         (SELECT c.code FROM isahl."zc_id_cate-position" c
+          WHERE c.id = p.ck_category AND c.deleted_at IS NULL),
+         (SELECT c2.notice FROM isahl.zc_id_category c2
+          WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL),
+         '')
+   FROM isahl."zc_id_subj-position" p WHERE p.id = $1 AND p.deleted_at IS NULL"#;
+
+async fn resolve_category(pool: &PgPool, position_id: i64) -> String {
+    sqlx::query_scalar(CATEGORY_SQL)
+        .bind(position_id)
+        .fetch_one(pool)
+        .await
+        .expect("resolve ck_category")
+}
+
+/// 插岗位行（可带 `ck_category`），坐标三元组按 §6.12 解析（禁硬编码 ZUID）。
+async fn insert_position(pool: &PgPool, id: i64, notice: &str, category: Option<i64>) -> i64 {
+    let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
+        .await
+        .expect("resolve position coords");
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, ck_category, dk_scene, dk_factor, dk_function)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING"#,
+    )
+    .bind(id)
+    .bind(notice)
+    .bind(format!("T-POS-{id}"))
+    .bind(category)
+    .bind(dk_scene)
+    .bind(dk_factor)
+    .bind(dk_function)
+    .execute(pool)
+    .await
+    .expect("ensure position");
+    id
+}
+
 #[tokio::test]
 async fn position_category_resolves_visible_label_no_raw_id() {
     let pool = test_pool().await;
 
-    // 治理类基表行（ngac.sql 同款：code='ccb_member'，notice='CCB 成员'）
+    // ① 治理/种子岗：类别 = `zc_id_category` 基表行（`seed-dimensions.sql` 的 ccb_member 同款形态；
+    //    该表模型侧 row_layer='carry'，字典条目承载行）。两级解析首支（叶表）未命中 → 走 notice。
     let cat_base = tid(31);
     sqlx::query(
-        r#"INSERT INTO isahl."zc_id_cate-position" (id, notice, code)
-           VALUES ($1, 'CCB 成员', 'ccb_member') ON CONFLICT (id) DO NOTHING"#,
+        r#"INSERT INTO isahl.zc_id_category (id, notice, code)
+           VALUES ($1, 'CCB 成员', 'ccb_member') ON CONFLICT DO NOTHING"#,
     )
     .bind(cat_base)
     .execute(&pool)
     .await
     .expect("ensure base category");
-
-    // 基表行类岗位（业务 seed 同款：ck_category 直绑基表行 id）
-    let pos_gov = tid(32);
-    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
-    let (dk_scene, dk_factor, dk_function) =
-        ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
-            .await
-            .expect("resolve governance position coords");
-    sqlx::query(
-        r#"INSERT INTO isahl."zc_id_subj-position" (id, notice, code, ck_category, dk_scene, dk_factor, dk_function)
-           VALUES ($1, 'CCB 主席', $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING"#,
-    )
-    .bind(pos_gov)
-    .bind(format!("T-GOV-{pos_gov}"))
-    .bind(cat_base)
-    .bind(dk_scene)
-    .bind(dk_factor)
-    .bind(dk_function)
-    .execute(&pool)
-    .await
-    .expect("ensure governance position");
-
-    // 无类别岗位（ck_category NULL）
-    let pos_none = tid(33);
-    ensure_position(&pool, pos_none, "无类别岗位", None).await;
-
-    // handler POSITION_SELECT 同款解析表达式
-    let resolved: String = sqlx::query_scalar(
-        r#"SELECT COALESCE(
-                 (SELECT c.code FROM isahl."zc_id_cate-position" c
-                  WHERE c.id = p.ck_category AND c.deleted_at IS NULL),
-                 (SELECT c2.notice FROM isahl.zc_id_category c2
-                  WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL),
-                 '')
-           FROM isahl."zc_id_subj-position" p WHERE p.id = $1 AND p.deleted_at IS NULL"#,
-    )
-    .bind(pos_gov)
-    .fetch_one(&pool)
-    .await
-    .expect("resolve governance category");
+    let pos_gov = insert_position(&pool, tid(32), "CCB 主席", Some(cat_base)).await;
     assert_eq!(
-        resolved, "CCB 成员",
-        "基表行类别应解析为其字典 notice，而非 ck_category::text 数字 id"
+        resolve_category(&pool, pos_gov).await,
+        "CCB 成员",
+        "基表行类别 MUST 经父表跨子族解析为其字典 notice，而非 ck_category::text 数字 id"
     );
 
-    let resolved_none: String = sqlx::query_scalar(
-        r#"SELECT COALESCE(
-                 (SELECT c.code FROM isahl."zc_id_cate-position" c
-                  WHERE c.id = p.ck_category AND c.deleted_at IS NULL),
-                 (SELECT c2.notice FROM isahl.zc_id_category c2
-                  WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL),
-                 '')
-           FROM isahl."zc_id_subj-position" p WHERE p.id = $1 AND p.deleted_at IS NULL"#,
+    // ② 页面新建岗：类别 = `zc_id_cate-position` 叶表行 → 首支命中，输出该行 code（页面/WZ 契约）。
+    let cat_leaf = tid(34);
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_cate-position" (id, notice, code)
+           VALUES ($1, '决策岗', 'EXECUTIVE') ON CONFLICT DO NOTHING"#,
     )
-    .bind(pos_none)
-    .fetch_one(&pool)
+    .bind(cat_leaf)
+    .execute(&pool)
     .await
-    .expect("resolve no category");
-    assert_eq!(resolved_none, "", "无类别岗位显示为空串");
+    .expect("ensure leaf category");
+    let pos_page = insert_position(&pool, tid(35), "页面岗", Some(cat_leaf)).await;
+    assert_eq!(
+        resolve_category(&pool, pos_page).await,
+        "EXECUTIVE",
+        "叶表类别 MUST 输出其 code（页面/WZ 五码契约，前端据此映射中文标签）"
+    );
+
+    // ③ 无类别岗位（ck_category NULL）→ 空串
+    let pos_none = tid(33);
+    ensure_position(&pool, pos_none, "无类别岗位", None).await;
+    assert_eq!(
+        resolve_category(&pool, pos_none).await,
+        "",
+        "无类别岗位显示为空串"
+    );
 }
 
 /// 岗位读投影的任职员工 MUST 来自任职桥（fix-position-employee-binding-display）。
@@ -741,7 +766,7 @@ async fn position_read_projection_exposes_bridge_employees() {
             .ok();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_contacts (id, notice, code, dk_scene, dk_factor, dk_function)
-           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING"#,
+           VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING"#,
     )
     .bind(employee)
     .bind("任职投影员工")

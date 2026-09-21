@@ -30,6 +30,7 @@ pub struct ContextItem {
     pub table: String,
     pub concept: Option<String>,
     /// 范畴定义行 zuid（_t_='scope-definition'）；未种子化时 null
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub scope_id: Option<i64>,
 }
@@ -73,11 +74,13 @@ pub async fn scope_options(
 ) -> Result<HttpResponse, AliothError> {
     // 范畴定义行（父表读聚合 + tableoid 派生叶表归属，避免动态叶表查询）——
     // 业务数据，唯一保留的运行时 DB 读取
-    let scope_rows: Vec<(String, i64)> = sqlx::query_as(
-        r#"SELECT replace(tableoid::regclass::text, '"', '') AS leaf, id
-           FROM isahl."zc_id_proc-context"
-           WHERE _t_ = 'scope-definition' AND deleted_at IS NULL"#,
-    )
+    let scope_rows: Vec<(String, i64)> = sqlx::query_as(concat!(
+        r#"SELECT "#,
+        common::leaf_relname!(pc),
+        r#" AS leaf, id
+           FROM isahl."zc_id_proc-context" pc
+           WHERE _t_ = 'scope-definition' AND deleted_at IS NULL"#
+    ))
     .fetch_all(pool.get_ref())
     .await?;
     let scope_of = |table: &str| -> Option<i64> {
@@ -121,13 +124,15 @@ pub async fn scope_options(
         })
         .collect::<Vec<_>>();
     if let Some(scene) = query.scene.as_deref() {
-        let populated: Vec<String> = sqlx::query_scalar(
-            r#"SELECT replace(tableoid::regclass::text, '"', '') AS leaf
-               FROM isahl."zc_id_statement"
+        let populated: Vec<String> = sqlx::query_scalar(concat!(
+            r#"SELECT "#,
+            common::leaf_relname!(st),
+            r#" AS leaf
+               FROM isahl."zc_id_statement" st
                WHERE deleted_at IS NULL
                  AND dk_scene = (SELECT id FROM isahl."zc_id_scene" WHERE code = $1 AND deleted_at IS NULL LIMIT 1)
-               GROUP BY 1"#,
-        )
+               GROUP BY 1"#
+        ))
         .bind(scene)
         .fetch_all(pool.get_ref())
         .await?;

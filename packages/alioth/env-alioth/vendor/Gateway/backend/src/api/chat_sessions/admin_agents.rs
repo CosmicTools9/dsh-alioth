@@ -52,6 +52,9 @@ pub struct AgentAdminResponse {
     pub color: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public: Option<bool>,
+    /// 主体人格（物理列 `soul`；空/缺省不序列化——add-agent-persona-channel D2）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soul: Option<String>,
     #[serde(skip_serializing_if = "Value::is_null")]
     pub settings: Value,
     pub deleted: bool,
@@ -66,6 +69,9 @@ pub struct CreateAgentRequest {
     pub color: Option<String>,
     #[serde(default)]
     pub public: Option<bool>,
+    /// 主体人格文本（物理列 `soul`；缺省不写该列）
+    #[serde(default)]
+    pub soul: Option<String>,
     #[serde(default)]
     pub settings: Value,
 }
@@ -78,6 +84,9 @@ pub struct PatchAgentRequest {
     pub color: Option<String>,
     #[serde(default)]
     pub public: Option<bool>,
+    /// 主体人格文本（物理列 `soul`）：缺省 = 不变，空串 = 清空
+    #[serde(default)]
+    pub soul: Option<String>,
     /// AgentConfig 可覆盖字段（浅合并进既有 settings；null 键删除）
     #[serde(default)]
     pub settings: Value,
@@ -88,6 +97,7 @@ fn row_to_response(
     code: String,
     notice: Option<String>,
     color: Option<String>,
+    soul: Option<String>,
     settings: Option<Value>,
     deleted: bool,
 ) -> AgentAdminResponse {
@@ -102,6 +112,7 @@ fn row_to_response(
         name: notice.unwrap_or_default(),
         color: color.unwrap_or_default(),
         public,
+        soul,
         settings,
         deleted,
     }
@@ -134,11 +145,12 @@ pub async fn list_agents(
             String,
             Option<String>,
             Option<String>,
+            Option<String>,
             Option<Value>,
             Option<chrono::DateTime<chrono::Utc>>,
         ),
     >(
-        r#"SELECT code, notice, t_color_, settings, deleted_at
+        r#"SELECT code, notice, t_color_, soul, settings, deleted_at
            FROM isahl."zc_id_empl-agent"
            ORDER BY id ASC"#,
     )
@@ -148,8 +160,8 @@ pub async fn list_agents(
         Ok(rows) => {
             let items: Vec<AgentAdminResponse> = rows
                 .into_iter()
-                .map(|(code, notice, color, settings, deleted_at)| {
-                    row_to_response(code, notice, color, settings, deleted_at.is_some())
+                .map(|(code, notice, color, soul, settings, deleted_at)| {
+                    row_to_response(code, notice, color, soul, settings, deleted_at.is_some())
                 })
                 .collect();
             success(items)
@@ -179,8 +191,14 @@ pub async fn create_agent(
         );
     }
     if let Value::Object(map) = &body.settings {
-        if map.contains_key("code") {
-            return bad_request("INVALID_SETTINGS", "code 属于物理列，不能写入 settings");
+        // 物理列不得经 settings 承载（add-agent-persona-channel D1）
+        for physical in ["code", "notice", "t_color_", "soul"] {
+            if map.contains_key(physical) {
+                return bad_request(
+                    "INVALID_SETTINGS",
+                    &format!("{physical} 属于物理列，不能写入 settings"),
+                );
+            }
         }
     }
 
@@ -194,7 +212,16 @@ pub async fn create_agent(
         "t_color_".to_string(),
         Value::String(body.color.clone().unwrap_or_else(|| "#6366f1".to_string())),
     );
-    let mut settings = body.settings.clone();
+    // 主体人格（物理列；缺省不写该列——add-agent-persona-channel D1/D2）
+    if let Some(soul) = &body.soul {
+        record.insert("soul".to_string(), Value::String(soul.clone()));
+    }
+    // settings 为 JSONB 配置对象：缺省/非对象（含 JSON null）→ {} 起底（同 patch 口径）
+    let mut settings = if body.settings.is_object() {
+        body.settings.clone()
+    } else {
+        json!({})
+    };
     if let Value::Object(map) = &mut settings {
         match body.public {
             Some(p) => {
@@ -230,8 +257,12 @@ pub async fn create_agent(
                 .get("t_color_")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let soul = result_map
+                .get("soul")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let settings = result_map.get("settings").cloned();
-            success(row_to_response(code, notice, color, settings, false))
+            success(row_to_response(code, notice, color, soul, settings, false))
         }
         Err(e) => {
             let msg = format!("{}", e);
@@ -290,9 +321,27 @@ pub async fn patch_agent(
     if let Some(color) = &body.color {
         record.insert("t_color_".to_string(), Value::String(color.clone()));
     }
+    // 主体人格（物理列）：缺省 = 不变，空串 = 清空（add-agent-persona-channel D2）
+    if let Some(soul) = &body.soul {
+        record.insert("soul".to_string(), Value::String(soul.clone()));
+    }
     // settings 浅合并（settings 键可含 public；null 值删除键）
+    // 物理列不得经 settings 承载（add-agent-persona-channel D1）——双端同判据
+    if let Value::Object(patch) = &body.settings {
+        for physical in ["code", "notice", "t_color_", "soul"] {
+            if patch.contains_key(physical) {
+                return bad_request(
+                    "INVALID_SETTINGS",
+                    &format!("{physical} 属于物理列，不能写入 settings"),
+                );
+            }
+        }
+    }
+    // settings 为 JSONB 配置对象：SQL NULL / 非对象 → 以 {} 起底——否则 NULL 会以
+    // text 绑定打到 jsonb 列（实测 `字段 "settings" 的类型为 jsonb, 但表达式的类型为 text`）。
     let mut settings = old_map
         .get("settings")
+        .filter(|v| v.is_object())
         .cloned()
         .unwrap_or_else(|| json!({}));
     if let Value::Object(existing) = &mut settings {
@@ -338,8 +387,12 @@ pub async fn patch_agent(
                 .get("t_color_")
                 .and_then(|v| v.as_str())
                 .map(String::from);
+            let soul = result_map
+                .get("soul")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let settings = result_map.get("settings").cloned();
-            success(row_to_response(code, notice, color, settings, false))
+            success(row_to_response(code, notice, color, soul, settings, false))
         }
         Err(e) => {
             common::telemetry::error!("admin agents: patch '{}' failed: {}", code, e);

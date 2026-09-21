@@ -17,6 +17,7 @@ pub struct SystemSubjectStatus {
     /// 是否已绑定主体（entity_table='zc_id_subjects' 且 entity_id 有效）
     pub bound: bool,
     /// 绑定主体 id（未绑定时 null）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub subject_id: Option<i64>,
     /// 绑定主体 code（未绑定时 null）
@@ -35,6 +36,7 @@ pub struct BindSystemSubjectRequest {
     pub code: Option<String>,
     /// 绑定已有主体（add-subject-rebind-management）：跳过创建，校验
     /// zc_id_subjects 行存在后直接绑定（tableoid 解析叶表名）。
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub entity_id: Option<i64>,
     /// 创建模式的主体类型（fix-system-subject-seat-by-type）：选定现有叶表类型
@@ -514,6 +516,12 @@ pub async fn bind_system_subject(
         .await
         .map_err(actix_web::error::ErrorInternalServerError)?;
     }
+
+    // 说明（2026-09-14 裁决「system 绑定的主体是易运」）：平台侧锚 = `system` 哨兵绑定的**业务主体**
+    // （判据 = 名称含「物产中大」），其岗位视角由主体/岗位建档（`zc_id_subj-position` + 视角标签）承载；
+    // MUST NOT 以系统占位 `SUBJ-SYSTEM` 作运营组织槽取值 —— 故本 bootstrap 不再为 `SUBJ-SYSTEM` 补视角链
+    // （该做法会把占位主体变成可用的平台身份，与裁决冲突）。哨兵主体的视角链由
+    // change `fix-wz-platform-anchor-binding` 负责。
 
     tx.commit()
         .await

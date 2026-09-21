@@ -17,7 +17,36 @@ use trigger_registry::stock_materialization as sm;
 
 use crate::models::{CreateVoucherRequest, UpdateVoucherRequest, Voucher};
 
+/// 建单 INSERT 模板——`{title_col}` = 库内当前「物/交易对象」列
+/// （[`sm::voucher_title_column`]：新模型 `fk_payload` / 旧模型 `fk_production`），
+/// 运行期替换后经 `AssertSqlSafe` 执行；`AS production_id` 输出别名不变（对外 DTO 契约）。
+const VOUCHER_INSERT_SQL: &str = r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
+               ({title_col}, "fk_subj-storage", "fk_obj-storage", qk_qty, qk_income, qk_outgo, created_by_id,
+                dk_scene, dk_factor, dk_function)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+               RETURNING id, {title_col} AS production_id, "fk_subj-storage" AS from_storage_id,
+                         "fk_obj-storage" AS to_storage_id, qk_qty AS qty, qk_income AS income,
+                         qk_outgo AS outgo, qk_pre_balance AS pre_balance, qk_balance AS balance, created_at, updated_at, deleted_at"#;
+
+/// 更新 UPDATE 模板（同款「物」列占位）：两处 `{title_col}` = SET 目标 + RETURNING 投影。
+const VOUCHER_UPDATE_SQL: &str = r#"UPDATE isahl."zc_id_stat-whs-voucher" SET
+                   {title_col} = COALESCE($1, {title_col}),
+                   "fk_subj-storage" = COALESCE($2, "fk_subj-storage"),
+                   "fk_obj-storage" = COALESCE($3, "fk_obj-storage"),
+                   qk_qty = COALESCE($4, qk_qty),
+                   qk_income = COALESCE($5, qk_income),
+                   qk_outgo = COALESCE($6, qk_outgo),
+                   updated_at = NOW(),
+                   updated_by_id = $7
+               WHERE id = $8 AND deleted_at IS NULL
+               RETURNING id, {title_col} AS production_id, "fk_subj-storage" AS from_storage_id,
+                         "fk_obj-storage" AS to_storage_id, qk_qty AS qty, qk_income AS income,
+                         qk_outgo AS outgo, qk_pre_balance AS pre_balance, qk_balance AS balance, created_at, updated_at, deleted_at"#;
+
+/// 物化记录构造：`title_col` = 库内当前「物」列（探测值），键用物理列名——
+/// 物化侧 `get_title_id` 同时识别 `fk_payload` / `fk_production` 两键。
 fn voucher_map(
+    title_col: &str,
     id: Option<i64>,
     production_id: Option<i64>,
     from_storage_id: Option<i64>,
@@ -31,7 +60,7 @@ fn voucher_map(
         m.insert("id".to_string(), Value::from(v));
     }
     if let Some(v) = production_id {
-        m.insert("fk_production".to_string(), Value::from(v));
+        m.insert(title_col.to_string(), Value::from(v));
     }
     if let Some(v) = from_storage_id {
         m.insert("fk_subj-storage".to_string(), Value::from(v));
@@ -109,36 +138,36 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
             None => None,
         };
 
+        // 「物/交易对象」列随模型演进（新 fk_payload / 旧 fk_production）——运行期探测，
+        // 读写同列：SQL 以 {title_col} 占位替换后经 AssertSqlSafe 执行
+        let title_col = sm::voucher_title_column(self.generic.pool())
+            .await
+            .map_err(ApiError::Database)?;
+
         // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
         let (dk_scene, dk_factor, dk_function) =
-            ontology_binding::resolve(self.generic.pool(), ("GH", "FRA", "↓_GG"))
+            ontology_binding::resolve(self.generic.pool(), ("JC", "GID", "↓_LA"))
                 .await
                 .map_err(ApiError::from)?;
-        let row = sqlx::query_as::<_, Voucher>(
-            r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
-               (fk_production, "fk_subj-storage", "fk_obj-storage", qk_qty, qk_income, qk_outgo, created_by_id,
-                dk_scene, dk_factor, dk_function)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-               RETURNING id, fk_production AS production_id, "fk_subj-storage" AS from_storage_id,
-                         "fk_obj-storage" AS to_storage_id, qk_qty AS qty, qk_income AS income,
-                         qk_outgo AS outgo, qk_pre_balance AS pre_balance, qk_balance AS balance, created_at, updated_at, deleted_at"#,
-        )
-        .bind(req.production_id)
-        .bind(req.from_storage_id)
-        .bind(req.to_storage_id)
-        .bind(qty_id)
-        .bind(income_id)
-        .bind(outgo_id)
-        .bind(user_id)
-        .bind(dk_scene)
-        .bind(dk_factor)
-        .bind(dk_function)
-        .fetch_one(self.generic.pool())
-        .await
-        .map_err(ApiError::from)?;
+        let insert_sql = VOUCHER_INSERT_SQL.replace("{title_col}", title_col);
+        let row = sqlx::query_as::<_, Voucher>(sqlx::AssertSqlSafe(insert_sql))
+            .bind(req.production_id)
+            .bind(req.from_storage_id)
+            .bind(req.to_storage_id)
+            .bind(qty_id)
+            .bind(income_id)
+            .bind(outgo_id)
+            .bind(user_id)
+            .bind(dk_scene)
+            .bind(dk_factor)
+            .bind(dk_function)
+            .fetch_one(self.generic.pool())
+            .await
+            .map_err(ApiError::from)?;
 
         // 物化：时空伴随净变 + 余额链回填（显式调用 Framework 库函数）
         let new_map = voucher_map(
+            title_col,
             Some(row.id),
             row.production_id,
             row.from_storage_id,
@@ -189,7 +218,12 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
             ),
             None => None,
         };
+        // 「物/交易对象」列运行期探测（同 create：读写同列，两态可执行）
+        let title_col = sm::voucher_title_column(self.generic.pool())
+            .await
+            .map_err(ApiError::Database)?;
         let old_map = voucher_map(
+            title_col,
             Some(old.id),
             old.production_id,
             old.from_storage_id,
@@ -199,35 +233,23 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
             old.outgo,
         );
 
-        let row = sqlx::query_as::<_, Voucher>(
-            r#"UPDATE isahl."zc_id_stat-whs-voucher" SET
-                   fk_production = COALESCE($1, fk_production),
-                   "fk_subj-storage" = COALESCE($2, "fk_subj-storage"),
-                   "fk_obj-storage" = COALESCE($3, "fk_obj-storage"),
-                   qk_qty = COALESCE($4, qk_qty),
-                   qk_income = COALESCE($5, qk_income),
-                   qk_outgo = COALESCE($6, qk_outgo),
-                   updated_at = NOW(),
-                   updated_by_id = $7
-               WHERE id = $8 AND deleted_at IS NULL
-               RETURNING id, fk_production AS production_id, "fk_subj-storage" AS from_storage_id,
-                         "fk_obj-storage" AS to_storage_id, qk_qty AS qty, qk_income AS income,
-                         qk_outgo AS outgo, qk_pre_balance AS pre_balance, qk_balance AS balance, created_at, updated_at, deleted_at"#,
-        )
-        .bind(req.production_id)
-        .bind(req.from_storage_id)
-        .bind(req.to_storage_id)
-        .bind(qty_id)
-        .bind(income_id)
-        .bind(outgo_id)
-        .bind(user_id)
-        .bind(id)
-        .fetch_optional(self.generic.pool())
-        .await
-        .map_err(ApiError::from)?;
+        let update_sql = VOUCHER_UPDATE_SQL.replace("{title_col}", title_col);
+        let row = sqlx::query_as::<_, Voucher>(sqlx::AssertSqlSafe(update_sql))
+            .bind(req.production_id)
+            .bind(req.from_storage_id)
+            .bind(req.to_storage_id)
+            .bind(qty_id)
+            .bind(income_id)
+            .bind(outgo_id)
+            .bind(user_id)
+            .bind(id)
+            .fetch_optional(self.generic.pool())
+            .await
+            .map_err(ApiError::from)?;
 
         if let Some(row) = &row {
             let new_map = voucher_map(
+                title_col,
                 Some(row.id),
                 row.production_id,
                 row.from_storage_id,
@@ -251,7 +273,12 @@ impl AliothRepository<Voucher, CreateVoucherRequest, UpdateVoucherRequest, ApiEr
             .get(id)
             .await?
             .ok_or_else(|| ApiError::NotFound(format!("voucher {} not found", id)))?;
+        // 物化记录键 = 库内当前「物」列（与 create/update 同源探测）
+        let title_col = sm::voucher_title_column(self.generic.pool())
+            .await
+            .map_err(ApiError::Database)?;
         let old_map = voucher_map(
+            title_col,
             Some(old.id),
             old.production_id,
             old.from_storage_id,

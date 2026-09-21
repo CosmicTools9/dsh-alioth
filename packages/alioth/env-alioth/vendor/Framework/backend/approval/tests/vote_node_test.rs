@@ -240,7 +240,7 @@ async fn vote_publish_materializes_cate_quorum_and_bridge() {
     let (scope_id, _entity_id) = seed_task_commission(&pool).await;
 
     let mut g = vote_graph(2);
-    g["nodes"][1]["role"] = json!(format!("vote-pub"));
+    g["nodes"][1]["role"] = json!("vote-pub".to_string());
     let flow_id = create_flow(&pool, "Publish", Some(scope_id), &g).await;
     let (s, b) = post_json!(
         &app,
@@ -332,7 +332,7 @@ async fn vote_abstain_triggers_auto_reject_when_quorum_unmet() {
     let (scope_id, entity_id) = seed_task_commission(&pool).await;
 
     let mut g = vote_graph(2);
-    g["nodes"][1]["role"] = json!(format!("vote-abs"));
+    g["nodes"][1]["role"] = json!("vote-abs".to_string());
     let flow_id = create_flow(&pool, "Abstain", Some(scope_id), &g).await;
     let (s, _) = post_json!(
         &app,
@@ -492,7 +492,8 @@ async fn abstain_rejected_on_non_vote_instance() {
         "version": 1,
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
-            {"id": "a", "type": "approval", "label": "审批", "mode": "or_sign"}
+            {"id": "a", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 2}]},
+            {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]
     });
     let flow_id = create_flow(&pool, "NonVote", Some(scope_id), &graph).await;
@@ -654,7 +655,7 @@ async fn vote_quorum_gate_advances_after_quorum_met() {
     let (scope_id, entity_id) = seed_task_commission(&pool).await;
 
     let mut g = vote_graph(2);
-    g["nodes"][1]["role"] = json!(format!("vote-gate"));
+    g["nodes"][1]["role"] = json!("vote-gate".to_string());
     let flow_id = create_flow(&pool, "Runtime", Some(scope_id), &g).await;
     let (s, b) = post_json!(
         &app,

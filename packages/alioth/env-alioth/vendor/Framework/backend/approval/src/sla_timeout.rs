@@ -140,7 +140,7 @@ async fn try_escalate_transfer(
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
         let (dk_scene, dk_factor, dk_function) =
-            crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJcFtaNc)
+            crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JcFtaNc)
                 .await
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
         sqlx::query(
@@ -302,8 +302,7 @@ pub async fn check_and_reject_with(
         // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组；
         // 解析失败降级 NULL（不阻断自动驳回，与既有告警面一致）
         let (dk_scene, dk_factor, dk_function) =
-            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJcFtaNc)
-                .await
+            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JcFtaNc).await
             {
                 Ok(v) => v,
                 Err(e) => {

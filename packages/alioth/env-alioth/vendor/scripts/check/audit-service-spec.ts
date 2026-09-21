@@ -13,6 +13,9 @@
  *   F5  自定义错误类型使用 thiserror/anyhow（无自定义错误类型 → OK）
  *   F6  业务代码无 println!（src/bin/ 入口输出除外）
  *   F7  handlers/ 无直接 SQL（分层：handlers → services → repositories）
+ *   F8  声明↔实况：service.json `hasBackend: true` 而本 ns 无 backend/src → 违规
+ *       （跨 ns 复用共享内核 crate 的形态 MUST 声明 `hasBackend: false` + `backendCrate`
+ *        记录复用来源；此前该形态仅在「零发现」分支才被发现，同 ns 有其他单元时静默通过）
  *
  * 服务发现：`Pre-Proc/{ns}/Sources/Apps/Services` 优先、扁平 `Sources/Services` 回退
  * （布局契约见 scripts/lib/preproc-layout.mjs）。**零发现不得空通过**：候选根下存在
@@ -21,7 +24,7 @@
  * Usage: bun scripts/check/audit-service-spec.ts [--ns NS] [--factor FACTOR]
  * Exit code: 0 = 全部通过（或该范围内确实无 Service 单元）; 1 = 存在违规或发现失败
  */
-import { readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { gatewaySourcesKindDir } from "../lib/preproc-layout.mjs";
@@ -83,6 +86,29 @@ function undeclaredServiceJson(nsFilter?: string, factorFilter?: string): string
   return hits;
 }
 
+/** 声明↔实况：service.json 声明 hasBackend=true 但本 ns 无 backend/src。
+ *  跨 ns 复用共享内核 crate 的形态 MUST 声明 hasBackend=false + backendCrate 记录复用来源。 */
+function declaredBackendWithoutDir(nsFilter?: string, factorFilter?: string): string[] {
+  const hits: string[] = [];
+  for (const { root } of candidateRoots(nsFilter)) {
+    for (const unit of readdirSync(root, { withFileTypes: true })) {
+      if (!unit.isDirectory()) continue;
+      if (factorFilter && unit.name !== factorFilter) continue;
+      const dir = join(root, unit.name);
+      const sj = join(dir, "service.json");
+      if (!existsSync(sj) || existsSync(join(dir, "backend", "src"))) continue;
+      let declared = false;
+      try {
+        declared = JSON.parse(readFileSync(sj, "utf-8"))?.hasBackend === true;
+      } catch {
+        continue; // JSON 合法性由 check-config-json.mjs 负责
+      }
+      if (declared) hits.push(sj.replace(`${ROOT}/`, ""));
+    }
+  }
+  return hits;
+}
+
 function grep(pat: string, dir: string, exclude?: string): string[] {
   const r = spawnSync("grep", ["-rnE", pat, dir], { encoding: "utf-8", timeout: 30000 });
   if (r.status !== 0) return [];
@@ -109,6 +135,14 @@ if (services.length === 0) {
 }
 
 let allPass = true;
+const phantomBackends = declaredBackendWithoutDir(args.ns, args.factor);
+if (phantomBackends.length > 0) {
+  console.error(
+    `audit-service-spec: FAIL \u2014 ${phantomBackends.length} 个 Service 声明 hasBackend=true 但本 ns 无 backend/src（跨 ns 复用内核 crate 的形态 MUST 声明 hasBackend=false + backendCrate 记录复用来源）:`,
+  );
+  for (const p of phantomBackends) console.error(`  - ${p}`);
+  allPass = false;
+}
 for (const svc of services) {
   console.log(`\n== ${svc.ns}/${svc.id} ==`);
   const checks: [string, string, boolean, string][] = [

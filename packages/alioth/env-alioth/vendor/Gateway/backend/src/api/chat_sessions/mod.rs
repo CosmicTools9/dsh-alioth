@@ -13,6 +13,8 @@
 pub mod adapters;
 #[cfg(feature = "sso")]
 pub mod admin_agents;
+mod attachment_parse;
+pub mod memory_scope;
 pub mod memory_store;
 mod orchestrator;
 pub mod ports;
@@ -31,14 +33,17 @@ use tokio::sync::RwLock;
 use crate::i18n::I18nManagerRef;
 
 use self::adapters::{
-    agent_dispatch::AgentRouterAdapter, db_ai_contact::DbAIContactAdapter,
-    db_llm_config::DbLlmConfigAdapter, db_message::SqlxMessageAdapter, db_message_meta,
+    agent_dispatch::AgentRouterAdapter,
+    db_ai_contact::DbAIContactAdapter,
+    db_llm_config::{self, DbLlmConfigAdapter},
+    db_message::SqlxMessageAdapter,
+    db_message_meta,
     db_session::SqlxSessionAdapter,
 };
 use self::orchestrator::{
     CreateSessionInput, DefaultSessionOrchestrator, SessionOrchestrator, TurnInput,
 };
-use self::ports::{AIContactPort, MessageStorePort, SessionStorePort};
+use self::ports::{LlmConfigPort, MessageStorePort, SessionStorePort};
 // ============================================
 // 后台响应生成追踪器
 //
@@ -311,9 +316,45 @@ fn internal_error(code: &str, message: &str) -> HttpResponse {
     )
 }
 
+fn service_unavailable(code: &str, message: &str) -> HttpResponse {
+    // API_DESIGN_SPEC §3.2（错误响应顶层平铺 `{code, message, details}`，无 `error` 包装）——
+    // 本模块既有 `error()`/`internal_error()` 的 `{success:false,error:{…}}` 属历史遗留形态
+    // （R2 契约测试固化，本次不动）；**新增**错误响应按 §3.2 平铺，前端 `@alioth/api`
+    // 客户端优先取顶层 `code`，无需依赖嵌套兼容分支。
+    HttpResponse::ServiceUnavailable().json(serde_json::json!({
+        "code": code,
+        "message": message,
+    }))
+}
+
 /// R2（D2.5）内部错误泛化文案：DB/SQL 原文只进 telemetry，不透传响应
 /// （chat_sessions 全部 internal_error 调用点统一使用；code 保留供前端分支）。
 const GENERIC_INTERNAL_MSG: &str = "操作失败，请稍后重试";
+
+/// LLM 未配置（fix-llm-unconfigured-visibility）：用户可自行修复的前提缺失，
+/// 故以独立 code + 503 送达前端（MUST NOT 被 `GENERIC_INTERNAL_MSG` 泛化抹平）。
+/// 前端按 code 渲染本地化文案；此处 message 为无 i18n 时的中文兜底。
+const LLM_NOT_CONFIGURED_CODE: &str = "LLM_NOT_CONFIGURED";
+const LLM_NOT_CONFIGURED_MSG: &str =
+    "LLM 未配置：请在「系统配置 → LLM」添加可用 provider（或设置 LLM_API_KEY）后重试";
+
+/// LLM 配置前置探测（fix-llm-unconfigured-visibility）：未配置 → `Some(503 + code)`；
+/// 可用或**非未配置类失败**（DB 故障等）→ `None`（沿用既有异步失败语义）。
+/// 受理前的副作用（如 regenerate 的软删旧回复）MUST 在探测之后执行。
+async fn llm_preflight(pool: &PgPool) -> Option<HttpResponse> {
+    match DbLlmConfigAdapter::new(pool.clone()).load_service().await {
+        Err(e) => llm_unconfigured_rejection(&e),
+        Ok(_) => None,
+    }
+}
+
+/// LLM 配置加载失败的端点映射（fix-llm-unconfigured-visibility）：
+/// `Some(503 + LLM_NOT_CONFIGURED)` = 未配置（该次触发必然失败，前置拒绝）；
+/// `None` = 非未配置类失败（DB 故障等 → 维持既有异步失败语义，不前置拒绝）。
+fn llm_unconfigured_rejection(err: &str) -> Option<HttpResponse> {
+    db_llm_config::is_unconfigured(err)
+        .then(|| service_unavailable(LLM_NOT_CONFIGURED_CODE, LLM_NOT_CONFIGURED_MSG))
+}
 
 // ============================================
 // Helpers
@@ -336,7 +377,7 @@ fn build_orchestrator(pool: &PgPool, i18n: I18nManagerRef) -> Arc<DefaultSession
             let message_store = Arc::new(SqlxMessageAdapter::new(pool.clone()));
             let llm_config = Arc::new(DbLlmConfigAdapter::new(pool.clone()));
             let agent_dispatch = Arc::new(AgentRouterAdapter::new(pool.clone()));
-            let ai_contact = Arc::new(DbAIContactAdapter::new(pool.clone(), i18n.clone()));
+            let ai_contact = Arc::new(DbAIContactAdapter::new(pool.clone()));
             Arc::new(DefaultSessionOrchestrator::new(
                 pool,
                 i18n,
@@ -614,7 +655,6 @@ pub async fn add_message(
 /// GET /api/chat-sessions/{id}/messages — Load paginated message history
 pub async fn get_messages(
     pool: web::Data<PgPool>,
-    i18n_manager: web::Data<I18nManagerRef>,
     req: HttpRequest,
     path: web::Path<i64>,
     query: web::Query<MessagesQuery>,
@@ -624,22 +664,15 @@ pub async fn get_messages(
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(50).min(100);
 
-    // 角色推导与 orchestrator.derive_role 同语义：fk_sender-addr == AI contact
-    // → assistant，其余（含 NULL sender）→ user。历史里用户消息此前被硬编码
-    // 成 "unknown"，前端一律按 AI 气泡渲染。
-    let locale = req
-        .extensions()
-        .get::<Locale>()
-        .cloned()
-        .unwrap_or(Locale::new("zh-CN"));
-    let ai_contact =
-        DbAIContactAdapter::new(pool.get_ref().clone(), i18n_manager.get_ref().clone());
-    // 解析失败（如 AI contact 引导失败）降级为 None：全部按 user 渲染，
-    // 不让历史接口因联系人引导问题 500。
-    let ai_contact_id = ai_contact
-        .resolve_ai_contact_id(&locale)
-        .await
-        .unwrap_or(None);
+    // 角色推导与 orchestrator.derive_role 同语义：发送方 ∈ 智能体侧联系方式集合 →
+    // assistant，其余（含 NULL sender）→ user。历史里用户消息此前被硬编码成 "unknown"，
+    // 前端一律按 AI 气泡渲染。
+    // 智能体侧联系方式集合（`agent-<code>` 前缀 ∪ 历史 `llm-agent`）：角色判定唯一依据。
+    // 查询失败降级为空集（全部按 user 渲染），不让历史接口因该查询失败 500。
+    let agent_contacts =
+        crate::api::chat_sessions::memory_scope::agent_contact_id_set(pool.get_ref())
+            .await
+            .unwrap_or_default();
 
     let message_store = SqlxMessageAdapter::new(pool.get_ref().clone());
     match message_store
@@ -652,8 +685,7 @@ pub async fn get_messages(
                 .map(|r| {
                     let is_assistant = r
                         .fk_sender_addr
-                        .zip(ai_contact_id)
-                        .map(|(sender, ai)| sender == ai)
+                        .map(|sender| agent_contacts.contains(&sender))
                         .unwrap_or(false);
                     ChatMessageResponse {
                         id: r.id,
@@ -706,17 +738,16 @@ async fn launch_generation(
     model: Option<String>,
 ) -> Result<HttpResponse, String> {
     let locale_str = locale.to_string();
-    // D2.13：generation_id = 本轮用户消息 id
-    let ai_contact = DbAIContactAdapter::new(pool.clone(), i18n.clone());
-    let ai_contact_id = ai_contact
-        .resolve_ai_contact_id(&locale)
-        .await
-        .unwrap_or(None);
+    // LLM 未配置前置探测（fix-llm-unconfigured-visibility）：未配置时本轮**必然失败**，
+    // 不进入 202 异步 → 前端在触发时即拿到 LLM_NOT_CONFIGURED（而非 30-60s 后的英文失败）。
+    // 其余 load 失败（DB 故障等）维持既有异步语义（错误经 turn 落 GenerationStatus::Failed）。
+    if let Some(rejection) = llm_preflight(&pool).await {
+        return Ok(rejection);
+    }
+
+    // D2.13：generation_id = 本轮用户消息 id（用户侧判定见 MessageStorePort）
     let message_store = SqlxMessageAdapter::new(pool.clone());
-    let generation_id = match message_store
-        .get_last_user_message_row(session_id, ai_contact_id)
-        .await
-    {
+    let generation_id = match message_store.get_last_user_message_row(session_id).await {
         Ok(Some(row)) => row.id,
         Ok(None) => return Err("NO_USER_MESSAGE".to_string()),
         // DB 错误（如缺表/连接失败）不得吞为 NO_USER_MESSAGE——透传根因
@@ -755,7 +786,13 @@ async fn launch_generation(
                     session_id,
                     e
                 );
-                cache_insert(session_id, generation_id, GenerationStatus::Failed(e)).await;
+                // 用户可见文本剥离内部哨兵（MUST NOT 泄漏 llm-unconfigured: 标记）
+                cache_insert(
+                    session_id,
+                    generation_id,
+                    GenerationStatus::Failed(db_llm_config::visible_message(&e).to_string()),
+                )
+                .await;
             }
         }
     });
@@ -848,21 +885,15 @@ pub async fn regenerate_response(
             })));
         }
     }
-    let ai_contact =
-        DbAIContactAdapter::new(pool.get_ref().clone(), i18n_manager.get_ref().clone());
-    let ai_contact_id = match ai_contact.resolve_ai_contact_id(&locale).await {
-        Ok(Some(id)) => id,
-        _ => {
-            return Ok(internal_error(
-                "AI_CONTACT_UNAVAILABLE",
-                "AI contact 不可用，无法定位 assistant 消息",
-            ))
-        }
-    };
-    // 无最后 assistant 消息也可重生成（直接基于用户消息再来一轮）
-    if let Err(e) =
-        db_message_meta::soft_delete_last_assistant(pool.get_ref(), session_id, ai_contact_id).await
-    {
+    // LLM 未配置前置探测（fix-llm-unconfigured-visibility）：MUST 在软删旧回复**之前**——
+    // 否则未配置时旧 assistant 消息已被软删而新回复永不产生（用户净损失一条回复）。
+    if let Some(rejection) = llm_preflight(pool.get_ref()).await {
+        return Ok(rejection);
+    }
+
+    // assistant 定位按智能体侧联系方式（`agent-<code>` 前缀 ∪ 历史 `llm-agent`），
+    // 不再依赖单一共享联系人（E1：判定 MUST 以 code 前缀为唯一依据）。
+    if let Err(e) = db_message_meta::soft_delete_last_assistant(pool.get_ref(), session_id).await {
         common::telemetry::error!("regenerate: 清理旧回复失败: {}", e);
         return Ok(internal_error("DB_ERROR", GENERIC_INTERNAL_MSG));
     }
@@ -1116,6 +1147,11 @@ pub async fn model_options(
 
     match orchestrator.list_model_options().await {
         Ok(options) => Ok(success(options)),
+        // 未配置：前端须能区分并给出「去配置」提示（fix-llm-unconfigured-visibility）
+        Err(e) if db_llm_config::is_unconfigured(&e) => Ok(service_unavailable(
+            LLM_NOT_CONFIGURED_CODE,
+            LLM_NOT_CONFIGURED_MSG,
+        )),
         Err(e) => {
             common::telemetry::error!("Failed to load model options: {}", e);
             Ok(internal_error("LLM_CONFIG_ERROR", GENERIC_INTERNAL_MSG))
@@ -1255,9 +1291,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 mod tests {
     use super::*;
 
+    /// 进程级静态 generation cache 为两个测试共享 —— 并行执行时互相 clear 会假失败
+    /// （既有隔离缺陷）。以互斥守卫串行化同一 cache 的测试。
+    static CACHE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// D2.13：多轮并存 key 精确轮询语义（cache 层，无 DB）
     #[tokio::test]
     async fn generation_cache_exact_and_latest_polling() {
+        let _serial = CACHE_TEST_LOCK.lock().await;
         // 清场（静态缓存跨测试进程内共享）
         generation_cache().write().await.clear();
 
@@ -1298,6 +1339,7 @@ mod tests {
     /// D2.9：cancel 置位后接收端可见（取消语义 cache 层）
     #[tokio::test]
     async fn generation_cache_cancel_flag() {
+        let _serial = CACHE_TEST_LOCK.lock().await;
         let s = 335424851373100i64;
         let g = 335424851373101i64;
         let mut rx = cache_insert(s, g, GenerationStatus::Processing).await;
@@ -1333,5 +1375,55 @@ mod tests {
         // 泛化文案不得含 SQL/表结构细节痕迹
         let msg = parsed["error"]["message"].as_str().unwrap();
         assert!(!msg.contains("error") && !msg.contains("sql") && !msg.contains("constraint"));
+    }
+
+    /// 未配置前置拒绝：503 + code=LLM_NOT_CONFIGURED（MUST NOT 泛化为 500、MUST NOT 202 受理）。
+    #[actix_web::test]
+    async fn llm_unconfigured_preflight_returns_503_with_code() {
+        let raw = format!(
+            "{} LLM_API_KEY not configured. Add an LLM provider in System Config > LLM",
+            db_llm_config::LLM_UNCONFIGURED_MARKER
+        );
+        let resp = llm_unconfigured_rejection(&raw).expect("未配置 MUST 前置拒绝");
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let body = actix_web::body::to_bytes(resp.into_body())
+            .await
+            .expect("body bytes");
+        let parsed: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        // API_DESIGN_SPEC §3.2：新增错误响应顶层平铺（无 error 包装）
+        assert_eq!(parsed["code"], LLM_NOT_CONFIGURED_CODE);
+        assert_eq!(parsed["message"], LLM_NOT_CONFIGURED_MSG);
+        assert!(parsed.get("error").is_none(), "MUST NOT 使用 error 包装");
+        // 用户可见文案 MUST NOT 含内部哨兵
+        let msg = parsed["message"].as_str().unwrap();
+        assert!(!msg.contains(db_llm_config::LLM_UNCONFIGURED_MARKER));
+    }
+
+    /// 非未配置类失败不前置拒绝（DB 故障维持既有异步失败语义）。
+    #[test]
+    fn llm_other_failure_is_not_rejected() {
+        assert!(llm_unconfigured_rejection("DB error: connection refused").is_none());
+        assert!(llm_unconfigured_rejection("llm-unconfiguredX: near-miss").is_none());
+    }
+
+    /// 后台失败文本落库前剥离哨兵（`/response` 的 error 为用户可见文本）。
+    #[test]
+    fn llm_failure_visible_text_strips_marker() {
+        let raw = format!(
+            "{} LLM_API_KEY not configured.",
+            db_llm_config::LLM_UNCONFIGURED_MARKER
+        );
+        assert_eq!(
+            db_llm_config::visible_message(&raw),
+            "LLM_API_KEY not configured."
+        );
+        // 无哨兵文本原样透传
+        assert_eq!(
+            db_llm_config::visible_message("plain failure"),
+            "plain failure"
+        );
     }
 }

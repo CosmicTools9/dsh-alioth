@@ -29,8 +29,29 @@ use sqlx::PgPool;
 ///
 /// `builtin_display` 查询前做连字符归一（`-` → `_`，兼容 outgo-payments 等
 /// 历史双命名 seed）。新类型未收录时由链 4 fallback 兜底。
+///
+/// 值口径（2026-09-14 校准）：第 2 类条目的值 MUST = `resource_registry` 绑定表
+/// （该条目的 `table_name`）在 `isahl_meta.meta_collections.name` 中的中文语义，
+/// MUST NOT 由 `resource_type` 域名字面反推。已按绑定表修正：
+/// `receipts`（绑定 `zc_id_stat-smt-bank`）「收款单」→「事实-银行流水」、
+/// `waybill`（绑定 `zc_id_orde-land`）「运单」→「订单-陆运委托」。
+///
+/// 已裁决（2026-09-14，用户裁定）：`identities` 的值 = 「实现-身份」，对应
+/// `zc_id_identity`——SSO 侧 `identities` 是**认证身份**资源，语义贴近该表，
+/// 而非其别名条目的 `table_name`（`zc_id_subj-org`，见 `handler_aliases` 节自述
+/// 「表名仅为审计/列级归属，PDP 只用 type_name」⇒ 非语义锚点）。据此不按绑定表改名。
+///
+/// 已裁决（2026-09-14，用户选定「统一为绑定表语义」）：① 取消审批族 5 条的
+/// 「发布语义短名」例外——`approvals`/`approval_instances`（同绑
+/// `zc_id_oper-approve`）、`approval_flows`（`zc_id_process`）、`approval_actions`
+/// （`zc_id_deta-opinion`）、`delegation_rules`（`zc_id_operation`）取绑定表语义；
+/// 同表两条目同名系绑定事实，非命名疏漏。② `projects`/`tasks` 属**跨 ns 双绑定**
+/// （`projects`：Alioth/WZ `zc_id_prjt-proc_ctrl` + SE `zc_id_project`；
+/// `tasks`：Alioth/WZ `zc_id_task` + Cosmic-Tools `zc_id_task-fix`），
+/// 扁平 const 无法按 ns 分派 ⇒ 取两绑定共同的**族核**「项目」/「任务」；
+/// 若需 ns 精确名，须改为 `resolve_module` 式 ns 感知映射（另立变更）。
 pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
-    // ── 系统域（简短业务名，发布语义保留） ──
+    // ── 系统/非表资源（无 isahl 表绑定）——简短业务名 ──
     ("sso_admin", "SSO 管理"),
     ("sso_audit", "SSO 审计"),
     ("system_config", "系统配置"),
@@ -41,11 +62,15 @@ pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
     ("mades", "OpenAPI 制造"),
     ("openapi_admin", "OpenAPI 管理"),
     ("openapi_analytics", "OpenAPI 分析"),
-    ("approvals", "审批"),
-    ("approval_flows", "审批流"),
-    ("approval_instances", "审批实例"),
-    ("approval_actions", "审批操作"),
-    ("delegation_rules", "委托规则"),
+    // 审批域 5 条：2026-09-14 用户裁决——取消「发布语义短名」例外，一律取绑定表语义
+    //（approvals/approval_instances 同绑 `zc_id_oper-approve` ⇒ 同名「操作-核验审批」，
+    // 系绑定事实而非命名疏漏；`approval_flows`→`zc_id_process`、
+    // `approval_actions`→`zc_id_deta-opinion`、`delegation_rules`→`zc_id_operation`）。
+    ("approvals", "操作-核验审批"),
+    ("approval_flows", "实现-流程"),
+    ("approval_instances", "操作-核验审批"),
+    ("approval_actions", "明细-审批意见"),
+    ("delegation_rules", "实现-操作"),
     // ── registry 全量 + 存量补充（本体表中文名，按 resource_type 排序） ──
     ("aeg_reviews", "事件-变更"),
     ("airworthiness_certificates", "销售-适航证书"),
@@ -80,7 +105,7 @@ pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
     ("dispatch", "操作-核验审批"),
     ("engineers", "主体-雇员"),
     ("event_accidents", "事件-事故"),
-    ("event_trackings", "事件-跟踪"),
+    ("event_trackings", "事件-追踪"),
     ("exchange_rates", "比率-汇率"),
     ("execution", "订单-陆运委托"),
     ("factors", "实现-要素"),
@@ -128,13 +153,14 @@ pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
     ("production_schedules", "实现-计划"),
     ("products", "实现-产品"),
     ("project_budgets", "评估-定量计算"),
-    ("projects", "项目-过程控制"),
+    // projects/tasks：跨 ns 双绑定（见文件头「已裁决」②），取族核
+    ("projects", "项目"),
     ("project_templates", "实现-项目"),
     ("quad_analyses", "评估-定量计算"),
     ("reassign", "操作-核验审批"),
     ("receipt_collections", "单据-清算账单"),
     ("receipt_matches", "单据-清算账单"),
-    ("receipts", "收款单"),
+    ("receipts", "事实-银行流水"),
     ("receivables", "单据-清算账单"),
     ("regulatory_assessments", "事件-变更"),
     ("release_tags", "产品-诉求"),
@@ -153,7 +179,8 @@ pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
     ("subjects", "主体-组织"),
     ("subsystems", "产品-制造"),
     ("supplier_change_notices", "事件-变更"),
-    ("tasks", "实现-任务"),
+    // tasks：跨 ns 双绑定（见文件头「已裁决」②），取族核
+    ("tasks", "任务"),
     ("templates", "实现-合约"),
     ("test_runs", "事实-质检单"),
     ("tracking", "操作-运输追踪"),
@@ -164,7 +191,7 @@ pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
     ("ver_branch", "类目-版控分支"),
     ("verctrl", "文件-受控文件"),
     ("versions", "标签-版本"),
-    ("waybill", "运单"),
+    ("waybill", "订单-陆运委托"),
     ("waybills", "订单-运输服务"),
 ];
 

@@ -13,7 +13,19 @@ mod common;
 use common::{ensure_role_member, setup_test_schema};
 
 const USER_ID: i64 = 425201;
-const CC_USER: i64 = 425202;
+/// 收件人用户 id——每次调用唯一（进程内原子序号主导 + pid + 时间低位）：共享测试库
+/// 跨会话/线程并行时，固定 id/email（role-user-425202@test.local）必撞唯一键（三轮实测）
+fn cc_user() -> i64 {
+    static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as i64)
+        .unwrap_or(0);
+    425_000_000
+        + SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) * 1_000_000
+        + (std::process::id() as i64 % 1000) * 1000
+        + (nanos % 1000)
+}
 
 macro_rules! build_app {
     ($pool:expr, $bus:expr) => {{
@@ -53,9 +65,12 @@ macro_rules! post_json {
     }};
 }
 
-async fn seed_scope(pool: &PgPool) -> (i64, i64) {
+async fn seed_scope(pool: &PgPool) -> (i64, i64, i64, String) {
     // 收件人用户（employee 实体：subj-employee.notice → fk_user；无 engineer 实体）
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
+    let cc_uid = cc_user();
+    // username/name 亦须 per-run（auth_users_name_key 唯一）；解析/断言全链用此名
+    let cc_name = format!("cc-target-{cc_uid}");
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("ZJ", "LNC", "↓_EH"))
         .await
         .unwrap();
@@ -66,7 +81,7 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64) {
            VALUES (isahl.gen_next_zuid(), 'cc-emp', 'cc-target', $1, 1, NOW(), NOW(), '实现', '范例',
                    $2, $3, $4)"#,
     )
-    .bind(CC_USER)
+    .bind(cc_uid)
     .bind(dk_scene)
     .bind(dk_factor)
     .bind(dk_function)
@@ -74,12 +89,13 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64) {
     .await
     .unwrap();
     // 收件人用户（engineer 解析按 username/name）
-    ensure_role_member(pool, "default", CC_USER).await.unwrap();
+    ensure_role_member(pool, "default", cc_uid).await.unwrap();
     sqlx::query(
-        r#"UPDATE isahl_auth.auth_users SET username = 'cc-target', name = 'cc-target'
+        r#"UPDATE isahl_auth.auth_users SET username = $2, name = $2
            WHERE id = $1"#,
     )
-    .bind(CC_USER)
+    .bind(cc_uid)
+    .bind(&cc_name)
     .execute(pool)
     .await
     .unwrap();
@@ -109,7 +125,7 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64) {
     .fetch_one(pool)
     .await
     .unwrap();
-    (scope_id, entity_id)
+    (scope_id, entity_id, cc_uid, cc_name)
 }
 
 async fn create_flow(pool: &PgPool, name: &str, ctx_id: Option<i64>, graph: &Value) -> i64 {
@@ -152,7 +168,7 @@ fn cc_graph(refs: Value) -> Value {
         "version": 1,
         "nodes": [
             {"id": "s", "type": "start", "label": "开始", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
-            {"id": "c", "type": "cc", "label": "抄送", "recipientRefs": refs},
+            {"id": "c", "type": "cc", "label": "抄送", "recipientRefs": refs, "next": [{"to": 2}]},
             {"id": "e", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}
         ]
     })
@@ -164,9 +180,9 @@ async fn cc_structured_publish_materializes_array_and_validates() {
     setup_test_schema(&pool).await.unwrap();
     let bus: Arc<dyn DomainEventBus> = Arc::new(InMemoryEventBus::new());
     let app = build_app!(pool, bus);
-    let (scope_id, _e) = seed_scope(&pool).await;
+    let (scope_id, _e, _cc_uid, cc_name) = seed_scope(&pool).await;
 
-    let g = cc_graph(json!([{"kind": "employee", "id": "cc-target"}]));
+    let g = cc_graph(json!([{"kind": "employee", "id": cc_name}]));
     let flow = create_flow(&pool, "Structured", Some(scope_id), &g).await;
     let (s, b) = post_json!(
         &app,
@@ -189,7 +205,7 @@ async fn cc_structured_publish_materializes_array_and_validates() {
     let recips = recips.expect("timeline recipients");
     assert!(recips.is_array(), "物化应为数组: {recips}");
     assert_eq!(recips[0]["kind"], "employee");
-    assert_eq!(recips[0]["id"], "cc-target");
+    assert_eq!(recips[0]["id"], cc_name);
 
     // 非法 kind → 400
     let g2 = cc_graph(json!([{"kind": "owner", "id": "x"}]));
@@ -209,10 +225,10 @@ async fn cc_structured_event_resolves_recipients() {
     let bus: Arc<dyn DomainEventBus> = Arc::new(InMemoryEventBus::new());
     let mut rx = bus.subscribe("ApprovalCc").await.unwrap();
     let app = build_app!(pool, bus);
-    let (scope_id, entity_id) = seed_scope(&pool).await;
+    let (scope_id, entity_id, cc_uid, cc_name) = seed_scope(&pool).await;
 
     let g = cc_graph(json!([
-        {"kind": "employee", "id": "cc-target"},
+        {"kind": "employee", "id": cc_name},
         {"kind": "role", "id": "default"}
     ]));
     let flow = create_flow(&pool, "Event", Some(scope_id), &g).await;
@@ -248,5 +264,5 @@ async fn cc_structured_event_resolves_recipients() {
     // engineer 按 username/name 解析 + role default 成员（CC_USER 已在 default）
     let resolved = payload["resolvedUsers"].as_array().expect("resolvedUsers");
     let ids: Vec<i64> = resolved.iter().filter_map(|v| v.as_i64()).collect();
-    assert!(ids.contains(&CC_USER), "cc-target 用户应被解析: {ids:?}");
+    assert!(ids.contains(&cc_uid), "cc-target 用户应被解析: {ids:?}");
 }

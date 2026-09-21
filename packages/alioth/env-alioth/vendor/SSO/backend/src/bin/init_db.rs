@@ -42,7 +42,7 @@ async fn main() {
     // 按文件名排序
     entries.sort_by_key(|a| a.file_name());
 
-    // 迁移 tracking 表（对齐 Gateway namespace_schema.rs 的 MIGRATIONS_TABLE 模式）：
+    // 迁移 tracking 表（对齐 Gateway namespace_schema.rs 的记账表模式：表名唯一字面量 + 静态 SQL）：
     // 记录已成功应用的迁移，避免每次全量重跑（幂等重跑靠容错，但无记录）。
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS isahl_auth.sso_migrations (\

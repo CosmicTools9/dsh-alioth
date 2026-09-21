@@ -138,7 +138,7 @@ async fn stops_insert_and_ordered_read() {
             .bind(f.line)
             .bind(place)
             .bind(f.cat_stop)
-            .bind(seq as i32)
+            .bind(seq)
             .bind(1_i64)
             .execute(&pool)
             .await
@@ -179,7 +179,7 @@ async fn stops_full_replace_soft_deletes_old() {
             .bind(f.line)
             .bind(place)
             .bind(f.cat_stop)
-            .bind(seq as i32)
+            .bind(seq)
             .bind(1_i64)
             .execute(&pool)
             .await
@@ -199,7 +199,7 @@ async fn stops_full_replace_soft_deletes_old() {
             .bind(f.line)
             .bind(place)
             .bind(f.cat_load)
-            .bind(seq as i32)
+            .bind(seq)
             .bind(1_i64)
             .execute(&mut *tx)
             .await

@@ -4,7 +4,9 @@
 //! 本层仅负责：提取 HttpRequest 上下文 → 调 Framework 服务 → 映射 HTTP 响应。
 
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
-use framework_workspace_approval::{ApprovalActor, ApprovalHook, ApprovalService};
+use framework_workspace_approval::{
+    ApprovalActionResponse, ApprovalActor, ApprovalHook, ApprovalService,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::sync::Arc;
@@ -44,7 +46,147 @@ pub async fn apply_registration_activation(
         user_id,
         target_status
     );
+    // 审批通过 → 自动绑定主体（fix-register-approval-activation-chain 续：
+    // 「自动创建主体并绑定」的绑定半段——主体行由 SSO 实名提交创建，
+    // 此处按实名记录回填 auth_users 主体认知字段）。
+    if target_status == "active" {
+        bind_subject_from_identity(pool, user_id).await;
+    }
     Ok(())
+}
+
+/// 审批通过后的主体绑定：按申请人实名记录回填 `auth_users.entity_table/entity_id`。
+///
+/// 主体来源 = `isahl_auth.identity_verifications` 登记的实名实体实例
+/// （SSO 实名提交创建：personal → `zc_id_empl-natural`、enterprise →
+/// `zc_id_orga-non-banking-legal`）。
+/// 语义：
+/// - m2o COALESCE——用户已绑实体（含组织实体，`/api/binding/*` 或引导页绑定）时保留原绑定，仅补空；
+/// - 幂等——`entity_id IS NULL` 才写；
+/// - 白名单——仅接受 `isahl.zc_id_subjects` 继承链内的实体（`tableoid` 匹配），防越权绑定；
+/// - 无实名记录/未通过实名 → 跳过 + info（外部入驻主体经 `/api/binding/*` 绑定）。
+async fn bind_subject_from_identity(pool: &sqlx::PgPool, user_id: i64) {
+    let entity: Option<(i64, String)> = match sqlx::query_as(
+        r#"
+        SELECT iv.entity_instance_id, iv.entity_instance_table
+          FROM isahl_auth.identity_verifications iv
+         WHERE iv.user_id = $1
+           AND iv.entity_instance_id IS NOT NULL
+           AND iv.entity_instance_table IS NOT NULL
+           AND iv.verification_status IN ('verified', 'approved')
+           AND EXISTS (
+                 SELECT 1 FROM isahl.zc_id_subjects s
+                  WHERE s.id = iv.entity_instance_id
+                    AND s.deleted_at IS NULL
+                    AND s.tableoid = to_regclass('isahl.' || quote_ident(iv.entity_instance_table))
+               )
+         ORDER BY iv.updated_at DESC NULLS LAST, iv.id DESC
+         LIMIT 1
+        "#,
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            common::telemetry::warn!("主体绑定查询失败（用户 {}）: {}", user_id, e);
+            return;
+        }
+    };
+
+    let Some((entity_id, entity_table)) = entity else {
+        common::telemetry::info!(
+            "用户 {} 无已通过实名的主体记录——审批通过后不自动绑定（外部入驻主体经 /api/binding/* 绑定）",
+            user_id
+        );
+        return;
+    };
+
+    // m2o COALESCE：entity_id 为空才写（SET 表达式读旧值语义与 employee-onboarding 同构）
+    if let Err(e) = sqlx::query(
+        r#"UPDATE isahl_auth.auth_users
+              SET entity_id = COALESCE(entity_id, $1),
+                  entity_table = CASE WHEN entity_id IS NULL THEN $2 ELSE entity_table END,
+                  updated_at = NOW()
+            WHERE id = $3"#,
+    )
+    .bind(entity_id)
+    .bind(&entity_table)
+    .bind(user_id)
+    .execute(pool)
+    .await
+    {
+        common::telemetry::warn!("主体绑定写入失败（用户 {}）: {}", user_id, e);
+    }
+}
+
+/// 审批通过全链（人工端点与自动审批通过 handler 共用，防两条通过链路漂移）。
+///
+/// 链路：状态桥（`ApprovalService::execute`）→ 注册用户激活（含主体绑定）→ 流程推进。
+/// `actor_id = None` 表示匿名上下文（execute 跳过 operator 鉴权）；自动审批通过
+/// handler 传 `SYSTEM_USER_ID` 与系统意见文本。
+pub(crate) async fn approve_instance(
+    pool: &sqlx::PgPool,
+    approval_id: i64,
+    actor_id: Option<i64>,
+    opinion: Option<String>,
+    bus: Option<&Arc<dyn common::event_bus::DomainEventBus>>,
+) -> ApprovalActionResponse {
+    let opinion_text = opinion.clone();
+    let actor = actor_id.map(|uid| ApprovalActor {
+        user_id: uid,
+        opinion,
+    });
+
+    let resp = ApprovalService::execute(
+        pool,
+        approval_id,
+        "approved",
+        actor,
+        None::<&dyn ApprovalHook>,
+    )
+    .await;
+    if !resp.success {
+        return resp;
+    }
+
+    // fix-register-approval-activation-chain：注册审批（user-register-approval /
+    // external-subject-register-approval）通过 → 经 oper-approve.fk_subject 定位申请人
+    // 并激活（含主体绑定），失败 warn 不阻断审批结果（对齐 advance_flow 降级模式）。
+    if let Err(e) = apply_registration_activation(pool, approval_id, "active").await {
+        common::telemetry::warn!(
+            "approval {} 通过后注册用户激活失败（不阻断审批）: {}",
+            approval_id,
+            e
+        );
+    }
+    // fix-approval-endpoint-gates：审批通过后推进流程节点（fk_process → next-ops；
+    // FLOW-AUTHORIZATION 的 approve→end 链闭环）——失败仅 warn 不阻断审批结果
+    // （advance 幂等可重放，断点由下次操作/自检恢复）。
+    if let Some(uid) = actor_id {
+        if let Err(e) = approval::advance::advance_flow(pool, approval_id, uid, bus).await {
+            common::telemetry::warn!(
+                "approval {} 通过后流程推进失败（不阻断审批）: {}",
+                approval_id,
+                e
+            );
+        }
+    }
+    // fix-approval-gateway-event-publish：终态事件发布（对齐 approval crate approve_inner
+    // 全链）——payable/contract/driver-onboarding/employee-onboarding 域订阅方经
+    // ApprovalCompleted 驱动业务实体状态机；缺此步则审批通过后业务实体永卡中间态。
+    if let Some(bus) = bus {
+        approval::handlers::approve_reject::publish_approval_completed(
+            bus,
+            pool,
+            approval_id,
+            "approved",
+            opinion_text.as_deref(),
+        )
+        .await;
+    }
+    resp
 }
 
 /// 前端「带意见通过/驳回」POST { opinion } → 透传至 ApprovalActor.opinion。
@@ -59,6 +201,7 @@ pub async fn approve_approval(
     req: HttpRequest,
     pool: web::Data<sqlx::PgPool>,
     _messaging: web::Data<Arc<dyn common::messaging::MessagingService>>,
+    bus: web::Data<Arc<dyn common::event_bus::DomainEventBus>>,
     path: web::Path<i64>,
     body: Option<web::Json<OpinionBody>>,
 ) -> HttpResponse {
@@ -68,45 +211,15 @@ pub async fn approve_approval(
         .get::<common::context::RequestContext>()
         .map(|ctx| ctx.user_id);
     let opinion = body.and_then(|b| b.opinion.clone());
-    let actor = user_id.map(|uid| ApprovalActor {
-        user_id: uid,
-        opinion,
-    });
-
-    let resp = ApprovalService::execute(
+    let resp = approve_instance(
         pool.get_ref(),
         approval_id,
-        "approved",
-        actor,
-        None::<&dyn ApprovalHook>,
+        user_id,
+        opinion,
+        Some(bus.get_ref()),
     )
     .await;
     if resp.success {
-        // fix-register-approval-activation-chain：注册审批（user-register-approval）
-        // 通过 → 经 oper-approve.fk_subject 定位申请人并激活（comments 已文本化，
-        // 旧 comments JSON 解析链停用后激活无消费者——此处内联恢复，全 ns 生效）。
-        // 失败 warn 不阻断审批结果（对齐 advance_flow 降级模式）。
-        if let Err(e) = apply_registration_activation(pool.get_ref(), approval_id, "active").await {
-            common::telemetry::warn!(
-                "approval {} 通过后注册用户激活失败（不阻断审批）: {}",
-                approval_id,
-                e
-            );
-        }
-        // fix-approval-endpoint-gates：审批通过后推进流程节点（fk_process → next-ops；
-        // FLOW-AUTHORIZATION 的 approve→end 链闭环）——失败仅 warn 不阻断审批结果
-        // （advance 幂等可重放，断点由下次操作/自检恢复）。
-        if let Some(uid) = user_id {
-            if let Err(e) =
-                approval::advance::advance_flow(pool.get_ref(), approval_id, uid, None).await
-            {
-                common::telemetry::warn!(
-                    "approval {} 通过后流程推进失败（不阻断审批）: {}",
-                    approval_id,
-                    e
-                );
-            }
-        }
         HttpResponse::Ok().json(resp)
     } else {
         HttpResponse::BadRequest().json(resp)
@@ -118,6 +231,7 @@ pub async fn reject_approval(
     req: HttpRequest,
     pool: web::Data<sqlx::PgPool>,
     _messaging: web::Data<Arc<dyn common::messaging::MessagingService>>,
+    bus: web::Data<Arc<dyn common::event_bus::DomainEventBus>>,
     path: web::Path<i64>,
     body: Option<web::Json<OpinionBody>>,
 ) -> HttpResponse {
@@ -126,7 +240,8 @@ pub async fn reject_approval(
         .extensions()
         .get::<common::context::RequestContext>()
         .map(|ctx| ctx.user_id);
-    let opinion = body.and_then(|b| b.opinion.clone());
+    let opinion_text = body.and_then(|b| b.opinion.clone());
+    let opinion = opinion_text.clone();
     let actor = user_id.map(|uid| ApprovalActor {
         user_id: uid,
         opinion,
@@ -151,6 +266,16 @@ pub async fn reject_approval(
                 e
             );
         }
+        // fix-approval-gateway-event-publish：驳回终态事件——订阅方回滚业务状态
+        // （如承运账单 Pending→Init）；与 approve 路径对称，best-effort 不阻断。
+        approval::handlers::approve_reject::publish_approval_completed(
+            bus.get_ref(),
+            pool.get_ref(),
+            approval_id,
+            "rejected",
+            opinion_text.as_deref(),
+        )
+        .await;
         HttpResponse::Ok().json(resp)
     } else {
         HttpResponse::BadRequest().json(resp)
@@ -461,13 +586,16 @@ pub async fn get_approval_detail(
                 ELSE 'active'
             END AS status,
             CASE
-                WHEN i.tableoid::regclass::text LIKE '%zc_id_appr%' THEN split_part(i.tableoid::regclass::text, '_', 3)
+                WHEN lf.leaf LIKE '%zc_id_appr%' THEN split_part(lf.leaf, '_', 3)
                 ELSE ''
             END AS dept,
             TO_CHAR(i.created_at, 'MM-DD HH24:MI') AS time,
             (i.created_by_id = $2) AS mine,
             i.fk_operator AS operator_id
         FROM isahl."zc_id_oper-approve" i
+        CROSS JOIN LATERAL (
+            SELECT (SELECT relname FROM pg_class WHERE oid = i.tableoid) AS leaf
+        ) lf
         LEFT JOIN LATERAL (
             SELECT o.notice FROM isahl."zc_id_deta-opinion" o
             WHERE o.fk_list = i.id AND o.deleted_at IS NULL

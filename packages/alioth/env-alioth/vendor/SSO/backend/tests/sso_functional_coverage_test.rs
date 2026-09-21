@@ -4,7 +4,7 @@
 
 mod common;
 
-use actix_web::{test, web, App};
+use actix_web::{test, web, App, HttpMessage};
 use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Claims};
 use gateway_sso::auth::AuthState;
 use serde_json::json;
@@ -161,7 +161,11 @@ async fn api_key_create_and_authenticate() {
         .as_str()
         .expect("secret returned")
         .to_string();
-    let key_id = body["id"].as_i64().expect("key id");
+    // ID_JSON_PRECISION：id 以字符串下发
+    let key_id: i64 = body["id"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("key id");
     assert!(raw_key.starts_with("ak_"), "key should be prefixed ak_");
 
     // 用密钥换取 JWT
@@ -296,10 +300,21 @@ async fn ngac_pdp_check_returns_decision() {
     )
     .await;
 
+    // decide/check 系列端点硬化（enforce_decision_subject）：Bearer + Claims 双通道，
+    // 测试无中间件链须自行注入（同 ngac_explain_test 先例）
+    configure_token_validation(
+        "http://localhost:9002".to_string(),
+        "http://localhost:9002".to_string(),
+    );
+    let claims = Claims::new("1", "pdp-check@test.local", false);
+    let token =
+        encode_access_token(&claims, &test_auth_state().jwt_private_key).expect("encode token");
     let check = test::TestRequest::post()
         .uri("/pdp/check")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
         .set_json(json!({"user_id": 1, "resource": "document:123", "action": "read"}))
         .to_request();
+    check.extensions_mut().insert(claims);
     let resp = test::call_service(&app, check).await;
     assert_eq!(resp.status().as_u16(), 200, "pdp check should respond 200");
     let body: serde_json::Value = test::read_body_json(resp).await;

@@ -18,7 +18,7 @@
  * ============================================================ */
 
 // ── 扁平翻译字典 ──
-var DICT = {
+var DICT: Record<string, string> = {
   /* system-settings */
   'system-settings.branding.name': '系统设置',
   'system-settings.branding.sub': '通用基础配置',
@@ -31,6 +31,31 @@ var DICT = {
   'system-settings.scene.license-mgmt': '许可证',
   'system-settings.scene.theme': '主题',
   'system-settings.scene.language': '语言',
+
+  /* activity-shell（wz-external 简化入口壳）——原 '../i18n' 模块随事实源同步丢失，键值在此归位 */
+  'shell.backHome': '返回首页',
+  'shell.navModule': '模块导航',
+  'shell.openMenu': '打开菜单',
+  'shell.closeSearch': '关闭搜索',
+  'shell.search': '搜索',
+  'shell.collapseSidebar': '折叠侧栏',
+  'shell.expandSidebar': '展开侧栏',
+  'shell.contentArea': '内容区',
+  'shell.userMenu': '用户菜单',
+  'shell.workspace': '工作区',
+  'shell.help': '帮助',
+  'shell.privacy': '隐私',
+  'shell.account': '账户',
+  'shell.language': '语言',
+  'shell.languageSwitch': '切换语言',
+  'shell.themeLight': '切换到浅色',
+  'shell.themeDark': '切换到深色',
+  'dock.searchShortPlaceholder': '搜索…',
+  'common.colon': '：',
+  'docs.attachModal.close': '关闭',
+  'logout': '退出登录',
+  'scene.profile': '个人资料',
+  'scene.settings': '设置',
 
   /* common */
   'system-settings.common.new': '新建',
@@ -78,8 +103,6 @@ var DICT = {
   /* loading */
   'system-settings.loading.spinner': '加载中…',
   'system-settings.loading.skeleton': '内容加载中',
-
-  /* empty */
   'system-settings.empty.noData': '暂无数据',
 
   /* wizard */
@@ -96,11 +119,17 @@ var DICT = {
 };
 
 /* ── 翻译函数 ── */
-export function t(key, vars) {
+export function t(key: string, vars?: Record<string, string | number>) {
   var val = DICT[key];
   if (val === undefined) return key;
   if (!vars) return val;
-  return val.replace(/\{(\w+)\}/g, function(m, name) {
+  return val.replace(/\{(\w+)\}/g, function (m: string, name: string) {
     return vars[name] !== undefined ? String(vars[name]) : m;
   });
+}
+
+/* ── useT：hook 形态的 t() 访问器（activity-shell 消费）──
+ * 原型壳无 locale 运行时切换；t() 为 zh 字典 + key 兜底（缺键返回键名本身）。 */
+export function useT() {
+  return t;
 }

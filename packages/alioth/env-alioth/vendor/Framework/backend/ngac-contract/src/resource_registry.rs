@@ -405,6 +405,74 @@ impl ResourceRegistry {
             "receipt_sync".to_string(),
             ResourceTypeDef::new("receipt_collections", "zc_id_bill-check"),
         );
+        // fix-gw-pep-handler-resource-drift：URL 实体段 → **handler 实际校验的资源名**别名。
+        // 这些 URL 实体此前未注册（resolve 回退 map_resource 派生出 DB 中不存在的伪资源 →
+        // 强制态恒 Deny）或注册名与 handler 校验名不一致（PEP 与 handler 落在不同 OA 上）。
+        // 注册成 handler 同名资源后两侧判定同源；**不弱化校验**（校验点、动作、行级属主不变，
+        // 仅让 PEP 的资源名与 handler 对齐）。表名仅为审计/列级归属（PDP 只用 type_name）。
+        // 每个键的证据见本文件注释中的 `文件:行`（handler require_resource_access）。
+        let handler_aliases: Vec<(&str, ResourceTypeDef)> = vec![
+            // 采购询盘：/procure/*（transport-dispatch/handlers/procure.rs:180/206/278/301/420/446/539/574）
+            (
+                "procure",
+                ResourceTypeDef::new("procure-inquiries", "zc_id_prod-request"),
+            ),
+            // 车型字典：/service/isahl-db/vehicle-types（identity-org/handlers/tracking.rs:77）
+            (
+                "vehicle_types",
+                ResourceTypeDef::new("identities", "zc_id_subj-org"),
+            ),
+            // 线路站点：/traffic-lines/{id}/stops（identity-org/handlers/traffic_line_stops.rs:70/136）
+            (
+                "traffic_lines",
+                ResourceTypeDef::new("traffic_line", "zc_id_place"),
+            ),
+            // 费用科目：/fee-subjects（accounts-receivable/handlers/fee_subject.rs:77/115/136）
+            (
+                "fee_subjects",
+                ResourceTypeDef::new("receivables", "zc_id_bill-check"),
+            ),
+            // 关务拆单：/external/customs/split-bill（transport-operations/handlers/customs_split.rs:86）
+            (
+                "external",
+                ResourceTypeDef::new("waybill", "zc_id_orde-land"),
+            ),
+            // 月度对账单推送：/monthly-statement/{month}/push-xingtai（transport-operations/handlers/settlement.rs:210）
+            (
+                "monthly_statement",
+                ResourceTypeDef::new("settlements", "zc_id_plan-payment"),
+            ),
+            // FSSC 科目字典 / 回调：handler 判 outgo-yecai-payables
+            // （accounts-payable/handlers/fssc.rs:260/432）
+            (
+                "sap_classes",
+                ResourceTypeDef::new("outgo-yecai-payables", "zc_id_bill-check"),
+            ),
+            (
+                "fssc_callbacks",
+                ResourceTypeDef::new("outgo-yecai-payables", "zc_id_bill-check"),
+            ),
+            // 派车：/dispatch（transport-dispatch/handlers/dispatch.rs:23）
+            (
+                "dispatch",
+                ResourceTypeDef::new("consignments", "zc_id_orde-land"),
+            ),
+            // 应付域 handler 使用连字符名（DB 两种命名并存）——PEP 对齐 handler 侧
+            (
+                "outgo_payables",
+                ResourceTypeDef::new("outgo-payables", "zc_id_oper-payment"),
+            ),
+            (
+                "outgo_payments",
+                ResourceTypeDef::new("outgo-payments", "zc_id_oper-payment"),
+            ),
+            (
+                "outgo_yecai_payables",
+                ResourceTypeDef::new("outgo-yecai-payables", "zc_id_bill-check"),
+            ),
+        ];
+        self.entities
+            .extend(handler_aliases.into_iter().map(|(k, v)| (k.to_string(), v)));
         self
     }
 
@@ -646,6 +714,80 @@ mod tests {
             .with_alioth_defaults()
             .with_wz_defaults();
         assert!(reg.resolve("/api/service/nonexistent/create").is_none());
+    }
+
+    #[test]
+    fn test_resolve_wz_handler_resource_aliases() {
+        // fix-gw-pep-handler-resource-drift：PEP 解析出的资源名必须 == handler 实际校验名
+        let reg = ResourceRegistry::new()
+            .with_alioth_defaults()
+            .with_wz_defaults();
+        let cases = [
+            // 采购询盘（procure.rs）
+            (
+                "/api/service/transport-dispatch/procure/inquiries",
+                "procure-inquiries:0",
+            ),
+            // 子路径 id 段（/procure/inquiries/{id}）——PEP 只认 entity 后第一段
+            // （这里是 "inquiries"，非数字）→ id=0（残留：PEP id ≠ handler 行级 id，
+            // 因 CTE 对具体行无 OA 时回落 fk_resource=0 集合 OA，判定结果不变）
+            (
+                "/api/service/transport-dispatch/procure/inquiries/42",
+                "procure-inquiries:0",
+            ),
+            // 车型（identity-org/tracking.rs）
+            ("/api/service/isahl-db/vehicle-types", "identities:0"),
+            // 线路站点（identity-org/traffic_line_stops.rs）
+            (
+                "/api/service/isahl-db/traffic-lines/7/stops",
+                "traffic_line:7",
+            ),
+            // 费用科目（accounts-receivable/fee_subject.rs）
+            (
+                "/api/service/accounts-receivable/fee-subjects",
+                "receivables:0",
+            ),
+            // 关务拆单（transport-operations/customs_split.rs）
+            (
+                "/api/service/transport-operations/external/customs/split-bill",
+                "waybill:0",
+            ),
+            // 月度对账推送（transport-operations/settlement.rs）
+            (
+                "/api/service/transport-operations/monthly-statement/2026-08/push-xingtai",
+                "settlements:0",
+            ),
+            // FSSC 科目字典 / 回调（accounts-payable/fssc.rs）
+            (
+                "/api/service/accounts-payable/sap-classes",
+                "outgo-yecai-payables:0",
+            ),
+            (
+                "/api/service/accounts-payable/fssc-callbacks",
+                "outgo-yecai-payables:0",
+            ),
+            // 派车（transport-dispatch/dispatch.rs）
+            ("/api/service/transport-dispatch/dispatch", "consignments:0"),
+            // 应付域连字符名对齐
+            (
+                "/api/service/accounts-payable/outgo-payables",
+                "outgo-payables:0",
+            ),
+            (
+                "/api/service/accounts-payable/outgo-payments/42",
+                "outgo-payments:42",
+            ),
+            (
+                "/api/service/accounts-payable/outgo-yecai-payables",
+                "outgo-yecai-payables:0",
+            ),
+        ];
+        for (path, expected) in cases {
+            let r = reg
+                .resolve(path)
+                .unwrap_or_else(|| panic!("resolve failed: {path}"));
+            assert_eq!(r.resource, expected, "path={path}");
+        }
     }
 
     #[test]

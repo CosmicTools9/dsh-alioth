@@ -94,7 +94,7 @@ async fn insert_event(pool: &PgPool, label: &str, flow_id: i64, lk_urgent: Optio
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(op_id)
     .bind(even_id)
@@ -137,8 +137,8 @@ async fn set_status(pool: &PgPool, instance_id: i64, code: &str, notice: &str) {
     {
         Some(id) => id,
         None => sqlx::query_scalar::<_, i64>(
-            r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice)
-               VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+            r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice, flag)
+               VALUES (isahl.gen_next_uid(73), $1, $2, 'end') RETURNING id"#,
         )
         .bind(code)
         .bind(notice)
@@ -148,7 +148,7 @@ async fn set_status(pool: &PgPool, instance_id: i64, code: &str, notice: &str) {
     };
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-           VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+           VALUES (isahl.gen_next_uid(260), $1, $2)"#,
     )
     .bind(instance_id)
     .bind(sid)
@@ -183,7 +183,7 @@ async fn insert_instance(
     if let Some(ev) = event_id {
         sqlx::query(
             r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+               VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
         )
         .bind(instance_id)
         .bind(ev)
@@ -392,11 +392,20 @@ async fn test_enriched_handler_pending_status() {
 
     assert_eq!(my["status"], "pending", "no action → status=pending");
     assert_eq!(my["result"], "pending", "no action → result=pending");
-    assert_eq!(
-        my["applicant"],
-        serde_json::Value::Null,
-        "no fk_subject → applicant=null"
-    );
+    // 7a81761c4a 申请人归用户 id 空间：fk_previous NULL → applicant=创建者 username。
+    // 镜像 handler 解析优先级（enriched_instance.rs:155-171）：员工主体 notice → 账号显示名
+    let sys_username: String = sqlx::query_scalar(
+        r#"SELECT COALESCE(
+             (SELECT ee.notice FROM isahl."zc_id_subj-employee" ee
+              WHERE ee.deleted_at IS NULL AND (ee.fk_user = 1 OR ee.id = 1)
+              ORDER BY (ee.fk_user = 1) DESC LIMIT 1),
+             (SELECT COALESCE(u.display_name, u.name, u.username) FROM isahl_auth.auth_users u WHERE u.id = 1)
+           )"#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("system user");
+    assert_eq!(my["applicant"], sys_username, "applicant=创建者 username");
     assert_eq!(
         my["priority"],
         serde_json::Value::Null,
@@ -441,7 +450,7 @@ async fn test_enriched_todo_scope_filters_by_assignee() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(op_id)
     .bind(ev_assign)

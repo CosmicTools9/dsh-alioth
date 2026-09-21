@@ -68,10 +68,11 @@ pub async fn resolve_user_permissions(pool: &PgPool, user_id: i64) -> Result<Val
     };
 
     Ok(serde_json::json!({
-        "userId": user_id,
-        "policyClassId": fk_policy_class,
+        "userId": user_id.to_string(),
+        // Option<i64> id：字符串化 + 缺值 null（Option 无 Display；ID_JSON_PRECISION）
+        "policyClassId": fk_policy_class.map(|v| v.to_string()),
         "policyClass": policy_class_name,
-        "entityId": entity_id,
+        "entityId": entity_id.map(|v| v.to_string()),
         "entityTable": entity_table,
         "userAttributes": user_attributes,
     }))

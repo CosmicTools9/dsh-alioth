@@ -355,6 +355,10 @@ async fn t1_5_handler_approve_propagates_opinion_body() {
             alioth_gateway::notification::db_messaging::DbMessagingService::new(pool.clone()),
         )
             as std::sync::Arc<dyn common::messaging::MessagingService>),
+        web::Data::new(
+            std::sync::Arc::new(common::event_bus::InMemoryEventBus::new())
+                as std::sync::Arc<dyn common::event_bus::DomainEventBus>,
+        ),
         path,
         Some(body),
     )
@@ -398,6 +402,10 @@ async fn t1_5_handler_approve_without_body_ok() {
             alioth_gateway::notification::db_messaging::DbMessagingService::new(pool.clone()),
         )
             as std::sync::Arc<dyn common::messaging::MessagingService>),
+        web::Data::new(
+            std::sync::Arc::new(common::event_bus::InMemoryEventBus::new())
+                as std::sync::Arc<dyn common::event_bus::DomainEventBus>,
+        ),
         path,
         None,
     )
@@ -472,7 +480,7 @@ async fn t1_6_overview_filters_by_visible_ids() {
 const STATUS_SEED_CODES: [&str; 3] = ["pending", "approved", "rejected"];
 const REG_EVENT: i64 = -99021; // 注册审批事件（even-approve，缺实例）
 const REG_OPER: i64 = -99022; // 注册审批实例（oper-approve，even 缺失 → oper→even 自愈）
-const VERIFY_OPER: i64 = -99024; // user-verify 断链实例（不应被注册审批自愈误重建）
+const VERIFY_OPER: i64 = -99024; // user-verify 断链实例（自愈应绑 FLOW-USER-VERIFY 重建）
 const INACTIVE_OPER: i64 = -99026; // 主体 is_active=false 的断链实例（不应被自愈重建）
 
 async fn status_seed_count(pool: &PgPool, code: &str) -> i64 {
@@ -486,6 +494,7 @@ async fn status_seed_count(pool: &PgPool, code: &str) -> i64 {
     .expect("count status seed")
 }
 
+#[allow(dead_code)] // 测试辅助：供后续流程种子计数用例接线（当前分支未调用）
 async fn flow_seed_count(pool: &PgPool, code: &str) -> i64 {
     sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM isahl.zc_id_process
@@ -530,8 +539,8 @@ async fn t1_7_self_check_seeds_idempotent() {
         assert_eq!(n, first[i], "状态种子 {} 二次运行行数应稳定", code);
     }
 
-    // FLOW-USER-REGISTER 流程种子：恰好 1 行（唯一写入方）
-    assert_eq!(flow_seed_count(&pool, "FLOW-USER-REGISTER").await, 1);
+    // FLOW-USER-REGISTER 已退役（运行时零消费方，register.rs 绑 FLOW-AUTHORIZATION）——
+    // 不再种子、不断言行数；存量库惰性遗留行由人工通道清理
 }
 
 // ── T1.8: 注册审批实例补链自愈（even-approve 缺 oper-approve → 补建）─────────
@@ -684,7 +693,11 @@ async fn t1_9_rejected_user_reapply_creates_authorization_instance() {
         json["success"].as_bool().unwrap_or(false),
         "apply 应成功: {json}"
     );
-    let instance_id = json["instance_id"].as_i64().expect("instance id");
+    let instance_id: i64 = json["instance_id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| json["instance_id"].as_i64())
+        .expect("instance id");
 
     // 断言 1：状态回 pending_approval
     let status: String =
@@ -1005,7 +1018,7 @@ async fn t1_11_registration_approval_activates_user_via_fk_subject() {
     .expect("insert registration instance");
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(REG_OPER_11)
     .bind(REG_EVENT_11)
@@ -1023,6 +1036,10 @@ async fn t1_11_registration_approval_activates_user_via_fk_subject() {
             alioth_gateway::notification::db_messaging::DbMessagingService::new(pool.clone()),
         )
             as std::sync::Arc<dyn common::messaging::MessagingService>),
+        web::Data::new(
+            std::sync::Arc::new(common::event_bus::InMemoryEventBus::new())
+                as std::sync::Arc<dyn common::event_bus::DomainEventBus>,
+        ),
         path,
         None,
     )
@@ -1162,30 +1179,59 @@ async fn t1_12_broken_oper_with_missing_subject_not_reconstructed() {
         .await
         .ok();
 }
+// ── T1.14: user-verify 断链自愈（绑 FLOW-USER-VERIFY，fix-user-verify-self-heal）──
 //
-// 自愈契约（fix-approval-event-adaptive-write）：oper→even 重建仅针对
-// user-register-approval（绑 FLOW-AUTHORIZATION + 72h SLA，与写入契约一致）。
-// user-verify 走独立流程模板 FLOW-USER-VERIFY，无对应自愈逻辑——若误按
-// AUTHORIZATION_FLOW_CODE 重建会绑错流程，故断链维持告警人工处理，不触发重建。
+// oper→even 自愈按事件 code 分派绑定：user-verify → FLOW-USER-VERIFY +
+// zc_id_appr-user_verify 叶表（identity.rs 写入契约）；事件↔流程归属经叶表
+// fk_process，tpl_id 绑该流程 approve 节点操作行（MUST NOT 指向 AUTHORIZATION）。
 
 #[tokio::test]
-async fn t1_11_user_verify_broken_not_misreconstructed() {
+async fn t1_14_user_verify_broken_heals_with_verify_flow_binding() {
     let _ = env_logger::builder().is_test(true).try_init();
     let pool = connect_test_db().await;
 
-    // 前置：seed 模板
+    // 前置：模型级种子重放（FLOW-USER-VERIFY 模板 + 72h 时长——组件零模板）
+    alioth_gateway::seed::ensure_startup_seed_self_check(&pool).await;
     alioth_gateway::seed::ensure_gateway_seed_self_check(&pool).await;
 
-    // 清理残留 fixture
+    // 清理残留 fixture（含桥行——rr_event 唯一键含软删行，残留桥致重复键违例/断链失真）
     sqlx::query(r#"DELETE FROM isahl."zc_id_oper-approve" WHERE id = $1"#)
         .bind(VERIFY_OPER)
         .execute(&pool)
         .await
         .ok();
-    sqlx::query(r#"DELETE FROM isahl."zc_id_even-approve" WHERE notice = 'T1.11实名审核'"#)
+    sqlx::query(r#"DELETE FROM isahl.zc_id_operation_rr_event WHERE ref_left = $1"#)
+        .bind(VERIFY_OPER)
         .execute(&pool)
         .await
         .ok();
+    sqlx::query(r#"DELETE FROM isahl."zc_id_appr-user_verify" WHERE notice = 'T1.14实名审核'"#)
+        .execute(&pool)
+        .await
+        .ok();
+
+    // 创建真实主体用户（自愈要求 fk_subject 存在于 auth_users 且活跃）
+    let suffix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE name = 't114-user'")
+        .execute(&pool)
+        .await
+        .ok();
+    let uid: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl_auth.auth_users
+           (id, name, username, email, user_type, status, is_active, created_at, updated_at,
+            failed_login_attempts, notification_preferences)
+           VALUES (isahl.gen_next_zuid(), 't114-user', 't114-user',
+                   $1, 'standard', 'active', TRUE,
+                   NOW(), NOW(), 0, '{}'::jsonb)
+           RETURNING id"#,
+    )
+    .bind(format!("t114-user-{}@test.local", suffix))
+    .fetch_one(&pool)
+    .await
+    .expect("insert subject user");
 
     // 构造 user-verify 断链 oper 实例（无 rr_event 桥 = 断链）
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
@@ -1197,10 +1243,10 @@ async fn t1_11_user_verify_broken_not_misreconstructed() {
         r#"INSERT INTO isahl."zc_id_oper-approve"
            (id, notice, code, fk_subject, created_by_id, created_at, updated_at,
             dk_scene, dk_factor, dk_function)
-           VALUES ($1, 'T1.11实名审核', 'user-verify', $2, $2, NOW(), NOW(), $3, $4, $5)"#,
+           VALUES ($1, 'T1.14实名审核', 'user-verify', $2, $2, NOW(), NOW(), $3, $4, $5)"#,
     )
     .bind(VERIFY_OPER)
-    .bind(USER_A)
+    .bind(uid)
     .bind(dk_scene)
     .bind(dk_factor)
     .bind(dk_function)
@@ -1208,33 +1254,133 @@ async fn t1_11_user_verify_broken_not_misreconstructed() {
     .await
     .expect("insert user-verify broken oper fixture");
 
-    // 自检
-    alioth_gateway::seed::ensure_gateway_seed_self_check(&pool).await;
-
-    // 断言 1：桥行未被回填（user-verify 断链不参与 oper→even 自愈）
-    let bridges: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM isahl.zc_id_operation_rr_event rr
-           WHERE rr.ref_left = $1 AND rr.deleted_at IS NULL"#,
+    // 前置：确认断链（无指向活跃 even-approve 事件的 rr_event 桥行）
+    let broken_before: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl."zc_id_oper-approve" oa
+           WHERE oa.id = $1 AND oa.deleted_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM isahl.zc_id_operation_rr_event rr
+                 JOIN isahl."zc_id_even-approve" e ON e.id = rr.ref_right AND e.deleted_at IS NULL
+                 WHERE rr.ref_left = oa.id AND rr.deleted_at IS NULL)"#,
     )
     .bind(VERIFY_OPER)
     .fetch_one(&pool)
     .await
-    .expect("oper bridge count");
-    assert_eq!(bridges, 0, "user-verify 断链不应被重建回填桥行");
+    .expect("broken count before");
+    assert_eq!(broken_before, 1, "前置：user-verify oper 应为断链");
 
-    // 断言 2：未产生 user-verify 事件（notice 匹配的 even 行不应存在）
+    // 自检 → 重建事件（落 user_verify 叶表）+ 回填 rr_event 桥行（绑 FLOW-USER-VERIFY）
+    alioth_gateway::seed::ensure_gateway_seed_self_check(&pool).await;
+
+    // 断言 1：桥行已回填为真实存在的 even 事件
+    let ev_id: i64 = sqlx::query_scalar(
+        r#"SELECT rr.ref_right FROM isahl."zc_id_oper-approve" oa
+           JOIN isahl.zc_id_operation_rr_event rr
+             ON rr.ref_left = oa.id AND rr.deleted_at IS NULL
+           JOIN isahl."zc_id_even-approve" e ON e.id = rr.ref_right AND e.deleted_at IS NULL
+           WHERE oa.id = $1 AND oa.deleted_at IS NULL"#,
+    )
+    .bind(VERIFY_OPER)
+    .fetch_one(&pool)
+    .await
+    .expect("oper bridge row");
+
+    // 断言 2：事件落点自适应（叶表存在 → user_verify 叶表；否则 even-approve 主表），code 保持 user-verify
+    let leaf_exists: bool =
+        sqlx::query_scalar(r#"SELECT to_regclass('isahl."zc_id_appr-user_verify"') IS NOT NULL"#)
+            .fetch_one(&pool)
+            .await
+            .expect("leaf probe");
+    let ev_code: String = if leaf_exists {
+        sqlx::query_scalar::<_, String>(
+            r#"SELECT code FROM isahl."zc_id_appr-user_verify" WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(ev_id)
+        .fetch_one(&pool)
+        .await
+        .expect("healed event in user_verify leaf")
+    } else {
+        sqlx::query_scalar::<_, String>(
+            r#"SELECT code FROM isahl."zc_id_even-approve" WHERE id = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(ev_id)
+        .fetch_one(&pool)
+        .await
+        .expect("healed event in even-approve main table")
+    };
+    assert_eq!(ev_code, "user-verify");
+
+    // 断言 3：绑定 FLOW-USER-VERIFY（而非 FLOW-AUTHORIZATION）
+    let verify_flow_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl.zc_id_process WHERE code = 'FLOW-USER-VERIFY' AND deleted_at IS NULL LIMIT 1",
+    )
+    .fetch_optional(&pool)
+    .await
+    .expect("verify flow query")
+    .expect("FLOW-USER-VERIFY 模板应由模型级种子供给");
+    // fk_process（叶表契约列）：identity.rs 同源写值 = 流程行 id
+    let fk_process: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        r#"SELECT fk_process FROM isahl."zc_id_appr-user_verify" WHERE id = $1"#,
+    )
+    .bind(ev_id)
+    .fetch_optional(&pool)
+    .await
+    .expect("fk_process query")
+    .flatten();
+    assert_eq!(
+        fk_process,
+        Some(verify_flow_id),
+        "事件 fk_process 应为 FLOW-USER-VERIFY 行 id"
+    );
+    // tpl_id：该流程 approve 节点操作行（process_rr_operation 桥反查）
+    let tpl_id: Option<i64> =
+        sqlx::query_scalar(r#"SELECT tpl_id FROM isahl."zc_id_even-approve" WHERE id = $1"#)
+            .bind(ev_id)
+            .fetch_one(&pool)
+            .await
+            .expect("tpl query");
+    let tpl_in_verify: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS (SELECT 1 FROM isahl.zc_id_process_rr_operation rro
+                          WHERE rro.ref_left = $1 AND rro.ref_right = $2 AND rro.deleted_at IS NULL)"#,
+    )
+    .bind(verify_flow_id)
+    .bind(tpl_id)
+    .fetch_one(&pool)
+    .await
+    .expect("tpl binding query");
+    assert!(
+        tpl_in_verify,
+        "事件 tpl_id 应绑 FLOW-USER-VERIFY 节点（而非 AUTHORIZATION），tpl={tpl_id:?}"
+    );
+
+    // 断言 4：二次自检不重复重建（仍只 1 条该 notice 事件）
+    alioth_gateway::seed::ensure_gateway_seed_self_check(&pool).await;
     let ev_count: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FROM isahl."zc_id_even-approve"
-           WHERE notice = 'T1.11实名审核' AND deleted_at IS NULL"#,
+        r#"SELECT COUNT(*) FROM isahl."zc_id_appr-user_verify"
+           WHERE notice = 'T1.14实名审核' AND deleted_at IS NULL"#,
     )
     .fetch_one(&pool)
     .await
-    .expect("even count");
-    assert_eq!(ev_count, 0, "user-verify 不应被误重建事件");
+    .expect("event count after second check");
+    assert_eq!(ev_count, 1, "二次自检不得重复重建 even 事件");
 
-    // 清理
+    // 清理（含桥行）
     sqlx::query(r#"DELETE FROM isahl."zc_id_oper-approve" WHERE id = $1"#)
         .bind(VERIFY_OPER)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(r#"DELETE FROM isahl.zc_id_operation_rr_event WHERE ref_left = $1"#)
+        .bind(VERIFY_OPER)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query(r#"DELETE FROM isahl."zc_id_appr-user_verify" WHERE notice = 'T1.14实名审核'"#)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
+        .bind(uid)
         .execute(&pool)
         .await
         .ok();

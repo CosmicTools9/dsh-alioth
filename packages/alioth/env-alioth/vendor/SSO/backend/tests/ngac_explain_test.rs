@@ -156,16 +156,37 @@ fn test_auth_state() -> AuthState {
 
 /// 构造 admin 请求头（JWT）。
 async fn admin_token(_pool: &PgPool, admin: i64, email: &str) -> String {
+    admin_token_claims(admin, email).await.0
+}
+
+/// token + Claims 成对：decide/check 系列端点的主体一致性校验（enforce_decision_subject）
+/// 要求 Claims 由中间件注入 extensions——测试无中间件链，须测试侧注入同一份 Claims
+async fn admin_token_claims(admin: i64, email: &str) -> (String, Claims) {
     let state = test_auth_state();
     configure_token_validation(
         "http://localhost:9002".to_string(),
         "http://localhost:9002".to_string(),
     );
-    encode_access_token(
-        &Claims::new(&admin.to_string(), email, false),
-        &state.jwt_private_key,
-    )
-    .expect("encode token")
+    let claims = Claims::new(&admin.to_string(), email, false);
+    let token = encode_access_token(&claims, &state.jwt_private_key).expect("encode token");
+    (token, claims)
+}
+
+/// decide/explain 请求构造：Bearer + Claims 扩展注入（主体一致性校验双通道）
+fn decide_req(
+    uri: &str,
+    token: &str,
+    claims: &Claims,
+    body: serde_json::Value,
+) -> actix_http::Request {
+    use actix_web::HttpMessage;
+    let req = test::TestRequest::post()
+        .uri(uri)
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .set_json(body)
+        .to_request();
+    req.extensions_mut().insert(claims.clone());
+    req
 }
 
 async fn cleanup(pool: &PgPool, email: &str, oa_id: i64) {
@@ -331,18 +352,20 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
     .await;
 
     // 1) 关联授权 read → permit；explain 一致
-    let token = admin_token(&pool, s.admin, email).await;
+    let (token, claims) = admin_token_claims(s.admin, email).await;
     let d = {
         let resp = test::call_service(
             &app,
-            test::TestRequest::post()
-                .uri("/api/ngac/decide")
-                .set_json(json!({
+            decide_req(
+                "/api/ngac/decide",
+                &token,
+                &claims,
+                json!({
                     "user_id": s.admin,
                     "resource": "engineers:0",
                     "action": "read"
-                }))
-                .to_request(),
+                }),
+            ),
         )
         .await;
         let body: serde_json::Value = test::read_body_json(resp).await;
@@ -389,14 +412,16 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
     let d2 = {
         let resp = test::call_service(
             &app,
-            test::TestRequest::post()
-                .uri("/api/ngac/decide")
-                .set_json(json!({
+            decide_req(
+                "/api/ngac/decide",
+                &token,
+                &claims,
+                json!({
                     "user_id": s.admin,
                     "resource": "engineers:0",
                     "action": "delete"
-                }))
-                .to_request(),
+                }),
+            ),
         )
         .await;
         let body: serde_json::Value = test::read_body_json(resp).await;
@@ -432,14 +457,16 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
     let d3 = {
         let resp = test::call_service(
             &app,
-            test::TestRequest::post()
-                .uri("/api/ngac/decide")
-                .set_json(json!({
+            decide_req(
+                "/api/ngac/decide",
+                &token,
+                &claims,
+                json!({
                     "user_id": s.admin,
                     "resource": "engineers:0",
                     "action": "read"
-                }))
-                .to_request(),
+                }),
+            ),
         )
         .await;
         let body: serde_json::Value = test::read_body_json(resp).await;
@@ -456,15 +483,16 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
     let e3 = {
         let resp = test::call_service(
             &app,
-            test::TestRequest::post()
-                .uri("/api/ngac/decide/explain")
-                .insert_header(("Authorization", format!("Bearer {}", token)))
-                .set_json(json!({
+            decide_req(
+                "/api/ngac/decide/explain",
+                &token,
+                &claims,
+                json!({
                     "user_id": s.admin,
                     "resource": "engineers:0",
                     "action": "read"
-                }))
-                .to_request(),
+                }),
+            ),
         )
         .await;
         let body: serde_json::Value = test::read_body_json(resp).await;

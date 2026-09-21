@@ -5,8 +5,11 @@
 //! - `POST /seals/batch` — `startCode` 缺省时按类型 code 前缀自动续号（count 1=单号、N=连号）；
 //!   `startCode` 显式时从起始号等宽递增（事务原子 + code 查重 + NGAC 行注册）
 //!
-//! 注册顺序约束：本 register 必须先于 `crud_routes::<Seal, …>("/seals")` 注册
-//! （actix 按注册顺序匹配，避免 `/{id}` 抢占 `/batch`）。
+//! 注册约束：本 register 必须先于 `crud_routes::<Seal, …>("/seals")` 注册，且 MUST 用
+//! **全路径 `web::resource`**（不得用 `web::scope("/seals")`）——actix 对同前缀 scope
+//! 短路：先注册的 `/seals` scope 吃掉前缀后，后注册的 CRUD `/seals` scope 的
+//! `GET /seals`、`/seals/{id}` 全部 404（fix-wz-seal-crud-scope 实证）。
+//! 同范式参照 `traffic_line_stops::register`（全路径 resource 与 CRUD scope 共存）。
 
 use crate::models::{CreateSealBatchRequest, Seal};
 use crate::repository::SealRepository;
@@ -17,7 +20,7 @@ use common::AliothError as ApiError;
 use sqlx::PgPool;
 
 pub fn register(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/seals").route("/batch", web::post().to(seal_batch_create)));
+    cfg.service(web::resource("/seals/batch").route(web::post().to(seal_batch_create)));
 }
 
 /// POST /seals/batch — 批量创建连号铅封

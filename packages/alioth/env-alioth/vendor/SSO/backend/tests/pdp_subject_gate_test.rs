@@ -5,7 +5,6 @@
 //! - 本人决策 → 放行（门禁通过，决策正常返回）
 //! - 服务令牌（svc_user_id 匹配）→ 放行
 //! - cookie-only（无 Authorization）→ 401 BEARER_REQUIRED
-//! - policy-version Bearer-only
 //! - 审计摄入自然人 403（gap_closure 已覆盖服务令牌 201）
 
 mod common;

@@ -240,9 +240,25 @@ async fn test_pip_legacy_noauth_path_returns_404() {
     )
     .await;
 
-    // 旧 noauth 路径：路由已移除 → 404（且 /api/ngac 仍在公开匹配器，无需 JWT）。
+    // 旧 noauth 路径：路由已移除。两层断言（2026-09-19 硬化后语义）：
+    // ① 匿名请求被鉴权门拦下（401）——公开路径白名单只跳 NGAC PDP，JWT 仍必须有效；
+    // ② 持有效 admin 票据 → 401 不再掩盖路由缺失，须 404（证明旧路径确已下线）。
     let req = test::TestRequest::post()
         .uri("/api/ngac/pip/users/1/attributes")
+        .set_json(json!({"fk_user_attribute": 1}))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "anonymous request must be gated by the auth middleware"
+    );
+
+    let auth_state = common::test_auth_state();
+    let token = admin_token(&auth_state, 1);
+    let req = test::TestRequest::post()
+        .uri("/api/ngac/pip/users/1/attributes")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
         .set_json(json!({"fk_user_attribute": 1}))
         .to_request();
     let resp = test::call_service(&app, req).await;

@@ -135,6 +135,13 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
             }
         }
 
+        // 实体行作用域谓词（ROW_FILTER）：坐标之外的判别（系统事实行排除等），恒原文拼接。
+        // 无占位符 → 不影响 param_idx 与 visible_ids 绑定顺序（NGAC_SPEC 行级过滤条款）。
+        if !E::ROW_FILTER.is_empty() {
+            sql.push_str(" AND ");
+            sql.push_str(E::ROW_FILTER);
+        }
+
         // 列类型映射仅在存在过滤条件时参与 SQL 生成（无过滤时跳过进程级缓存锁）
         let col_types = if self.filters.is_empty() {
             None
@@ -362,6 +369,11 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         } else {
             String::new()
         };
+        let row_filter = if !E::ROW_FILTER.is_empty() {
+            format!(" AND {}", E::ROW_FILTER)
+        } else {
+            String::new()
+        };
         let rls_clause = if let Some(ids) = visible_ids {
             if !ids.is_empty() {
                 " AND e.id = ANY($2::bigint[])".to_string()
@@ -375,12 +387,13 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         let mut fields = E::SELECT_FIELDS.to_string();
         fields.push_str(&build_sensitive_suffix::<E>(authorized_columns, "e."));
         let sql = format!(
-            "SELECT {} FROM {} AS e WHERE e.id = ${}{}{}{}",
+            "SELECT {} FROM {} AS e WHERE e.id = ${}{}{}{}{}",
             fields,
             E::table_name(),
             1,
             deleted_cond,
             coord_filter,
+            row_filter,
             rls_clause
         );
         let mut q = sqlx::query_as::<Postgres, E>(AssertSqlSafe(sql.as_str())).bind(id);
@@ -650,13 +663,19 @@ impl<'a, E: AliothDbEntity + HasReferenceJoins> QueryBuilder<'a, E> {
         } else {
             String::new()
         };
+        let row_filter = if !E::ROW_FILTER.is_empty() {
+            format!(" AND {}", E::ROW_FILTER)
+        } else {
+            String::new()
+        };
         let sql = format!(
-            "SELECT {} FROM {} AS e WHERE e.id = ${}{}{}",
+            "SELECT {} FROM {} AS e WHERE e.id = ${}{}{}{}",
             fields,
             E::table_name(),
             1,
             deleted_cond,
-            coord_filter
+            coord_filter,
+            row_filter
         );
         Ok(sqlx::query_as::<Postgres, E>(AssertSqlSafe(sql.as_str()))
             .bind(id)

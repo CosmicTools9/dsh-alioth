@@ -8,7 +8,7 @@
 
 mod common;
 
-use actix_web::{test, web, App};
+use actix_web::{test, web, App, HttpMessage};
 use gateway_sso::audit::handlers::{handle_audit_event, AuditEventRecord, AuditEventType};
 use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Claims};
 use gateway_sso::auth::middleware::RequireAuth;
@@ -329,7 +329,11 @@ async fn idp_admin_crud() {
     let resp = test::call_service(&app, create).await;
     assert_eq!(resp.status().as_u16(), 201, "create provider");
     let body: serde_json::Value = test::read_body_json(resp).await;
-    let pid = body["id"].as_i64().expect("provider id");
+    // ID_JSON_PRECISION：id 以字符串下发
+    let pid: i64 = body["id"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("provider id");
 
     // GET SINGLE（新增端点）
     let get = test::TestRequest::get()
@@ -470,14 +474,20 @@ async fn ws_audit_stream_receives_broadcast() {
     let mut rx = gateway_sso::websocket::init_ws_server().client_receiver();
 
     // 触发一次 PDP 决策（经 audit_decision 广播到 WS）
+    // decide 端点硬化（enforce_decision_subject）：Bearer + Claims 双通道（测试侧注入；
+    // token 经 mint_token 签发以保证 token 校验配置就位）
+    let ws_claims = Claims::new("42", "ws-audit@test.local", false);
+    let ws_token = mint_token(&ast, 42, "ws-audit@test.local");
     let decide = test::TestRequest::post()
-        .uri("/api/ngac/decide")
+        .uri("/api/ngac/pdp/decide")
+        .insert_header(("Authorization", format!("Bearer {}", ws_token)))
         .set_json(json!({
             "user_id": 42,
             "resource": "sso_audit:0",
             "action": "read"
         }))
         .to_request();
+    decide.extensions_mut().insert(ws_claims);
     let _resp = test::call_service(&app, decide).await;
 
     // 广播通道应收审计事件（超时保护）
@@ -598,14 +608,18 @@ async fn pep_enforces_admin_and_audit_resources() {
 
     // 普通用户：均 403（无 sso_admin/sso_audit 关联 → NotApplicable → fail-closed）
     // 直接验证 PDP 决策（公开端点 /api/ngac/decide）：普通用户对 sso_audit:0 应为 deny
+    let reg_claims = Claims::new(&regular_id.to_string(), "regular@test.local", false);
+    let reg_token = mint_token(&ast, regular_id, "regular@test.local");
     let decide_resp = test::TestRequest::post()
-        .uri("/api/ngac/decide")
+        .uri("/api/ngac/pdp/decide")
+        .insert_header(("Authorization", format!("Bearer {}", reg_token)))
         .set_json(json!({
             "user_id": regular_id,
             "resource": "sso_audit:0",
             "action": "read"
         }))
         .to_request();
+    decide_resp.extensions_mut().insert(reg_claims);
     let resp = test::call_service(&app, decide_resp).await;
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(

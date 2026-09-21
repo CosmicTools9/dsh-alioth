@@ -35,6 +35,8 @@ struct Fixture {
     subject_id: i64,
     employee_id: i64,
     position_id: i64,
+    /// 视角关联行 id（标签宿主：`zc_id_relation-post_view_r_tags.ref_left`）
+    pair_id: i64,
     tag_id: i64,
 }
 
@@ -123,7 +125,7 @@ async fn seed_bound_user(pool: &PgPool, suffix: &str) -> Fixture {
     .await
     .expect("link employment");
 
-    // 视角链：岗位 → relation-post_view_r_tags → tags-post_view
+    // 视角链：岗位 → 视角关联行（标签宿主）→ relation-post_view_r_tags → tags-post_view
     let tag_id: i64 = sqlx::query_scalar(
         "INSERT INTO isahl.\"zc_id_tags-post_view\" (id, notice, code, created_by_id)
          VALUES (isahl.gen_next_uid(130), '认知测试视角', $1, 1) RETURNING id",
@@ -132,15 +134,24 @@ async fn seed_bound_user(pool: &PgPool, suffix: &str) -> Fixture {
     .fetch_one(pool)
     .await
     .expect("insert view tag");
-    sqlx::query(
-        "INSERT INTO isahl.\"zc_id_relation-post_view_r_tags\" (id, notice, ref_left, ref_right, created_by_id)
-         VALUES (isahl.gen_next_uid(180), '岗位视角', $1, $2, 1)",
+    let pair_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl.\"zc_id_subj-post_rr_view\" (id, notice, ref_left, ref_right, created_by_id)
+         VALUES (isahl.gen_next_uid(320), '认知测试视角绑定', $1, $2, 1) RETURNING id",
     )
     .bind(position_id)
+    .bind(employee_id)
+    .fetch_one(pool)
+    .await
+    .expect("link view pair");
+    sqlx::query(
+        "INSERT INTO isahl.\"zc_id_relation-post_view_r_tags\" (id, notice, ref_left, ref_right, created_by_id)
+         VALUES (isahl.gen_next_uid(180), '视角关联行标签', $1, $2, 1)",
+    )
+    .bind(pair_id)
     .bind(tag_id)
     .execute(pool)
     .await
-    .expect("link position tag");
+    .expect("link view pair tag");
 
     Fixture {
         user_id,
@@ -148,6 +159,7 @@ async fn seed_bound_user(pool: &PgPool, suffix: &str) -> Fixture {
         subject_id,
         employee_id,
         position_id,
+        pair_id,
         tag_id,
     }
 }
@@ -162,9 +174,13 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
     let _ = sqlx::query(
         "UPDATE isahl.\"zc_id_relation-post_view_r_tags\" SET deleted_at = NOW() WHERE ref_left = $1",
     )
-    .bind(f.position_id)
+    .bind(f.pair_id)
     .execute(pool)
     .await;
+    let _ = sqlx::query("DELETE FROM isahl.\"zc_id_subj-post_rr_view\" WHERE id = $1")
+        .bind(f.pair_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl.\"zc_id_tags-post_view\" WHERE id = $1")
         .bind(f.tag_id)
         .execute(pool)

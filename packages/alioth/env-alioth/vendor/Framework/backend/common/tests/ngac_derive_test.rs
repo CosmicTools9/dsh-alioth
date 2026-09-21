@@ -99,8 +99,8 @@ async fn derive_from_class_is_idempotent() {
     let class_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO isahl_auth.org_policy_class
-            (code, scope, ua_template, state)
-        VALUES ($1, '{"actions":["read"]}', '{"name_rule":"position:{code}"}', 'active')
+            (code, notice, scope, ua_template, state)
+        VALUES ($1, $1 || '-notice', '{"actions":["read"]}', '{"name_rule":"position:{code}"}', 'active')
         RETURNING id
         "#,
     )
@@ -111,8 +111,8 @@ async fn derive_from_class_is_idempotent() {
     let rule_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO isahl_auth.org_policy_rule
-            (policy_class_id, resource_type, actions, state)
-        VALUES ($1, $2, '["read"]', 'active')
+            (policy_class_id, subject_code, resource_type, actions, state)
+        VALUES ($1, 'subj-itest', $2, '["read"]', 'active')
         RETURNING id
         "#,
     )
@@ -249,10 +249,11 @@ async fn migrate_legacy_position_associations_is_idempotent() {
     .execute(&pool)
     .await;
 
-    // 基表类别行（tableoid = isahl.zc_id_category：直接 INSERT 基表）
+    // 基表类别行（tableoid = isahl.zc_id_category：直接 INSERT 基表——认知派生/迁移只认基表，
+    // 子族字典行不派生，org_tree.rs:715 裁决；zc_id_cate-organization 子表行会被 tableoid 过滤）
     let cat_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_cate-organization\" (code, notice, enable, created_at, updated_at) \
-         VALUES ($1, $2, true, NOW(), NOW()) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_category\" (code, notice, created_at, updated_at) \
+         VALUES ($1, $2, NOW(), NOW()) RETURNING id",
     )
     .bind(&cat_code)
     .bind(MARKER)

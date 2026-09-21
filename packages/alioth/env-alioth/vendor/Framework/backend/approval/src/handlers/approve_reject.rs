@@ -14,7 +14,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use common::context;
 use common::error::AliothError as ApiError;
 use common::event_bus::{DomainEvent, DomainEventBus};
-use common::permissions::require_resource_access;
+use common::permissions::require_row_or_collection_access;
 use common::ApiResponse;
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -104,7 +104,7 @@ pub async fn approve(
 ) -> Result<HttpResponse, ApiError> {
     let instance_id = path.into_inner();
     let user_id = context::require_auth(&req)?;
-    require_resource_access(
+    require_row_or_collection_access(
         pool.get_ref(),
         user_id,
         "approval-instances",
@@ -134,7 +134,7 @@ async fn insert_opinion(
     let date_anchor = today_date_anchor(pool).await?;
     // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组
     let (dk_scene, dk_factor, dk_function) =
-        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::DkJcFtaNc).await?;
+        crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JcFtaNc).await?;
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_deta-opinion"
            (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, dk_scene, dk_factor, dk_function)
@@ -258,7 +258,7 @@ pub async fn reject(
 ) -> Result<HttpResponse, ApiError> {
     let instance_id = path.into_inner();
     let user_id = context::require_auth(&req)?;
-    require_resource_access(
+    require_row_or_collection_access(
         pool.get_ref(),
         user_id,
         "approval-instances",
@@ -303,7 +303,7 @@ pub async fn abstain(
 ) -> Result<HttpResponse, ApiError> {
     let instance_id = path.into_inner();
     let user_id = context::require_auth(&req)?;
-    require_resource_access(
+    require_row_or_collection_access(
         pool.get_ref(),
         user_id,
         "approval-instances",
@@ -382,11 +382,12 @@ pub(crate) async fn update_lifecycle_status(
         Some(id) => id,
         None => {
             sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice)
-                   VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_stus-approve" (id, code, notice, flag)
+                   VALUES (isahl.gen_next_uid(73), $1, $2, $3::isahl.status_flag) RETURNING id"#,
             )
             .bind(status_code)
             .bind(status_notice)
+            .bind(common::status::flag_for_status_code(status_code))
             .fetch_one(pool)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?
@@ -458,7 +459,7 @@ pub(crate) async fn update_lifecycle_status(
         None => {
             sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-                   VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+                   VALUES (isahl.gen_next_uid(260), $1, $2)"#,
             )
             .bind(instance_id)
             .bind(status_id)

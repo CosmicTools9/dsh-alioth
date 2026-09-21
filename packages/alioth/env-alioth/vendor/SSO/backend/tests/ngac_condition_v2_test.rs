@@ -22,6 +22,7 @@ struct Fixture {
     user_b: i64,
     ua_cond: i64, // 条件要求持有的 UA（user_attr_in 目标）
     oa: i64,
+    res: i64, // 本测试独占的资源实例号（fk_resource）——两测试共用 condres:0 会互删 OA
 }
 
 async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
@@ -104,20 +105,24 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
         .ok();
     }
 
-    // OA condres/0 + AR read + association: base → condres/read，conditions={user_attr_in:[cond_name]}
+    // OA condres/{res} + AR read + association: base → condres/read，conditions={user_attr_in:[cond_name}]
+    // res 按 suffix 派生独占资源号——两测试共用 fk_resource=0 会被对方 cleanup 删 OA（实测互踩）
+    let res: i64 = if suffix == "v1" { 9101 } else { 9102 };
     let _ = sqlx::query(
         "INSERT INTO isahl_auth.ngac_object_attribute (o_name, fk_policy_class, resource_type, fk_resource, created_at, updated_at)
-         VALUES ($1, $2, 'condres', 0, NOW(), NOW())
+         VALUES ($1, $2, 'condres', $3, NOW(), NOW())
          ON CONFLICT (resource_type, fk_resource) DO UPDATE SET deleted_at = NULL",
     )
     .bind(format!("condres-oa-{}", suffix))
     .bind(pc)
+    .bind(res)
     .execute(pool)
     .await
     .ok();
     let oa: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type='condres' AND fk_resource=0 LIMIT 1",
+        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type='condres' AND fk_resource=$1 LIMIT 1",
     )
+    .bind(res)
     .fetch_one(pool)
     .await
     .expect("OA");
@@ -147,6 +152,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .expect("association");
 
     Fixture {
+        res,
         user_a: users[0],
         user_b: users[1],
         ua_cond,
@@ -160,8 +166,9 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .execute(pool)
         .await;
     let _ = sqlx::query(
-        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type='condres' AND fk_resource=0",
+        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type='condres' AND fk_resource=$1",
     )
+    .bind(f.res)
     .execute(pool)
     .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_attribute WHERE id = $1")
@@ -174,23 +181,41 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
 async fn user_attr_in_condition_gates_decision() {
     let pool = connect().await;
     let f = seed(&pool, "v1").await;
+    let auth_st = common::test_auth_state();
+    // 生产同构：RequireAuth scope（claims 注入供决策面主体校验）
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(common::test_auth_state()))
-            .route(
-                "/api/ngac/decide",
-                web::post().to(gateway_sso::ngac::pdp::ngac_decide),
+            .app_data(web::Data::new(auth_st.clone()))
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .route(
+                        "/decide",
+                        web::post().to(gateway_sso::ngac::pdp::ngac_decide),
+                    ),
             ),
     )
     .await;
+    // 决策面主体校验 sub==user_id ⇒ 问谁就用谁的令牌
+    let token_a = encode_access_token(
+        &Claims::new(&f.user_a.to_string(), "condv2_decide@alioth.test", false),
+        &auth_st.jwt_private_key,
+    )
+    .expect("token a");
+    let token_b = encode_access_token(
+        &Claims::new(&f.user_b.to_string(), "condv2_decide_b@alioth.test", false),
+        &auth_st.jwt_private_key,
+    )
+    .expect("token b");
 
     // user_a 持有 cond UA → 放行
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
             .uri("/api/ngac/decide")
-            .set_json(json!({"user_id": f.user_a, "resource": "condres:0", "action": "read"}))
+            .insert_header(("Authorization", format!("Bearer {}", token_a)))
+            .set_json(json!({"user_id": f.user_a, "resource": format!("condres:{}", f.res), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -202,7 +227,8 @@ async fn user_attr_in_condition_gates_decision() {
         &app,
         test::TestRequest::post()
             .uri("/api/ngac/decide")
-            .set_json(json!({"user_id": f.user_b, "resource": "condres:0", "action": "read"}))
+            .insert_header(("Authorization", format!("Bearer {}", token_b)))
+            .set_json(json!({"user_id": f.user_b, "resource": format!("condres:{}", f.res), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -237,7 +263,7 @@ async fn user_attr_in_condition_gates_decision() {
         test::TestRequest::post()
             .uri("/api/ngac/decide/explain/me")
             .insert_header(("Authorization", format!("Bearer {}", token)))
-            .set_json(json!({"resource": "condres:0", "action": "read"}))
+            .set_json(json!({"resource": format!("condres:{}", f.res), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -258,11 +284,12 @@ async fn user_attr_in_condition_gates_decision() {
 
 #[tokio::test]
 async fn object_attr_in_condition_matches_oa_closure() {
+    let auth_st = common::test_auth_state();
     let pool = connect().await;
     let f = seed(&pool, "v2").await;
     // 追加一条带 object_attr_in 的关联：base → condres/0（OA 名已知）+ 条件命中
     let base_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name LIKE 'condv2-base-%' AND deleted_at IS NULL LIMIT 1",
+        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = 'condv2-base-v2' AND deleted_at IS NULL LIMIT 1",
     )
     .fetch_one(&pool)
     .await
@@ -306,18 +333,30 @@ async fn object_attr_in_condition_matches_oa_closure() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(common::test_auth_state()))
-            .route(
-                "/api/ngac/decide",
-                web::post().to(gateway_sso::ngac::pdp::ngac_decide),
+            .app_data(web::Data::new(auth_st.clone()))
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .route(
+                        "/decide",
+                        web::post().to(gateway_sso::ngac::pdp::ngac_decide),
+                    ),
             ),
     )
     .await;
+    // decide 需 Bearer（fix-auth-token-precedence 收紧）+ 主体校验 sub==user_id
+    use gateway_sso::auth::jwt::{encode_access_token, Claims};
+    let decide_token = encode_access_token(
+        &Claims::new(&f.user_b.to_string(), "condv2_decide_b@alioth.test", false),
+        &auth_st.jwt_private_key,
+    )
+    .expect("decide token");
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
             .uri("/api/ngac/decide")
-            .set_json(json!({"user_id": f.user_b, "resource": "condres:0", "action": "read"}))
+            .insert_header(("Authorization", format!("Bearer {}", decide_token)))
+            .set_json(json!({"user_id": f.user_b, "resource": format!("condres:{}", f.res), "action": "read"}))
             .to_request(),
     )
     .await;

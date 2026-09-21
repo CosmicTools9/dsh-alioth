@@ -106,7 +106,7 @@ async fn insert_even(pool: &sqlx::PgPool, flow_id: i64, applicant_name: &str) ->
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(op_id)
     .bind(even_id)
@@ -137,7 +137,7 @@ async fn insert_oper(pool: &sqlx::PgPool, even_id: i64) -> i64 {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(even_id)

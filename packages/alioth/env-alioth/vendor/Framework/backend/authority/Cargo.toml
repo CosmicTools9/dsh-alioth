@@ -16,13 +16,13 @@ async-trait = { workspace = true }
 common = { path = "../common" }
 crud = { path = "../crud" }
 identity-org = { path = "../identity-org" }
+ontology-binding = { path = "../ontology-binding" }
 
 [lib]
 path = "src/lib.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
-ontology-binding = { path = "../ontology-binding" }
 
 
 [features]

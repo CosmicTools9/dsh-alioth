@@ -23,11 +23,6 @@
         "name": "InventoryBalance",
         "table": "isahl.mv_inventory",
         "inherits": null,
-        "coordinates": {
-          "factor": "",
-          "function": "",
-          "scene": ""
-        },
         "field_mappings": [
           {
             "business_name": "id",

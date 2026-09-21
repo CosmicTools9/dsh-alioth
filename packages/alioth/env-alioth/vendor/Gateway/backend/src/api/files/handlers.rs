@@ -27,10 +27,24 @@ use super::FilesState;
 
 /// 上传大小上限（SECURITY_SPEC 对齐：10MB）
 const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
-/// 全局扩展名白名单（净化层；kind 级约束由 `FileTableKind::allowed_extensions` 判定）
-const ALLOWED_EXT: [&str; 10] = [
-    "pdf", "png", "jpg", "jpeg", "doc", "docx", "xls", "xlsx", "txt", "zip",
-];
+
+/// 文件名净化用扩展名并集：唯一真相源 = `FileTableKind::allowed_extensions`
+/// （净化层与 kind 层共用一份白名单，避免两处漂移导致合法附件被 400）。
+fn allowed_ext_union() -> Vec<&'static str> {
+    let mut all: Vec<&'static str> = [
+        FileTableKind::Document,
+        FileTableKind::Image,
+        FileTableKind::Avatar,
+        FileTableKind::Package,
+        FileTableKind::Versioned,
+    ]
+    .iter()
+    .flat_map(|kind| kind.allowed_extensions().iter().copied())
+    .collect();
+    all.sort_unstable();
+    all.dedup();
+    all
+}
 
 /// 提取并校验 `X-Namespace` header（必填，格式 `^[A-Z][a-zA-Z0-9-]*$`）。
 fn extract_namespace(req: &HttpRequest) -> Result<String, AliothError> {
@@ -74,7 +88,7 @@ fn sanitize_filename(name: &str) -> Result<String, AliothError> {
         ));
     }
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
-    if !ALLOWED_EXT.contains(&ext.as_str()) {
+    if !allowed_ext_union().contains(&ext.as_str()) {
         return Err(AliothError::BadRequest(format!("扩展名不在白名单: {ext}")));
     }
     Ok(name.to_string())

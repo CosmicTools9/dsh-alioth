@@ -52,7 +52,7 @@ async fn seed_flow(pool: &sqlx::PgPool, code: &str) -> (i64, String) {
             failed_login_attempts, notification_preferences)
            VALUES ($1, 'optlock-test', 'optlock-test', 'optlock@test.local',
                    'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
-           ON CONFLICT (id) DO NOTHING"#,
+           ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
     .execute(pool)

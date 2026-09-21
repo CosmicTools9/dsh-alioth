@@ -5,13 +5,28 @@
 //! 提取自 contract service `transition.rs`（REUSE_FIRST：procure/contract 共用，
 //! 禁止各 service 手搓重复实现）。
 
-use sqlx::{AssertSqlSafe, Executor, Postgres, Transaction};
+use sqlx::{Executor, Postgres, Transaction};
 
 use crate::AliothError;
 
-/// 状态字典表白名单（sqlx 0.9 动态表名须 AssertSqlSafe 显式标记；
-/// 新增 `stus-*` 族在此登记，未知表 fail-visible）
-const STATUS_DICT_WHITELIST: &[&str] = &[
+/// 状态字典表 → 静态 SQL：每条 SQL 在**编译期**由 `concat!` 固化（表名是字面量，
+/// 运行期无拼串、无 `AssertSqlSafe`）。SQL 正文单一来源（宏内一处），
+/// 族成员新增 = 在调用处加一行表名，未知表 fail-visible（不回落、不静默）。
+macro_rules! status_dict_sqls {
+    ($($table:literal),+ $(,)?) => {
+        &[$((
+            $table,
+            concat!(
+                "SELECT st.code FROM \"isahl\".\"zc_id_lifecycle_r_primary-status\" ps \
+                 JOIN \"isahl\".\"", $table, "\" st ON st.id = ps.ref_right AND st.deleted_at IS NULL \
+                 WHERE ps.ref_left = $1 AND ps.deleted_at IS NULL \
+                 ORDER BY ps.id DESC LIMIT 1"
+            ),
+        )),+]
+    };
+}
+
+const STATUS_DICT_SQL: &[(&str, &str)] = status_dict_sqls![
     "zc_id_stus-agreement",
     "zc_id_stus-contract",
     "zc_id_stus-prod-made",
@@ -22,14 +37,12 @@ const STATUS_DICT_WHITELIST: &[&str] = &[
     "zc_id_stus-trade",
 ];
 
-fn ensure_dict(dict_table: &str) -> Result<(), AliothError> {
-    if STATUS_DICT_WHITELIST.contains(&dict_table) {
-        Ok(())
-    } else {
-        Err(AliothError::Internal(format!(
-            "未知状态字典表: {dict_table}"
-        )))
-    }
+fn status_dict_sql(dict_table: &str) -> Result<&'static str, AliothError> {
+    STATUS_DICT_SQL
+        .iter()
+        .find(|(t, _)| *t == dict_table)
+        .map(|(_, sql)| *sql)
+        .ok_or_else(|| AliothError::Internal(format!("未知状态字典表: {dict_table}")))
 }
 
 /// 读实体当前状态 code（无桥接行 → None；字典 code 原样返回，不剥前缀）。
@@ -43,14 +56,8 @@ pub async fn current_status_opt<'e, E>(
 where
     E: Executor<'e, Database = Postgres>,
 {
-    ensure_dict(dict_table)?;
-    let sql = format!(
-        r#"SELECT st.code FROM "isahl"."zc_id_lifecycle_r_primary-status" ps
-           JOIN "isahl"."{dict_table}" st ON st.id = ps.ref_right AND st.deleted_at IS NULL
-           WHERE ps.ref_left = $1 AND ps.deleted_at IS NULL
-           ORDER BY ps.id DESC LIMIT 1"#,
-    );
-    let code: Option<String> = sqlx::query_scalar(AssertSqlSafe(sql))
+    let sql = status_dict_sql(dict_table)?;
+    let code: Option<String> = sqlx::query_scalar(sql)
         .bind(entity_id)
         .fetch_optional(executor)
         .await
@@ -95,6 +102,81 @@ pub async fn upsert_renewal_status_tx(
     Ok(())
 }
 
+/// 状态字典行的**阶段归类**（`isahl.status_flag`）
+///
+/// DDL 约束：该列为 `isahl.status_flag` 枚举、**NOT NULL 且无默认值**（`ENVIRONMENT_SPEC.md §11.4`），
+/// 故字典行 INSERT MUST 显式给值。语义 = 「该状态处于本体生命周期的哪个阶段」
+/// （`ALIOTH_ONTOLOGY_SPEC.md §4.2`）：
+///
+/// - `start` 起始态：草稿 / 待受理 / 未激活类
+/// - `end` 终态：完成 / 驳回 / 终止类
+/// - `doing` 中间态：其余（"已提交 / 审核中 / 已发布 / 已签收"等仍在流转者归此）
+///
+/// 匹配口径 = **code 词尾段**（`ST-DRAFT` / `cert-state-draft` / `ps-planned` 均命中 `draft`）。
+/// 适用面：运行期由调用方提供 code、且拿不到字典行语义上下文（notice / 所属表）的写入路径；
+/// 种子与领域字典的逐行取值仍以各自显式声明为准（`Framework/seed/*` 写 `flag` 字面量）。
+pub fn flag_for_status_code(code: &str) -> &'static str {
+    const END: &[&str] = &[
+        "approved",
+        "rejected",
+        "refused",
+        "passed",
+        "completed",
+        "complete",
+        "done",
+        "closed",
+        "canceled",
+        "cancelled",
+        "settled",
+        "voided",
+        "void",
+        "expired",
+        "revoked",
+        "withdrawn",
+        "retired",
+        "scrapped",
+        "abolished",
+        "obsolete",
+        "archived",
+        "terminated",
+        "disabled",
+        "deprecated",
+        "failed",
+        "ended",
+        "finished",
+        "compliant",
+        // 终态语义补充（与 Framework/seed 的显式取值对齐：放行/修复/删除/处理/实施/适用/执行/逾期）
+        "released",
+        "fixed",
+        "deleted",
+        "handled",
+        "implemented",
+        "applicable",
+        "executed",
+        "overdue",
+        "resolved",
+        "resigned",
+    ];
+    const START: &[&str] = &[
+        "draft", "new", "pending", "open", "created", "init", "unread", "inactive", "planned",
+        "applied", "todo",
+    ];
+    let trimmed = code.trim();
+    let full = trimmed.to_ascii_lowercase();
+    let tail = trimmed
+        .rsplit(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if END.contains(&full.as_str()) || END.contains(&tail.as_str()) {
+        return "end";
+    }
+    if START.contains(&full.as_str()) || START.contains(&tail.as_str()) {
+        return "start";
+    }
+    "doing"
+}
+
 pub async fn upsert_status_tx(
     tx: &mut Transaction<'_, Postgres>,
     entity_id: i64,
@@ -130,4 +212,52 @@ pub async fn upsert_status_tx(
         .map_err(AliothError::from_sqlx)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flag_for_status_code;
+
+    #[test]
+    fn flag_for_status_code_阶段归类() {
+        // 起始态
+        for c in [
+            "draft",
+            "ST-DRAFT",
+            "cert-state-draft",
+            "ps-planned",
+            "pending",
+            "unread",
+            "IOT-INACTIVE",
+        ] {
+            assert_eq!(flag_for_status_code(c), "start", "期望 start: {c}");
+        }
+        // 终态
+        for c in [
+            "approved",
+            "rejected",
+            "completed",
+            "CNT-DONE",
+            "closed",
+            "ST-SETTLED",
+            "PTC-TERMINATED",
+            "CERT-REVOKED",
+            "sign-released",
+        ] {
+            assert_eq!(flag_for_status_code(c), "end", "期望 end: {c}");
+        }
+        // 中间态（仍在流转：已提交 / 审核中 / 已发布 / 已签收 / 已读）
+        for c in [
+            "read",
+            "published",
+            "cb-effective",
+            "ag-submitted",
+            "cert-state-review",
+            "ST-SIGNED",
+            "ra-assessing",
+            "",
+        ] {
+            assert_eq!(flag_for_status_code(c), "doing", "期望 doing: {c}");
+        }
+    }
 }

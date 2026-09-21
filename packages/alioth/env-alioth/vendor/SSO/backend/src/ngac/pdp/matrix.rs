@@ -412,6 +412,34 @@ async fn build_policy_matrix(
         .map(|o| (o.id, ancestor_closure(o.id, &oa_ancestors)))
         .collect();
 
+    // (UA, OA) 精确对 → 规则集索引：等价 `Pdp::evaluate_pair_in` 的两段判定，但把
+    // 「扫描该 UA 的全部关联」降为「按对命中」。泛关联 UA（如策略类级 UA 与全部实例
+    // OA 成边，实测单 UA 6k+ 条）下，逐对全扫是 O(UA × OA × rights × 闭包² × 关联数)，
+    // 实测 6k OA 时 >8 分钟；索引后每对为 O(匹配规则数)。
+    // 克隆 `ak_access_rights` / `conditions` 最小字段——DashMap 守卫不跨迭持续持。
+    let mut assoc_index: HashMap<(i64, i64), Vec<(Vec<i64>, Option<serde_json::Value>)>> =
+        HashMap::new();
+    for e in pg.associations.iter() {
+        let a = e.value();
+        assoc_index
+            .entry((a.fk_user_attribute, a.fk_object_attribute))
+            .or_default()
+            .push((a.ak_access_rights.clone(), a.conditions.clone()));
+    }
+    let mut prohib_index: HashMap<(i64, i64), Vec<(bool, Vec<i64>, Option<serde_json::Value>)>> =
+        HashMap::new();
+    for e in pg.prohibitions.iter() {
+        let p = e.value();
+        prohib_index
+            .entry((p.fk_user_attribute, p.fk_object_attribute))
+            .or_default()
+            .push((
+                p.is_active,
+                p.ak_access_rights.clone(),
+                p.conditions.clone(),
+            ));
+    }
+
     let mut cells: Vec<MatrixCell> = Vec::new();
     for ua in &uas {
         let ua_closure = ancestor_closure(ua.id, &ua_ancestors);
@@ -421,7 +449,7 @@ async fn build_policy_matrix(
             .filter_map(|id| ua_names.get(id).cloned())
             .collect();
         for oa in &oas {
-            let oa_closure = ancestor_closure(oa.id, &oa_ancestors);
+            let oa_closure = oa_closures.get(&oa.id).expect("oa closure precomputed");
             let ctx = ConditionContext {
                 now: Utc::now(),
                 user_ua_names: user_ua_names.clone(),
@@ -450,11 +478,29 @@ async fn build_policy_matrix(
                 let mut saw_permit = false;
                 for &ua_c in &ua_closure {
                     for &oa_c in oa_closures.get(&oa.id).expect("oa closure present") {
-                        match pdp.evaluate_pair(ua_c, oa_c, &ar.o_name, &ctx).0 {
-                            Decision::Deny => saw_deny = true,
-                            Decision::Permit => saw_permit = true,
-                            Decision::NotApplicable => {}
+                        // 与 evaluate_pair_in 同序同判：先 prohibition（deny），后 association（permit）
+                        if let Some(list) = prohib_index.get(&(ua_c, oa_c)) {
+                            if list.iter().any(|(active, rights, cond)| {
+                                *active
+                                    && rights.contains(&ar.id)
+                                    && crate::ngac::pdp::evaluate_conditions(cond, &ctx)
+                            }) {
+                                saw_deny = true;
+                                break;
+                            }
                         }
+                        if let Some(list) = assoc_index.get(&(ua_c, oa_c)) {
+                            if list.iter().any(|(rights, cond)| {
+                                rights.contains(&ar.id)
+                                    && crate::ngac::pdp::evaluate_conditions(cond, &ctx)
+                            }) {
+                                saw_permit = true;
+                                break;
+                            }
+                        }
+                    }
+                    if saw_deny || saw_permit {
+                        break;
                     }
                 }
                 if saw_deny {

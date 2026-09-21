@@ -61,13 +61,17 @@ async fn employee_crud_full_lifecycle() {
         .set_json(&create_body)
         .to_request();
     let resp = actix_test::call_service(&app, req).await;
+    let status = resp.status();
+    let raw = actix_test::read_body(resp).await;
+    let created: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
     assert_eq!(
-        resp.status(),
-        201,
-        "create employee must return 201 Created"
+        status, 201,
+        "create employee must return 201 Created, body: {created}"
     );
-    let created: Value = actix_test::read_body_json(resp).await;
-    let emp_id = created["id"].as_i64().expect("id present");
+    let emp_id: i64 = created["id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .expect("id present");
     assert_eq!(created["name"], "测试工程师-create");
     assert_eq!(created["code"], "E2E-EMP-CRUD");
     assert!(emp_id > 0);
@@ -78,7 +82,7 @@ async fn employee_crud_full_lifecycle() {
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 200);
     let fetched: Value = actix_test::read_body_json(resp).await;
-    assert_eq!(fetched["id"], emp_id);
+    assert_eq!(fetched["id"], emp_id.to_string());
     assert_eq!(fetched["name"], "测试工程师-create");
 
     let req = actix_test::TestRequest::patch()
@@ -244,7 +248,10 @@ async fn approver_crud_full_lifecycle() {
     let resp = actix_test::call_service(&app, req).await;
     assert_eq!(resp.status(), 201);
     let created: Value = actix_test::read_body_json(resp).await;
-    let approver_id = created["id"].as_i64().expect("id present");
+    let approver_id: i64 = created["id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .expect("id present");
 
     let req = actix_test::TestRequest::get()
         .uri(&format!("{PREFIX}/approvers/{approver_id}"))

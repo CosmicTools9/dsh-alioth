@@ -84,6 +84,24 @@ async fn json_body(resp: HttpResponse) -> serde_json::Value {
     serde_json::from_slice(&body).expect("json")
 }
 
+/// 文件 kind 表 → 软删静态 SQL：表名在**编译期**由 `concat!` 固化（无运行期拼串、
+/// 无 `AssertSqlSafe`）。kind 由存储链解析，清理须全覆盖 ⇒ 表集 = 全部 5 张 kind 表。
+macro_rules! file_kind_soft_delete_sqls {
+    ($($table:literal),+ $(,)?) => {
+        &[$(concat!(
+            "UPDATE isahl.\"", $table, "\" SET deleted_at = NOW() WHERE id = $1"
+        )),+]
+    };
+}
+
+const FILE_KIND_SOFT_DELETE_SQL: &[&str] = file_kind_soft_delete_sqls![
+    "zc_id_file-document",
+    "zc_id_file-image",
+    "zc_id_file-avatar",
+    "zc_id_file-package",
+    "zc_id_file-ver_ctrl",
+];
+
 /// 清理 fixture：URL 链 + 全部 kind 表文件行软删 + 磁盘目录。
 async fn cleanup(pool: &PgPool, file_ids: &[i64]) {
     for id in file_ids {
@@ -111,18 +129,8 @@ async fn cleanup(pool: &PgPool, file_ids: &[i64]) {
         .execute(pool)
         .await;
         // 文件行：全部 5 张 kind 表（kind 由存储链解析，清理须全覆盖）
-        for t in [
-            "zc_id_file-document",
-            "zc_id_file-image",
-            "zc_id_file-avatar",
-            "zc_id_file-package",
-            "zc_id_file-ver_ctrl",
-        ] {
-            let sql = format!(r#"UPDATE isahl."{t}" SET deleted_at = NOW() WHERE id = $1"#);
-            let _ = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-                .bind(id)
-                .execute(pool)
-                .await;
+        for sql in FILE_KIND_SOFT_DELETE_SQL {
+            let _ = sqlx::query(*sql).bind(id).execute(pool).await;
         }
         // 磁盘字节：整目录清理（覆盖改名后路径）
         for kind in ["document", "image", "avatar", "package", "ver_ctrl"] {
@@ -373,6 +381,132 @@ async fn upload_limits_enforced() {
     )
     .await;
     assert!(resp.is_err(), "缺 namespace 应报错");
+}
+
+// ── Chat 文档附件契约（chat-attachment-multi-format）──────────────────────
+
+/// 文本/办公族扩展名（md / csv / json）经 `/api/files`（Document kind）MUST 可上传——
+/// 否则聊天文档附件在入口即被 kind 白名单 400 拦截。
+#[tokio::test]
+async fn chat_document_extensions_accepted() {
+    let pool = connect_test_db().await;
+    let state = setup_state(pool.clone()).await;
+
+    let mut file_ids = Vec::new();
+    for (name, body) in [
+        (
+            "note.md",
+            &b"# \xe6\xa0\x87\xe9\xa2\x98\n\xe6\xad\xa3\xe6\x96\x87"[..],
+        ),
+        ("rows.csv", &b"a,b\n1,2"[..]),
+        ("data.json", &br#"{"k":1}"#[..]),
+    ] {
+        let resp = http_upload(&state, USER_A, "Alioth", name, body, &[]).await;
+        assert!(
+            resp.status().is_success(),
+            "{name} 上传应成功（Document kind 须覆盖 chat 附件族）: {}",
+            resp.status()
+        );
+        let up = json_body(resp).await;
+        file_ids.push(up["id"].as_str().unwrap().parse::<i64>().unwrap());
+    }
+
+    cleanup(&pool, &file_ids).await;
+}
+
+// ── 存储键合法性：含空格/中文的原名（批注 cc97d23f 回归）─────────────────
+
+/// 批注 cc97d23f：原名含空格的附件（`杭州热联-华畅 2026年协.pdf`）在本地后端 500
+/// `FileManager: Invalid storage key: WZ/document/<id>/杭州热联-华畅 2026年协.pdf`
+/// ——写入侧把原名直接当存储键文件名段，撞上本地后端字符集谓词。
+///
+/// 契约：存储键 MUST 由写入侧净化为键安全段（原名仍存文件行 `notice` →
+/// 下载文件名/展示不变）；上传与改名（PUT fileName）两条写入路径同等。
+#[tokio::test]
+async fn unsafe_filename_chars_are_key_safe_end_to_end() {
+    let pool = connect_test_db().await;
+    let state = setup_state(pool.clone()).await;
+
+    // 原名含空格 + 中文（中文本身合法但不属键安全集）
+    let original = "杭州热联-华畅 2026年协.pdf";
+    let resp = http_upload(&state, USER_A, "Alioth", original, b"%PDF-1.4 fake", &[]).await;
+    assert!(
+        resp.status().is_success(),
+        "含空格原名上传应成功（原报 500 Invalid storage key）: {}",
+        resp.status()
+    );
+    let up = json_body(resp).await;
+    let file_id: i64 = up["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(up["fileName"], original, "文件行须保留原名（元数据）");
+
+    // 存储键：无空格、全字符落在本地后端允许集 `[A-Za-z0-9/_.-]`（中文除外）
+    let stored: String = sqlx::query_scalar(
+        r#"SELECT u.path FROM isahl."zc_id_file_rr_url" rr
+           JOIN isahl."zc_id_stor-plc-url" s ON s.id = rr.ref_right
+           JOIN isahl."zc_id_info-url" u ON u.id = s.fk_address
+           WHERE rr.ref_left = $1"#,
+    )
+    .bind(file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("存储链 path");
+    let segment = stored.rsplit('/').next().unwrap_or_default();
+    assert!(
+        !segment.contains(' ') && segment.ends_with(".pdf"),
+        "存储键文件名段须键安全且保留扩展名: {stored}"
+    );
+
+    // 下载：字节 + 原名还原
+    let resp = download_file(
+        req_with_user(USER_A, "Alioth"),
+        web::Data::new(state.clone()),
+        web::Path::from(file_id),
+    )
+    .await
+    .expect("download");
+    assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    let body = actix_web::body::to_bytes(resp.into_body()).await.unwrap();
+    assert_eq!(&body[..], b"%PDF-1.4 fake");
+
+    // 改名到另一个含空格原名 → 同样键安全
+    let resp = http_update(
+        &state,
+        USER_A,
+        "Alioth",
+        file_id,
+        None,
+        &[("fileName", "价格 确认函.pdf")],
+    )
+    .await;
+    assert!(
+        resp.status().is_success(),
+        "改名到含空格原名应成功: {}",
+        resp.status()
+    );
+    let renamed: String = sqlx::query_scalar(
+        r#"SELECT u.path FROM isahl."zc_id_file_rr_url" rr
+           JOIN isahl."zc_id_stor-plc-url" s ON s.id = rr.ref_right
+           JOIN isahl."zc_id_info-url" u ON u.id = s.fk_address
+           WHERE rr.ref_left = $1"#,
+    )
+    .bind(file_id)
+    .fetch_one(&pool)
+    .await
+    .expect("改名后存储链 path");
+    assert!(
+        !renamed.rsplit('/').next().unwrap_or_default().contains(' '),
+        "改名后存储键仍须键安全: {renamed}"
+    );
+    let resp = download_file(
+        req_with_user(USER_A, "Alioth"),
+        web::Data::new(state.clone()),
+        web::Path::from(file_id),
+    )
+    .await
+    .expect("download after rename");
+    assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+    cleanup(&pool, &[file_id]).await;
 }
 
 // ── 非 document kind 全链路（bug① 回归）──────────────────────────────────

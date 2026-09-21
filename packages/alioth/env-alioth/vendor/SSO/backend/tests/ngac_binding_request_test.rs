@@ -137,14 +137,25 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("TX", "FJA", "↓_GG"))
         .await
         .expect("resolve zc_id_subj-position coords (Position)");
+    // 岗位类别（认知派生 UA 语义 = `position:{类别code}`，仅认 zc_id_category 基表行——
+    let category_id: i64 = sqlx::query_scalar(
+        // id 省略：zc_id_category 为 uid 类表，由列默认 gen_next_uid 决定（embedded-id-class 门禁）
+        "INSERT INTO isahl.zc_id_category (notice, code, created_by_id)
+         VALUES ('绑定测试岗位类别', $1, 1) RETURNING id",
+    )
+    .bind(format!("BIND-POS-{}", suffix))
+    .fetch_one(pool)
+    .await
+    .expect("insert position category");
     let position_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, created_by_id, dk_scene, dk_factor, dk_function)
-         VALUES (isahl.gen_next_zuid(), '绑定测试岗位', $1, 1, $2, $3, $4) RETURNING id",
+        "INSERT INTO isahl.\"zc_id_subj-position\" (id, notice, code, ck_category, created_by_id, dk_scene, dk_factor, dk_function)
+         VALUES (isahl.gen_next_zuid(), '绑定测试岗位', $1, $5, 1, $2, $3, $4) RETURNING id",
     )
     .bind(format!("BIND-POS-{}", suffix))
     .bind(dk_scene)
     .bind(dk_factor)
     .bind(dk_function)
+    .bind(category_id)
     .fetch_one(pool)
     .await
     .expect("insert position");

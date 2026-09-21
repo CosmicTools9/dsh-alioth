@@ -30,6 +30,10 @@ impl std::fmt::Display for SideEffectError {
 
 impl std::error::Error for SideEffectError {}
 
+/// `{title_col}` 占位符：凭证族「物/交易对象」列名，由执行器在执行期解析
+/// （构造侧纯函数拿不到 pool，见 `SideEffectExecutor::resolve_title_col`）。
+const TITLE_COL_PLACEHOLDER: &str = "{title_col}";
+
 /// Validate PostgreSQL identifier to prevent SQL injection.
 fn validate_pg_ident(ident: &str) -> Result<(), SideEffectError> {
     if ident.is_empty() || ident.len() > 63 {
@@ -122,6 +126,7 @@ impl SideEffectExecutor {
                     execute_with_binds(&mut *tx, &sql, vec![Value::Number((*id).into())]).await?;
                 }
                 SideEffect::RawSql(sql) => {
+                    let sql = self.resolve_title_col(sql).await?;
                     sqlx::query(AssertSqlSafe(sql.as_str()))
                         .execute(&mut *tx)
                         .await
@@ -187,11 +192,27 @@ impl SideEffectExecutor {
     }
 
     async fn execute_raw_sql(&self, sql: &str) -> Result<(), SideEffectError> {
-        sqlx::query(AssertSqlSafe(sql))
+        let sql = self.resolve_title_col(sql).await?;
+        sqlx::query(AssertSqlSafe(sql.as_str()))
             .execute(&self.pool)
             .await
             .map_err(|e| SideEffectError::RawSqlError(e.to_string()))?;
         Ok(())
+    }
+
+    /// 解析 `{title_col}` 占位符＝凭证族「物/交易对象」列（模型演进：`fk_payload` 优先，
+    /// 旧模型 `fk_production`；见 `stock_materialization::voucher_title_column`）。
+    ///
+    /// 纯函数构造的延迟 SQL（如 `auxiliary::ProductionDeleteTemplate`）拿不到 pool，
+    /// 无法自行探测列名，故由执行器在目标库上解析；无占位符时零开销返回原串。
+    async fn resolve_title_col(&self, sql: &str) -> Result<String, SideEffectError> {
+        if !sql.contains(TITLE_COL_PLACEHOLDER) {
+            return Ok(sql.to_string());
+        }
+        let col = crate::stock_materialization::voucher_title_column(&self.pool)
+            .await
+            .map_err(SideEffectError::RawSqlError)?;
+        Ok(sql.replace(TITLE_COL_PLACEHOLDER, col))
     }
 
     async fn execute_raw_sql_with_params(

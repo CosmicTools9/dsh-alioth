@@ -18,32 +18,32 @@ use ontology_binding::{Coords, DkBinding};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DkEntity {
     /// JC/FTA/↑_NA — 审批流程定义（zc_id_process 族）
-    DkJcFtaNa,
+    JcFtaNa,
     /// JC/FTA/↓_NC — 审批意见 zc_id_deta-opinion
-    DkJcFtaNc,
+    JcFtaNc,
     /// JE/FTA/↓_EZ — 审批实例 zc_id_oper-approve
-    DkJeFtaEz,
+    JeFtaEz,
     /// JE/FBB/↓_EZ — 门禁/自动节点操作 zc_id_oper-gate
-    DkJeFbbEz,
+    JeFbbEz,
     /// TX/FJA/↓_GG — 自然人主数据 zc_id_empl-natural
-    DkTxFjaGg,
+    TxFjaGg,
     /// JE/FBA/↓_AB — 标准/规章模板 zc_id_standard（声明+avic 库现存行）
-    DkJeFbaAb,
+    JeFbaAb,
     /// JE/GEC/↑_DA — prot 配置族 zc_id_prot-profile_config（同族先例 prot-env_config /
     /// prot-oss_config：seed-demo-surfaces.sql:59 / seed-storage-config.sql:17，均 JE·GEC·↑_DA）
-    DkJeGecDa,
+    JeGecDa,
 }
 
 impl DkBinding for DkEntity {
     fn coords(&self) -> Coords {
         match self {
-            DkEntity::DkJcFtaNa => ("JC", "FTA", "↑_NA"),
-            DkEntity::DkJcFtaNc => ("JC", "FTA", "↓_NC"),
-            DkEntity::DkJeFtaEz => ("JE", "FTA", "↓_EZ"),
-            DkEntity::DkJeFbbEz => ("JE", "FBB", "↓_EZ"),
-            DkEntity::DkTxFjaGg => ("TX", "FJA", "↓_GG"),
-            DkEntity::DkJeFbaAb => ("JE", "FBA", "↓_AB"),
-            DkEntity::DkJeGecDa => ("JE", "GEC", "↑_DA"),
+            DkEntity::JcFtaNa => ("JC", "FTA", "↑_NA"),
+            DkEntity::JcFtaNc => ("JC", "FTA", "↓_NC"),
+            DkEntity::JeFtaEz => ("JE", "FTA", "↓_EZ"),
+            DkEntity::JeFbbEz => ("JE", "FBB", "↓_EZ"),
+            DkEntity::TxFjaGg => ("TX", "FJA", "↓_GG"),
+            DkEntity::JeFbaAb => ("JE", "FBA", "↓_AB"),
+            DkEntity::JeGecDa => ("JE", "GEC", "↑_DA"),
         }
     }
 }

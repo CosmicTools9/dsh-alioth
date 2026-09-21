@@ -123,6 +123,11 @@ async fn entity_scope_ids<E: AliothDbEntity>(
         sql.push_str(" AND ");
         sql.push_str(E::COORDINATE_FILTER);
     }
+    // 行作用域谓词同上——活动流作用域 id 集必须与列表/get 口径同源
+    if !E::ROW_FILTER.is_empty() {
+        sql.push_str(" AND ");
+        sql.push_str(E::ROW_FILTER);
+    }
     sql.push_str(&format!(" LIMIT {}", SCOPE_LIMIT));
     sqlx::query_scalar(AssertSqlSafe(sql))
         .fetch_all(pool)

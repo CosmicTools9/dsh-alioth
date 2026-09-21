@@ -52,6 +52,19 @@ pub trait AliothDbEntity:
     /// Optional coordinate discriminator WHERE clause for entities sharing a DB table.
     /// When set, this raw SQL fragment (without "AND") is appended to every list/get query.
     const COORDINATE_FILTER: &'static str = "";
+    /// 实体行作用域谓词（可选，静态 SQL 片段，无 "AND" 前缀）：坐标三元组**之外**的行级
+    /// 判别——用于同表同坐标下还要区分「业务行 vs 系统事实行」的实体
+    /// （如框架 `common::plan_execution::record_slice_flip` 落在 even-alert 的 `code='flip-<plan_id>'` 行）。
+    ///
+    /// 与 `COORDINATE_FILTER` 的关系：后者判「本实体占表中哪一段」（走 code→ZUID 参数化快路径），
+    /// 本常量判「该段内哪些行属于本实体」（恒以**原文**拼接，不经参数化）。四读径一致生效：
+    /// list/count/搜索（`build_where_sql`）、`get`、`get_refs`、NGAC 活动作用域 id 集
+    /// （`activity::entity_scope_ids`）——读径口径必须同源，否则会「列表过滤、单条可读」分裂。
+    ///
+    /// MUST NOT 含用户输入 / 绑定占位符（`$n`）：原文拼接，含占位符会错位 `param_idx` 与
+    /// `visible_ids` 绑定顺序（NGAC_SPEC 行级过滤绑定顺序条款）；门禁
+    /// `scripts/check/check-entity-row-filter.ts`。默认空 = 不追加（零回归）。
+    const ROW_FILTER: &'static str = "";
     /// 本体坐标声明（回退坐标，REQ-DATA-002）：`X-Alioth-Coord` header 缺失时，
     /// 通用 CRUD handler 按此声明回填 `dk_*`（见 `handler::resolve_dk_ctx`）。
     /// 默认不声明 → `dk_*` 保持 NULL（不 fail-closed，兼容无坐标实体）。

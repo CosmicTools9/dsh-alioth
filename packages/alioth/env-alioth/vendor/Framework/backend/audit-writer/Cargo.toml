@@ -1,0 +1,18 @@
+[package]
+name = "audit-writer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "业务审计域写链共享事务（zc_id_audit 审计项目 + rr_auditee 受审主体桥 + rr_conclusion 结论桥）——change wire-business-audit-domain D1/D2 单源；与 isahl_audit 数据审计基建正交"
+
+[dependencies]
+sqlx = { workspace = true }
+common = { path = "../common" }
+ontology-binding = { path = "../ontology-binding" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

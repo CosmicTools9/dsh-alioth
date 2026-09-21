@@ -56,7 +56,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     )
     .execute(pool)
     .await
-    .ok();
+    .expect("seed step");
     let pc: i64 = sqlx::query_scalar(
         "SELECT id FROM isahl_auth.ngac_policy_class WHERE o_name='default' LIMIT 1",
     )
@@ -98,7 +98,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .bind(pc)
     .execute(pool)
     .await
-    .ok();
+    .expect("seed step");
     let ua_id: i64 = sqlx::query_scalar(
         "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $1 AND deleted_at IS NULL LIMIT 1",
     )
@@ -115,7 +115,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .bind(ua_id)
     .execute(pool)
     .await
-    .ok();
+    .expect("seed step");
     let _ = sqlx::query(
         "INSERT INTO isahl_auth.ngac_object_attribute (o_name, fk_policy_class, resource_type, fk_resource, created_at, updated_at)
          VALUES ($1, $2, 'deleggres', 0, NOW(), NOW())
@@ -125,7 +125,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .bind(pc)
     .execute(pool)
     .await
-    .ok();
+    .expect("seed step");
     let oa: i64 = sqlx::query_scalar(
         "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type='deleggres' AND fk_resource=0 LIMIT 1",
     )
@@ -137,7 +137,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     )
     .execute(pool)
     .await
-    .ok();
+    .expect("seed step");
     let ar: i64 = sqlx::query_scalar(
         "SELECT id FROM isahl_auth.ngac_access_right WHERE o_name='read' LIMIT 1",
     )
@@ -154,7 +154,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .bind(pc)
     .execute(pool)
     .await
-    .ok();
+    .expect("seed step");
 
     Fixture {
         u1: ids[0],
@@ -168,8 +168,10 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
 }
 
 async fn cleanup(pool: &PgPool, f: &Fixture) {
+    // 夹具用户 id 每 run 更新——按 id 清不到上轮崩溃残留；按 UA 名模式清扫委托（含历史 run）
     let _ = sqlx::query(
-        "DELETE FROM isahl_auth.ngac_delegation WHERE fk_delegator = ANY($1) OR fk_delegatee = ANY($1)",
+        "DELETE FROM isahl_auth.ngac_delegation WHERE fk_delegator = ANY($1) OR fk_delegatee = ANY($1) \
+         OR fk_user_attribute IN (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name LIKE 'deleg-target-%')",
     )
     .bind(vec![f.u1, f.u2, f.u3])
     .execute(pool)
@@ -200,13 +202,23 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
 #[tokio::test]
 async fn delegation_grant_revoke_and_boundaries() {
     let pool = connect().await;
+    {
+        // 开头清理：上轮崩溃留下的活跃委托仍在时间窗内会派生 UA（预检假放行实测）
+        let pre = seed(&pool, "c1-pre").await;
+        cleanup(&pool, &pre).await;
+    }
     let f = seed(&pool, "c1").await;
     let ast = common::test_auth_state();
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes)),
+            .service(
+                web::scope("/api/ngac")
+                    // 生产同构：RequireAuth 注入 Claims（fix-auth-token-precedence 收紧后必需）
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            ),
     )
     .await;
     let t1 = mint_token(&ast, f.u1, &f.u1_email);
@@ -217,13 +229,23 @@ async fn delegation_grant_revoke_and_boundaries() {
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/api/ngac/decide")
+            .uri("/api/ngac/pdp/decide")
+            // 收紧后 decide 需 Bearer 且 sub==被问主体（enforce_decision_subject）
+            .insert_header(("Authorization", format!("Bearer {}", t2)))
             .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
             .to_request(),
     )
     .await;
-    let d: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(d["permitted"], false, "委托前 U2 应无权限");
+    let st0 = resp.status();
+    let raw = test::read_body(resp).await;
+    let d: serde_json::Value = serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
+    assert_eq!(
+        d["permitted"],
+        false,
+        "委托前 U2 应无权限: status={} body={}",
+        st0,
+        String::from_utf8_lossy(&raw)
+    );
 
     // U1 委托 X 给 U2（现在 → +1h）
     let now = chrono::Utc::now();
@@ -242,7 +264,10 @@ async fn delegation_grant_revoke_and_boundaries() {
     )
     .await;
     let resp_status = resp.status();
-    let resp_body: serde_json::Value = test::read_body_json(resp).await;
+    let resp_body: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
     assert_eq!(resp_status, 201, "发起委托应 201: body={:?}", resp_body);
     let created = resp_body;
     let del_id: i64 = created["id"].as_str().unwrap().parse().expect("id");
@@ -251,13 +276,17 @@ async fn delegation_grant_revoke_and_boundaries() {
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/api/ngac/decide")
+            .uri("/api/ngac/pdp/decide")
+            .insert_header(("Authorization", format!("Bearer {}", t2)))
             .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
             .to_request(),
     )
     .await;
-    let d: serde_json::Value = test::read_body_json(resp).await;
-    assert_eq!(d["permitted"], true, "委托生效 U2 应放行: {}", d);
+    let d: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
+    assert_eq!(d["permitted"], true, "委托生效 U2 应放行: {:?}", d);
 
     // 链式委托：U2（委托来源）再委托给 U3 → 400
     let resp = test::call_service(
@@ -302,7 +331,10 @@ async fn delegation_grant_revoke_and_boundaries() {
             .to_request(),
     )
     .await;
-    let out: serde_json::Value = test::read_body_json(resp).await;
+    let out: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
     assert!(
         out.as_array()
             .unwrap()
@@ -318,7 +350,10 @@ async fn delegation_grant_revoke_and_boundaries() {
             .to_request(),
     )
     .await;
-    let in_: serde_json::Value = test::read_body_json(resp).await;
+    let in_: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
     assert!(
         in_.as_array()
             .unwrap()
@@ -334,7 +369,10 @@ async fn delegation_grant_revoke_and_boundaries() {
             .to_request(),
     )
     .await;
-    let out3: serde_json::Value = test::read_body_json(resp).await;
+    let out3: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
     assert!(
         !out3
             .as_array()
@@ -357,12 +395,16 @@ async fn delegation_grant_revoke_and_boundaries() {
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/api/ngac/decide")
+            .uri("/api/ngac/pdp/decide")
+            .insert_header(("Authorization", format!("Bearer {}", t2)))
             .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
             .to_request(),
     )
     .await;
-    let d: serde_json::Value = test::read_body_json(resp).await;
+    let d: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
     assert_eq!(d["permitted"], false, "撤销后 U2 应无权限: {}", d);
 
     // 二次撤销 → 409
@@ -382,13 +424,21 @@ async fn delegation_grant_revoke_and_boundaries() {
 #[tokio::test]
 async fn delegation_outside_window_inactive() {
     let pool = connect().await;
+    {
+        let pre = seed(&pool, "c2-pre").await;
+        cleanup(&pool, &pre).await;
+    }
     let f = seed(&pool, "c2").await;
     let ast = common::test_auth_state();
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes)),
+            .service(
+                web::scope("/api/ngac")
+                    .wrap(gateway_sso::auth::middleware::RequireAuth::new())
+                    .configure(gateway_sso::ngac::pdp::configure_routes),
+            ),
     )
     .await;
 
@@ -408,15 +458,20 @@ async fn delegation_outside_window_inactive() {
     .await
     .expect("expired delegation");
 
+    let t_u2 = mint_token(&ast, f.u2, &f.u2_email);
     let resp = test::call_service(
         &app,
         test::TestRequest::post()
-            .uri("/api/ngac/decide")
+            .uri("/api/ngac/pdp/decide")
+            .insert_header(("Authorization", format!("Bearer {}", t_u2)))
             .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
             .to_request(),
     )
     .await;
-    let d: serde_json::Value = test::read_body_json(resp).await;
+    let d: serde_json::Value = {
+        let b = test::read_body(resp).await;
+        serde_json::from_slice::<serde_json::Value>(&b).unwrap_or(serde_json::Value::Null)
+    };
     assert_eq!(d["permitted"], false, "过期委托不应生效: {}", d);
 
     cleanup(&pool, &f).await;

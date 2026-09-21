@@ -10,6 +10,7 @@ pub struct UserSubscription {
     pub id: String,
     pub target_table: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub target_id: Option<i64>,
     pub event_types: Vec<String>,
@@ -24,6 +25,7 @@ pub struct UserSubscription {
 #[derive(Debug, Deserialize)]
 pub struct CreateSubscriptionRequest {
     pub target_table: String,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub target_id: Option<i64>,
     #[serde(default = "default_event_types")]
@@ -35,6 +37,7 @@ pub struct CreateSubscriptionRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateSubscriptionRequest {
     pub target_table: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub target_id: Option<i64>,
     pub event_types: Option<Vec<String>>,

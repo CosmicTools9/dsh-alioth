@@ -24,11 +24,6 @@
       {
         "name": "SalesOrder",
         "table": "isahl.zc_id_oper-sales_order",
-        "coordinates": {
-          "scene": "",
-          "factor": "",
-          "function": ""
-        },
         "inherits": null,
         "notes": "操作-销售接单：销售订单主记录，含订单头信息、业务分类、操作员、审批等字段",
         "field_mappings": [
@@ -289,14 +284,6 @@
             "category": "scalar"
           },
           {
-            "business_name": "sk_unit-working",
-            "column": "sk_unit-working",
-            "data_type": "bigint",
-            "nullable": true,
-            "semantic_type": "bigint",
-            "category": "scalar"
-          },
-          {
             "business_name": "qk_arrived",
             "column": "qk_arrived",
             "data_type": "bigint",
@@ -483,11 +470,6 @@
             "type": "i64",
             "via_ref": true
           },
-          "sk_unit-working": {
-            "column": "sk_unit-working",
-            "type": "i64",
-            "via_ref": true
-          },
           "qk_arrived": {
             "column": "qk_arrived",
             "type": "i64",
@@ -632,10 +614,6 @@
             "column": "ck_cate-wh",
             "type": "i64"
           },
-          "sk_unit-working": {
-            "column": "sk_unit-working",
-            "type": "i64"
-          },
           "qk_arrived": {
             "column": "qk_arrived",
             "type": "i64"
@@ -753,10 +731,6 @@
           },
           "ck_cate-wh": {
             "column": "ck_cate-wh",
-            "type": "i64"
-          },
-          "sk_unit-working": {
-            "column": "sk_unit-working",
             "type": "i64"
           },
           "qk_arrived": {

@@ -37,6 +37,7 @@ pub struct LifecycleFlowRow {
     pub code: Option<String>,
     pub t_color_: Option<String>,
     pub comments: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_context: Option<i64>,
     /// 实际落位叶表（tableoid 派生，如 zc_id_proc-approve）
@@ -47,6 +48,7 @@ pub struct LifecycleFlowRow {
     #[sqlx(default)]
     pub status: Option<String>,
     /// 模板锚点：范例行 → 设计·实例 id；设计/执行行为 NULL
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub created_at: DateTime<Utc>,
@@ -58,24 +60,28 @@ pub struct LifecycleFlowRow {
     pub class_t: Option<String>,
 }
 
-const LIFECYCLE_SELECT: &str =
+const LIFECYCLE_SELECT: &str = concat!(
     "e.id, e.notice AS name, e.code, e.t_color_, e.comments, e.meta, \
      (SELECT rc.ref_right FROM isahl.\"zc_id_process_rr_context\" rc \
       WHERE rc.ref_left = e.id AND rc.deleted_at IS NULL \
-      ORDER BY rc.id LIMIT 1) AS fk_context, \
-     replace(e.tableoid::regclass::text, '\"', '') AS branch, \
+      ORDER BY rc.id LIMIT 1) AS fk_context, ",
+    common::leaf_relname!(e),
+    " AS branch, \
      (SELECT c.notice FROM isahl.\"zc_id_proc-context\" c \
       JOIN isahl.\"zc_id_process_rr_context\" rc2 ON rc2.ref_right = c.id AND rc2.deleted_at IS NULL \
       WHERE rc2.ref_left = e.id AND rc2.deleted_at IS NULL AND c.deleted_at IS NULL \
       ORDER BY rc2.id LIMIT 1) AS context_concept, \
-     (SELECT replace(c.tableoid::regclass::text, '\"', '') FROM isahl.\"zc_id_proc-context\" c \
+     (SELECT ",
+    common::leaf_relname!(c),
+    " FROM isahl.\"zc_id_proc-context\" c \
       JOIN isahl.\"zc_id_process_rr_context\" rc3 ON rc3.ref_right = c.id AND rc3.deleted_at IS NULL \
       WHERE rc3.ref_left = e.id AND rc3.deleted_at IS NULL AND c.deleted_at IS NULL \
       ORDER BY rc3.id LIMIT 1) AS context_leaf, \
      (SELECT s.code FROM isahl.\"zc_id_lifecycle_r_primary-status\" ls \
       JOIN isahl.\"zc_id_stus-process\" s ON s.id = ls.ref_right \
       WHERE ls.ref_left = e.id AND ls.deleted_at IS NULL) AS status, \
-     e.tpl_id, e.created_at, e.updated_at, e._t_ AS class_t";
+     e.tpl_id, e.created_at, e.updated_at, e._t_ AS class_t"
+);
 
 const LIFECYCLE_FROM: &str = "FROM isahl.zc_id_process e";
 
@@ -160,6 +166,7 @@ pub struct GenerateTemplateResponse {
     pub code: Option<String>,
     /// 实际落位叶表
     pub branch: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
 }
@@ -176,6 +183,36 @@ pub struct GenerateTemplateResponse {
 /// 克隆：同叶表落 实现·范例 行——notice/code/comments/t_color_/
 /// dk_scene/dk_factor 原样复制，dk_function 换 `↓.{suffix}` 码，tpl_id → 设计行；
 /// 输入范畴绑定经 zc_id_process_rr_context 桥复制到克隆行（不再复制物理列）。
+///
+/// 克隆 INSERT（7 张流程叶表各自静态固化）：notice/code/comments/t_color_/
+/// dk_scene/dk_factor 原样，dk_function → 实现·范例码 id（$2），tpl_id → 设计行（$1）。
+/// 表名为 `$table:literal`，正文编译期由 `concat!` 拼接（多行字面量的缩进即 SQL 正文，勿重排）。
+macro_rules! clone_sql {
+    ($table:literal) => {
+        concat!(
+            "INSERT INTO isahl.\"",
+            $table,
+            "\"
+           (notice, code, comments, t_color_, meta, mermaid, dk_scene, dk_factor, dk_function,
+            tpl_id, created_by_id, _f_, _t_)
+           SELECT notice, code, comments, t_color_, meta, mermaid, dk_scene, dk_factor, $2,
+                  $1,
+                  (SELECT created_by_id FROM isahl.zc_id_process WHERE id = $1),
+                  '实现', '范例'
+           FROM isahl.zc_id_process WHERE id = $1
+           RETURNING id, notice, code"
+        )
+    };
+}
+
+static CLONE_SQL_APPROVE: &str = clone_sql!("zc_id_proc-approve");
+static CLONE_SQL_CICD: &str = clone_sql!("zc_id_proc-cicd");
+static CLONE_SQL_LOADING: &str = clone_sql!("zc_id_proc-loading");
+static CLONE_SQL_MAKE: &str = clone_sql!("zc_id_proc-make");
+static CLONE_SQL_PROJECT: &str = clone_sql!("zc_id_proc-project");
+static CLONE_SQL_PURCHASE: &str = clone_sql!("zc_id_proc-purchase");
+static CLONE_SQL_SERVICE: &str = clone_sql!("zc_id_proc-service");
+
 pub async fn generate_template(
     pool: web::Data<PgPool>,
     req: HttpRequest,
@@ -186,9 +223,13 @@ pub async fn generate_template(
     let design_id = path.into_inner();
     let pool = pool.get_ref();
 
-    // 1. 设计·实例行在册（含 function 码与落位叶表）
+    // 1. 设计·实例行在册（含 function 码与落位叶表）。
+    // branch 取 pg_class.relname（恒为裸叶表名）——tableoid::regclass::text 会随
+    // search_path 渲染为 schema 限定形（isahl.zc_id_proc-approve），剥引号后仍带
+    // 前缀，导致下方静态 match 白名单失配（P6 缺陷：'isahl.zc_id_proc-approve'
+    // 不可克隆）。relname 与 match 白名单同构，渲染无关。
     let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        r#"SELECT replace(tableoid::regclass::text, '"', ''), notice,
+        r#"SELECT (SELECT relname FROM pg_class WHERE oid = e.tableoid), notice,
                   (SELECT f.code FROM isahl.zc_id_function f
                    WHERE f.id = e.dk_function AND f.deleted_at IS NULL LIMIT 1)
            FROM isahl.zc_id_process e
@@ -264,15 +305,15 @@ pub async fn generate_template(
         });
     }
 
-    // 5. 同叶表克隆（静态 match 分发，禁 format! 动态表名；对齐 repositories::create）
-    let insert_sql = match branch.as_str() {
-        "zc_id_proc-approve" => clone_sql("isahl.\"zc_id_proc-approve\""),
-        "zc_id_proc-cicd" => clone_sql("isahl.\"zc_id_proc-cicd\""),
-        "zc_id_proc-loading" => clone_sql("isahl.\"zc_id_proc-loading\""),
-        "zc_id_proc-make" => clone_sql("isahl.\"zc_id_proc-make\""),
-        "zc_id_proc-project" => clone_sql("isahl.\"zc_id_proc-project\""),
-        "zc_id_proc-purchase" => clone_sql("isahl.\"zc_id_proc-purchase\""),
-        "zc_id_proc-service" => clone_sql("isahl.\"zc_id_proc-service\""),
+    // 5. 同叶表克隆（静态 match 分发 + 编译期固化 SQL；对齐 repositories::create）
+    let insert_sql: &'static str = match branch.as_str() {
+        "zc_id_proc-approve" => CLONE_SQL_APPROVE,
+        "zc_id_proc-cicd" => CLONE_SQL_CICD,
+        "zc_id_proc-loading" => CLONE_SQL_LOADING,
+        "zc_id_proc-make" => CLONE_SQL_MAKE,
+        "zc_id_proc-project" => CLONE_SQL_PROJECT,
+        "zc_id_proc-purchase" => CLONE_SQL_PURCHASE,
+        "zc_id_proc-service" => CLONE_SQL_SERVICE,
         other => {
             return Err(AliothError::Validation {
                 field: "branch".into(),
@@ -280,14 +321,13 @@ pub async fn generate_template(
             });
         }
     };
-    let created: (i64, String, Option<String>) =
-        sqlx::query_as(sqlx::AssertSqlSafe(insert_sql.as_str()))
-            .bind(design_id)
-            .bind(exemplar_fn_id)
-            // 静态 SQL（表名编译期常量 + 参数化值），AssertSqlSafe 声明已审计
-            .fetch_one(pool)
-            .await
-            .map_err(AliothError::from)?;
+    let created: (i64, String, Option<String>) = sqlx::query_as(sqlx::AssertSqlSafe(insert_sql))
+        .bind(design_id)
+        .bind(exemplar_fn_id)
+        // 静态 SQL（表名编译期常量 + 参数化值），AssertSqlSafe 声明已审计
+        .fetch_one(pool)
+        .await
+        .map_err(AliothError::from)?;
 
     // 设计行的输入范畴绑定经 rr_context 桥复制到范例行（ref_left=克隆行）。
     // 桥复制幂等：同设计行可重复克隆（克隆行各自独立建桥，无冲突约束面）。
@@ -315,22 +355,6 @@ pub async fn generate_template(
     )
 }
 
-/// 克隆 INSERT：notice/code/comments/t_color_/dk_scene/dk_factor 原样，
-/// dk_function → 实现·范例码 id（$2），tpl_id → 设计行（$1）。
-/// 流程↔输入范畴绑定不随列复制——克隆后由调用方经 zc_id_process_rr_context 桥重挂。
-fn clone_sql(table: &str) -> String {
-    format!(
-        r#"INSERT INTO {table}
-           (notice, code, comments, t_color_, meta, mermaid, dk_scene, dk_factor, dk_function,
-            tpl_id, created_by_id, _f_, _t_)
-           SELECT notice, code, comments, t_color_, meta, mermaid, dk_scene, dk_factor, $2,
-                  $1,
-                  (SELECT created_by_id FROM isahl.zc_id_process WHERE id = $1),
-                  '实现', '范例'
-           FROM isahl.zc_id_process WHERE id = $1
-           RETURNING id, notice, code"#
-    )
-}
 pub fn register(cfg: &mut web::ServiceConfig) {
     cfg.route(
         "/approval-flows/lifecycle/{class}",

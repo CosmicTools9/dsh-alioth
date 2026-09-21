@@ -17,7 +17,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use common::context;
 use common::error::AliothError as ApiError;
 use common::event_bus::DomainEventBus;
-use common::permissions::require_resource_access;
+use common::permissions::require_row_or_collection_access;
 use common::ApiResponse;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -59,8 +59,14 @@ async fn process_batch(
     };
 
     for &instance_id in ids {
-        if let Err(e) =
-            require_resource_access(pool, user_id, "approval-instances", instance_id, action).await
+        if let Err(e) = require_row_or_collection_access(
+            pool,
+            user_id,
+            "approval-instances",
+            instance_id,
+            action,
+        )
+        .await
         {
             result.failed.push(BatchFailure {
                 id: instance_id,

@@ -28,9 +28,12 @@ pub async fn ensure_default_capacity_pool(
     line_id: i64,
 ) -> Result<i64, ApiError> {
     // 已有线路池（家族优先序与 Step 0d 同构）
+    // 载体迁移（用户裁决 2026-09-21，报缺产物 R6）：容量池关系行原写读在声明语义
+    // 「关联-文件↔URL」的桥表上（挪用）；合法载体 = `zc_id_prod-payload_rr_stor-container`
+    // （关联-载荷↔容器，⊂ `zc_id_production_rr_storage`；mv_inventory 读父表故照常可见）。
     let existing: Option<i64> = sqlx::query_scalar(
         r#"SELECT r.ref_left
-       FROM "isahl"."zc_id_file_rr_url" r
+       FROM "isahl"."zc_id_prod-payload_rr_stor-container" r
        JOIN "isahl"."zc_id_prod-freight_road-sales" p
          ON p.id = r.ref_left AND p.deleted_at IS NULL
        WHERE r.ref_right = $1 AND r.qk_p_capacity IS NOT NULL AND r.deleted_at IS NULL
@@ -60,7 +63,7 @@ pub async fn ensure_default_capacity_pool(
     // 建容量标量（默认近乎无限）
     let cap_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-       VALUES (isahl.gen_next_zuid(), $1, $2, 999999999, 1) RETURNING id"#,
+       VALUES (isahl.gen_next_uid(419), $1, $2, 999999999, 1) RETURNING id"#,
     )
     .bind(format!("CAP-DEFAULT-{}", line_id))
     .bind(format!("线路 {} 默认容量", line_id))
@@ -93,11 +96,12 @@ pub async fn ensure_default_capacity_pool(
 .bind(dk_function)
 .fetch_one(&mut *tx)
 .await?;
-    // 绑定行（容量引用）
+    // 绑定行（容量引用）——载体迁移（2026-09-21 裁决，报缺产物 R6）：原落声明语义「文件↔URL」
+    // 的桥表（挪用）→ 改落关联-载荷↔容器；id 走载体自身 uid 段（模型默认 517，原借用为 335）。
     sqlx::query(
-        r#"INSERT INTO "isahl"."zc_id_file_rr_url"
+        r#"INSERT INTO "isahl"."zc_id_prod-payload_rr_stor-container"
        (id, code, notice, ref_left, ref_right, qk_p_capacity, created_by_id)
-       VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, 1)"#,
+       VALUES (isahl.gen_next_uid(517), $1, $2, $3, $4, $5, 1)"#,
     )
     .bind(format!("CAP-LINE-STO-{}", line_id))
     .bind(format!("线路 {} 默认容量绑定", line_id))

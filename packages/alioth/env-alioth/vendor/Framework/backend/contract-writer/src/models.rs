@@ -1,16 +1,25 @@
 //! 写件入参模型（不含 SQL）。
 
+use common::actor_identity::ActorIdentity;
+
 /// 买卖主体对（甲 = 买方 / 乙 = 卖方）。
 ///
 /// 产品行按方向取用：`fk_subj-demand` ← 买方、`fk_subj-provider` ← 卖方；
 /// 合约行按 `ContractParty` 顺序定 P1/P2。
-///
-/// 一式两份镜像**不互换**该主体对（用户裁决 2026-09-13）：镜像 = 同一单据的对方账副本，
-/// 双方账本内容一致，双边性由镜像行属权表达。
 #[derive(Debug, Clone, Copy)]
 pub struct DocParties {
     pub buyer: i64,
     pub seller: i64,
+}
+
+impl DocParties {
+    /// 一式两份镜像侧：甲/乙互换。
+    pub fn swapped(&self) -> Self {
+        Self {
+            buyer: self.seller,
+            seller: self.buyer,
+        }
+    }
 }
 
 /// 合同方行（顺序即 `code` 序号：`P1` 甲 / `P2` 乙 / `P3` 结算方…）。
@@ -26,8 +35,7 @@ pub struct ContractParty {
 /// 合约叶表（`zc_id_contract` 继承族的三个可写叶）。
 ///
 /// 一式两份镜像的叶表规则（用户裁决 2026-09-11）：销售 ↔ 采购落**相反**叶表；
-/// 诉求（Request）无相反方向，镜像落**同表**。镜像是同一单据的对方账副本——
-/// 合同方/角色/结算方与主行一致（**甲/乙不互换**，2026-09-13 裁决），双边性由行属权表达。
+/// 诉求（Request）无相反方向，镜像落**同表**（主体互换即为镜像语义）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractLeaf {
     /// `zc_id_cont-sales`
@@ -44,13 +52,29 @@ impl ContractLeaf {
         matches!(self, ContractLeaf::Sales)
     }
 
-    /// 一式两份镜像叶：Sales ↔ Purchase（相反叶表）；Request → Request（同表）。
+    /// 对称桥方向语义（用户裁决 2026-09-17「先有语义判定再有位置判定」）：
+    /// 供给性合约 = 我方销售（销售叶，恒落对称桥 `ref_right`）；
+    /// 需求性 = 我方采购（采购叶）与客户诉求（诉求叶），恒落 `ref_left`。
+    pub fn is_supply_nature(self) -> bool {
+        matches!(self, ContractLeaf::Sales)
+    }
+
+    /// 一式两份镜像叶（同交易双账本，2026-09-17 裁决「我方采购 配对 他方销售」）：
+    /// **我方采购（Purchase）→ 他方销售（Sales）**、**客户诉求（Request）→ 我方销售（Sales）**、
+    /// **手建我方销售（Sales）→ 客户诉求行（Request）**——配对一律**不互换**甲/乙
+    /// （镜像行 = 同一交易的对方账本，主体角色与正本一致；取代 2026-09-14「甲/乙互换」）。
     pub fn mirrored(self) -> Self {
         match self {
-            ContractLeaf::Sales => ContractLeaf::Purchase,
+            ContractLeaf::Sales => ContractLeaf::Request,
             ContractLeaf::Purchase => ContractLeaf::Sales,
-            ContractLeaf::Request => ContractLeaf::Request,
+            ContractLeaf::Request => ContractLeaf::Sales,
         }
+    }
+
+    /// 「我」槽位是否在乙方（P2）：Sales（我方销售）/ Request = true；Purchase = false。
+    /// （销售叶另承载他方销售——「我」在甲；槽位断言见 `contract.rs::ensure_actor_slot`。）
+    pub fn actor_slot_is_p2(self) -> bool {
+        matches!(self, ContractLeaf::Sales | ContractLeaf::Request)
     }
 
     /// 叶表名（INSERT 目标；读径按此识别）。
@@ -76,6 +100,11 @@ pub struct ContractRowInput<'a> {
     pub comments: &'a str,
     /// 合同方行（顺序定 P 序号）
     pub parties: Vec<ContractParty>,
+    /// 单据当事人「我」的三段解析结果（`common::actor_identity::resolve_actor_identity`）。
+    /// `None` = 系统内部写（测试夹具/迁移），跳过槽位与视角断言。
+    pub actor: Option<ActorIdentity>,
+    /// 平台侧单据要求的岗位视角（如 `VIEW-BIZ`）；`None` = 不校验视角。
+    pub require_view: Option<&'a str>,
     /// 职能码（`↑.GG` / `↑_GG` / `↓.GG` / `↓_GG`）——`_f_`/`_t_` 派生源
     pub fn_code: &'a str,
     /// 场景/因子码（`zc_id_scene.code` / `zc_id_factor.code`）
@@ -125,7 +154,7 @@ pub struct ProductRowInput<'a> {
     pub user_id: i64,
 }
 
-/// 运输产品**成对**写件入参（一式两份：主族 + 相反族 + `{code}-R`；**同一买卖主体对，不互换**）。
+/// 运输产品**成对**写件入参（一式两份：主族 + 相反族 + `{code}-R`；**镜像互换买卖主体对**）。
 #[derive(Debug, Clone)]
 pub struct ProductPairInput<'a> {
     /// 主产品方向（销售向 = `-sales`；镜像自动落相反族）
@@ -154,14 +183,14 @@ pub struct ProductPairInput<'a> {
     pub user_id: i64,
 }
 
-/// 合同驱动运输产品组装入参（单侧；主/镜像各一次调用——业务方向由 `is_sales`/`is_single` 给定）。
+/// 合同驱动运输产品组装入参（单侧；主/镜像各一次调用——业务方向由 `is_sales`/`is_order` 给定）。
 #[derive(Debug, Clone)]
 pub struct ContractProductInput<'a> {
     pub contract_id: i64,
     /// 合同向（销售 / 采购）——决定产品族与合同桥型
     pub is_sales: bool,
-    /// 合同形态（single → `rr_deal`；master → `rr_goods`；采购恒 `rr_demand`）
-    pub is_single: bool,
+    /// 合同形态（order → `rr_deal`；framework → `rr_goods`；采购恒 `rr_demand`）
+    pub is_order: bool,
     /// 合同编号（产品 `code = PRD-{contract_code}`；起讫桥 `code = STOP-PRD-{...}`）
     pub contract_code: &'a str,
     pub notice: &'a str,
@@ -169,7 +198,8 @@ pub struct ContractProductInput<'a> {
     pub demand_subject: i64,
     pub provider_subject: i64,
     pub line_id: i64,
-    pub vehicle_form_id: i64,
+    /// 车型（→ 产品 `ck_vehicle-form`）——可选，缺省落 NULL
+    pub vehicle_form_id: Option<i64>,
     pub origin_place_id: i64,
     pub dest_place_id: i64,
     pub price_id: Option<i64>,

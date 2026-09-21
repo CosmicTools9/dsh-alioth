@@ -9,7 +9,7 @@
 
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 #[derive(Debug, Deserialize)]
 pub struct LegalSearchReq {
@@ -35,25 +35,56 @@ pub struct LegalSearchResp {
     pub total: usize,
 }
 
-const ALL_LEAF_TABLES: [&str; 4] = [
-    "zc_id_law-civil-article",
-    "zc_id_law-common-section",
-    "zc_id_law-common-holding",
-    "zc_id_law-intl-article",
+/// 叶表检索 SQL（编译期固化：表名内嵌为字面量）。
+macro_rules! leaf_sql {
+    ($t:literal) => {
+        concat!(
+            "SELECT id, code, notice, comments, fk_jurisdiction FROM isahl.\"",
+            $t,
+            "\" \
+             WHERE deleted_at IS NULL \
+               AND (notice ILIKE '%' || $1 || '%' OR comments ILIKE '%' || $1 || '%') \
+             LIMIT $2"
+        )
+    };
+}
+
+/// scope → (叶表, 检索 SQL) 静态注册表（表名与 SQL 均为编译期字面量）。
+const SCOPES: [(&str, &str, &str); 4] = [
+    (
+        "civil",
+        "zc_id_law-civil-article",
+        leaf_sql!("zc_id_law-civil-article"),
+    ),
+    (
+        "common",
+        "zc_id_law-common-section",
+        leaf_sql!("zc_id_law-common-section"),
+    ),
+    (
+        "common-holding",
+        "zc_id_law-common-holding",
+        leaf_sql!("zc_id_law-common-holding"),
+    ),
+    (
+        "intl",
+        "zc_id_law-intl-article",
+        leaf_sql!("zc_id_law-intl-article"),
+    ),
 ];
 
-fn resolve_tables(scopes: &[String]) -> Vec<&'static str> {
+/// scope 列表 → (叶表, 检索 SQL)（未知 scope 忽略；空列表 = 全部登记叶表）。
+fn resolve_tables(scopes: &[String]) -> Vec<(&'static str, &'static str)> {
     if scopes.is_empty() {
-        return ALL_LEAF_TABLES.to_vec();
+        return SCOPES.iter().map(|(_, t, sql)| (*t, *sql)).collect();
     }
     scopes
         .iter()
-        .filter_map(|s| match s.as_str() {
-            "civil" => Some("zc_id_law-civil-article"),
-            "common" => Some("zc_id_law-common-section"),
-            "common-holding" => Some("zc_id_law-common-holding"),
-            "intl" => Some("zc_id_law-intl-article"),
-            _ => None,
+        .filter_map(|s| {
+            SCOPES
+                .iter()
+                .find(|(name, _, _)| name == s)
+                .map(|(_, t, sql)| (*t, *sql))
         })
         .collect()
 }
@@ -72,13 +103,8 @@ pub async fn legal_search(
     let tables = resolve_tables(scopes);
 
     let mut hits: Vec<LegalArticleHit> = Vec::new();
-    'outer: for table in &tables {
-        let sql = format!(
-            "SELECT id, code, notice, comments, fk_jurisdiction FROM isahl.\"{}\" \
-             WHERE deleted_at IS NULL AND (notice ILIKE '%' || $1 || '%' OR comments ILIKE '%' || $1 || '%') \
-             LIMIT $2",
-            table
-        );
+    'outer: for (table, sql) in &tables {
+        // 表名与 SQL 均来自编译期静态注册表；keyword / limit 一律参数绑定。
         for kw in &req.keywords {
             let rows = sqlx::query_as::<
                 _,
@@ -89,7 +115,7 @@ pub async fn legal_search(
                     Option<String>,
                     Option<i64>,
                 ),
-            >(AssertSqlSafe(sql.as_str()))
+            >(*sql)
             .bind(kw)
             .bind(max_results)
             .fetch_all(pool.get_ref())

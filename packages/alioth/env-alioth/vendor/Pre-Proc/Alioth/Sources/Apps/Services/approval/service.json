@@ -12,9 +12,9 @@
     "entities": [
       {
         "coordinates": {
-          "factor": "FTA",
-          "function": "↑_NA",
-          "scene": "JC"
+          "scene": "JE",
+          "factor": "FUA",
+          "function": "↓_BA"
         },
         "field_mappings": [
           {

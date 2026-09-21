@@ -109,15 +109,8 @@ impl FileService {
             .code
             .clone()
             .unwrap_or_else(|| format!("FIL-{}", file_id));
-        let insert_sql = format!(
-            r#"INSERT INTO {table}
-               (id, notice, code, qk_size, created_by_id,
-                dk_scene, dk_factor, dk_function, ck_category,
-                ak_benefit_user, ak_permit_user, ak_access_user)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"#,
-            table = req.table_kind.table_name(),
-        );
-        sqlx::query(sqlx::AssertSqlSafe(insert_sql.as_str()))
+        let insert_sql = req.table_kind.sql().insert;
+        sqlx::query(sqlx::AssertSqlSafe(insert_sql))
             .bind(file_id)
             .bind(&req.filename)
             .bind(&code)
@@ -169,7 +162,7 @@ impl FileService {
         sqlx::query(
             r#"INSERT INTO isahl."zc_id_file_rr_url"
                (id, notice, ref_left, ref_right, created_by_id)
-               VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4)"#,
+               VALUES (isahl.gen_next_uid(335), $1, $2, $3, $4)"#,
         )
         .bind(format!("file-{} → url", file_id))
         .bind(file_id)
@@ -329,13 +322,13 @@ impl FileService {
             }
         }
 
-        // 新存储键：替换旧 path 最后一段（文件名）
+        // 新存储键：替换旧 path 最后一段（文件名段净化——与上传同源，禁止原名直入键）
         let new_path = if filename_changed {
             let (prefix, _) = chain
                 .path
                 .rsplit_once('/')
                 .ok_or_else(|| FileError::Config(format!("存储键缺少目录: {}", chain.path)))?;
-            format!("{prefix}/{new_filename}")
+            format!("{prefix}/{}", key_safe_filename(&new_filename))
         } else {
             chain.path.clone()
         };
@@ -378,10 +371,8 @@ impl FileService {
             None
         };
 
-        let mut row_sql = format!(
-            r#"UPDATE {table} SET notice = $2"#,
-            table = chain.kind.table_name(),
-        );
+        // 静态前缀（表名编译期固化）+ 运行期追加可选 SET 项
+        let mut row_sql = chain.kind.sql().update_notice.to_string();
         let mut param = 2;
         if req.ak_access_user.is_some() {
             param += 1;
@@ -497,7 +488,8 @@ impl FileService {
         Ok(Some(url))
     }
 
-    /// 存储键：`{namespace}/{table_kind}/{file_id}/{filename}`。
+    /// 存储键：`{namespace}/{table_kind}/{file_id}/{filename}`（文件名段经
+    /// [`key_safe_filename`] 净化——原名不从键承载，见该函数文档）。
     fn storage_key(
         &self,
         namespace: &str,
@@ -510,9 +502,45 @@ impl FileService {
             namespace,
             kind.path_segment(),
             file_id,
-            filename
+            key_safe_filename(filename)
         )
     }
+}
+
+/// 存储键文件名段净化：**原名是元数据**（存文件行 `notice`，下载文件名/界面展示用），
+/// 键段只承担存储定位——故允许有损。
+///
+/// 规则（只做「字符替换 + 形态约束」，无哈希/无截断——`file_id` 目录已保证唯一）：
+/// - Unicode 字母数字（含中文）+ `.` / `-` / `_` 原样保留；
+/// - 其余（空格、括号、引号、`/`、`\`…）逐字符替换为 `_`；
+/// - 连续 `.` 折叠为单个（杜绝 `..` 穿越形态）、剥除首部 `.`（隐藏文件形态）；
+/// - 结果为空（纯符号原名）→ 占位 `_`（键只需合法，原名不在此）。
+///
+/// 该净化在**写入侧**（上传 + 改名）统一执行，读取侧不再依赖字符集白名单
+/// （见 [`crate::backend::LocalBackend`] 的 `validate_key`——历史键自愈）。
+pub fn key_safe_filename(filename: &str) -> String {
+    let mut out = String::with_capacity(filename.len());
+    // 首字符视作「前导点」→ 前导 `.` 不落键（HTTP 层亦拒首部 `.`）
+    let mut prev_dot = true;
+    for c in filename.chars() {
+        if c == '.' {
+            if !prev_dot {
+                out.push('.');
+            }
+            prev_dot = true;
+        } else {
+            prev_dot = false;
+            out.push(if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            });
+        }
+    }
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
 }
 
 /// MIME 判定：扩展名静态 match（非结构化解析；与 WZ contract 同口径）。

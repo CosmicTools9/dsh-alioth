@@ -1,6 +1,6 @@
 //! 运输产品行写件（`zc_id_prod-freight_road-{sales,purchase}`）。
 //!
-//! 主产品与镜像产品同构——族由 `is_sales` 定，主体对由调用方给定（镜像 = 相反族 + **同一主体对，不互换**）；
+//! 主产品与镜像产品同构——族由 `is_sales` 定，主体对由调用方给定（镜像 = 相反族 + **互换后的主体对**）；
 //! 业务组装（标量创建、合同桥路由、业务校验）留在 ns；起讫桥 `rr_stop` 由本 crate 的
 //! `insert_product_stops_tx` 单源承载（各链共用，禁第二份同语义 SQL）。
 
@@ -35,13 +35,46 @@ const PURCHASE_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_prod-freight_road-pu
            $12, $13, $14, $15, $16, $17, ARRAY[$17]::bigint[], ARRAY[$17]::bigint[])
    RETURNING id"#;
 
+/// 产品编号唯一性（软删不计；两个产品叶表并查）。
+///
+/// `code` 是 `resolve_contract_product_ids_tx`（删除级联）与 `sync_auto_product_code_tx`（改号同步）
+/// 的**身份键**——同叶表出现同码产品会让解析命中错行/多行，故与合约 code 同口径：应用层查重、
+/// 软删不计、DB 无唯一索引（模型中心通道）。
+async fn ensure_product_code_unique_tx(
+    conn: &mut PgConnection,
+    code: &str,
+) -> Result<(), AliothError> {
+    let taken: bool = sqlx::query_scalar(
+        r#"SELECT EXISTS (
+             SELECT 1 FROM "isahl"."zc_id_prod-freight_road-sales"
+              WHERE code = $1 AND deleted_at IS NULL
+             UNION ALL
+             SELECT 1 FROM "isahl"."zc_id_prod-freight_road-purchase"
+              WHERE code = $1 AND deleted_at IS NULL
+           )"#,
+    )
+    .bind(code)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(AliothError::from_sqlx)?;
+    if taken {
+        return Err(AliothError::Validation {
+            field: "code".into(),
+            message: format!("PRODUCT_CODE_TAKEN: 产品编号 {code} 已存在"),
+        });
+    }
+    Ok(())
+}
+
 /// 单张产品行落库。返回产品 id。
 ///
-/// `_f_`/`_t_` 经 `derive_form_type` 从 `fn_code` 派生绑定（单一派生源，调用方不传形态字面量）。
+/// `_f_`/`_t_` 经 `derive_form_type` 从 `fn_code` 派生绑定（单一派生源，调用方不传形态字面量）；
+/// 写入前按 `code` 查重（[`ensure_product_code_unique_tx`]）。
 pub async fn insert_product_row_tx(
     conn: &mut PgConnection,
     input: &ProductRowInput<'_>,
 ) -> Result<i64, AliothError> {
+    ensure_product_code_unique_tx(conn, input.code).await?;
     let (form, tier) = derive_form_type(input.fn_code).ok_or_else(|| AliothError::Validation {
         field: "fnCode".into(),
         message: format!(
@@ -98,7 +131,7 @@ pub async fn create_contract_transport_product_tx(
             demand_subject: input.demand_subject,
             provider_subject: input.provider_subject,
             line_id: Some(input.line_id),
-            vehicle_form_id: Some(input.vehicle_form_id),
+            vehicle_form_id: input.vehicle_form_id,
             price_id: input.price_id,
             weight_id: input.weight_id,
             period_id: input.period_id,
@@ -122,8 +155,8 @@ pub async fn create_contract_transport_product_tx(
     )
     .await?;
 
-    // 合同桥挂接（销售 master→goods / 销售 single→deal / 采购→demand）
-    let bridge_sql = if input.is_sales && !input.is_single {
+    // 合同桥挂接（销售 framework→goods / 销售 order→deal / 采购→demand）
+    let bridge_sql = if input.is_sales && !input.is_order {
         BRIDGE_GOODS
     } else if input.is_sales {
         BRIDGE_DEAL
@@ -134,6 +167,9 @@ pub async fn create_contract_transport_product_tx(
         .bind(input.contract_id)
         .bind(product_id)
         .bind(input.user_id)
+        // 桥行金额回写：价 = 产品单价标量、量 = 产品货量标量（可能为 None）
+        .bind(input.price_id)
+        .bind(input.weight_id)
         .bind(input.valid_segm_id)
         .execute(&mut *conn)
         .await
@@ -144,9 +180,10 @@ pub async fn create_contract_transport_product_tx(
 
 const STOP_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_prod-transport_rr_stop"
    (id, code, ref_left, ref_right, ck_category, created_by_id)
-   SELECT isahl.gen_next_zuid(), $1, $2, $3,
+   SELECT isahl.gen_next_uid(288), $1, $2, $3,
           (SELECT id FROM "isahl"."zc_id_cate-traffic" WHERE code = $4 LIMIT 1),
-          $5"#;
+          $5
+   ON CONFLICT DO NOTHING"#;
 
 /// 为运输产品写起讫停靠桥 ×2（起 = `ST-DEPART` / 讫 = `ST-ARRIVE`）。
 ///
@@ -155,6 +192,10 @@ const STOP_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_prod-transport_rr_stop"
 /// 桥 `code` 由产品 code 派生（`STOP-{product_code}-D/-A`，与既有 `STOP-PRD-*` 约定同构），
 /// 各 ns MUST NOT 保留同语义的第二份 SQL（`REUSE_FIRST_SPEC`）。
 /// 地点缺失（`None` / 非正）即跳过、不报错（对齐既有「无站点则跳过」风格）。
+/// 幂等：唯一键 `uq_zc_id_prod-transport_rr_stop_ref_left_ref_right_qk_period`
+/// = (ref_left, ref_right, COALESCE(qk_period,-1)) **不含 ck_category** —— 起讫同址
+/// （origin == dest，直发/委托链从 `over-seq` 全 NULL 的产品停靠桥解析起讫时实测同址）
+/// 或重放同 (ref_left, ref_right) 时，`ON CONFLICT DO NOTHING` 吞并第二行而非撞键中断写链。
 pub async fn insert_product_stops_tx(
     conn: &mut PgConnection,
     product_id: i64,
@@ -183,20 +224,23 @@ pub async fn insert_product_stops_tx(
     Ok(())
 }
 
+// 桥行金额回写（2026-09-14）：`qk_price`/`qk_qty` = 产品 `qk_price` / `qk_w_lading` 标量 id。
+// 台账总额口径 = `SUM(rr_matter.qk_qty × qk_price)`，桥行两列为空会使「仅自动产品」的合同金额恒 0
+// （实测：产品价 ¥230 而合同总额 ¥0）；回写后两条读径同源自洽。
 const BRIDGE_GOODS: &str = r#"INSERT INTO "isahl"."zc_id_contract_rr_goods"
-   (ref_left, ref_right, code, notice, qk_period, created_by_id)
-   VALUES ($1, $2, 'GOODS', '标的产品（自动创建）', $4, $3)"#;
+   (ref_left, ref_right, code, notice, qk_price, qk_qty, qk_period, created_by_id)
+   VALUES ($1, $2, 'GOODS', '标的产品（自动创建）', $4, $5, $6, $3)"#;
 
 const BRIDGE_DEAL: &str = r#"INSERT INTO "isahl"."zc_id_contract_rr_deal"
-   (ref_left, ref_right, code, notice, qk_period, created_by_id)
-   VALUES ($1, $2, 'DEAL', '成交产品（自动创建）', $4, $3)"#;
+   (ref_left, ref_right, code, notice, qk_price, qk_qty, qk_period, created_by_id)
+   VALUES ($1, $2, 'DEAL', '成交产品（自动创建）', $4, $5, $6, $3)"#;
 
 const BRIDGE_DEMAND: &str = r#"INSERT INTO "isahl"."zc_id_contract_rr_demand"
-   (ref_left, ref_right, code, notice, qk_period, created_by_id)
-   VALUES ($1, $2, 'DEMAND', '规范需求（自动创建）', $4, $3)"#;
+   (ref_left, ref_right, code, notice, qk_price, qk_qty, qk_period, created_by_id)
+   VALUES ($1, $2, 'DEMAND', '规范需求（自动创建）', $4, $5, $6, $3)"#;
 
 /// 运输产品**成对**落库（一式两份）：主产品（`is_sales` 定族）+ 镜像产品（相反族、`{code}-R`），
-/// **同一买卖主体对（不互换）**、同线路/标量，各自 `fk_previous` 挂各自单据。返回 `(主产品 id, 镜像产品 id)`。
+/// **买卖主体对不互换**（同交易双账本，2026-09-17 裁决）、同线路/标量，各自 `fk_previous` 挂各自单据。返回 `(主产品 id, 镜像产品 id)`。
 pub async fn insert_product_pair_tx(
     conn: &mut PgConnection,
     input: &ProductPairInput<'_>,
@@ -232,6 +276,8 @@ pub async fn insert_product_pair_tx(
             code: &mirror_code,
             notice: input.mirror_notice.unwrap_or(input.notice),
             comments: input.mirror_comments.unwrap_or(input.comments),
+            // 同交易双账本（2026-09-17 裁决）：产品主体对**不互换**——镜像产品 = 同一交易
+            // 的对方账本产品行（买/卖主体与正本一致），取代旧「demand↔provider 互换」。
             demand_subject: input.demand_subject,
             provider_subject: input.provider_subject,
             line_id: input.line_id,
@@ -249,4 +295,32 @@ pub async fn insert_product_pair_tx(
     .await?;
 
     Ok((main_id, mirror_id))
+}
+
+/// 解析合同**销售族**自动产品 id（`PRD-{合同code}`，挂 `rr_goods`/`rr_deal` 标的关系族桥）——
+/// 订单明细 `fk_goods` 优先绑定来源（fix-wz-contract-order-product-chain G1）。
+///
+/// 识别口径与 [`crate::mirror::resolve_contract_product_ids_tx`] 同源（`code` 约定 +
+/// `zc_id_contract_rr_matter` 族桥成员；父表 SELECT 经 PG 继承覆盖 `rr_goods`/`rr_deal` 叶桥），
+/// 特化 = 销售叶 + 单行（择一规则：`id` 升序首条，防御同码多行——`code` 唯一性由
+/// [`ensure_product_code_unique_tx`] 应用层保证，DB 无唯一索引）。无命中 → `None`（调用方回落）。
+pub async fn resolve_contract_sales_product_tx(
+    conn: &mut PgConnection,
+    contract_id: i64,
+) -> Result<Option<i64>, AliothError> {
+    sqlx::query_scalar::<_, Option<i64>>(
+        r#"SELECT p.id FROM "isahl"."zc_id_prod-freight_road-sales" p
+           WHERE p.code = 'PRD-' || (SELECT code FROM "isahl"."zc_id_contract" WHERE id = $1)
+             AND p.deleted_at IS NULL
+             AND p.id IN (
+               SELECT ref_right FROM "isahl"."zc_id_contract_rr_matter"
+               WHERE ref_left = $1 AND deleted_at IS NULL
+             )
+           ORDER BY p.id LIMIT 1"#,
+    )
+    .bind(contract_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map(|opt| opt.flatten())
+    .map_err(AliothError::from_sqlx)
 }

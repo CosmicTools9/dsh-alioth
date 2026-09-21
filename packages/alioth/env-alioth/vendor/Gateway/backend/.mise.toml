@@ -1,26 +1,33 @@
 [tasks]
-setup = "cargo fetch && cargo check"
+# cargo 目标目录统一经映射取值（scripts/lib/cargo-target-dirs.sh）：
+#   dev        → 用途 ns（Deploy/{ns}/target，与 dev:{ns} 链同槽）
+#   其余组件任务 → 用途 check（root workspace 唯一构建缓存 /tmp/alioth-check）
+# MUST NOT 依赖 cwd 默认推导（根 target/）。
+setup = "cargo fetch && env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo check"
 # 显式追加 preproc-proxy：dev 形态保持 /preproc/* 与 /api/pre_proc/* 反代可用
 # （生产构建 build-ns.sh 不含该 feature；openspec fix-gateway-proxy-standalone-auth）
 # 小写化用 tr 而非 ${NS,,}——/bin/bash 3.2 不支持 ${var,,}
-dev = "bash ../../scripts/lib/guard-mise-task.sh Gateway -- bash -c 'NS=${NAMESPACE:-alioth}; NS_LC=$(echo \"$NS\" | tr \"[:upper:]\" \"[:lower:]\"); cargo run --no-default-features --features \"${NS_LC},sso,preproc-proxy\"'"
-build = "bash -c 'NS=${NAMESPACE:-alioth}; cargo build --release --no-default-features --features \"${NS,,},sso\"'"
-test = "bash ../../scripts/lib/guard-mise-task.sh Gateway --mode test -- cargo test"
-lint = "cargo clippy -- -D warnings && cargo fmt --check"
-# 无独立 workspace（根 workspace 成员）：-p 限定只清本包产物，避免清空共享 target/
-clean = "cargo clean -p alioth-gateway"
+dev = "bash ../../scripts/lib/guard-mise-task.sh Gateway -- bash -c 'NS=${NAMESPACE:-alioth}; NS_LC=$(echo \"$NS\" | tr \"[:upper:]\" \"[:lower:]\"); exec env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh ns \"$NS\")\" cargo run --no-default-features --features \"${NS_LC},sso,preproc-proxy\"'"
+# namespace 构建唯一入口（feature 门控 + Deploy/{ns}/target 隔离 + 签名修复）
+build = "bash ../../scripts/build-ns.sh ${NAMESPACE:-alioth} release"
+test = "bash ../../scripts/lib/guard-mise-task.sh Gateway --mode test -- env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo test"
+lint = "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo clippy -- -D warnings && cargo fmt --check"
+# 无独立 workspace（根 workspace 成员）：-p 限定只清本包产物，避免清空共享缓存
+clean = "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo clean -p alioth-gateway"
 
 # Gateway no-sso 形态（standalone 认证）编译检查——官方构建全带 sso，
 # 该任务兜底 no-sso 形态零构建零测试的缺口（openspec fix-gateway-proxy-standalone-auth）
-"check:standalone" = { description = "Gateway no-sso 形态编译检查（standalone 认证链路）", run = "cargo check -p alioth-gateway --no-default-features --features alioth" }
+"check:standalone" = { description = "Gateway no-sso 形态编译检查（standalone 认证链路）", run = "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo check -p alioth-gateway --no-default-features --features alioth" }
 
 [env]
+# cargo 目标目录兜底面：由 scripts/lib/cargo-target-dirs.sh 的 check 用途导出（无字面量重复）。
+
 # ns 形态（2026-08-14 收敛）：env 真相源 = Deploy/{NAMESPACE}/.env（decrypt-env.sh 按
 # NAMESPACE 加载，每 ns 独立端口/库/sso 配置，ENVIRONMENT_SPEC §6.9）；backend 不再持有 .env。
 # 启动须显式 NAMESPACE：`NAMESPACE=WZ mise run dev`。
 
-# 自动解密 .env 中的 enc: 前缀敏感值
-_.source = "../../scripts/env/decrypt-env.sh"
+# _.source 数组：先注入目标目录兜底面，再解密 .env 中的 enc: 前缀敏感值
+_.source = ["../../scripts/lib/cargo-target-env.sh", "../../scripts/env/decrypt-env.sh"]
 
 RUST_LOG = "info"
 

@@ -11,7 +11,13 @@
  *
  * 组件: GatewayShell / TopBar / Navigation / MainNav / NavItem / Logo /
  * ModuleTabs / Breadcrumbs / SearchSlot / ActionGroup / UserMenu /
- * Footer / WorkspaceDock / MobileSheet
+ * Footer / WorkspaceDock / MobileSheet / NavPills / IconRail /
+ * SecondaryNavColumn / NavDrawer / MenuModePicker / MenuModeSwatch
+ *
+ * 导航菜单模式（menuMode）: sidebar(单栏) / category(分类) / dual(双栏) /
+ * top(顶部) / grouped(分组, 默认=现行为) / topDual(顶栏双行);
+ * collapsedShowText 控制二级导航列折叠时是否保留文字。契约见
+ * alioth-design/references/menu-modes.md。
  */
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 
@@ -54,7 +60,28 @@ export interface NavItemDef {
 export interface NavGroup {
   label: string;
   items: NavItemDef[];
+  /** 分组图标（category 顶栏分类 / dual 图标栏使用）；缺省回退该组首项 icon */
+  icon?: string;
 }
+
+// ── 导航菜单模式 ──
+export type MenuMode = 'sidebar' | 'category' | 'dual' | 'top' | 'grouped' | 'topDual';
+
+export interface MenuModeDef {
+  id: MenuMode;
+  label: string;
+  hint: string;
+}
+
+/** 六种导航菜单模式; 顺序 = 设计参考（设置页 3×2 网格）顺序 */
+export const MENU_MODES: MenuModeDef[] = [
+  { id: 'sidebar', label: '单栏菜单', hint: '单列侧栏，扁平导航项' },
+  { id: 'category', label: '分类导航', hint: '顶栏分类 + 分类侧栏' },
+  { id: 'dual', label: '双栏菜单', hint: '图标栏 + 二级列' },
+  { id: 'top', label: '顶部菜单', hint: '导航项内联顶栏' },
+  { id: 'grouped', label: '分组菜单', hint: '侧栏带分组标题' },
+  { id: 'topDual', label: '顶栏双行', hint: '顶栏第二行承载导航' },
+];
 
 export interface ModuleTab {
   id: string;
@@ -219,19 +246,21 @@ export function SearchSlot({ placeholder }: { placeholder?: string }) {
 
   return (
     <>
-      <div className="relative w-72 hidden md:block">
+      <div className="relative w-72 hidden lg:block">
         <input
           type="search"
           placeholder={resolvedPlaceholder}
-          className="w-full h-9 pl-3 pr-3 rounded-lg border bg-muted/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-background transition-colors"
+          className="w-full h-9 pl-3 pr-3 rounded-lg border bg-muted/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 focus:bg-background transition-colors"
           value={value}
           onChange={(e) => setValue(e.target.value)}
         />
       </div>
+      {/* 宽度 288px 的桌面搜索框在 768–1023 会与品牌/面包屑/操作区挤压重叠（实测 tablet Δoverlap=12）
+          ⇒ 桌面档抬到 lg（≥1024），768–1023 用紧凑按钮 */}
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+        className="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
         aria-label="搜索"
         title="搜索"
       >
@@ -385,6 +414,7 @@ export function TopBar({
   onTrigger,
   onModuleTabChange,
   onMobileMenuToggle,
+  navInline,
 }: {
   brand: string;
   brandIcon: string;
@@ -396,10 +426,12 @@ export function TopBar({
   onTrigger?: (id: string) => void;
   onModuleTabChange?: (id: string) => void;
   onMobileMenuToggle?: () => void;
+  /** 顶栏内联导航（顶部菜单的导航项、分类导航的顶栏分类）；无则不改变现布局 */
+  navInline?: React.ReactNode;
 }) {
   return (
-    <header className="h-14 border-b flex items-center justify-between px-4 md:px-6 bg-background shrink-0">
-      <div className="flex items-center gap-2 min-w-0 relative h-full">
+    <header className="h-14 border-b flex items-center justify-between gap-2 px-4 md:px-6 bg-background shrink-0 overflow-hidden">
+      <div className={cn('flex items-center gap-2 min-w-0 flex-1 h-full')}>
         {onMobileMenuToggle && (
           <button
             type="button"
@@ -416,6 +448,14 @@ export function TopBar({
           showAppName={moduleTabs && moduleTabs.length > 0 ? brand : undefined}
         />
         {moduleTabs && moduleTabs.length > 0 && <ModuleTabs tabs={moduleTabs} onTabClick={onModuleTabChange} />}
+        {navInline ? (
+          <nav
+            aria-label="主导航"
+            className="flex items-center gap-0.5 min-w-0 overflow-x-auto hide-scrollbar"
+          >
+            {navInline}
+          </nav>
+        ) : null}
         {breadcrumbs && breadcrumbs.length > 0 && <Breadcrumbs crumbs={breadcrumbs} />}
       </div>
       <div className="flex items-center gap-3">
@@ -434,7 +474,7 @@ export function Footer({
 }: {
   brand: string;
   version: string;
-  links?: { label: string; href: string }[];
+  links?: { label: string; href?: string }[];
 }) {
   const defaultLinks = links === undefined
     ? [
@@ -536,11 +576,14 @@ export function MainNav({
   activeId,
   collapsed,
   onSelect,
+  showGroupTitles = true,
 }: {
   groups: NavGroup[];
   activeId: string;
   collapsed: boolean;
   onSelect: (id: string) => void;
+  /** 是否渲染分组标题（单栏菜单模式传 false；默认 true = 现行为） */
+  showGroupTitles?: boolean;
 }) {
   return (
     <nav className="flex h-full flex-col">
@@ -548,7 +591,7 @@ export function MainNav({
         <div className="space-y-4">
           {groups.map((g, gi) => (
             <div key={g.label ?? `__group_${gi}`} className="space-y-1">
-              {!collapsed && (
+              {!collapsed && showGroupTitles && (
                 <div className="px-4 py-3.5 pb-1">
                   <span className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground/55">
                     {g.label}
@@ -629,6 +672,7 @@ export function Navigation({
   onMobileClose,
   brand,
   brandIcon,
+  showGroupTitles = true,
 }: {
   groups: NavGroup[];
   activeId: string;
@@ -639,6 +683,7 @@ export function Navigation({
   onMobileClose?: () => void;
   brand?: string;
   brandIcon?: string;
+  showGroupTitles?: boolean;
 }) {
   return (
     <>
@@ -648,21 +693,62 @@ export function Navigation({
           collapsed ? 'w-16' : 'w-60',
         )}
       >
-        <MainNav groups={groups} activeId={activeId} collapsed={collapsed} onSelect={onSelect} />
+        <MainNav
+          groups={groups}
+          activeId={activeId}
+          collapsed={collapsed}
+          onSelect={onSelect}
+          showGroupTitles={showGroupTitles}
+        />
         <SidebarFoot collapsed={collapsed} onToggle={onToggle} />
       </aside>
-      <MobileSheet
+      <NavDrawer
         open={!!mobileOpen}
         onClose={onMobileClose || (() => {})}
+        groups={groups}
+        activeId={activeId}
+        onSelect={onSelect}
         brand={brand || 'Alioth'}
         brandIcon={brandIcon || 'gatewayLogo'}
-      >
-        <div className="flex flex-col h-full">
-          <MainNav groups={groups} activeId={activeId} collapsed={false} onSelect={onSelect} />
-          <SidebarFoot collapsed={false} onToggle={onMobileClose || (() => {})} />
-        </div>
-      </MobileSheet>
+        showGroupTitles={showGroupTitles}
+      />
     </>
+  );
+}
+
+/** 移动端抽屉导航（所有菜单模式共用；移动端恒以列表呈现，含分组标题） */
+export function NavDrawer({
+  open,
+  onClose,
+  groups,
+  activeId,
+  onSelect,
+  brand,
+  brandIcon,
+  showGroupTitles = true,
+}: {
+  open: boolean;
+  onClose: () => void;
+  groups: NavGroup[];
+  activeId: string;
+  onSelect: (id: string) => void;
+  brand: string;
+  brandIcon: string;
+  showGroupTitles?: boolean;
+}) {
+  return (
+    <MobileSheet open={open} onClose={onClose} brand={brand} brandIcon={brandIcon}>
+      <div className="flex flex-col h-full">
+        <MainNav
+          groups={groups}
+          activeId={activeId}
+          collapsed={false}
+          onSelect={onSelect}
+          showGroupTitles={showGroupTitles}
+        />
+        <SidebarFoot collapsed={false} onToggle={onClose} />
+      </div>
+    </MobileSheet>
   );
 }
 
@@ -677,6 +763,302 @@ export function SidebarFoot({ collapsed, onToggle }: { collapsed: boolean; onTog
       >
         <span className="w-3.5 h-3.5">{icon(collapsed ? 'panelRight' : 'panelLeft', 14)}</span>
       </button>
+    </div>
+  );
+}
+
+// ── 导航菜单模式子组件 ──
+
+/** 横向导航丸（顶部菜单 / 顶栏双行的导航项，分类导航的顶栏分类） */
+export function NavPills({
+  items,
+  activeId,
+  onSelect,
+}: {
+  items: { id: string; label: string; icon: string }[];
+  activeId: string;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <>
+      {items.map((it) => {
+        const isActive = it.id === activeId;
+        return (
+          <button
+            key={it.id}
+            type="button"
+            onClick={() => onSelect(it.id)}
+            title={it.label}
+            aria-current={isActive ? 'page' : undefined}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm whitespace-nowrap shrink-0 transition-colors cursor-pointer border-none bg-transparent',
+              isActive
+                ? 'bg-primary/10 text-primary font-semibold'
+                : 'text-muted-foreground font-medium hover:bg-accent hover:text-foreground',
+            )}
+          >
+            <span className="h-4 w-4 shrink-0">{icon(it.icon)}</span>
+            <span>{it.label}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+/** 图标栏（双栏菜单第一列）：常驻不折叠，折叠按钮置于其底部保证可达 */
+export function IconRail({
+  groups,
+  activeIndex,
+  onSelectGroup,
+  collapsed,
+  onToggle,
+}: {
+  groups: NavGroup[];
+  activeIndex: number;
+  onSelectGroup: (index: number) => void;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <aside className="hidden md:flex flex-col h-full w-16 bg-secondary border-r border-border shrink-0">
+      <div className="flex-1 overflow-y-auto hide-scrollbar py-2 flex flex-col items-center gap-1">
+        {groups.map((g, i) => (
+          <button
+            key={g.label ?? `__rail_${i}`}
+            type="button"
+            onClick={() => onSelectGroup(i)}
+            title={g.label}
+            aria-current={i === activeIndex ? 'true' : undefined}
+            className={cn(
+              'h-9 w-9 rounded-md flex items-center justify-center transition-colors cursor-pointer border-none bg-transparent',
+              i === activeIndex
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+            )}
+          >
+            <span className="h-4 w-4 shrink-0">{icon(g.icon || g.items[0]?.icon || 'box')}</span>
+          </button>
+        ))}
+      </div>
+      <SidebarFoot collapsed={collapsed} onToggle={onToggle} />
+    </aside>
+  );
+}
+
+/**
+ * 二级导航列：分类导航的分类列（variant='nav'）/ 双栏菜单的二级列（variant='panel'）。
+ * 折叠宽度：w-16（仅图标）或 w-56（collapsedShowText 保留文字）；展开恒为 w-60。
+ */
+export function SecondaryNavColumn({
+  group,
+  activeId,
+  collapsed,
+  collapsedShowText,
+  onSelect,
+  onToggle,
+  showFoot,
+  variant,
+}: {
+  group: NavGroup;
+  activeId: string;
+  collapsed: boolean;
+  collapsedShowText: boolean;
+  onSelect: (id: string) => void;
+  onToggle: () => void;
+  showFoot: boolean;
+  variant: 'nav' | 'panel';
+}) {
+  return (
+    <aside
+      className={cn(
+        'hidden md:flex flex-col h-full border-r border-border shrink-0 transition-all duration-300 ease-in-out',
+        collapsed ? (collapsedShowText ? 'w-56' : 'w-16') : 'w-60',
+        variant === 'nav' ? 'bg-secondary' : 'bg-card',
+      )}
+    >
+      <MainNav
+        groups={[group]}
+        activeId={activeId}
+        collapsed={collapsed && !collapsedShowText}
+        onSelect={onSelect}
+      />
+      {showFoot && <SidebarFoot collapsed={collapsed} onToggle={onToggle} />}
+    </aside>
+  );
+}
+
+/**
+ * 菜单模式缩略图：与该模式实际布局同构（深色块 = 导航面，浅色 = 内容面）。
+ * 判定判据：category/top/topDual 有顶部横条；dual 有两条导航列；top/topDual 无左侧列。
+ */
+export function MenuModeSwatch({ mode }: { mode: MenuMode }) {
+  const mark = 'h-[2px] rounded-full bg-background';
+  const soft = 'h-[2px] rounded-full bg-border';
+  const frame = 'h-10 w-full rounded border border-border bg-muted/30 overflow-hidden flex';
+  const navCol = 'w-7 p-1 bg-foreground shrink-0 flex flex-col justify-center gap-1';
+  const topBar = (
+    <div className="h-3 w-full bg-foreground flex items-center gap-1 px-1 shrink-0">
+      <span className={cn(mark, 'w-5')} />
+      <span className={cn(mark, 'w-px')} />
+      <span className={cn(mark, 'w-px')} />
+      <span className={cn(mark, 'w-px')} />
+    </div>
+  );
+
+  if (mode === 'sidebar' || mode === 'grouped') {
+    return (
+      <div className={frame}>
+        <div className={navCol}>
+          {mode === 'grouped' && <span className={cn(mark, 'w-3')} />}
+          <span className={cn(mark, 'w-4')} />
+          <span className={cn(mark, 'w-4')} />
+          {mode === 'grouped' && <span className={cn(mark, 'w-3')} />}
+          {mode === 'sidebar' ? null : <span className={cn(mark, 'w-4')} />}
+        </div>
+        <div className="flex-1" />
+      </div>
+    );
+  }
+
+  if (mode === 'category') {
+    return (
+      <div className={cn(frame, 'flex-col')}>
+        {topBar}
+        <div className="flex flex-1 min-h-0 w-full">
+          <div className={navCol}>
+            <span className={cn(mark, 'w-4')} />
+            <span className={cn(mark, 'w-4')} />
+            <span className={cn(mark, 'w-4')} />
+          </div>
+          <div className="flex-1" />
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'dual') {
+    return (
+      <div className={frame}>
+        <div className="w-5 p-1 bg-foreground shrink-0 flex flex-col items-center justify-center gap-1">
+          <span className="w-3 h-3 rounded bg-background shrink-0" />
+          <span className={cn(mark, 'w-3')} />
+          <span className={cn(mark, 'w-3')} />
+        </div>
+        <div className="w-7 p-1 bg-card border-r border-border shrink-0 flex flex-col justify-center gap-1">
+          <span className={cn(soft, 'w-full')} />
+          <span className={cn(soft, 'w-full')} />
+          <span className={cn(soft, 'w-full')} />
+          <span className={cn(soft, 'w-full')} />
+        </div>
+        <div className="flex-1" />
+      </div>
+    );
+  }
+
+  if (mode === 'top') {
+    return (
+      <div className={cn(frame, 'flex-col')}>
+        {topBar}
+        <div className="flex-1" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn(frame, 'flex-col')}>
+      {topBar}
+      <div className="h-3 w-full bg-muted/50 border-b border-border flex items-center gap-1 px-1 shrink-0">
+        <span className={cn(soft, 'w-4')} />
+        <span className={cn(soft, 'w-4')} />
+        <span className={cn(soft, 'w-4')} />
+      </div>
+      <div className="flex-1" />
+    </div>
+  );
+}
+
+export interface MenuModePickerProps {
+  value: MenuMode;
+  onChange: (mode: MenuMode) => void;
+  collapsedShowText: boolean;
+  onCollapsedShowTextChange: (next: boolean) => void;
+  title?: string;
+  hint?: string;
+  modes?: MenuModeDef[];
+}
+
+/** 导航设置选择器：3×2 模式卡片（单选）+ 「收起菜单时显示文字」开关 */
+export function MenuModePicker({
+  value,
+  onChange,
+  collapsedShowText,
+  onCollapsedShowTextChange,
+  title = '菜单模式',
+  hint,
+  modes = MENU_MODES,
+}: MenuModePickerProps) {
+  const rows = [modes.slice(0, 3), modes.slice(3, 6)];
+  return (
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="mb-2">
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        {hint && <div className="text-xs text-muted-foreground mt-1">{hint}</div>}
+      </div>
+      <div role="radiogroup" aria-label={title} className="flex flex-col gap-2">
+        {rows.map((row, ri) => (
+          <div key={ri} className="flex gap-2">
+            {row.map((m) => {
+              const selected = m.id === value;
+              return (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  aria-label={m.label}
+                  title={m.hint}
+                  onClick={() => onChange(m.id)}
+                  className={cn(
+                    'flex-1 min-w-0 rounded-lg p-1 transition-colors cursor-pointer border-none text-left',
+                    selected ? 'bg-primary/15' : 'bg-transparent hover:bg-accent',
+                  )}
+                >
+                  <div className="rounded-md border border-border bg-card p-2">
+                    <MenuModeSwatch mode={m.id} />
+                  </div>
+                  <div
+                    className={cn(
+                      'text-xs text-center mt-1 truncate',
+                      selected ? 'text-primary font-semibold' : 'text-muted-foreground',
+                    )}
+                  >
+                    {m.label}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 border-t border-border">
+        <div className="flex items-center justify-between py-2">
+          <span className="text-sm text-foreground">收起菜单时显示文字</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={collapsedShowText}
+            aria-label="收起菜单时显示文字"
+            onClick={() => onCollapsedShowTextChange(!collapsedShowText)}
+            className={cn(
+              'w-9 h-5 rounded-full flex items-center px-1 shrink-0 transition-colors cursor-pointer border-none',
+              collapsedShowText ? 'bg-primary justify-end' : 'bg-border',
+            )}
+          >
+            <span className="w-3.5 h-3.5 rounded-full bg-background shrink-0" />
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -715,6 +1097,10 @@ export interface GatewayShellProps {
   noContentScroll?: boolean;
   /** 隐藏右侧 WorkspaceDock，用于无 dock 的实现模块 */
   hideWorkspaceDock?: boolean;
+  /** 导航菜单模式（默认 'grouped' = 改动前的分组侧栏；与 App/Module 模式正交） */
+  menuMode?: MenuMode;
+  /** 二级导航列折叠时是否保留文字（category 分类列 / dual 二级列）；主侧栏不受影响 */
+  collapsedShowText?: boolean;
 }
 
 export function GatewayShell(props: GatewayShellProps) {
@@ -747,13 +1133,87 @@ export function GatewayShell(props: GatewayShellProps) {
     hideFooter = false,
     noContentScroll = false,
     hideWorkspaceDock = false,
+    menuMode = 'grouped',
+    collapsedShowText = false,
   } = props;
 
   const [internalCollapsed, setInternalCollapsed] = useState(collapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [pickedGroup, setPickedGroup] = useState<number | null>(null);
 
   const effectiveCollapsed = onToggle ? collapsed : internalCollapsed;
   const handleToggle = onToggle || (() => setInternalCollapsed((p) => !p));
+
+  // 当前分类：由 activeId 反推所属分组；用户点击分类后以点击值为准，activeId 变化即复位
+  useEffect(() => {
+    setPickedGroup(null);
+  }, [activeId]);
+
+  const derivedGroupIndex = useMemo(() => {
+    if (!navGroups || navGroups.length === 0) return 0;
+    const idx = navGroups.findIndex((g) => g.items.some((it) => it.id === activeId));
+    return idx >= 0 ? idx : 0;
+  }, [navGroups, activeId]);
+  const activeGroupIndex =
+    pickedGroup != null && navGroups && pickedGroup < navGroups.length
+      ? pickedGroup
+      : derivedGroupIndex;
+
+  const handleSelect = useCallback(
+    (id: string) => {
+      onSelect?.(id);
+      setMobileOpen(false);
+    },
+    [onSelect],
+  );
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  const hasNav = !!(
+    !hideNavigation &&
+    navGroups &&
+    navGroups.length > 0 &&
+    activeId != null &&
+    onSelect
+  );
+  const activeGroup = navGroups ? navGroups[activeGroupIndex] : undefined;
+
+  const selectGroup = (index: number) => {
+    setPickedGroup(index);
+    const first = navGroups?.[index]?.items?.[0];
+    if (first) handleSelect(first.id);
+  };
+
+  const categoryPills =
+    hasNav && menuMode === 'category' && navGroups
+      ? navGroups.map((g, i) => ({
+          id: `category-${i}`,
+          label: g.label,
+          icon: g.icon || g.items[0]?.icon || 'box',
+        }))
+      : undefined;
+  const itemPills =
+    hasNav && (menuMode === 'top' || menuMode === 'topDual') && navGroups
+      ? navGroups.flatMap((g) =>
+          g.items.map((it) => ({ id: it.id, label: it.label, icon: it.icon })),
+        )
+      : undefined;
+  // topDual 的导航项只进第二行导航条（见 body 内 h-11 条），不进 TopBar 内联槽——避免双份
+  const navInline = categoryPills || (menuMode === 'top' && itemPills) ? (
+    <NavPills
+      items={(categoryPills || itemPills)!}
+      activeId={categoryPills ? `category-${activeGroupIndex}` : activeId || ''}
+      onSelect={(id) => {
+        const groupIndex = categoryPills
+          ? categoryPills.findIndex((pill) => pill.id === id)
+          : -1;
+        if (groupIndex >= 0) selectGroup(groupIndex);
+        else if (!categoryPills) handleSelect(id);
+      }}
+    />
+  ) : undefined;
+  const isColumnNav = menuMode === 'sidebar' || menuMode === 'grouped';
+  const isTopNav = menuMode === 'top' || menuMode === 'topDual';
+  const isSecondaryNav = menuMode === 'category' || menuMode === 'dual';
 
   const activeTrigger = activeWorkspace
     ? triggers.find((t) => t.id === activeWorkspace)
@@ -777,20 +1237,59 @@ export function GatewayShell(props: GatewayShellProps) {
             : undefined
         }
         onModuleTabChange={onModuleTabChange}
+        navInline={navInline}
       />
+      {hasNav && menuMode === 'topDual' && itemPills ? (
+        <nav
+          aria-label="主导航"
+          className="h-11 border-b bg-background shrink-0 flex items-center gap-0.5 px-4 md:px-6 overflow-x-auto hide-scrollbar"
+        >
+          <NavPills items={itemPills} activeId={activeId || ''} onSelect={handleSelect} />
+        </nav>
+      ) : null}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {!hideNavigation && navGroups && navGroups.length > 0 && activeId != null && onSelect && (
+        {hasNav && isColumnNav && (
           <Navigation
-            groups={navGroups}
+            groups={navGroups!}
             activeId={activeId || ''}
             collapsed={effectiveCollapsed}
-            onSelect={(id) => {
-              onSelect?.(id);
-              setMobileOpen(false);
-            }}
+            showGroupTitles={menuMode === 'grouped'}
+            onSelect={handleSelect}
             onToggle={handleToggle}
             mobileOpen={mobileOpen}
-            onMobileClose={() => setMobileOpen(false)}
+            onMobileClose={closeMobile}
+            brand={brand}
+            brandIcon={brandIcon}
+          />
+        )}
+        {hasNav && menuMode === 'dual' && (
+          <IconRail
+            groups={navGroups!}
+            activeIndex={activeGroupIndex}
+            onSelectGroup={selectGroup}
+            collapsed={effectiveCollapsed}
+            onToggle={handleToggle}
+          />
+        )}
+        {hasNav && isSecondaryNav && activeGroup && (
+          <SecondaryNavColumn
+            group={activeGroup}
+            activeId={activeId || ''}
+            collapsed={effectiveCollapsed}
+            collapsedShowText={collapsedShowText}
+            onSelect={handleSelect}
+            onToggle={handleToggle}
+            showFoot={menuMode === 'category'}
+            variant={menuMode === 'category' ? 'nav' : 'panel'}
+          />
+        )}
+        {hasNav && isTopNav && (
+          <NavDrawer
+            open={mobileOpen}
+            onClose={closeMobile}
+            groups={navGroups!}
+            activeId={activeId || ''}
+            onSelect={handleSelect}
             brand={brand}
             brandIcon={brandIcon}
           />

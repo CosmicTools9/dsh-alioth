@@ -1,9 +1,12 @@
 //! Extension 管线端到端集成测试
 //!
-//! 验证从 YAML → ExtensionLoader → AppExtensionRegistry → before_create
-//! 的完整链路，不依赖 Gateway HTTP 层和数据库。
+//! 验证从 YAML → `ExtensionSurface`（单一装配路径）→ 引擎执行的完整链路，
+//! 不依赖 Gateway HTTP 层和数据库。
+//!
+//! 装配一律经 `ExtensionSurface`（禁止本文件内联 `AppExtensionRegistry::new()` +
+//! `register()` 的第二套装配）：测试通过 == 真实产物路径通过。
 
-use runtime_engine::AppExtensionRegistry;
+use runtime_engine::ExtensionSurface;
 
 /// constraints.yaml 的内容（内嵌以保持测试自包含）
 const CONSTRAINTS_YAML: &str = r#"
@@ -78,6 +81,11 @@ fn make_test_extension(app_code: &str) -> runtime_engine::AppLogicExtension {
     ext
 }
 
+/// 从内嵌 YAML 装配执行面（唯一装配入口）
+fn test_surface(app_code: &str) -> ExtensionSurface {
+    ExtensionSurface::from_extension(make_test_extension(app_code))
+}
+
 /// 从变量对构造 HashMap
 fn vars(
     pairs: &[(&str, serde_json::Value)],
@@ -94,9 +102,7 @@ fn vars(
 
 #[test]
 fn test_constraint_name_required() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     // name 为空 → 约束应失败
     let mut variables = vars(&[
@@ -105,9 +111,7 @@ fn test_constraint_name_required() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(!result.all_passed, "名称为空应不通过约束");
     assert!(!result.blocking_errors.is_empty(), "应有阻塞错误");
 
@@ -118,17 +122,13 @@ fn test_constraint_name_required() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(result.all_passed, "名称非空应通过");
 }
 
 #[test]
 fn test_constraint_code_invalid() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     // code == 'INVALID' → 应不通过
     let mut variables = vars(&[
@@ -137,9 +137,7 @@ fn test_constraint_code_invalid() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(!result.all_passed, "INVALID 编码应不通过");
 
     // code 为空 → 应通过（可选字段）
@@ -149,17 +147,13 @@ fn test_constraint_code_invalid() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(result.all_passed, "空编码应通过");
 }
 
 #[test]
 fn test_constraint_cross_field_public_requires_name() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     // public=true + name=null → 应不通过
     let mut variables = vars(&[
@@ -168,9 +162,7 @@ fn test_constraint_cross_field_public_requires_name() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(!result.all_passed, "公开客户无名称应不通过");
 
     // public=false + name=有值 → 应通过
@@ -180,9 +172,7 @@ fn test_constraint_cross_field_public_requires_name() {
         ("public", serde_json::json!(false)),
         ("_f_", serde_json::json!("personal")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(result.all_passed, "非公开客户有名称应通过");
 }
 
@@ -192,9 +182,7 @@ fn test_constraint_cross_field_public_requires_name() {
 
 #[test]
 fn test_rule_auto_company_for_public() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     // public=true + _f_ 未设置 → 规则应自动填充 company
     let mut variables = vars(&[
@@ -203,9 +191,7 @@ fn test_rule_auto_company_for_public() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!(null)),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(result.all_passed, "规则执行后应全部通过");
     // 验证 mutations 中存在 _f_ = 'company'
     assert_eq!(
@@ -222,9 +208,7 @@ fn test_rule_does_not_trigger_when_name_conflicts_with_constraint() {
     // 但约束 1 要求 name != null AND name != '' —— 互斥。
     // 这意味着规则在约束验证后永远无法触发。
     // 这是设计选择（约束优先于规则），此处仅验证行为。
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     // name=null → 约束 1 失败，规则不会执行
     let mut variables = vars(&[
@@ -233,9 +217,7 @@ fn test_rule_does_not_trigger_when_name_conflicts_with_constraint() {
         ("public", serde_json::json!(false)),
         ("_f_", serde_json::json!("personal")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(!result.all_passed, "name=null 时约束应先于规则执行");
     // name 不应被规则填充
     assert_eq!(
@@ -251,9 +233,7 @@ fn test_rule_does_not_trigger_when_name_conflicts_with_constraint() {
 
 #[test]
 fn test_blocking_rule_rejects_test_code() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     // code='test' → 阻塞规则应阻止 create
     let mut variables = vars(&[
@@ -262,9 +242,7 @@ fn test_blocking_rule_rejects_test_code() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(!result.all_passed, "test 编码应被阻塞");
     assert!(
         result.blocking_errors.iter().any(|e| e.contains("test")),
@@ -278,9 +256,7 @@ fn test_blocking_rule_rejects_test_code() {
         ("public", serde_json::json!(true)),
         ("_f_", serde_json::json!("company")),
     ]);
-    let result = registry
-        .before_create(app_code, "Subject", &mut variables)
-        .unwrap();
+    let result = surface.create("Subject", &mut variables).unwrap();
     assert!(result.all_passed, "normal 编码应通过");
 }
 
@@ -290,19 +266,15 @@ fn test_blocking_rule_rejects_test_code() {
 
 #[test]
 fn test_app_code_isolation() {
-    let registry = AppExtensionRegistry::new();
+    // app-a 有扩展；app-b 无扩展（空扩展装配）
+    let surface_b =
+        ExtensionSurface::from_extension(runtime_engine::AppLogicExtension::new("app-b"));
 
-    // 只注册 app-a，不注册 app-b
-    registry.register(make_test_extension("app-a"));
-
-    // app-b 没有扩展 → before_create 应直接返回通过（空结果）
     let mut variables = vars(&[
         ("name", serde_json::json!("")), // 即使数据无效
         ("code", serde_json::json!("INVALID")),
     ]);
-    let result = registry
-        .before_create("app-b", "Subject", &mut variables)
-        .unwrap();
+    let result = surface_b.create("Subject", &mut variables).unwrap();
     assert!(result.all_passed, "未注册的 app 不应有约束验证");
     assert!(
         result.evaluations.is_empty(),
@@ -311,7 +283,7 @@ fn test_app_code_isolation() {
 }
 
 // ─────────────────────────────────────────────────────
-// 测试：ExtensionLoader 加载真实 YAML 文件（可选路径）
+// 测试：ExtensionLoader 加载真实 YAML 文件
 // ─────────────────────────────────────────────────────
 
 #[test]
@@ -351,11 +323,97 @@ fn test_extension_loader_parses_yaml() {
     );
 }
 
+/// 唯一临时目录（进程内互不覆盖；无 tempfile 依赖）
+fn unique_tmp_dir(tag: &str) -> std::path::PathBuf {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("rt-ext-{}-{}-{}", tag, std::process::id(), nanos))
+}
+
+#[test]
+fn test_surface_from_dir_loads_real_artifacts() {
+    let dir = unique_tmp_dir("fromdir");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("constraints.yaml"), CONSTRAINTS_YAML).unwrap();
+    std::fs::write(dir.join("rules.yaml"), RULES_YAML).unwrap();
+
+    let surface = ExtensionSurface::from_dir("test-app", &dir).expect("目录加载应成功");
+    let inventory = surface.inventory();
+    assert_eq!(inventory.constraints.len(), 4, "目录加载应含 4 条约束");
+    assert_eq!(inventory.rules.len(), 3, "目录加载应含 3 条规则");
+    assert_eq!(inventory.total(), 7, "覆盖单元总数 = 约束 + 规则");
+
+    // 真实加载的扩展应可执行（与内存装配同一条执行路径）
+    let mut variables = vars(&[
+        ("name", serde_json::json!("")),
+        ("code", serde_json::json!("C001")),
+        ("public", serde_json::json!(true)),
+        ("_f_", serde_json::json!("company")),
+    ]);
+    let result = surface.create("Subject", &mut variables).unwrap();
+    assert!(!result.all_passed, "目录加载的约束应生效");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_surface_from_missing_dir_is_empty_not_error() {
+    let dir = unique_tmp_dir("missing");
+    let surface = ExtensionSurface::from_dir("test-app", &dir).expect("目录缺失不应报错");
+    assert!(
+        surface.inventory().is_empty(),
+        "缺失目录 → 无声明（空扩展，同 loader 既有语义）"
+    );
+
+    let mut variables = vars(&[("name", serde_json::json!(""))]);
+    let result = surface.create("Subject", &mut variables).unwrap();
+    assert!(result.all_passed, "空扩展不应产生阻塞");
+    assert!(result.evaluations.is_empty(), "空扩展不应产生 evaluation");
+}
+
 // ─────────────────────────────────────────────────────
-// 测试：before_update 中的状态机转换验证
+// 测试：声明清单（覆盖判定输入面）
 // ─────────────────────────────────────────────────────
 
-/// 带状态机定义的测试扩展
+#[test]
+fn test_surface_inventory_ids_are_stable_and_unique() {
+    let surface = test_surface("test-app");
+    let inv = surface.inventory();
+
+    assert_eq!(inv.constraints.len(), 4);
+    assert_eq!(inv.rules.len(), 3);
+    assert_eq!(inv.state_machines.len(), 0);
+    assert_eq!(inv.total(), 7);
+
+    // id 稳定且唯一（覆盖报告以 id 为键）
+    let mut ids: Vec<&str> = inv
+        .constraints
+        .iter()
+        .map(|c| c.id.as_str())
+        .chain(inv.rules.iter().map(|r| r.id.as_str()))
+        .collect();
+    let before = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), before, "声明 id 必须唯一");
+
+    // 字段级 / 跨字段约束可区分
+    assert_eq!(inv.constraints[0].field.as_deref(), Some("name"));
+    assert!(
+        inv.constraints[2].field.is_none(),
+        "跨字段约束 field 为 None"
+    );
+    assert_eq!(inv.constraints[0].level, "error");
+    assert!(inv.rules.iter().any(|r| r.blocking), "应含阻塞规则声明");
+}
+
+// ─────────────────────────────────────────────────────
+// 测试：状态机（before_update 转换验证 + on_transition guard）
+// ─────────────────────────────────────────────────────
+
+/// 带状态机定义的测试扩展（含带 guard 的迁移）
 fn make_state_machine_extension(app_code: &str) -> runtime_engine::AppLogicExtension {
     use runtime_contract::extension::StateMachineExtension;
 
@@ -388,11 +446,32 @@ fn make_state_machine_extension(app_code: &str) -> runtime_engine::AppLogicExten
     ext
 }
 
+/// 带 guard 的状态机（确认须先付款）
+fn make_guarded_state_machine_ext(app_code: &str) -> runtime_engine::AppLogicExtension {
+    use runtime_contract::extension::StateMachineExtension;
+
+    let mut ext = runtime_engine::AppLogicExtension::new(app_code);
+    ext.state_machines = vec![StateMachineExtension {
+        entity: "Order".to_string(),
+        state_field: "t_state".to_string(),
+        states: vec![
+            runtime_contract::behavior::State::new("Pending"),
+            runtime_contract::behavior::State::new("Confirmed"),
+        ],
+        transitions: vec![runtime_contract::behavior::Transition::new(
+            "confirm",
+            "Pending",
+            "Confirmed",
+        )
+        .with_guard("paid == true")],
+        initial_state: "Pending".to_string(),
+    }];
+    ext
+}
+
 #[test]
 fn test_before_update_state_machine_valid_transition() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_state_machine_extension(app_code));
+    let surface = ExtensionSurface::from_extension(make_state_machine_extension("test-app"));
 
     // 当前状态: Pending, 更新请求: t_state = Confirmed, event = confirm
     let mut new_vars = vars(&[
@@ -401,17 +480,15 @@ fn test_before_update_state_machine_valid_transition() {
     ]);
     let current_vars = vars(&[("t_state", serde_json::json!("Pending"))]);
 
-    let result = registry
-        .before_update(app_code, "Order", &mut new_vars, &current_vars)
+    let result = surface
+        .update("Order", &mut new_vars, &current_vars)
         .unwrap();
     assert!(result.all_passed, "Pending → Confirmed 应通过状态机验证");
 }
 
 #[test]
 fn test_before_update_state_machine_invalid_transition() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_state_machine_extension(app_code));
+    let surface = ExtensionSurface::from_extension(make_state_machine_extension("test-app"));
 
     // 当前状态: Pending, 更新请求: t_state = Delivered (跳过两步，不允许)
     let mut new_vars = vars(&[
@@ -420,17 +497,15 @@ fn test_before_update_state_machine_invalid_transition() {
     ]);
     let current_vars = vars(&[("t_state", serde_json::json!("Pending"))]);
 
-    let result = registry
-        .before_update(app_code, "Order", &mut new_vars, &current_vars)
+    let result = surface
+        .update("Order", &mut new_vars, &current_vars)
         .unwrap();
     assert!(!result.all_passed, "Pending → Delivered 应被状态机阻止");
 }
 
 #[test]
 fn test_before_update_state_machine_no_state_change() {
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_state_machine_extension(app_code));
+    let surface = ExtensionSurface::from_extension(make_state_machine_extension("test-app"));
 
     // 状态未变化（Pending → Pending），不应触发转换验证
     let mut new_vars = vars(&[
@@ -442,8 +517,8 @@ fn test_before_update_state_machine_no_state_change() {
         ("notice", serde_json::json!("旧备注")),
     ]);
 
-    let result = registry
-        .before_update(app_code, "Order", &mut new_vars, &current_vars)
+    let result = surface
+        .update("Order", &mut new_vars, &current_vars)
         .unwrap();
     assert!(result.all_passed, "状态未变化时应通过");
 }
@@ -451,9 +526,7 @@ fn test_before_update_state_machine_no_state_change() {
 #[test]
 fn test_before_update_no_state_machine_defined() {
     // 未定义状态机的实体，before_update 不应报错
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code)); // 只有约束/规则，无状态机
+    let surface = test_surface("test-app"); // 只有约束/规则，无状态机
 
     let mut new_vars = vars(&[
         ("name", serde_json::json!("Acme")),
@@ -466,8 +539,8 @@ fn test_before_update_no_state_machine_defined() {
         ("code", serde_json::json!("C001")),
     ]);
 
-    let result = registry
-        .before_update(app_code, "Subject", &mut new_vars, &current_vars)
+    let result = surface
+        .update("Subject", &mut new_vars, &current_vars)
         .unwrap();
     assert!(result.all_passed, "未定义状态机的实体更新应通过");
 }
@@ -475,9 +548,7 @@ fn test_before_update_no_state_machine_defined() {
 #[test]
 fn test_before_update_constraint_still_works() {
     // 即使传了 current_variables，约束验证仍应对 new_variables 生效
-    let app_code = "test-app";
-    let registry = AppExtensionRegistry::new();
-    registry.register(make_test_extension(app_code));
+    let surface = test_surface("test-app");
 
     let mut new_vars = vars(&[
         ("name", serde_json::json!("")), // 空名称违反约束
@@ -488,8 +559,49 @@ fn test_before_update_constraint_still_works() {
         ("public", serde_json::json!(true)),
     ]);
 
-    let result = registry
-        .before_update(app_code, "Subject", &mut new_vars, &current_vars)
+    let result = surface
+        .update("Subject", &mut new_vars, &current_vars)
         .unwrap();
     assert!(!result.all_passed, "空名称应违反约束");
+}
+
+#[test]
+fn test_on_transition_guard_blocks_and_allows() {
+    let surface = ExtensionSurface::from_extension(make_guarded_state_machine_ext("test-app"));
+
+    // guard 为假 → 转换被拒
+    let mut vars_unpaid = vars(&[("paid", serde_json::json!(false))]);
+    let blocked = surface
+        .transition("Order", "Pending", "Confirmed", &mut vars_unpaid)
+        .unwrap();
+    assert!(!blocked.all_passed, "未付款时 guard 应拒绝转换");
+
+    // guard 为真 → 转换放行
+    let mut vars_paid = vars(&[("paid", serde_json::json!(true))]);
+    let allowed = surface
+        .transition("Order", "Pending", "Confirmed", &mut vars_paid)
+        .unwrap();
+    assert!(allowed.all_passed, "已付款时 guard 应放行转换");
+}
+
+#[test]
+fn test_surface_inventory_enumerates_state_machine_transitions() {
+    let surface = ExtensionSurface::from_extension(make_state_machine_extension("test-app"));
+    let inv = surface.inventory();
+
+    assert_eq!(inv.state_machines.len(), 1);
+    let sm = &inv.state_machines[0];
+    assert_eq!(sm.state_field, "t_state");
+    assert_eq!(sm.states.len(), 5, "应枚举 5 个状态");
+    assert_eq!(sm.transitions.len(), 4, "应枚举 4 条迁移（覆盖单元）");
+    assert_eq!(inv.total(), 4, "无约束/规则时覆盖单元 = 迁移数");
+    assert_eq!(sm.transitions[3].from.len(), 2, "多源迁移应保留全部来源");
+    assert!(!sm.transitions[0].has_guard, "无 guard 迁移应标记 false");
+}
+
+#[test]
+fn test_surface_inventory_marks_guarded_transition() {
+    let surface = ExtensionSurface::from_extension(make_guarded_state_machine_ext("test-app"));
+    let sm = &surface.inventory().state_machines[0];
+    assert!(sm.transitions[0].has_guard, "带 guard 迁移应标记 true");
 }

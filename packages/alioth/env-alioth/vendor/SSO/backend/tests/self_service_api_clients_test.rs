@@ -57,6 +57,42 @@ async fn ensure_user(pool: &PgPool, name: &str, email: &str) -> i64 {
         .expect("user id")
 }
 
+/// 前置清场：清掉该自然人此前遗留的自助 client（含订阅）与服务用户。
+/// 共享测试库中前轮失败会跳过尾部 cleanup，残留会把「本人全量可见」的计数断言撑爆——
+/// 该用户的自助 client 属本测试族独占，可安全按所有者删除。
+async fn purge_self_clients(pool: &PgPool, user_id: i64) {
+    // 归属判据与 list_self_api_clients 同源：client_name 前缀 `user:<id>:`
+    let prefix = format!("user:{}:%", user_id);
+    sqlx::query(
+        "DELETE FROM isahl_auth.api_subscriptions WHERE fk_client IN
+           (SELECT id FROM isahl_auth.api_clients WHERE client_name LIKE $1)",
+    )
+    .bind(&prefix)
+    .execute(pool)
+    .await
+    .ok();
+    let svc_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT fk_service_user FROM isahl_auth.api_clients
+         WHERE client_name LIKE $1 AND fk_service_user IS NOT NULL",
+    )
+    .bind(&prefix)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    sqlx::query("DELETE FROM isahl_auth.api_clients WHERE client_name LIKE $1")
+        .bind(&prefix)
+        .execute(pool)
+        .await
+        .ok();
+    for id in svc_ids {
+        sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1 AND user_type = 'service'")
+            .bind(id)
+            .execute(pool)
+            .await
+            .ok();
+    }
+}
+
 /// 测试数据清理：订阅 → client → 服务用户 → 自然人（顺序满足 FK）。
 async fn cleanup(pool: &PgPool, client_ids: &[i64], service_user_ids: &[i64], user_ids: &[i64]) {
     for id in client_ids {
@@ -130,6 +166,7 @@ async fn self_service_crud_lifecycle() {
     .await;
 
     let user_id = ensure_user(&pool, "self_crud", "self_crud@alioth.test").await;
+    purge_self_clients(&pool, user_id).await;
     let token = mint_token(&ast, user_id, "self_crud@alioth.test");
     let mut client_ids: Vec<i64> = Vec::new();
     let mut svc_user_ids: Vec<i64> = Vec::new();
@@ -143,7 +180,10 @@ async fn self_service_crud_lifecycle() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 201, "create apikey client");
     let created: Value = test::read_body_json(resp).await;
-    let created_id = created["id"].as_i64().expect("client id");
+    let created_id = created["id"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("client id");
     let secret = created["secret"]
         .as_str()
         .expect("plaintext secret")
@@ -160,7 +200,10 @@ async fn self_service_crud_lifecycle() {
         "响应返回显示名"
     );
     assert_eq!(created["client_type"].as_str(), Some("apikey"));
-    let svc_user_id = created["fk_service_user"].as_i64().expect("svc user");
+    let svc_user_id = created["fk_service_user"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("svc user");
     client_ids.push(created_id);
     svc_user_ids.push(svc_user_id);
 
@@ -219,7 +262,10 @@ async fn self_service_crud_lifecycle() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 201, "create oauth2 client");
     let oauth2: Value = test::read_body_json(resp).await;
-    let oauth2_id = oauth2["id"].as_i64().expect("oauth2 client id");
+    let oauth2_id = oauth2["id"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("oauth2 client id");
     let oauth2_cid = oauth2["client_id"].as_str().expect("client_id").to_string();
     assert!(
         oauth2_cid.starts_with("client-"),
@@ -232,7 +278,12 @@ async fn self_service_crud_lifecycle() {
         "oauth2 client_id 与 secret 不同"
     );
     client_ids.push(oauth2_id);
-    svc_user_ids.push(oauth2["fk_service_user"].as_i64().expect("svc user"));
+    svc_user_ids.push(
+        oauth2["fk_service_user"]
+            .as_str()
+            .and_then(|v| v.parse().ok())
+            .expect("svc user"),
+    );
 
     // ── 列表：仅本人 client，前缀剥离 ───────────────────────────────────────
     let req = test::TestRequest::get()
@@ -260,7 +311,8 @@ async fn self_service_crud_lifecycle() {
     // oauth2 的 scopes 回显
     let oauth2_listed = clients
         .iter()
-        .find(|c| c["id"] == oauth2_id)
+        // ID_JSON_PRECISION：响应 id 为字符串，按解析值比较
+        .find(|c| c["id"].as_str().and_then(|v| v.parse::<i64>().ok()) == Some(oauth2_id))
         .expect("oauth2 in list");
     assert_eq!(
         oauth2_listed["scopes"],
@@ -371,6 +423,8 @@ async fn self_service_ownership_isolation() {
 
     let user_a = ensure_user(&pool, "self_a", "self_a@alioth.test").await;
     let user_b = ensure_user(&pool, "self_b", "self_b@alioth.test").await;
+    purge_self_clients(&pool, user_a).await;
+    purge_self_clients(&pool, user_b).await;
     let token_a = mint_token(&ast, user_a, "self_a@alioth.test");
     let token_b = mint_token(&ast, user_b, "self_b@alioth.test");
 
@@ -383,8 +437,14 @@ async fn self_service_ownership_isolation() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), 201);
     let created: Value = test::read_body_json(resp).await;
-    let client_id = created["id"].as_i64().expect("client id");
-    let svc_user_id = created["fk_service_user"].as_i64().expect("svc user");
+    let client_id = created["id"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("client id");
+    let svc_user_id = created["fk_service_user"]
+        .as_str()
+        .and_then(|v| v.parse().ok())
+        .expect("svc user");
 
     // B 列表：看不到 A 的 client（归属隔离）
     let req = test::TestRequest::get()

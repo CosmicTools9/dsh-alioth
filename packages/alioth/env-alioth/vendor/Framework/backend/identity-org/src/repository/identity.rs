@@ -166,9 +166,12 @@ impl From<PgPool> for IdentityRepository {
     }
 }
 
-/// MDM 主数据编码 upsert/清除（wz_fssc.subject_mdm 侧表；空串=删除记录）。
-/// isahl schema 冻结 + comments 禁嵌 JSON，主体级 MDM 编码落 WZ 扩展表
+/// MDM 主数据编码 upsert/清除（wz_fssc.subject_mdm 侧表，主键 `(subject_id, view_tag)`；
+/// 空串=删除该视角记录）。isahl schema 冻结 + comments 禁嵌 JSON，主体级 MDM 编码落 WZ 扩展表
 /// （change: add-subject-mdm-code；先例：subject_bank_card / subject_invoice_info）。
+///
+/// 单值 `mdmCode` 兼容路径：落码视角 = 该主体拥有的 CUST → SUPP 首个；判不出则 `VIEW-BIZ`
+/// （用户裁决 2026-09-14「MDM 码按视角不同」后由 `mdmCodes` 映射取代，单值仅保兼容）。
 async fn sync_subject_mdm(
     pool: &sqlx::PgPool,
     subject_id: i64,
@@ -176,30 +179,32 @@ async fn sync_subject_mdm(
     user_id: i64,
 ) -> Result<(), ApiError> {
     crate::handlers::subjects::ensure_subject_mdm(pool).await?;
-    let trimmed = mdm_code.trim();
-    if trimmed.is_empty() {
-        sqlx::query("DELETE FROM wz_fssc.subject_mdm WHERE subject_id = $1")
-            .bind(subject_id)
-            .execute(pool)
-            .await
-            .map_err(ApiError::from)?;
-    } else {
-        sqlx::query(
-            r#"INSERT INTO wz_fssc.subject_mdm (subject_id, mdm_code, created_by_id, updated_by_id)
-               VALUES ($1, $2, $3, $3)
-               ON CONFLICT (subject_id)
-               DO UPDATE SET mdm_code = EXCLUDED.mdm_code,
-                             updated_by_id = EXCLUDED.updated_by_id,
-                             updated_at = now()"#,
-        )
-        .bind(subject_id)
-        .bind(trimmed)
-        .bind(user_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::from)?;
+    let tag = crate::handlers::subjects::resolve_mdm_view_tag(pool, subject_id).await?;
+    crate::handlers::subjects::write_subject_mdm(pool, subject_id, &tag, mdm_code, user_id).await
+}
+
+/// MDM 编码按视角批量写（映射语义；值为空串=删该视角行，未出现的视角不动）。
+async fn sync_subject_mdm_codes(
+    pool: &sqlx::PgPool,
+    subject_id: i64,
+    codes: &std::collections::BTreeMap<String, String>,
+    user_id: i64,
+) -> Result<(), ApiError> {
+    crate::handlers::subjects::write_subject_mdm_codes(pool, subject_id, codes, user_id).await
+}
+
+/// 两条 MDM 写入路径的统一归口（`mdmCodes` 映射优先，单值 `mdmCode` 仅在其缺省时生效）。
+async fn apply_subject_mdm(
+    pool: &sqlx::PgPool,
+    subject_id: i64,
+    req: &UpdateIdentityRequest,
+    user_id: i64,
+) -> Result<(), ApiError> {
+    match (&req.mdm_codes, &req.mdm_code) {
+        (Some(codes), _) => sync_subject_mdm_codes(pool, subject_id, codes, user_id).await,
+        (None, Some(mdm_code)) => sync_subject_mdm(pool, subject_id, mdm_code, user_id).await,
+        (None, None) => Ok(()),
     }
-    Ok(())
 }
 
 #[async_trait]
@@ -280,11 +285,11 @@ impl AliothRepository<Identity, CreateIdentityRequest, UpdateIdentityRequest, Ap
 
         if sets.is_empty() {
             // 仅 MDM 编码更新的场景（无主体列变更）：确认主体存在后写侧表
-            if let Some(ref mdm_code) = req.mdm_code {
+            if req.mdm_code.is_some() || req.mdm_codes.is_some() {
                 if self.get(id).await?.is_none() {
                     return Ok(None);
                 }
-                sync_subject_mdm(&self.pool, id, mdm_code, user_id).await?;
+                apply_subject_mdm(&self.pool, id, &req, user_id).await?;
             }
             return self.get(id).await;
         }
@@ -321,9 +326,7 @@ impl AliothRepository<Identity, CreateIdentityRequest, UpdateIdentityRequest, Ap
         let updated = q.fetch_optional(&self.pool).await.map_err(ApiError::from)?;
         // MDM 主数据编码（wz_fssc.subject_mdm 侧表）：主体更新成功后写入
         if updated.is_some() {
-            if let Some(ref mdm_code) = req.mdm_code {
-                sync_subject_mdm(&self.pool, id, mdm_code, user_id).await?;
-            }
+            apply_subject_mdm(&self.pool, id, &req, user_id).await?;
         }
         Ok(updated)
     }
@@ -428,8 +431,9 @@ subject_leaf_repository!(
 /// DTO 入参仍为运单 id（契约不变）→ 经 id 解析为编号；解析不到即 400（不静默丢弃）。
 ///
 /// 排除项（依据）：`o_number` 为维度派生的声明编号、DTO 禁写（`DTO_DESIGN_SPEC.md` §5.2 /
-/// `MODULE_SPEC.md` §5），不可用作载荷；真结构路径为
-/// `zc_id_tsp-voucher_rr_devi-seal` + `zc_id_orde-traffic_rr_tsp-voucher` 两跳桥（经装车条），
+/// `MODULE_SPEC.md` §5），不可用作载荷；真结构路径为**直连桥** `zc_id_orde-traffic_rr_devi-seal`
+/// （运输订单 → 铅封 `zc_id_devi-seal.code`，读侧同口径见
+/// `transport-operations/repositories/waybill_overview.rs::seal_no`），
 /// 其写侧归装车条组装流程（`transport-operations`），非封签管理页可造。
 pub(crate) async fn resolve_seal_waybill_code(
     pool: &PgPool,

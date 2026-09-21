@@ -101,12 +101,68 @@ fn tag() -> String {
     )
 }
 
+/// 夹具语句的静态 SQL 注册表：表名以 `$table:literal` 传入，`concat!` 编译期固化
+/// （无运行期拼串、无 `AssertSqlSafe`）。
+macro_rules! fixture_sqls {
+    ($prefix:literal, $suffix:literal, [$($table:literal),+ $(,)?]) => {
+        &[$(($table, concat!($prefix, $table, $suffix))),+]
+    };
+}
+
+/// 插入夹具行：表集 = 本文件 `insert_row` 的全部调用点。
+const INSERT_ROW_SQL: &[(&str, &str)] = fixture_sqls!(
+    r#"INSERT INTO isahl.""#,
+    r#"" (notice) VALUES ($1) RETURNING id"#,
+    [
+        "zc_id_lifecycle",
+        "zc_id_status",
+        "zc_id_subjects",
+        "zc_id_version",
+    ]
+);
+
+/// 软删断言探针：表集 = 本文件 `deleted_at_of` 的全部调用点。
+const DELETED_AT_SQL: &[(&str, &str)] = fixture_sqls!(
+    r#"SELECT deleted_at FROM isahl.""#,
+    r#"" WHERE id = $1"#,
+    [
+        "zc_id_appr-payment",
+        "zc_id_deta-tsp",
+        "zc_id_lifecycle",
+        "zc_id_lifecycle_r_primary-status",
+        "zc_id_lifecycle_r_status",
+        "zc_id_status",
+        "zc_id_version",
+    ]
+);
+
+/// 用例内清理（物理删除）：表集 = 本文件 `hard_delete` 的全部调用点。
+const HARD_DELETE_SQL: &[(&str, &str)] = fixture_sqls!(
+    r#"DELETE FROM isahl.""#,
+    r#"" WHERE id = $1"#,
+    [
+        "zc_id_appr-payment",
+        "zc_id_deta-tsp",
+        "zc_id_lifecycle",
+        "zc_id_lifecycle_r_primary-status",
+        "zc_id_lifecycle_r_status",
+        "zc_id_status",
+        "zc_id_subjects",
+        "zc_id_version",
+    ]
+);
+
+/// 夹具表名 → 编译期静态 SQL（未登记表名 fail-visible，不回落拼串）。
+fn fixture_sql(registry: &[(&'static str, &'static str)], table: &str) -> &'static str {
+    registry
+        .iter()
+        .find(|(t, _)| *t == table)
+        .map(|(_, sql)| *sql)
+        .unwrap_or_else(|| panic!("未登记夹具表名: {table}"))
+}
+
 async fn insert_row(pool: &PgPool, table: &str, notice: &str) -> i64 {
-    let sql = format!(
-        "INSERT INTO isahl.\"{}\" (notice) VALUES ($1) RETURNING id",
-        table
-    );
-    sqlx::query(AssertSqlSafe(sql.as_str()))
+    sqlx::query(fixture_sql(INSERT_ROW_SQL, table))
         .bind(notice)
         .fetch_one(pool)
         .await
@@ -114,7 +170,7 @@ async fn insert_row(pool: &PgPool, table: &str, notice: &str) -> i64 {
         .get::<i64, _>("id")
 }
 
-/// 插入 r_status 桥接行（ref_left → lifecycle，ref_right → status）
+/// 插入 r_primary-status 桥接行（ref_left → lifecycle，ref_right → status）
 async fn insert_relation_row(pool: &PgPool, notice: &str, ref_left: i64, ref_right: i64) -> i64 {
     sqlx::query(
         r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (notice, ref_left, ref_right)
@@ -158,7 +214,7 @@ async fn insert_manu_row(pool: &PgPool, notice: &str, fk_previous: Option<i64>) 
         .expect("resolve dk coords");
     match fk_previous {
         Some(parent) => sqlx::query(
-            r#"INSERT INTO isahl."zc_id_version"
+            r#"INSERT INTO isahl."zc_id_prod-prj_vcs_file-made"
                (notice, fk_previous, dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5) RETURNING id"#,
         )
@@ -180,8 +236,7 @@ async fn deleted_at_of(
     table: &str,
     id: i64,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
-    let sql = format!("SELECT deleted_at FROM isahl.\"{}\" WHERE id = $1", table);
-    sqlx::query(AssertSqlSafe(sql.as_str()))
+    sqlx::query(fixture_sql(DELETED_AT_SQL, table))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -194,15 +249,14 @@ async fn deleted_at_of(
 }
 
 async fn hard_delete(pool: &PgPool, table: &str, id: i64) {
-    let sql = format!("DELETE FROM isahl.\"{}\" WHERE id = $1", table);
-    sqlx::query(AssertSqlSafe(sql.as_str()))
+    sqlx::query(fixture_sql(HARD_DELETE_SQL, table))
         .bind(id)
         .execute(pool)
         .await
         .expect("hard delete cleanup");
 }
 
-/// status + r_status 桥接行（ref_right → status）
+/// status + r_primary-status 桥接行（ref_right → status）
 async fn seed_status_relation(pool: &PgPool, notice: &str) -> (i64, i64, i64) {
     let status_id = insert_row(pool, "zc_id_status", notice).await;
     let lc_id = insert_row(pool, "zc_id_lifecycle", notice).await;
@@ -233,7 +287,7 @@ async fn cleanup_leaked_fail_triggers(pool: &PgPool) {
     .collect();
     for t in leftover {
         sqlx::query(AssertSqlSafe(format!(
-            "DROP TRIGGER IF EXISTS \"{}\" ON isahl.\"zc_id_lifecycle_r_status\"",
+            "DROP TRIGGER IF EXISTS \"{}\" ON isahl.\"zc_id_lifecycle_r_primary-status\"",
             t
         )))
         .execute(pool)
@@ -259,7 +313,7 @@ async fn relation_cascade_on_soft_delete() {
     assert_eq!(rows, 1);
 
     assert!(
-        deleted_at_of(&pool, "zc_id_lifecycle_r_status", rel_id)
+        deleted_at_of(&pool, "zc_id_lifecycle_r_primary-status", rel_id)
             .await
             .is_some(),
         "关系表行应随主删除同事务置位 deleted_at"
@@ -272,7 +326,7 @@ async fn relation_cascade_on_soft_delete() {
         "无关行 deleted_at 不得置位"
     );
 
-    hard_delete(&pool, "zc_id_lifecycle_r_status", rel_id).await;
+    hard_delete(&pool, "zc_id_lifecycle_r_primary-status", rel_id).await;
     hard_delete(&pool, "zc_id_lifecycle", lc_id).await;
     hard_delete(&pool, "zc_id_status", status_id).await;
 }
@@ -395,22 +449,22 @@ async fn batch_soft_delete_cascades_relation_rows() {
     assert_eq!(rows, 2);
 
     assert!(
-        deleted_at_of(&pool, "zc_id_lifecycle_r_status", r1)
+        deleted_at_of(&pool, "zc_id_lifecycle_r_primary-status", r1)
             .await
             .is_some(),
         "batch 级联：第一条 status 的关联行应置位"
     );
     assert!(
-        deleted_at_of(&pool, "zc_id_lifecycle_r_status", r2)
+        deleted_at_of(&pool, "zc_id_lifecycle_r_primary-status", r2)
             .await
             .is_some(),
         "batch 级联：第二条 status 的关联行应置位"
     );
 
-    hard_delete(&pool, "zc_id_lifecycle_r_status", r1).await;
+    hard_delete(&pool, "zc_id_lifecycle_r_primary-status", r1).await;
     hard_delete(&pool, "zc_id_lifecycle", lc1).await;
     hard_delete(&pool, "zc_id_status", s1).await;
-    hard_delete(&pool, "zc_id_lifecycle_r_status", r2).await;
+    hard_delete(&pool, "zc_id_lifecycle_r_primary-status", r2).await;
     hard_delete(&pool, "zc_id_lifecycle", lc2).await;
     hard_delete(&pool, "zc_id_status", s2).await;
 }
@@ -443,7 +497,7 @@ async fn cascade_rolls_back_on_target_failure() {
     .await
     .expect("create fail function");
     sqlx::query(AssertSqlSafe(format!(
-        "CREATE TRIGGER {} BEFORE UPDATE ON isahl.\"zc_id_lifecycle_r_status\" FOR EACH ROW EXECUTE FUNCTION isahl.{}()",
+        "CREATE TRIGGER {} BEFORE UPDATE ON isahl.\"zc_id_lifecycle_r_primary-status\" FOR EACH ROW EXECUTE FUNCTION isahl.{}()",
         tg_name, fn_name
     )))
     .execute(&pool)
@@ -461,7 +515,7 @@ async fn cascade_rolls_back_on_target_failure() {
         "级联失败时主实体必须回滚（无部分级联残留）"
     );
     assert!(
-        deleted_at_of(&pool, "zc_id_lifecycle_r_status", rel_id)
+        deleted_at_of(&pool, "zc_id_lifecycle_r_primary-status", rel_id)
             .await
             .is_none(),
         "级联失败时关联行不得置位"
@@ -469,7 +523,7 @@ async fn cascade_rolls_back_on_target_failure() {
 
     // 清理触发器 + 数据
     sqlx::query(AssertSqlSafe(format!(
-        "DROP TRIGGER {} ON isahl.\"zc_id_lifecycle_r_status\"",
+        "DROP TRIGGER {} ON isahl.\"zc_id_lifecycle_r_primary-status\"",
         tg_name
     )))
     .execute(&pool)
@@ -479,7 +533,7 @@ async fn cascade_rolls_back_on_target_failure() {
         .execute(&pool)
         .await
         .expect("drop fail function");
-    hard_delete(&pool, "zc_id_lifecycle_r_status", rel_id).await;
+    hard_delete(&pool, "zc_id_lifecycle_r_primary-status", rel_id).await;
     hard_delete(&pool, "zc_id_lifecycle", lc_id).await;
     hard_delete(&pool, "zc_id_status", status_id).await;
 }

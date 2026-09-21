@@ -43,7 +43,7 @@ impl FenceRepository {
         }
         let id: i64 = sqlx::query_scalar(
             r#"INSERT INTO "isahl"."zc_id_scal-distance" (id, mark, notice, created_by_id)
-               VALUES (isahl.gen_next_uid(), $1, $2, $3) RETURNING id"#,
+               VALUES (isahl.gen_next_uid(423), $1, $2, $3) RETURNING id"#,
         )
         .bind(radius)
         .bind(format!("围栏半径 {radius}"))
@@ -100,10 +100,10 @@ impl FenceRepository {
         };
         sqlx::query_as::<_, Fence>(
             r#"INSERT INTO "isahl"."zc_id_geog-circle" (notice, code, comments, circle, sk_unit, qk_radius, t_color_, created_by_id)
-               VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326), $6, $7, $8, $9)
+               VALUES ($1, $2, $3, postgis.ST_SetSRID(postgis.ST_MakePoint($4, $5), 4326), $6, $7, $8, $9)
                RETURNING id, notice, code, comments,
                          to_jsonb(circle) as circle, 'circle' AS fence_type,
-                         ST_AsGeoJSON(circle)::jsonb AS geometry, sk_unit,
+                         postgis.ST_AsGeoJSON(circle)::jsonb AS geometry, sk_unit,
                          (SELECT sd.mark::bigint FROM "isahl"."zc_id_scal-distance" sd
                           WHERE sd.id = qk_radius AND sd.deleted_at IS NULL) AS qk_radius,
                          t_color_, created_at, updated_at, deleted_at"#,
@@ -134,9 +134,9 @@ impl FenceRepository {
         );
         sqlx::query_as::<_, Fence>(
             r#"INSERT INTO "isahl"."zc_id_geog-area" (notice, code, comments, box, sk_unit, t_color_, created_by_id)
-               VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromText($4), 4326), $5, $6, $7)
+               VALUES ($1, $2, $3, postgis.ST_SetSRID(postgis.ST_GeomFromText($4), 4326), $5, $6, $7)
                RETURNING id, notice, code, comments, NULL::jsonb AS circle, 'area' AS fence_type,
-                         ST_AsGeoJSON(box)::jsonb AS geometry, NULL::bigint AS qk_radius,
+                         postgis.ST_AsGeoJSON(box)::jsonb AS geometry, NULL::bigint AS qk_radius,
                          sk_unit, t_color_, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.notice).bind(&req.code).bind(req.comments.as_deref())
@@ -167,9 +167,9 @@ impl FenceRepository {
         };
         sqlx::query_as::<_, Fence>(
             r#"INSERT INTO "isahl"."zc_id_geog-polygon" (notice, code, comments, polygon, sk_unit, t_color_, created_by_id)
-               VALUES ($1, $2, $3, ST_SetSRID(ST_GeomFromText($4), 4326), $5, $6, $7)
+               VALUES ($1, $2, $3, postgis.ST_SetSRID(postgis.ST_GeomFromText($4), 4326), $5, $6, $7)
                RETURNING id, notice, code, comments, NULL::jsonb AS circle, 'polygon' AS fence_type,
-                         ST_AsGeoJSON(polygon)::jsonb AS geometry, NULL::bigint AS qk_radius,
+                         postgis.ST_AsGeoJSON(polygon)::jsonb AS geometry, NULL::bigint AS qk_radius,
                          sk_unit, t_color_, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.notice).bind(&req.code).bind(req.comments.as_deref())
@@ -221,7 +221,7 @@ impl FenceRepository {
         if centre_lnglat.is_some() {
             idx += 1;
             sets.push(format!(
-                "circle = ST_SetSRID(ST_MakePoint(${}, ${}), 4326)",
+                "circle = postgis.ST_SetSRID(postgis.ST_MakePoint(${}, ${}), 4326)",
                 idx,
                 idx + 1
             ));
@@ -253,7 +253,7 @@ impl FenceRepository {
         let sql = format!(
             r#"UPDATE "isahl"."zc_id_geog-circle" SET {} WHERE id = ${} AND deleted_at IS NULL
                RETURNING id, notice, code, comments, NULL::jsonb AS circle, 'circle' AS fence_type,
-                         ST_AsGeoJSON(circle)::jsonb AS geometry, sk_unit,
+                         postgis.ST_AsGeoJSON(circle)::jsonb AS geometry, sk_unit,
                          (SELECT sd.mark::bigint FROM "isahl"."zc_id_scal-distance" sd
                           WHERE sd.id = "isahl"."zc_id_geog-circle".qk_radius AND sd.deleted_at IS NULL) AS qk_radius,
                          t_color_, created_at, updated_at, deleted_at"#,
@@ -334,11 +334,11 @@ impl FenceRepository {
             Some(wkt) => sqlx::query_as::<_, Fence>(
                 r#"UPDATE "isahl"."zc_id_geog-area"
                        SET notice=$1, code=$2, comments=$3, sk_unit=$4, t_color_=$5,
-                           box=ST_SetSRID(ST_GeomFromText($6), 4326),
+                           box=postgis.ST_SetSRID(postgis.ST_GeomFromText($6), 4326),
                            updated_at=NOW(), updated_by_id=$7
                        WHERE id=$8 AND deleted_at IS NULL
                        RETURNING id, notice, code, comments, NULL::jsonb AS circle,
-                                 'area' AS fence_type, ST_AsGeoJSON(box)::jsonb AS geometry,
+                                 'area' AS fence_type, postgis.ST_AsGeoJSON(box)::jsonb AS geometry,
                                  NULL::bigint AS qk_radius, sk_unit, t_color_,
                                  created_at, updated_at, deleted_at"#,
             )
@@ -359,7 +359,7 @@ impl FenceRepository {
                            updated_at=NOW(), updated_by_id=$6
                        WHERE id=$7 AND deleted_at IS NULL
                        RETURNING id, notice, code, comments, NULL::jsonb AS circle,
-                                 'area' AS fence_type, ST_AsGeoJSON(box)::jsonb AS geometry,
+                                 'area' AS fence_type, postgis.ST_AsGeoJSON(box)::jsonb AS geometry,
                                  NULL::bigint AS qk_radius, sk_unit, t_color_,
                                  created_at, updated_at, deleted_at"#,
             )
@@ -414,11 +414,11 @@ impl FenceRepository {
             Some(wkt) => sqlx::query_as::<_, Fence>(
                 r#"UPDATE "isahl"."zc_id_geog-polygon"
                        SET notice=$1, code=$2, comments=$3, sk_unit=$4, t_color_=$5,
-                           polygon=ST_SetSRID(ST_GeomFromText($6), 4326),
+                           polygon=postgis.ST_SetSRID(postgis.ST_GeomFromText($6), 4326),
                            updated_at=NOW(), updated_by_id=$7
                        WHERE id=$8 AND deleted_at IS NULL
                        RETURNING id, notice, code, comments, NULL::jsonb AS circle,
-                                 'polygon' AS fence_type, ST_AsGeoJSON(polygon)::jsonb AS geometry,
+                                 'polygon' AS fence_type, postgis.ST_AsGeoJSON(polygon)::jsonb AS geometry,
                                  NULL::bigint AS qk_radius, sk_unit, t_color_,
                                  created_at, updated_at, deleted_at"#,
             )
@@ -439,7 +439,7 @@ impl FenceRepository {
                            updated_at=NOW(), updated_by_id=$6
                        WHERE id=$7 AND deleted_at IS NULL
                        RETURNING id, notice, code, comments, NULL::jsonb AS circle,
-                                 'polygon' AS fence_type, ST_AsGeoJSON(polygon)::jsonb AS geometry,
+                                 'polygon' AS fence_type, postgis.ST_AsGeoJSON(polygon)::jsonb AS geometry,
                                  NULL::bigint AS qk_radius, sk_unit, t_color_,
                                  created_at, updated_at, deleted_at"#,
             )
@@ -538,24 +538,45 @@ impl AliothRepository<Fence, CreateFenceRequest, UpdateFenceRequest, ApiError> f
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), ApiError> {
         // add-fence-geometry-types：探测物理叶表后在该叶表软删（通用路径绑定单表会脱靶）
         let kind = self.probe_fence_kind(id).await?;
-        let table = match kind {
-            FenceKind::Circle => r#""isahl"."zc_id_geog-circle""#,
-            FenceKind::Area => r#""isahl"."zc_id_geog-area""#,
-            FenceKind::Polygon => r#""isahl"."zc_id_geog-polygon""#,
+        // 三叶表静态软删 SQL（表名编译期固化，运行期零拼表名）
+        macro_rules! fence_delete_sql {
+            ($table:literal) => {
+                concat!(
+                    "UPDATE \"isahl\".\"", $table,
+                    "\" SET deleted_at = NOW(), deleted_by_id = $1 WHERE id = $2 AND deleted_at IS NULL"
+                )
+            };
+        }
+        let sql = match kind {
+            FenceKind::Circle => fence_delete_sql!("zc_id_geog-circle"),
+            FenceKind::Area => fence_delete_sql!("zc_id_geog-area"),
+            FenceKind::Polygon => fence_delete_sql!("zc_id_geog-polygon"),
         };
-        let sql = format!(
-            "UPDATE {table} SET deleted_at = NOW(), deleted_by_id = $1 WHERE id = $2 AND deleted_at IS NULL"
-        );
-        let rows = sqlx::query(AssertSqlSafe(sql.as_str()))
+        let mut tx = self.pool.begin().await.map_err(ApiError::from)?;
+        // 逻辑触发器（引用清除归 Rust，DB 无触发器）：地点 qk_fence 指向被删围栏时置空——
+        // 经继承根 zc_id_place 覆盖全部地点叶表（fk_index 反向声明两条：根级
+        // zc_id_geometry → zc_id_place.fence 与叶级 zc_id_geog-polygon → stor-place 族，
+        // 根更新一并覆盖），语义同框架 SetNull 级联（schema_repository::set_null_fk）。
+        sqlx::query(
+            r#"UPDATE isahl."zc_id_place" SET qk_fence = NULL, updated_at = NOW()
+                   WHERE qk_fence = $1 AND deleted_at IS NULL"#,
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::from)?;
+        let rows = sqlx::query(sql)
             .bind(user_id)
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(ApiError::from)?
             .rows_affected();
         if rows == 0 {
+            // 未命中（不存在/已软删）：整笔回滚（含引用清除），保持 NotFound 语义
             return Err(ApiError::NotFound(format!("fence {id} not found")));
         }
+        tx.commit().await.map_err(ApiError::from)?;
         Ok(())
     }
 }

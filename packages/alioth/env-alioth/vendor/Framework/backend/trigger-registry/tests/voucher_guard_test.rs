@@ -58,7 +58,7 @@ async fn seed_capacity_row(
     // 容量标量（qk_p_capacity）与库存标量（qk_qty）
     let cap_scalar: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, '总容量', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, '总容量', $2::numeric, 1) RETURNING id"#,
     )
     .bind(format!("TEST-GUARD-CAP-{code_suffix}"))
     .bind(cap)
@@ -67,7 +67,7 @@ async fn seed_capacity_row(
     .expect("insert cap scalar");
     let qty_scalar: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, '可售', $2::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, '可售', $2::numeric, 1) RETURNING id"#,
     )
     .bind(format!("TEST-GUARD-QTY-{code_suffix}"))
     .bind(initial)
@@ -75,10 +75,13 @@ async fn seed_capacity_row(
     .await
     .expect("insert qty scalar");
 
+    // 容量池关系行——载体迁移（用户裁决 2026-09-21，报缺产物 R6）：原载体声明语义
+    // = 关联-文件↔URL（挪用）；合法载体 = `zc_id_prod-payload_rr_stor-container`
+    // （关联-载荷↔容器，⊂ `zc_id_production_rr_storage`；标量读径走父表 zc_id_scale 不变）。
     sqlx::query(
-        r#"INSERT INTO "isahl"."zc_id_file_rr_url"
+        r#"INSERT INTO "isahl"."zc_id_prod-payload_rr_stor-container"
            (id, code, notice, ref_left, ref_right, qk_p_capacity, qk_qty, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, '容量行', $2, $3, $4, $5, 1)"#,
+           VALUES (isahl.gen_next_uid(517), $1, '容量行', $2, $3, $4, $5, 1)"#,
     )
     .bind(format!("TEST-GUARD-ROW-{code_suffix}"))
     .bind(pool_product)
@@ -106,6 +109,8 @@ fn guard_rec(
 ) -> HashMap<String, serde_json::Value> {
     let mut rec = HashMap::new();
     rec.insert("id".to_string(), serde_json::json!(voucher_id));
+    // 刻意用旧物理列名做记录键：守卫 `get_title_id` MUST 同时识别
+    // `fk_payload`（当前模型列）与 `fk_production`（旧键）——未同步升级的调用方不受影响。
     rec.insert("fk_production".to_string(), serde_json::json!(pool_product));
     match side {
         // 出库位 = fk_subj-storage（与 WZ 下单 OUT 同语义）；入库位 = fk_obj-storage
@@ -142,9 +147,14 @@ async fn insert_and_guard(
     max: Option<f64>,
     comment_action: &str,
 ) -> (Option<i64>, Option<Result<VoucherApply, GuardError>>) {
+    // 凭证族「物/交易对象」列（模型演进：fk_payload 优先，旧模型 fk_production）——
+    // fixture 与守卫读列同源，两态可执行
+    let title_col = trigger_registry::stock_materialization::voucher_title_column(&mut **tx)
+        .await
+        .expect("「物」列探测");
     let weight_scalar: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, $3::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, $2, $3::numeric, 1) RETURNING id"#,
     )
     .bind(format!(
         "WT-GUARD-{}-{}",
@@ -165,12 +175,12 @@ async fn insert_and_guard(
     .to_string();
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
-        ontology_binding::resolve_conn(&mut **tx, ("GC", "FJA", "↓_BE"))
+        ontology_binding::resolve_conn(tx, ("GC", "FJA", "↓_BE"))
             .await
             .expect("resolve dk coords");
-    let voucher_id: Option<i64> = sqlx::query_scalar(
+    let voucher_id: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
-           (id, code, notice, comments, fk_production, "fk_subj-storage", "fk_obj-storage",
+           (id, code, notice, comments, {title_col}, "fk_subj-storage", "fk_obj-storage",
             qk_outgo, qk_income, "ck_sto-title", _t_, created_by_id,
             dk_scene, dk_factor, dk_function)
            VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4,
@@ -181,8 +191,8 @@ async fn insert_and_guard(
                    (SELECT id FROM "isahl"."zc_id_cate-sto-title" WHERE code = 'STO-IDLE' LIMIT 1),
                    '实例', 1, $8, $9, $10)
            ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING
-           RETURNING id"#,
-    )
+           RETURNING id"#
+    )))
     .bind(code)
     .bind(format!("守卫测试 {code}"))
     .bind(&comments)
@@ -391,7 +401,7 @@ async fn guarded_voucher_external_null_balance_fallback() {
     // 外源凭证：直插 tsp 叶表，无 balance 回填（qk_pre_balance/qk_balance 恒 NULL）
     let weight_scalar: i64 = sqlx::query_scalar(
         r#"INSERT INTO "isahl"."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, '外源 15', 15::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), $1, '外源 15', 15::numeric, 1) RETURNING id"#,
     )
     .bind(format!("WT-T{}-EXT", suffix))
     .fetch_one(&pool)
@@ -402,12 +412,15 @@ async fn guarded_voucher_external_null_balance_fallback() {
         ontology_binding::resolve(&pool, ("GC", "FJA", "↓_BE"))
             .await
             .expect("resolve dk coords");
-    sqlx::query(
+    let title_col = trigger_registry::stock_materialization::voucher_title_column(&pool)
+        .await
+        .expect("「物」列探测");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"INSERT INTO "isahl"."zc_id_stat-tsp-voucher"
-           (id, code, notice, fk_production, "fk_obj-storage", qk_income, created_by_id,
+           (id, code, notice, {title_col}, "fk_obj-storage", qk_income, created_by_id,
             dk_scene, dk_factor, dk_function)
-           VALUES (isahl.gen_next_zuid(), $1, '外源导入', $2, $3, $4, 1, $5, $6, $7)"#,
-    )
+           VALUES (isahl.gen_next_zuid(), $1, '外源导入', $2, $3, $4, 1, $5, $6, $7)"#
+    )))
     .bind(format!("EXT-T{}-1", suffix))
     .bind(pool_product)
     .bind(line)
@@ -641,7 +654,7 @@ async fn chain_start_opening_balance_zero() {
         .execute(&pool)
         .await
         .ok();
-    sqlx::query(r#"DELETE FROM isahl."zc_id_file_rr_url" WHERE ref_left = $1"#)
+    sqlx::query(r#"DELETE FROM isahl."zc_id_prod-payload_rr_stor-container" WHERE ref_left = $1"#)
         .bind(pool_product)
         .execute(&pool)
         .await

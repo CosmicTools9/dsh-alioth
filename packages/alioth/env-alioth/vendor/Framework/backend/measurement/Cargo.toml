@@ -19,3 +19,6 @@ crud = { path = "../crud" }
 
 [lib]
 path = "src/lib.rs"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

@@ -19,7 +19,7 @@ use common::data::ApiResponse;
 use common::permissions::require_resource_access;
 use common::AliothError as ApiError;
 use serde::{Deserialize, Serialize};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 pub fn register(cfg: &mut web::ServiceConfig) {
     cfg.service(
@@ -48,9 +48,10 @@ pub struct SubjectBankCard {
     pub masked: String,
     /// 开户机构名称（fk_trustee → zc_id_subj-bank.notice 派生）
     pub bank_name: Option<String>,
-    /// 开户机构主体 id（fk_trustee）
-    #[serde(with = "i64_string")]
-    pub trustee_id: i64,
+    /// 开户机构主体 id（fk_trustee；可空 = 未登记开户机构）
+    #[serde(default)]
+    #[serde(with = "common::serde_zuid::opt")]
+    pub trustee_id: Option<i64>,
     /// 联行号（开户机构行 zc_id_subj-bank.code 派生）
     pub bank_line_no: Option<String>,
 }
@@ -61,9 +62,9 @@ pub struct UpsertBankCardRequest {
     pub name: String,
     /// 账户号（必填，同主体内唯一）
     pub account: String,
-    /// 开户机构主体 id（zc_id_subjects 行；必填）
-    #[serde(with = "common::serde_zuid")]
-    pub trustee_id: i64,
+    /// 开户机构主体 id（zc_id_subjects 行；可空——未登记开户机构时省略或传 null）
+    #[serde(default, with = "common::serde_zuid::opt")]
+    pub trustee_id: Option<i64>,
 }
 
 mod i64_string {
@@ -153,13 +154,38 @@ async fn account_conflict(
     Ok(exists)
 }
 
-const BANK_CARD_FIELDS: &str = "b.id, r.ref_left AS subject_id, COALESCE(b.name, '') AS name, \
+/// 银行账户承接表投影与 FROM 子句（编译期字面量；`concat!` 需要字面量故以宏承载）
+macro_rules! bank_card_fields {
+    () => {
+        "b.id, r.ref_left AS subject_id, COALESCE(b.name, '') AS name, \
      COALESCE(b.code, '') AS account, COALESCE(b.notice, '') AS masked, \
-     tb.notice AS bank_name, b.fk_trustee AS trustee_id, tb.code AS bank_line_no";
-
-const BANK_CARD_FROM: &str = "\"isahl\".\"zc_id_stor-acc-bank\" b \
+     tb.notice AS bank_name, b.fk_trustee AS trustee_id, tb.code AS bank_line_no"
+    };
+}
+macro_rules! bank_card_from {
+    () => {
+        "\"isahl\".\"zc_id_stor-acc-bank\" b \
      JOIN \"isahl\".\"zc_id_subjects_rr_account\" r ON r.ref_right = b.id AND r.deleted_at IS NULL \
-     LEFT JOIN \"isahl\".\"zc_id_subjects\" tb ON tb.id = b.fk_trustee AND tb.deleted_at IS NULL";
+     LEFT JOIN \"isahl\".\"zc_id_subjects\" tb ON tb.id = b.fk_trustee AND tb.deleted_at IS NULL"
+    };
+}
+
+/// 按主体列卡（表名编译期固化）
+const BANK_CARD_BY_SUBJECT_SQL: &str = concat!(
+    "SELECT ",
+    bank_card_fields!(),
+    " FROM ",
+    bank_card_from!(),
+    " WHERE r.ref_left = $1 AND b.deleted_at IS NULL ORDER BY b.id DESC"
+);
+/// 按卡 id 取单卡（表名编译期固化）
+const BANK_CARD_BY_ID_SQL: &str = concat!(
+    "SELECT ",
+    bank_card_fields!(),
+    " FROM ",
+    bank_card_from!(),
+    " WHERE b.id = $1 AND b.deleted_at IS NULL"
+);
 
 pub async fn list_subject_bank_cards(
     req: HttpRequest,
@@ -170,13 +196,7 @@ pub async fn list_subject_bank_cards(
     let subject_id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "identities", subject_id, "read").await?;
 
-    let sql = format!(
-        "SELECT {} FROM {} \
-         WHERE r.ref_left = $1 AND b.deleted_at IS NULL \
-         ORDER BY b.id DESC",
-        BANK_CARD_FIELDS, BANK_CARD_FROM
-    );
-    let rows = sqlx::query_as::<_, SubjectBankCard>(AssertSqlSafe(sql.as_str()))
+    let rows = sqlx::query_as::<_, SubjectBankCard>(BANK_CARD_BY_SUBJECT_SQL)
         .bind(subject_id)
         .fetch_all(pool.get_ref())
         .await?;
@@ -200,7 +220,9 @@ pub async fn create_subject_bank_card(
     if body.account.trim().is_empty() {
         return Err(ApiError::BadRequest("账户号不能为空".into()));
     }
-    ensure_trustee(pool.get_ref(), body.trustee_id).await?;
+    if let Some(trustee_id) = body.trustee_id {
+        ensure_trustee(pool.get_ref(), trustee_id).await?;
+    }
     ensure_subject(pool.get_ref(), subject_id).await?;
     if account_conflict(pool.get_ref(), subject_id, &body.account, 0).await? {
         return Err(ApiError::BadRequest(format!(
@@ -212,7 +234,7 @@ pub async fn create_subject_bank_card(
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
-        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+        ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG"))
             .await
             .map_err(ApiError::from_sqlx)?;
     let notice = build_notice(&body.name, &body.account);
@@ -244,11 +266,7 @@ pub async fn create_subject_bank_card(
     .map_err(ApiError::from_sqlx)?;
     tx.commit().await.map_err(ApiError::from_sqlx)?;
 
-    let sql = format!(
-        "SELECT {} FROM {} WHERE b.id = $1 AND b.deleted_at IS NULL",
-        BANK_CARD_FIELDS, BANK_CARD_FROM
-    );
-    let row = sqlx::query_as::<_, SubjectBankCard>(AssertSqlSafe(sql.as_str()))
+    let row = sqlx::query_as::<_, SubjectBankCard>(BANK_CARD_BY_ID_SQL)
         .bind(card_id)
         .fetch_one(pool.get_ref())
         .await?;
@@ -272,7 +290,9 @@ pub async fn update_subject_bank_card(
     if body.account.trim().is_empty() {
         return Err(ApiError::BadRequest("账户号不能为空".into()));
     }
-    ensure_trustee(pool.get_ref(), body.trustee_id).await?;
+    if let Some(trustee_id) = body.trustee_id {
+        ensure_trustee(pool.get_ref(), trustee_id).await?;
+    }
     if account_conflict(pool.get_ref(), subject_id, &body.account, card_id).await? {
         return Err(ApiError::BadRequest(format!(
             "主体下已存在账户号 {}，请确认",
@@ -306,11 +326,7 @@ pub async fn update_subject_bank_card(
     };
     tx.commit().await.map_err(ApiError::from_sqlx)?;
 
-    let sql = format!(
-        "SELECT {} FROM {} WHERE b.id = $1 AND b.deleted_at IS NULL",
-        BANK_CARD_FIELDS, BANK_CARD_FROM
-    );
-    let row = sqlx::query_as::<_, SubjectBankCard>(AssertSqlSafe(sql.as_str()))
+    let row = sqlx::query_as::<_, SubjectBankCard>(BANK_CARD_BY_ID_SQL)
         .bind(card_id)
         .fetch_one(pool.get_ref())
         .await?;

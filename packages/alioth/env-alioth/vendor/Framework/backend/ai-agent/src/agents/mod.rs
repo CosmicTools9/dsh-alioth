@@ -198,6 +198,12 @@ pub struct AgentConfig {
     /// 建议的下一步操作列表
     #[serde(default)]
     pub suggested_actions: Vec<String>,
+
+    /// 智能体主体 id（`isahl.zc_id_empl-agent.id`）——记忆 L1 主体层键与消息主体标识。
+    /// 无主体行（未 materialize）时为 None：orchestration MUST 显式失败，
+    /// MUST NOT 回落为按人类账号（user_id）写记忆。
+    #[serde(default)]
+    pub subject_id: Option<i64>,
 }
 
 /// Agent 路由评分权重
@@ -254,6 +260,7 @@ impl Default for AgentConfig {
             routing_weights: RoutingWeights::default(),
             requires_input_default: false,
             suggested_actions: vec![],
+            subject_id: None,
         }
     }
 }
@@ -274,12 +281,6 @@ pub struct AgentContext {
     pub session_state: Option<serde_json::Value>,
     /// 当前工作流步骤标识
     pub workflow_step: Option<String>,
-    /// 目标表单 Schema（FormFillingAgent 使用）
-    pub form_schema: Option<serde_json::Value>,
-    /// 可用数据表目录（DataAnalysisAgent 使用）
-    pub schema_catalog: Option<serde_json::Value>,
-    /// 业务规则快照（SimulationAgent / DocumentAutomationAgent 使用）
-    pub business_rules: Option<serde_json::Value>,
 }
 
 impl Default for AgentContext {
@@ -294,9 +295,6 @@ impl Default for AgentContext {
             attachments: vec![],
             session_state: None,
             workflow_step: None,
-            form_schema: None,
-            schema_catalog: None,
-            business_rules: None,
         }
     }
 }

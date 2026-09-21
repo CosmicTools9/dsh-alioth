@@ -29,11 +29,6 @@
         "name": "Status",
         "table": "isahl.zc_id_status",
         "inherits": "zc_id_lifecycle",
-        "coordinates": {
-          "factor": "FTB",
-          "function": "↑_DA",
-          "scene": "JE"
-        },
         "field_mappings": [
           {
             "json_path": "name",

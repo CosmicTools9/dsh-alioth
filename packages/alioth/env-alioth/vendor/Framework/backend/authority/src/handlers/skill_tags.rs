@@ -43,6 +43,7 @@ struct EmployeeSkillRow {
     proficiency: i64,
 }
 
+#[allow(clippy::extra_unused_type_parameters)] // G 在路由注册点消费（register::<G> 泛化复用），函数体无需判别
 async fn list_employee_skills<G: NgacGuard + 'static>(
     pool: web::Data<PgPool>,
 ) -> Result<HttpResponse, actix_web::Error> {

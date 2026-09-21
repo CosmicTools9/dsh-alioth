@@ -199,3 +199,106 @@ async fn acquire_creates_title_association_and_list_aggregates() {
 
     let _ = cat_id; // 类别行已按 code 清理
 }
+
+/// 根因回归（change: fix-subject-list-filter-semantics）：`kind`（叶表名）MUST 与连接 `search_path`
+/// 无关——旧实现 `tableoid::regclass::text` 在 `search_path` 不含 `isahl` 时渲染为
+/// `isahl."zc_id_prod-diploma-sales"`（按叶表名匹配/展示的消费方随即失效）。
+#[tokio::test]
+async fn held_kind_is_render_independent_of_search_path() {
+    let url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://isahl@localhost:5432/aliothstudio_test".to_string());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .expect("connect test db");
+    let db: String = sqlx::query_scalar("SELECT current_database()")
+        .fetch_one(&pool)
+        .await
+        .expect("current_database");
+    assert!(db.contains("_test"), "REFUSED: non-test db {db}");
+    sqlx::query("SET search_path = public")
+        .execute(&pool)
+        .await
+        .expect("set search_path=public");
+
+    let sfx = suffix();
+    let subject_id: i64 = sqlx::query_scalar(
+        r#"INSERT INTO isahl."zc_id_empl-natural"
+           (id, code, notice, dk_scene, dk_factor, dk_function, created_by_id)
+           VALUES (isahl.gen_next_zuid(), $1, 'search_path 证书测试主体',
+                   (SELECT id FROM isahl.zc_id_scene LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_factor LIMIT 1),
+                   (SELECT id FROM isahl.zc_id_function WHERE code LIKE '↓\_%' LIMIT 1),
+                   1) RETURNING id"#,
+    )
+    .bind(format!("T-SP-SUBJ-{sfx}"))
+    .fetch_one(&pool)
+    .await
+    .expect("主体 fixture");
+    sqlx::query(
+        r#"INSERT INTO isahl."zc_id_cate-certification" (notice, code, created_by_id)
+           VALUES ('search_path 证书类型', $1, 1)"#,
+    )
+    .bind(format!("CERT-SP-{sfx}"))
+    .execute(&pool)
+    .await
+    .expect("类别 fixture");
+
+    let paper = acquire(
+        &pool,
+        subject_id,
+        &AcquireCertificateRequest {
+            name: "search_path 纸质证书".into(),
+            code: format!("T-SP-CERT-{sfx}"),
+            category_code: format!("CERT-SP-{sfx}"),
+            kind: "diploma".into(),
+            qty: 1.0,
+        },
+        1,
+    )
+    .await
+    .expect("纸质取得");
+    assert_eq!(paper.kind, "zc_id_prod-diploma-sales");
+
+    let held_list = held(&pool, subject_id).await.expect("持有查询");
+    let row = held_list
+        .iter()
+        .find(|c| c.id == paper.id)
+        .expect("持有列表应含该证书");
+    assert_eq!(
+        row.kind, "zc_id_prod-diploma-sales",
+        "kind MUST 为裸叶表名（与连接 search_path 无关），实际 {}",
+        row.kind
+    );
+    assert!(
+        !row.kind.contains("isahl"),
+        "kind 不得携带 schema 限定: {}",
+        row.kind
+    );
+
+    for sql in [
+        format!(
+            r#"DELETE FROM isahl."zc_id_stat-whs-voucher" WHERE code LIKE 'TTL-SUBJ{subject_id}-CERT-%'"#
+        ),
+        format!(
+            r#"DELETE FROM isahl."zc_id_scal-common" WHERE code LIKE 'TTL-SUBJ{subject_id}-CERT%'"#
+        ),
+        format!(
+            r#"DELETE FROM isahl."zc_id_prod-diploma-sales" WHERE code LIKE 'T-SP-CERT-{sfx}'"#
+        ),
+        format!(r#"DELETE FROM isahl."zc_id_cate-certification" WHERE code = 'CERT-SP-{sfx}'"#),
+        format!(r#"DELETE FROM isahl."zc_id_empl-natural" WHERE id = {subject_id}"#),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&pool)
+            .await
+            .expect("cleanup");
+    }
+    sqlx::query(sqlx::AssertSqlSafe(
+        "REFRESH MATERIALIZED VIEW isahl.mv_title_ownership",
+    ))
+    .execute(&pool)
+    .await
+    .expect("refresh after cleanup");
+}

@@ -28,6 +28,7 @@ use sqlx::PgPool;
 pub struct FlowNodeItem {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt", rename = "processId")]
     pub process_id: Option<i64>,
     pub name: String,
@@ -76,10 +77,10 @@ pub async fn list_flow_nodes(
         node_type: Option<String>,
     }
 
-    // 节点列表三形态（2026-08-29 终端节点语义修正 + §4.4.1 类型承载）：
-    // 1. event 载体节点（event 驱动 start/中间节点）：even-approve 行——类型经
-    //    rr_event→op→ck_cate-proc_op→cate_proc_op.code 派生——桥成员即节点
-    //    身份判据；类型取 COALESCE(t_color_, c.code, end/start 桥判定)；
+    // 节点列表三形态（2026-08-29 终端节点语义修正 + §4.4.1 类型承载 + 2026-08-31 事件叶物化）：
+    // 1. event 载体节点：zc_id_event **父表**（继承覆盖 even-approve 载体行与 event 驱动
+    //    start 的叶表范例行——2026-08-31 后 start 的 rr_event 直挂叶表行，仅查 even-approve
+    //    会漏 start 节点）——类型经 rr_event→op→ck_cate-proc_op→cate_proc_op.code 派生；
     // 2. end 节点：statement 范例行经 rr_statement←op 反查（桥即 end 语义）；
     // 3. task 驱动 start：task 范例行经 rr_task←op 反查（桥即 start 语义）。
     let rows = sqlx::query_as::<_, NodeRow>(
@@ -88,7 +89,7 @@ pub async fn list_flow_nodes(
                          CASE WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs \
                                            WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL) \
                               THEN 'end' ELSE 'start' END) AS node_type \
-         FROM isahl.\"zc_id_even-approve\" n \
+         FROM isahl.\"zc_id_event\" n \
          JOIN isahl.zc_id_operation_rr_event oe ON oe.ref_right = n.id AND oe.deleted_at IS NULL \
          JOIN isahl.zc_id_process_rr_operation rr ON rr.ref_right = oe.ref_left AND rr.ref_left = $1 AND rr.deleted_at IS NULL \
          JOIN isahl.zc_id_operation o ON o.id = rr.ref_right AND o.deleted_at IS NULL \

@@ -73,13 +73,11 @@ async fn approval_flow_create_lands_in_proc_approve_subtype() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    for dk in [dk_scene, dk_factor, dk_function] {
-        if let Some(v) = dk {
-            assert!(
-                v != 515 && v != 522 && v != 526,
-                "dk 不得为历史悬空硬编码 ZUID"
-            );
-        }
+    for v in [dk_scene, dk_factor, dk_function].into_iter().flatten() {
+        assert!(
+            v != 515 && v != 522 && v != 526,
+            "dk 不得为历史悬空硬编码 ZUID"
+        );
     }
 
     // 清理
@@ -145,7 +143,7 @@ async fn approve_action_writes_qk_date_anchor() {
     .unwrap();
     sqlx::query(
         r#"INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, $2, 1)"#,
+           VALUES (isahl.gen_next_uid(267), $1, $2, 1)"#,
     )
     .bind(instance_id)
     .bind(approve_event_id)

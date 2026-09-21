@@ -2,14 +2,26 @@
 //!
 //! 验证 `ensure_mv_title_ownership`（add-title-ownership-mv，2026-09-07 用户定稿：
 //! 主体×物属权关系快速检索载体）：
-//! 1. 缺失 → 内嵌 DDL 创建视图 + 索引 + 初始 REFRESH
+//! 1. 缺失 → 内嵌 DDL 创建视图 + 索引 + 初始 REFRESH（视图体按当前模型「物」列
+//!    `fk_payload`〔凭证交易对象 = 货〕定义；库内无该列 = 模型未同步 → 走降级跳过
+//!    分支，本用例跳过且不改写既有视图）
 //! 2. 再次调用 → 幂等零副作用
 //! 3. 属权语义：net_qty = Σ(income 标量真值) − Σ(outgo 标量真值)；
 //!    无主体（fk_subject 空）凭证不进入视图
 //!
+//! fixture 按库内实际「物」列写入（`voucher_title_column`），与视图读列同源——
+//! 模型同步前后两态均可执行（读/写列不一致时视图聚合为空）。
+//!
 //! 需要 DATABASE_URL 指向 aliothstudio_test（`#[ignore]`，仿 mv_inventory 先例）。
 
 use common::testing::connect_test_db;
+
+/// 库内当前「物」列（新模型 `fk_payload` / 旧模型 `fk_production`）——fixture 与视图读列同源。
+async fn title_column(pool: &sqlx::PgPool) -> &'static str {
+    trigger_registry::stock_materialization::voucher_title_column(pool)
+        .await
+        .expect("「物」列探测")
+}
 
 #[tokio::test]
 #[ignore = "需 DATABASE_URL 测试库"]
@@ -33,6 +45,14 @@ async fn ensure_mv_title_ownership_self_heals() {
     .expect("基表探测");
     if !base {
         eprintln!("skipped: test 库无 zc_id_stat-sto-voucher（基表缺失降级场景）");
+        return;
+    }
+
+    // 模型就位判据：自愈只按当前「物」列（fk_payload）创建/重建视图；库内无该列
+    // （模型未同步）时走降级跳过分支——本用例（缺失 → 创建）不适用，跳过且不 DROP 既有视图
+    let title_col = title_column(&pool).await;
+    if title_col != "fk_payload" {
+        eprintln!("skipped: test 库模型未同步 fk_payload（库内「物」列 = {title_col}）");
         return;
     }
 
@@ -89,25 +109,27 @@ async fn mv_title_ownership_aggregates_net_title() {
 
     let pool = connect_test_db().await;
     ensure_mv_title_ownership(&pool).await.expect("视图就绪");
+    // 库内当前「物」列（视图读列同源）——模型同步前后两态均可执行
+    let title_col = title_column(&pool).await;
 
     // fixture：标量（income 10 / outgo 4 / 无主体凭证 income 100）
     let in_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'TO-IN', 'TO', 10::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), 'TO-IN', 'TO', 10::numeric, 1) RETURNING id"#,
     )
     .fetch_one(&pool)
     .await
     .expect("income 标量");
     let out_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'TO-OUT', 'TO', 4::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), 'TO-OUT', 'TO', 4::numeric, 1) RETURNING id"#,
     )
     .fetch_one(&pool)
     .await
     .expect("outgo 标量");
     let nosubj_s: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl."zc_id_scal-common" (id, code, notice, mark, created_by_id)
-           VALUES (isahl.gen_next_zuid(), 'TO-NOSUBJ', 'TO', 100::numeric, 1) RETURNING id"#,
+           VALUES (isahl.gen_next_uid(419), 'TO-NOSUBJ', 'TO', 100::numeric, 1) RETURNING id"#,
     )
     .fetch_one(&pool)
     .await
@@ -118,43 +140,43 @@ async fn mv_title_ownership_aggregates_net_title() {
     // 类列形态 1（§4.3.3 首选）：_f_/_t_ 禁止字面量直写，由 dk_function.code
     // 前缀派生（lifecycle.rs derive_form_type）——fixture 只提供 dk_* 派生源
     // 入库凭证：物权人 910001 拥有物 910002，初始物权 +10（单边 IN）
-    sqlx::query(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
-           (id, code, notice, qk_income, fk_subject, fk_production, dk_scene, dk_factor, dk_function, created_by_id)
+           (id, code, notice, qk_income, fk_subject, {title_col}, dk_scene, dk_factor, dk_function, created_by_id)
            VALUES (isahl.gen_next_zuid(), 'TO-V-IN', 'TO 初始物权', $1, 910001, 910002,
                    (SELECT id FROM isahl.zc_id_scene LIMIT 1),
                    (SELECT id FROM isahl.zc_id_factor LIMIT 1),
                    (SELECT id FROM isahl.zc_id_function WHERE code LIKE '↓\_%' LIMIT 1),
-                   1)"#,
-    )
+                   1)"#
+    )))
     .bind(in_s)
     .execute(&pool)
     .await
     .expect("入库凭证");
     // 出库凭证：同一 (物权人, 物) 属权 −4（同样 dk_* 派生形态）
-    sqlx::query(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
-           (id, code, notice, qk_outgo, fk_subject, fk_production, dk_scene, dk_factor, dk_function, created_by_id)
+           (id, code, notice, qk_outgo, fk_subject, {title_col}, dk_scene, dk_factor, dk_function, created_by_id)
            VALUES (isahl.gen_next_zuid(), 'TO-V-OUT', 'TO 属权转出', $1, 910001, 910002,
                    (SELECT id FROM isahl.zc_id_scene LIMIT 1),
                    (SELECT id FROM isahl.zc_id_factor LIMIT 1),
                    (SELECT id FROM isahl.zc_id_function WHERE code LIKE '↓\_%' LIMIT 1),
-                   1)"#,
-    )
+                   1)"#
+    )))
     .bind(out_s)
     .execute(&pool)
     .await
     .expect("出库凭证");
     // 无主体凭证：纯库存位移，不构成属权关系（物 910003；同样 dk_* 派生形态）
-    sqlx::query(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         r#"INSERT INTO isahl."zc_id_stat-whs-voucher"
-           (id, code, notice, qk_income, fk_production, dk_scene, dk_factor, dk_function, created_by_id)
+           (id, code, notice, qk_income, {title_col}, dk_scene, dk_factor, dk_function, created_by_id)
            VALUES (isahl.gen_next_zuid(), 'TO-V-NOSUBJ', 'TO 无主体', $1, 910003,
                    (SELECT id FROM isahl.zc_id_scene LIMIT 1),
                    (SELECT id FROM isahl.zc_id_factor LIMIT 1),
                    (SELECT id FROM isahl.zc_id_function WHERE code LIKE '↓\_%' LIMIT 1),
-                   1)"#,
-    )
+                   1)"#
+    )))
     .bind(nosubj_s)
     .execute(&pool)
     .await

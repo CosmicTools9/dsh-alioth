@@ -37,15 +37,17 @@ pub struct InitiateResponse {
 }
 
 /// 流程绑定上下文（zc_id_process_rr_context 桥 ref_right → proc-context 族行）：
+///
 /// - 旧形态（scope-definition 落业务叶表）：叶表直接匹配 entity_table
 /// - 新形态（flow-context 范例行，落域内叶表）：entity_table 同域判定
+///
 /// 单绑语义：取最早活跃桥行（ORDER BY rc.id LIMIT 1）。
 async fn bound_leaf_table(
     pool: &PgPool,
     flow_id: i64,
 ) -> Result<Option<(String, String)>, AliothError> {
     let row: Option<(String, Option<String>)> = sqlx::query_as(
-        r#"SELECT replace(c.tableoid::regclass::text, '"', ''), c._t_
+        r#"SELECT (SELECT relname FROM pg_class WHERE oid = c.tableoid), c._t_
            FROM isahl."zc_id_proc-context" c
            JOIN isahl."zc_id_process_rr_context" rc
              ON rc.ref_right = c.id AND rc.deleted_at IS NULL

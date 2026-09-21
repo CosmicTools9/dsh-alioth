@@ -68,8 +68,6 @@
   --primary-hover:  217 91% 53%;
   --primary-bg:  217 91% 60% / 0.08;
   --primary-bg-hover:  217 91% 60% / 0.12;
-  /* vfd 节点默认色（节点可通过内联样式覆盖） */
-  --vfd-node-color: hsl(var(--primary));
   --background:  0 0% 100%;
   --foreground:  222.2 84% 4.9%;
   --card:  0 0% 100%;
@@ -88,15 +86,17 @@
   --input:  214.3 31.8% 91.4%;
   --ring:  217 91% 60%;
   --radius:  0.5rem;
-  --radius-md:  0.375rem;
-  --radius-lg:  0.5rem;
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
   --success:  160 84% 39%;
   --success-foreground:  0 0% 100%;
   --warning:  38 92% 50%;
   --warning-foreground:  0 0% 100%;
   --info:  217 91% 60%;
   --info-foreground:  0 0% 100%;
-  --sidebar-background:  0 0% 98%;
+  --sidebar-background:  var(--sidebar);
   --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono:  'JetBrains Mono', monospace;
   --topbar-height:  3.5rem;
@@ -109,19 +109,20 @@
   --text2:  var(--muted-foreground);
   --tw-space-y-reverse:  0;
   --sidebar:  0 0% 98%;
-  --muted-fg:  215 16% 47%;
+  --muted-fg:  var(--muted-foreground);
   --border-width:  1px;
   --border-width-2:  2px;
   --bg-success:  160 84% 39% / 0.1;
   --bg-warning:  38 92% 50% / 0.1;
   --bg-destructive:  0 84% 60% / 0.1;
   --bg-info:  217 91% 60% / 0.1;
-  --chart-1:  191 97% 37%;
-  --chart-2:  271 91% 53%;
-  --chart-3:  330 80% 60%;
-  --chart-4:  239 84% 67%;
-  --chart-5:  224 76% 48%;
-  --overlay-bg:  hsla(0, 0%, 0%, 0.4);
+  --chart-1:  var(--categorical-1);
+  --chart-2:  var(--categorical-2);
+  --chart-3:  var(--categorical-3);
+  --chart-4:  var(--categorical-4);
+  --chart-5:  var(--categorical-5);
+  --overlay-bg:  rgba(0, 0, 0, 0.2);
+  --overlay-blur:  blur(4px);
   --destructive-hover:  0 70% 45%;
   --badge-success-bg:  160 84% 92%;
   --badge-success-fg:  160 84% 25%;
@@ -135,11 +136,14 @@
   --badge-muted-fg:  215 16% 35%;
   --shadow-color:  0 0% 0%;
   --shadow-xs:  0 1px 2px hsl(var(--shadow-color) / 0.05);
-  --shadow-sm:  0 1px 6px hsl(var(--shadow-color) / 0.08);
-  --shadow:  0 4px 16px hsl(var(--shadow-color) / 0.08);
-  --shadow-lg:  0 12px 32px hsl(var(--shadow-color) / 0.20);
-  --shadow-xl:  0 12px 48px hsl(var(--shadow-color) / 0.20);
-  --shadow-2xl:  0 12px 48px hsl(var(--shadow-color) / 0.25);
+  /* 几何与 alpha 对齐 DESIGN_TOKENS §8.2（共享 Foundation 唯一权威）；
+     保留 hsl(var(--shadow-color)/α) 机制以维持暗色档差异化 */
+  --shadow-sm:  0 1px 2px 0 hsl(var(--shadow-color) / 0.05);
+  --shadow-md:  0 4px 6px -1px hsl(var(--shadow-color) / 0.1), 0 2px 4px -2px hsl(var(--shadow-color) / 0.1);
+  --shadow:  0 4px 6px -1px hsl(var(--shadow-color) / 0.1), 0 2px 4px -2px hsl(var(--shadow-color) / 0.1);
+  --shadow-lg:  0 10px 15px -3px hsl(var(--shadow-color) / 0.1), 0 4px 6px -4px hsl(var(--shadow-color) / 0.1);
+  --shadow-xl:  0 20px 25px -5px hsl(var(--shadow-color) / 0.1), 0 8px 10px -6px hsl(var(--shadow-color) / 0.1);
+  --shadow-2xl:  0 25px 50px -12px hsl(var(--shadow-color) / 0.25);
   --overlay:  hsl(var(--shadow-color) / 0.65);
   --categorical-1:  243 75% 59%;
   --categorical-2:  211 100% 50%;
@@ -297,13 +301,15 @@ img, video { max-width: 100%; height: auto; }
 .block { display: block; }
 .inline-block { display: inline-block; }
 .hidden { display: none; }
-.sm\:flex { display: flex; }
-.md\:flex { display: flex; }
-.lg\:flex { display: flex; }
+/* 断点变体必须包在 media query 内：否则 `.md\:block` 会无条件覆盖 `.hidden`
+   ⇒ 375px 仍渲染桌面版元素（实测顶栏 w-72 搜索框与品牌区重叠的根因）。
+   Tailwind 语义：sm≥640 / md≥768 / lg≥1024。 */
+@media (min-width: 640px) { .sm\:flex { display: flex; } }
+@media (min-width: 768px) { .md\:flex { display: flex; } }
+@media (min-width: 1024px) { .lg\:flex { display: flex; } }
 .h-screen { height: 100vh; }
 .h-full { height: 100%; }
 .h-3 { height: 0.75rem; }
-.h-3\\.5 { height: 0.875rem; }
 .h-4 { height: 1rem; }
 .h-5 { height: 1.25rem; }
 .h-6 { height: 1.5rem; }
@@ -317,7 +323,6 @@ img, video { max-width: 100%; height: auto; }
 .min-h-screen { min-height: 100vh; }
 .w-3 { width: 0.75rem; }
 .bg-border { background: hsl(var(--border)); }
-.w-3\\.5 { width: 0.875rem; }
 .w-4 { width: 1rem; }
 .w-5 { width: 1.25rem; }
 .w-7 { width: 1.75rem; }
@@ -347,14 +352,12 @@ img, video { max-width: 100%; height: auto; }
 .left-0 { left: 0; }
 .right-0 { right: 0; }
 .bottom-0 { bottom: 0; }
-.top-1\\/2 { top: 50%; }
 .left-3 { left: 0.75rem; }
 .right-3 { right: 0.75rem; }
 .z-10 { z-index: 10; }
 .z-50 { z-index: 50; }
-.z-\\[9999\\] { z-index: 9999; }
-.-translate-y-1\\/2 { transform: translateY(-50%); }
-.-translate-x-1\\/2 { transform: translateX(-50%); }
+.z-\[9999\] { z-index: 9999; }
+.-translate-x-1\/2 { transform: translateX(-50%); }
 .transition-all { transition: all 0.15s ease; }
 .transition-colors { transition: color 0.15s, background-color 0.15s, border-color 0.15s; }
 .transition-transform { transition: transform 0.15s; }
@@ -389,9 +392,7 @@ img, video { max-width: 100%; height: auto; }
 .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
 .py-5 { padding-top: 1.25rem; padding-bottom: 1.25rem; }
 .gap-1 { gap: 0.25rem; }
-.gap-1\\.5 { gap: 0.375rem; }
 .gap-2 { gap: 0.5rem; }
-.gap-2\\.5 { gap: 0.625rem; }
 .gap-3 { gap: 0.75rem; }
 .gap-4 { gap: 1rem; }
 .gap-6 { gap: 1.5rem; }
@@ -401,9 +402,9 @@ img, video { max-width: 100%; height: auto; }
 .text-lg { font-size: 1.125rem; line-height: 1.75rem; }
 .text-xl { font-size: 1.25rem; line-height: 1.75rem; }
 .text-2xl { font-size: 1.5rem; line-height: 2rem; }
-.text-\\[10px\\] { font-size: 10px; }
-.text-\\[11px\\] { font-size: 11px; }
-.text-\\[12px\\] { font-size: 12px; }
+.text-\[10px\] { font-size: 10px; }
+.text-\[11px\] { font-size: 11px; }
+.text-\[12px\] { font-size: 12px; }
 .font-normal { font-weight: 400; }
 .font-medium { font-weight: 500; }
 .font-semibold { font-weight: 600; }
@@ -426,7 +427,6 @@ img, video { max-width: 100%; height: auto; }
 .bg-foreground { background: hsl(var(--foreground)); }
 .bg-card { background: hsl(var(--card)); }
 .bg-muted { background: hsl(var(--muted)); }
-.bg-muted\\/30 { background: hsl(var(--muted) / 0.3); }
 .bg-secondary { background: hsl(var(--secondary)); }
 .bg-primary { background: hsl(var(--primary)); }
 .bg-transparent { background: transparent; }
@@ -450,7 +450,7 @@ img, video { max-width: 100%; height: auto; }
 .rounded-md { border-radius: 0.375rem; }
 .rounded-lg { border-radius: 0.5rem; }
 .rounded-full { border-radius: 9999px; }
-.hover\:border-primary\\/30:hover { border-color: hsl(var(--primary) / 0.3); }
+.hover\:border-primary\/30:hover { border-color: hsl(var(--primary) / 0.3); }
 .cursor-pointer { cursor: pointer; }
 .select-none { user-select: none; }
 .outline-none { outline: none; }
@@ -503,7 +503,7 @@ img, video { max-width: 100%; height: auto; }
 .left-60 { left: 15rem; }
 .left-1\.5 { left: 0.375rem; }
 .right-1\.5 { right: 0.375rem; }
-.h-0.5 { height: 0.125rem; }
+.h-0\.5 { height: 0.125rem; }
 .rounded-t-lg { border-top-left-radius: 0.5rem; border-top-right-radius: 0.5rem; }
 .border-b-transparent { border-bottom-color: transparent; }
 .bg-muted\/50 { background: hsl(var(--muted) / 0.5); }
@@ -545,7 +545,7 @@ img, video { max-width: 100%; height: auto; }
 .hover\:bg-accent\/60:hover { background-color: hsl(var(--accent) / 0.60); }
 .hover\:text-foreground:hover { color: hsl(var(--foreground)); }
 .hover\:opacity-80:hover { opacity: 0.8; }
-.md\:flex { display: flex; }
+@media (min-width: 768px) { .md\:flex { display: flex; } }
 .before\:absolute::before { position: absolute; content: ""; }
 .before\:bottom-\[-1px\]::before { bottom: -1px; }
 .before\:left-\[6px\]::before { left: 6px; }
@@ -601,15 +601,17 @@ img, video { max-width: 100%; height: auto; }
 .before\:h-\[2px\]:before { height: 2px; }
 .before\:bg-primary:before { background: hsl(var(--primary)); }
 .before\:rounded-t-\[1px\]:before { border-top-left-radius: 1px; border-top-right-radius: 1px; }
-.sm\:inline { display: inline; }
-.md\:hidden { display: none; }
-.md\:block { display: block; }
-.md\:static { position: static; }
-.md\:bg-transparent { background: transparent; }
-.md\:border-0 { border-width: 0; }
-.md\:p-0 { padding: 0; }
-.md\:px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
-.md\:shadow-none { box-shadow: none; }
+@media (min-width: 640px) { .sm\:inline { display: inline; } }
+@media (min-width: 768px) {
+  .md\:hidden { display: none; }
+  .md\:block { display: block; }
+  .md\:static { position: static; }
+  .md\:bg-transparent { background: transparent; }
+  .md\:border-0 { border-width: 0; }
+  .md\:p-0 { padding: 0; }
+  .md\:px-6 { padding-left: 1.5rem; padding-right: 1.5rem; }
+  .md\:shadow-none { box-shadow: none; }
+}
 
 /* Framework/frontend/components/src/theme-components.css
  *
@@ -794,7 +796,9 @@ img, video { max-width: 100%; height: auto; }
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  overflow: hidden;
+  /* 横向可滚（列宽超容器出现横向滚动条）；纵向 hidden 保持圆角 */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .data-table table,
@@ -1058,6 +1062,16 @@ img, video { max-width: 100%; height: auto; }
   color:hsl(var(--warning))
 }
 
+.flow-icon.blue {
+  background:hsl(var(--chart-1)/12%);
+  color:hsl(var(--chart-1))
+}
+
+.flow-icon.violet {
+  background:hsl(var(--chart-3)/12%);
+  color:hsl(var(--chart-3))
+}
+
 .gallery-mini-node.start {
   background:hsl(var(--success)/12%);
   color:hsl(var(--success));
@@ -1099,6 +1113,8 @@ img, video { max-width: 100%; height: auto; }
   display:grid;
   grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
   gap:14px;
+  /* 上缘边距：首行卡片与 filter-bar 之间留白（批注 e2188e88） */
+  margin-top:14px;
 }
 
 .gallery-card {
@@ -1127,7 +1143,6 @@ img, video { max-width: 100%; height: auto; }
   text-overflow:ellipsis;
   white-space:nowrap;
 }
-
 
 .gallery-card-version {
   font-size:10px;
@@ -2019,6 +2034,14 @@ select.input {
 /* Framework/frontend/components/src/theme-flow.css
  * Generated from system-approve module theme.css
  */
+/* 抽屉滚动区隐藏滚动条（保留滚动）——避免经典滚动条吞右内边距导致左右留白不对称 */
+.vfd-scroll {
+  scrollbar-width: none;
+}
+.vfd-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
 .vfd-shell {
   display: flex;
   flex: 1;
@@ -2032,11 +2055,14 @@ select.input {
 
 .vfd-palette {
   width: 220px;
+  height: 100%; /* 高度受外层（vfd-shell flex stretch）约束——缺省内容高，
+                  palette-list 的 flex:1+overflow 不产生滚动，尾部节点被裁 */
   flex-shrink: 0;
   border-right: 1px solid hsl(var(--border));
   background: hsl(var(--muted)/30%);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .vfd-palette-head {
@@ -2165,8 +2191,8 @@ select.input {
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   box-shadow: var(--shadow-xs);
+  height: 100%;
   transition: box-shadow .12s, border-color .12s;
-  overflow: hidden;
 }
 
 .vfd-node-card:hover {
@@ -2493,8 +2519,8 @@ select.input {
 }
 
 .vfd-drawer {
-  flex: 0 1 300px;
-  max-width: 300px;
+  flex: 0 1 320px;
+  max-width: 320px;
   min-width: 0;
   border-left: 1px solid hsl(var(--border));
   background: hsl(var(--background));
@@ -2722,3 +2748,44 @@ select.input {
   }
 }
 
+/* 节点 hover 删除按钮（右上角 ×；最后节点时点击由 deleteNode 守卫拦截） */
+.vfd-node-wrapper .vfd-node-delete {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 9999px;
+  background: hsl(var(--destructive));
+  color: white;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 30;
+  padding: 0;
+}
+.vfd-node-wrapper:hover .vfd-node-delete,
+.vfd-node-delete:focus-visible {
+  opacity: 1;
+}
+
+/* ── 窄屏表格：保列宽 + 容器横向滚动 ─────────────────────────────────────────────
+ * 根因（实测 2026-09-19，tablet 768 / mobile 375）：内容区容器只有 `overflow-y-auto`，
+ * 表格 `w-full` 且单元格无最小宽度 ⇒ 列被压缩到 2-4 个字符宽，表头与单元格逐字竖排
+ * （`状 态` / `优先级` 每行一个字），与实现侧（Tailwind 容器 overflow-x-auto）表现不一致。
+ * 对策：窄屏给表格最小宽度保列宽，并让内容滚动容器可横向滚动（避免整页横向溢出）。
+ */
+@media (max-width: 900px) {
+  table { min-width: 640px; }
+  /* 单元格最小宽度：CJK 可在任意字符间断行，auto 布局会把单元格压到 min-content（1 字宽）
+     ⇒ 必须逐格保底宽度，否则 `状态`/`优先级` 仍逐字竖排（实测：只加 table min-width 无效）。 */
+  th,
+  td { min-width: 4.5em; }
+  /* 表头不折行（列名短且承担识别作用），长文本单元格仍允许折行 */
+  th { white-space: nowrap; }
+  .overflow-y-auto { overflow-x: auto; }
+}

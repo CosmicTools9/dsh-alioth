@@ -7,12 +7,12 @@ use async_trait::async_trait;
 use common::data::{ListQuery, PaginatedResponse};
 use common::AliothError as ApiError;
 use crud::{AliothRepository, GenericRepository};
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 use crate::biz::models::{
     CreateMeasurementUnitRequest, MeasurementUnit, UpdateMeasurementUnitRequest,
 };
-use crate::biz::repositories::unit_leaf_table_for_dimension;
+use crate::biz::repositories::unit_leaf_sql_for_dimension;
 
 #[derive(Clone)]
 pub struct MeasurementUnitRepository {
@@ -72,17 +72,8 @@ impl
     ) -> Result<MeasurementUnit, ApiError> {
         let p = self.generic.pool();
         let dim_key = req.dimension_key.as_deref().unwrap_or("");
-        let table = unit_leaf_table_for_dimension(dim_key);
-        let sql = format!(
-            r#"INSERT INTO {} (notice, code, symbol, system, base, t_color_, created_by_id)
-               VALUES ($1, $2, $3, $4::isahl.zc_id_unit_system_enum, $5, $6, $7)
-               RETURNING id, notice AS name, code, symbol,
-                         CASE WHEN tableoid = 'isahl.zc_id_unit'::regclass THEN NULL
-                              ELSE replace(replace(tableoid::regclass::text, '"zc_id_unit-', ''), '"', '') END AS dimension,
-                         system::text AS system, base, t_color_, created_at, updated_at, deleted_at"#,
-            table
-        );
-        sqlx::query_as::<_, MeasurementUnit>(AssertSqlSafe(sql.as_str()))
+        let sql = unit_leaf_sql_for_dimension(dim_key).insert_sql;
+        sqlx::query_as::<_, MeasurementUnit>(sql)
             .bind(&req.name)
             .bind(&req.code)
             .bind(&req.symbol)
@@ -102,7 +93,7 @@ impl
     ) -> Result<Option<MeasurementUnit>, ApiError> {
         let p = self.generic.pool();
         sqlx::query_as::<_, MeasurementUnit>(
-            r#"UPDATE isahl.zc_id_unit
+            r#"UPDATE isahl.zc_id_unit AS e
                SET notice = COALESCE($1, notice), code = COALESCE($2, code),
                    symbol = COALESCE($3, symbol),
                    system = COALESCE($4::isahl.zc_id_unit_system_enum, system),
@@ -110,8 +101,8 @@ impl
                    updated_by_id = $6, updated_at = NOW()
                WHERE id = $7 AND deleted_at IS NULL
                RETURNING id, notice AS name, code, symbol,
-                         CASE WHEN tableoid = 'isahl.zc_id_unit'::regclass THEN NULL
-                              ELSE replace(replace(tableoid::regclass::text, '"zc_id_unit-', ''), '"', '') END AS dimension,
+                         CASE WHEN e.tableoid = 'isahl.zc_id_unit'::regclass THEN NULL
+                              ELSE replace((SELECT relname FROM pg_class WHERE oid = e.tableoid), 'zc_id_unit-', '') END AS dimension,
                          system::text AS system, base, t_color_, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.name)

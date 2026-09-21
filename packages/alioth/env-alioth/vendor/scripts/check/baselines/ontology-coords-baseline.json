@@ -31,7 +31,6 @@
   "baseDirectWrites": [
     "zc_id_cate-sto-title",
     "zc_id_category",
-    "zc_id_contract",
     "zc_id_demand_rr_supply",
     "zc_id_eval-calculable",
     "zc_id_even-approve",
@@ -60,10 +59,8 @@
     "zc_id_stan-fin-cas",
     "zc_id_stan-fin-gaap",
     "zc_id_stan-fin-ifrs",
-    "zc_id_stat-trade_order",
     "zc_id_stor-account",
     "zc_id_stus-container",
-    "zc_id_stus-org",
     "zc_id_stus-storage",
     "zc_id_stus-trade",
     "zc_id_subj-employee",

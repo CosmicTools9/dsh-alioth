@@ -1,0 +1,22 @@
+{
+  "id": "todo-service",
+  "namespace": "Alioth",
+  "version": "0.1.0",
+  "domain": "任务",
+  "layer": 1,
+  "hasBackend": true,
+  "hasFrontend": false,
+  "factors": [],
+  "dtoDependencies": [],
+  "dtoExposes": {
+    "queries": [
+      "list",
+      "detail"
+    ],
+    "refs": [
+      "Todo"
+    ]
+  },
+  "publishes": [],
+  "subscribes": []
+}

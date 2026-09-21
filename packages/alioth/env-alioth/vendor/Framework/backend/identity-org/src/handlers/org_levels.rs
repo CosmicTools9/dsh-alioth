@@ -9,7 +9,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use common::context::require_auth;
 use common::data::ApiResponse;
 use common::AliothError as ApiError;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 /// 组织等级行（id/code/notice/comments/lv_value/ref_count）
 type LevelRow = (
@@ -21,14 +21,35 @@ type LevelRow = (
     Option<i64>,
 );
 
+/// 层级叶表静态 SQL（编译期固化：表名以宏字面量出现，正文单一来源）
+macro_rules! level_table_sql {
+    ($table:literal) => {
+        concat!(
+            "SELECT id, code, notice, comments, lv_value::text, ref_count FROM \"isahl\".\"",
+            $table,
+            "\" WHERE deleted_at IS NULL ORDER BY id"
+        )
+    };
+}
+
+/// 允许的表名 → 静态 SQL（闭式白名单：仅 leve-org / leve-post-resp；未知表 fail-visible）
+const LEVEL_TABLE_SQL: &[(&str, &str)] = &[
+    ("zc_id_leve-org", level_table_sql!("zc_id_leve-org")),
+    (
+        "zc_id_leve-post-resp",
+        level_table_sql!("zc_id_leve-post-resp"),
+    ),
+];
+
 async fn list_level_table(pool: &PgPool, table: &str) -> Result<HttpResponse, ApiError> {
-    // 表名为调用方白名单字面量（仅 leve-org / leve-post-resp）
-    let sql = format!(
-        "SELECT id, code, notice, comments, lv_value::text, ref_count FROM \"isahl\".\"{}\" \
-         WHERE deleted_at IS NULL ORDER BY id",
-        table
-    );
-    let rows: Vec<LevelRow> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
+    let Some(sql) = LEVEL_TABLE_SQL
+        .iter()
+        .find(|(t, _)| *t == table)
+        .map(|(_, s)| *s)
+    else {
+        return Err(ApiError::BadRequest(format!("未知层级表: {table}")));
+    };
+    let rows: Vec<LevelRow> = sqlx::query_as(sql)
         .fetch_all(pool)
         .await
         .map_err(ApiError::from_sqlx)?;

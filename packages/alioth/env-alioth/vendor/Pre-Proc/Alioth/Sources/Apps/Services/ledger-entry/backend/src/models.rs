@@ -162,7 +162,7 @@ pub struct Account {
     #[serde(with = "common::serde_zuid::opt_seq", default)]
     pub ak_source: Option<Vec<i64>>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
+    pub sk_currency: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -186,7 +186,7 @@ impl AliothDbEntity for Account {
         r#"isahl."zc_id_stor-account""#
     }
 
-    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, projection, _f_, _t_, dk_scene, dk_factor, dk_function, tpl_id, ak_source, sk_unit, fk_trustee, qk_capacity, name, account"#;
+    const SELECT_FIELDS: &'static str = r#"created_at, updated_at, id, created_by_id, updated_by_id, notice, t_color_, deleted_at, deleted_by_id, code, o_number, comments, ak_benefit_user, ak_permit_user, ak_access_user, projection, _f_, _t_, dk_scene, dk_factor, dk_function, tpl_id, ak_source, sk_currency, fk_trustee, qk_capacity, name, account"#;
     const ENTITY_NAME: &'static str = "account";
     const SOFT_DELETE: bool = true;
     const HAS_AUDIT: bool = false;
@@ -207,7 +207,7 @@ pub struct CreateAccountRequest {
     #[serde(with = "common::serde_zuid::opt_seq", default)]
     pub ak_source: Option<Vec<i64>>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
+    pub sk_currency: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -225,7 +225,7 @@ pub struct UpdateAccountRequest {
     #[serde(with = "common::serde_zuid::opt_seq", default)]
     pub ak_source: Option<Vec<i64>>,
     #[serde(with = "common::serde_zuid::opt", default)]
-    pub sk_unit: Option<i64>,
+    pub sk_currency: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]

@@ -26,11 +26,6 @@
       {
         "name": "LedgerEntry",
         "table": "isahl.zc_id_docu-accounting",
-        "coordinates": {
-          "scene": "",
-          "factor": "",
-          "function": ""
-        },
         "inherits": null,
         "notes": "归档-会计凭证：会计凭证主记录，含凭证编号、凭证号、审批意见、受益用户、版本批次、前序凭证等字段",
         "field_mappings": [

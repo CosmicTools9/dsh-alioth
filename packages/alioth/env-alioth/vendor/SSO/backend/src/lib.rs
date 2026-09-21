@@ -172,6 +172,13 @@ pub async fn build_server(config: Config) -> std::io::Result<actix_web::dev::Ser
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let pool = database.pool().clone();
 
+    // NGAC AGE 图投影启动自愈（幂等：restore 后图注册丢失 / 漂移时重放 037；
+    // fire-and-forget——AGE 属投影层，失败仅降级读路径，不阻断启动）
+    let heal_pool = pool.clone();
+    tokio::spawn(async move {
+        ngac::age_projection::ensure_ngac_age_projection(&heal_pool).await;
+    });
+
     let jwt_private_key = config.sso_jwt_private_key.as_bytes().to_vec();
     let jwt_public_key = auth::jwt::derive_public_key(&jwt_private_key)
         .map_err(|e| std::io::Error::other(format!("Failed to derive JWT public key: {e}")))?;

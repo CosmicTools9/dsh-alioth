@@ -27,6 +27,7 @@ struct PositionOption {
     id: i64,
     name: String,
     /// 任职人 auth user（未挂人岗位为 null；级联任职推导仅用非空行）
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     fk_user: Option<i64>,
 }

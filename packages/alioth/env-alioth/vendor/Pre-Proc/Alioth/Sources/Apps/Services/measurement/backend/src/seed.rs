@@ -10,9 +10,6 @@ use common::error::AliothError;
 use rust_decimal::{dec, Decimal};
 use sqlx::{AssertSqlSafe, PgPool};
 
-use measurement::biz_repositories::rate_leaf_table_for_dimension as rate_leaf_table;
-use measurement::biz_repositories::unit_leaf_table_for_dimension as unit_leaf_table;
-
 /// 单个待插入的单位种子。
 struct SeedUnit {
     name: &'static str,
@@ -476,6 +473,175 @@ fn all_seed_units() -> Vec<SeedUnit> {
     ]
 }
 
+/// 量纲种子静态句柄：叶表名与五条种子语句在**编译期**由 `concat!` 固化
+/// （运行期零拼表名、零 `AssertSqlSafe`）。
+struct DimensionSeedSql {
+    /// 量纲幂等判据：该量纲单元叶表已有行？
+    unit_count_sql: &'static str,
+    /// 单元 INSERT（列清单与 bind 序列逐一对应）
+    unit_insert_sql: &'static str,
+    /// 单元 id/code/base 回读（换算率基数解析）
+    unit_select_sql: &'static str,
+    /// 换算率叶表裸名（`information_schema.tables` 存在性查询用；无 schema 前缀与引号）
+    rate_leaf_name: &'static str,
+    /// 量纲幂等判据：该量纲换算率叶表已有行？
+    rate_count_sql: &'static str,
+    /// 换算率 INSERT（列清单与 bind 序列逐一对应）
+    rate_insert_sql: &'static str,
+}
+
+/// 量纲 → 种子语句（`$unit_leaf` / `$rate_leaf` = 叶表名尾段，如 `zc_id_unit-currency`）。
+/// 量纲无独立换算率叶表时 `$rate_leaf` 传父表 `zc_id_rate`（与 Framework 路由同口径）。
+macro_rules! dimension_seed_sql {
+    ($unit_leaf:literal, $rate_leaf:literal) => {
+        DimensionSeedSql {
+            unit_count_sql: concat!(
+                "SELECT COUNT(*) FROM isahl.\"",
+                $unit_leaf,
+                "\" WHERE deleted_at IS NULL"
+            ),
+            unit_insert_sql: concat!(
+                "INSERT INTO isahl.\"",
+                $unit_leaf,
+                "\" (notice, code, symbol, system, base, created_by_id)\n                       VALUES ($1, $2, $3, $4::zc_id_unit_system_enum, $5, 0)"
+            ),
+            unit_select_sql: concat!(
+                "SELECT id, code, base FROM isahl.\"",
+                $unit_leaf,
+                "\" WHERE deleted_at IS NULL ORDER BY id"
+            ),
+            rate_leaf_name: $rate_leaf,
+            rate_count_sql: concat!(
+                "SELECT COUNT(*) FROM isahl.\"",
+                $rate_leaf,
+                "\" WHERE ck_right = $1 AND deleted_at IS NULL"
+            ),
+            rate_insert_sql: concat!(
+                "INSERT INTO isahl.\"",
+                $rate_leaf,
+                "\" (notice, ck_left, ck_right, multiply, division, precision_, intrinsic, created_by_id)\n               VALUES ($1, $2, $3, $4, NULL, NULL, true, 0)"
+            ),
+        }
+    };
+}
+
+/// 量纲 → 种子语句句柄（键 = `all_seed_units()` 的 `SeedUnit.dimension` 闭集；
+/// 新增量纲 = 在此加一行）。叶表路由与 Framework `*-leaf_table_for_dimension`
+/// 的一致性由单测 `seed_sql_routes_to_framework_leafs` 守卫。
+const DIMENSION_SEED_SQLS: &[(&str, DimensionSeedSql)] = &[
+    (
+        "angle",
+        dimension_seed_sql!("zc_id_unit-angle", "zc_id_rate-angle"),
+    ),
+    (
+        "area",
+        dimension_seed_sql!("zc_id_unit-area", "zc_id_rate-area"),
+    ),
+    (
+        "common",
+        dimension_seed_sql!("zc_id_unit-common", "zc_id_rate"),
+    ),
+    (
+        "container",
+        dimension_seed_sql!("zc_id_unit-container", "zc_id_rate-container"),
+    ),
+    (
+        "currency",
+        dimension_seed_sql!("zc_id_unit-currency", "zc_id_rate"),
+    ),
+    (
+        "current",
+        dimension_seed_sql!("zc_id_unit-current", "zc_id_rate-current"),
+    ),
+    (
+        "data",
+        dimension_seed_sql!("zc_id_unit-data", "zc_id_rate-data"),
+    ),
+    (
+        "density",
+        dimension_seed_sql!("zc_id_unit-density", "zc_id_rate-density"),
+    ),
+    (
+        "display",
+        dimension_seed_sql!("zc_id_unit-display", "zc_id_rate"),
+    ),
+    (
+        "distance",
+        dimension_seed_sql!("zc_id_unit-distance", "zc_id_rate-distance"),
+    ),
+    (
+        "duration",
+        dimension_seed_sql!("zc_id_unit-duration", "zc_id_rate-duration"),
+    ),
+    (
+        "energy",
+        dimension_seed_sql!("zc_id_unit-energy", "zc_id_rate-energy"),
+    ),
+    (
+        "frequency",
+        dimension_seed_sql!("zc_id_unit-frequency", "zc_id_rate-frequency"),
+    ),
+    (
+        "intensity",
+        dimension_seed_sql!("zc_id_unit-intensity", "zc_id_rate-intensity"),
+    ),
+    (
+        "luminance",
+        dimension_seed_sql!("zc_id_unit-luminance", "zc_id_rate-luminance"),
+    ),
+    (
+        "magnetic_field_strength",
+        dimension_seed_sql!(
+            "zc_id_unit-magnetic_field_strength",
+            "zc_id_rate-magnetic_field_strength"
+        ),
+    ),
+    (
+        "magnetic_flux",
+        dimension_seed_sql!("zc_id_unit-magnetic_flux", "zc_id_rate-magnetic_flux"),
+    ),
+    (
+        "power",
+        dimension_seed_sql!("zc_id_unit-power", "zc_id_rate-power"),
+    ),
+    (
+        "pressure",
+        dimension_seed_sql!("zc_id_unit-pressure", "zc_id_rate-pressure"),
+    ),
+    (
+        "speed",
+        dimension_seed_sql!("zc_id_unit-speed", "zc_id_rate-speed"),
+    ),
+    (
+        "temperature",
+        dimension_seed_sql!("zc_id_unit-temperature", "zc_id_rate-temperature"),
+    ),
+    (
+        "voltage",
+        dimension_seed_sql!("zc_id_unit-voltage", "zc_id_rate-voltage"),
+    ),
+    (
+        "volume",
+        dimension_seed_sql!("zc_id_unit-volume", "zc_id_rate-volume"),
+    ),
+    (
+        "weight",
+        dimension_seed_sql!("zc_id_unit-weight", "zc_id_rate-weight"),
+    ),
+];
+
+/// 未登记量纲回落：父表 `zc_id_unit` / `zc_id_rate`
+const PARENT_DIMENSION_SEED_SQL: DimensionSeedSql = dimension_seed_sql!("zc_id_unit", "zc_id_rate");
+
+/// 量纲 → 种子语句句柄（未登记量纲回落父表，与 Framework 路由 `_` 臂同口径）
+fn seed_sql_for_dimension(dim_key: &str) -> &'static DimensionSeedSql {
+    DIMENSION_SEED_SQLS
+        .iter()
+        .find(|(k, _)| *k == dim_key)
+        .map(|(_, sql)| sql)
+        .unwrap_or(&PARENT_DIMENSION_SEED_SQL)
+}
+
 /// 向数据库预置标准单位种子数据及相对 base 单位的换算率。
 ///
 /// 按量纲分组，若某量纲叶表已存在非删除记录，则跳过该量纲，保证幂等。
@@ -489,39 +655,32 @@ pub async fn seed_standard_units(pool: &PgPool) -> Result<usize, AliothError> {
     let mut inserted = 0usize;
 
     for (dim_key, dim_units) in &by_dim {
-        let leaf_table = unit_leaf_table(dim_key);
+        let dim_sql = seed_sql_for_dimension(dim_key);
 
-        let count: (i64,) = sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT COUNT(*) FROM {} WHERE deleted_at IS NULL",
-            leaf_table
-        )))
-        .fetch_one(pool)
-        .await
-        .map_err(AliothError::from)?;
+        let count: (i64,) = sqlx::query_as(dim_sql.unit_count_sql)
+            .fetch_one(pool)
+            .await
+            .map_err(AliothError::from)?;
 
         if count.0 > 0 {
             continue;
         }
 
         for unit in dim_units {
-            sqlx::query(AssertSqlSafe(format!(
-                r#"INSERT INTO {} (notice, code, symbol, system, base, created_by_id)
-                       VALUES ($1, $2, $3, $4::zc_id_unit_system_enum, $5, 0)"#,
-                leaf_table
-            )))
-            .bind(unit.name)
-            .bind(unit.code)
-            .bind(unit.symbol)
-            .bind(unit.system)
-            .bind(unit.base)
-            .execute(pool)
-            .await
-            .map_err(AliothError::from)?;
+            sqlx::query(dim_sql.unit_insert_sql)
+                .bind(unit.name)
+                .bind(unit.code)
+                .bind(unit.symbol)
+                .bind(unit.system)
+                .bind(unit.base)
+                .execute(pool)
+                .await
+                .map_err(AliothError::from)?;
 
             inserted += 1;
         }
 
-        seed_conversion_rates_for_dimension(pool, dim_key, dim_units).await?;
+        seed_conversion_rates_for_dimension(pool, dim_sql, dim_units).await?;
     }
 
     Ok(inserted)
@@ -529,17 +688,14 @@ pub async fn seed_standard_units(pool: &PgPool) -> Result<usize, AliothError> {
 
 async fn seed_conversion_rates_for_dimension(
     pool: &PgPool,
-    dim_key: &str,
+    dim_sql: &DimensionSeedSql,
     dim_units: &[&SeedUnit],
 ) -> Result<(), AliothError> {
-    let unit_leaf_table = unit_leaf_table(dim_key);
-    let rate_leaf_table = rate_leaf_table(dim_key);
-
     // 若 rate 叶表不存在（如测试库 schema 不完整），跳过换算率插入。
     let table_exists: (bool,) = sqlx::query_as(
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'isahl' AND table_name = $1)"
     )
-    .bind(rate_leaf_table.trim_start_matches("isahl.\"").trim_end_matches("\""))
+    .bind(dim_sql.rate_leaf_name)
     .fetch_one(pool)
     .await
     .map_err(AliothError::from)?;
@@ -549,13 +705,10 @@ async fn seed_conversion_rates_for_dimension(
     }
 
     // 查询该量纲叶表下所有刚插入的单位 id/code/base。
-    let rows: Vec<(i64, String, bool)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT id, code, base FROM {} WHERE deleted_at IS NULL ORDER BY id",
-        unit_leaf_table
-    )))
-    .fetch_all(pool)
-    .await
-    .map_err(AliothError::from)?;
+    let rows: Vec<(i64, String, bool)> = sqlx::query_as(dim_sql.unit_select_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(AliothError::from)?;
 
     let id_by_code: HashMap<&str, i64> = rows
         .iter()
@@ -569,14 +722,11 @@ async fn seed_conversion_rates_for_dimension(
     };
 
     // 仅当该量纲尚无换算率时才插入。
-    let existing_rate_count: (i64,) = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT COUNT(*) FROM {} WHERE ck_right = $1 AND deleted_at IS NULL",
-        rate_leaf_table
-    )))
-    .bind(base_id)
-    .fetch_one(pool)
-    .await
-    .map_err(AliothError::from)?;
+    let existing_rate_count: (i64,) = sqlx::query_as(dim_sql.rate_count_sql)
+        .bind(base_id)
+        .fetch_one(pool)
+        .await
+        .map_err(AliothError::from)?;
 
     if existing_rate_count.0 > 0 {
         return Ok(());
@@ -597,18 +747,14 @@ async fn seed_conversion_rates_for_dimension(
             continue;
         }
 
-        sqlx::query(AssertSqlSafe(format!(
-            r#"INSERT INTO {} (notice, ck_left, ck_right, multiply, division, precision_, intrinsic, created_by_id)
-               VALUES ($1, $2, $3, $4, NULL, NULL, true, 0)"#,
-            rate_leaf_table
-        )))
-        .bind(format!("{} → base", unit.name))
-        .bind(unit_id)
-        .bind(base_id)
-        .bind(mult)
-        .execute(pool)
-        .await
-        .map_err(AliothError::from)?;
+        sqlx::query(dim_sql.rate_insert_sql)
+            .bind(format!("{} → base", unit.name))
+            .bind(unit_id)
+            .bind(base_id)
+            .bind(mult)
+            .execute(pool)
+            .await
+            .map_err(AliothError::from)?;
     }
 
     Ok(())
@@ -819,26 +965,54 @@ mod tests {
     use super::*;
     use common::testing::{connect_test_db, setup_test_schema_light};
 
+    /// 静态句柄 ↔ Framework 路由一致性（防两处漂移）：登记量纲的叶表必须与
+    /// `measurement::biz_repositories::{unit,rate}_leaf_table_for_dimension` 同口径；
+    /// 且所有种子量纲均已登记（未登记会落 `PARENT_DIMENSION_SEED_SQL` 回落）。
+    #[test]
+    fn seed_sql_routes_to_framework_leafs() {
+        use measurement::biz_repositories::{
+            rate_leaf_table_for_dimension as rate_leaf, unit_leaf_table_for_dimension as unit_leaf,
+        };
+        for (dim, sql) in DIMENSION_SEED_SQLS {
+            assert!(
+                sql.unit_count_sql.contains(unit_leaf(dim)),
+                "{dim}: unit 叶表与 Framework 路由不一致（静态 {:?} vs 框架 {:?}）",
+                sql.unit_count_sql,
+                unit_leaf(dim)
+            );
+            assert_eq!(
+                rate_leaf(dim),
+                format!("isahl.\"{}\"", sql.rate_leaf_name),
+                "{dim}: rate 叶表与 Framework 路由不一致"
+            );
+        }
+        for u in all_seed_units() {
+            assert!(
+                DIMENSION_SEED_SQLS.iter().any(|(k, _)| *k == u.dimension),
+                "量纲 {} 未登记静态句柄（会落父表回落，与 Framework 路由漂移）",
+                u.dimension
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_seed_standard_units_idempotent() {
         let pool = connect_test_db().await;
         setup_test_schema_light(&pool).await.unwrap();
-        // 清理计量表（WZ/Alioth 共用测试库，seed 幂等断言依赖空表起点）
-        sqlx::query("DELETE FROM isahl.zc_id_unit*")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM isahl.zc_id_rate*")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM isahl.\"zc_id_scal-price\"")
-            .execute(&pool)
-            .await
-            .unwrap();
+        // 共享测试库：单位族（zc_id_unit*）承载**模型级种子**（Framework/seed/seed-dimensions.sql）
+        // 与其他域消费（SE 预算等）——MUST NOT 通配清空（曾致全族 319→2，跨 ns 用例连锁失败）。
+        // 幂等断言改为「不依赖空起点 + 域内在册」：二次运行必须零新增、且域内确有行。
         let first = seed_standard_units(&pool).await.unwrap();
         let second = seed_standard_units(&pool).await.unwrap();
-        assert!(first > 0, "should insert units on first run, got {}", first);
         assert_eq!(second, 0, "should be idempotent on second run");
+        let total: i64 = sqlx::query_scalar("SELECT count(*) FROM isahl.zc_id_unit")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            total > 0,
+            "单位域应非空（模型级种子或本次 seed 供给），首次新增 {} 行",
+            first
+        );
     }
 }

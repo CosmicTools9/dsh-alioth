@@ -5,7 +5,7 @@
 /// - Gateway WZ（transport-dispatch）：`customer_subject_id` = 委托客户主体（req.customer_id）、
 ///   `operator_org_id` = 当前用户绑定运营组织（原 resolve_operator_org 结果）、`actor_user_id` = 1（原写死）。
 /// - OpenActivity 门户：`customer_subject_id` = 绑定企业组织（fk_subject）、
-///   `operator_org_id` = SUBJ-SYSTEM 组织锚点、`actor_user_id` = 门户用户。
+///   `operator_org_id` = 平台侧锚（system 哨兵绑定主体；WZ = `90R0` 易运）、`actor_user_id` = 门户用户。
 #[derive(Debug, Clone, Copy)]
 pub struct WriteContext {
     /// 委托方主体（fk_subject / fk_subj-demand / deta fk_counterparty）
@@ -34,6 +34,13 @@ pub struct CreateConsignmentInput {
     /// 预计提货（本地 +08 或 UTC，接受 "YYYY-MM-DDTHH:MM" / "YYYY-MM-DD"）
     pub pickup_time: Option<String>,
     pub eta: Option<String>,
+    /// 继承的既有时间段 id（`zc_id_segm-date`）——**非空即权威**，优先于
+    /// `pickup_time`/`eta` 派生（二者同给时本字段胜出，不再新建时间段行）。
+    ///
+    /// 拆单小委托（D6）自大委托产品 `qk_period` 带值：小委托是大委托同一批货的分配量切片，
+    /// 服务时段与大委托同源；不透传则小委托产品 `qk_period` 恒 NULL ⇒ 运单产品继承腿
+    /// （`waybill-writer` dispatch `consign_seg_id`）取到 NULL ⇒ 运单「预计到达」恒空。
+    pub period_id: Option<i64>,
     /// 关联合同 id（order_rr_contract 幂等桥）
     pub contract_id: Option<i64>,
     /// 车辆类型 id（ck_vehicle-form）

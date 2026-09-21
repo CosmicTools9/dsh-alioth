@@ -79,15 +79,15 @@ async fn list_stops(
            -- LATERAL 0-or-1 行，未绑/软删/几何缺失回 NULL——禁止经非叶父表 zc_id_geom-circle 读围栏
            LEFT JOIN LATERAL (
                SELECT lng, lat FROM (
-                   SELECT ST_X(g.circle::geometry) AS lng, ST_Y(g.circle::geometry) AS lat
+                   SELECT postgis.ST_X(g.circle::postgis.geometry) AS lng, postgis.ST_Y(g.circle::postgis.geometry) AS lat
                    FROM "isahl"."zc_id_geog-circle" g
                    WHERE g.id = p.qk_fence AND g.deleted_at IS NULL
                    UNION ALL
-                   SELECT ST_X(ST_Centroid(a.box::geometry)), ST_Y(ST_Centroid(a.box::geometry))
+                   SELECT postgis.ST_X(postgis.ST_Centroid(a.box::postgis.geometry)), postgis.ST_Y(postgis.ST_Centroid(a.box::postgis.geometry))
                    FROM "isahl"."zc_id_geog-area" a
                    WHERE a.id = p.qk_fence AND a.deleted_at IS NULL
                    UNION ALL
-                   SELECT ST_X(ST_Centroid(pg.polygon::geometry)), ST_Y(ST_Centroid(pg.polygon::geometry))
+                   SELECT postgis.ST_X(postgis.ST_Centroid(pg.polygon::postgis.geometry)), postgis.ST_Y(postgis.ST_Centroid(pg.polygon::postgis.geometry))
                    FROM "isahl"."zc_id_geog-polygon" pg
                    WHERE pg.id = p.qk_fence AND pg.deleted_at IS NULL
                ) coords LIMIT 1

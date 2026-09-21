@@ -123,35 +123,57 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
 
     // oper→even 自愈（fix-approval-event-adaptive-write）：断链 oper 实例
     // （rr_event 桥缺失）按 oper 字段重建缺失 even 事件并回填桥行。
-    // 事件写入目标表自适应——`zc_id_appr-authorization` 叶表存在写叶表（继承
-    // even-approve，查询可见），否则写 even-approve 主表（与 approvals/apply、
-    // register.rs 注册主链路同规则）。
-    // to_regclass 检测失败（schema/权限错误）不静默当无叶表，也不中断整个 self_check——
-    // 置 leaf_check_ok=false 跳过 oper→even 自愈（无法确定目标表），但尾部 even→oper
+    // 事件写入叶表按事件 code 分派（见下方 heal_binding）——禁写域父表 even-approve
+    // （§8.5「INSERT 必须落叶表」，门禁 check-leaf-insert.ts）。
+    // 叶表探测失败/缺失均不静默：warn 后跳过 oper→even 自愈，但尾部 even→oper
     // 补建/rebound/SLA/broken_after 照常执行（fix-approval-event-adaptive-write 契约）。
+    // oper→even 自愈绑定分派（与写入契约同构）：事件 code → (流程模板 code, 事件叶表)。
+    // - user-register-approval（注册/访问授权共用，register.rs / approvals/apply 写入）
+    //   → FLOW-AUTHORIZATION + zc_id_appr-authorization 叶表
+    // - user-verify（identity.rs 实名审核写入）→ FLOW-USER-VERIFY + zc_id_appr-user_verify 叶表
+    // 其余 code（external-subject-register-approval）不参与重建，断链维持告警人工核查。
+    let heal_binding: Option<(&str, &str)> = match event_code {
+        REGISTRATION_APPROVAL_CODE => Some((AUTHORIZATION_FLOW_CODE, "zc_id_appr-authorization")),
+        USER_VERIFY_CODE => Some((VERIFY_FLOW_CODE, "zc_id_appr-user_verify")),
+        _ => None,
+    };
+    // 叶表探测可用性（探测失败/叶表缺失均置 false：跳过 oper→even 自愈并 warn，不静默）
     let mut leaf_check_ok = true;
-    let leaf_table_exists: bool = match sqlx::query_scalar(
-        "SELECT to_regclass('isahl.\"zc_id_appr-authorization\"') IS NOT NULL",
-    )
-    .fetch_one(pool)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            common::telemetry::warn!(
-                "seed[approval]: 检测 authorization 叶表失败（跳过 oper→even 自愈，保持断链告警）: {e}"
-            );
-            leaf_check_ok = false;
-            false
+    let leaf_table_exists: bool = match heal_binding {
+        Some((_, leaf_table)) => {
+            match sqlx::query_scalar("SELECT to_regclass('isahl.' || quote_ident($1)) IS NOT NULL")
+                .bind(leaf_table)
+                .fetch_one(pool)
+                .await
+            {
+                Ok(true) => true,
+                // 叶表缺失（探测成功但不存在）：§8.5「INSERT 必须落叶表」——禁降级写域父表
+                // zc_id_even-approve（门禁 check-leaf-insert.ts），保持断链告警人工核查
+                Ok(false) => {
+                    if broken_count > 0 {
+                        common::telemetry::warn!(
+                            "seed[approval]: {event_code} 事件叶表 {leaf_table} 不存在（跳过 oper→even 自愈，保持断链告警）"
+                        );
+                    }
+                    leaf_check_ok = false;
+                    false
+                }
+                // 探测失败（schema/权限错误）不静默当无叶表——跳过自愈并告警
+                Err(e) => {
+                    common::telemetry::warn!(
+                        "seed[approval]: {event_code} 事件叶表 {leaf_table} 探测失败（跳过 oper→even 自愈，保持断链告警）: {e}"
+                    );
+                    leaf_check_ok = false;
+                    false
+                }
+            }
         }
+        None => false,
     };
     let mut healed_to_event: i64 = 0;
-    // 仅注册审批（user-register-approval）执行 oper→even 自愈：其事件契约绑
-    // FLOW-AUTHORIZATION + 72h SLA（approvals/apply、register.rs 一致）。
-    // user-verify（USER_VERIFY_CODE）走独立流程模板 FLOW-USER-VERIFY，无对应
-    // 自愈重建逻辑——若误按 AUTHORIZATION_FLOW_CODE 重建会绑错流程，故不在此
-    // 自愈，断链维持告警由人工核查（fix-approval-event-adaptive-write 契约）。
-    // leaf_check_ok=false 时同样跳过（无法确定事件写入目标表）。
+    // oper→even 自愈按事件 code 分派正确接收方（heal_binding）：user-register-approval
+    // → FLOW-AUTHORIZATION，user-verify → FLOW-USER-VERIFY（fix-user-verify-self-heal）；
+    // 叶表探测失败/缺失时跳过（无法安全写入目标表）。
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
     // 本函数两处 oper-approve INSERT（自愈环内 register-context、尾部补建）复用同一结果。
     let (dk_scene, dk_factor, dk_function) =
@@ -165,29 +187,31 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
             }
         };
 
-    if broken_count > 0 && event_code == REGISTRATION_APPROVAL_CODE && leaf_check_ok {
+    if let Some((heal_flow_code, leaf_table)) =
+        heal_binding.filter(|_| broken_count > 0 && leaf_check_ok && leaf_table_exists)
+    {
         // 模板绑定目标：user-register-approval 事件绑 FLOW-AUTHORIZATION 的 approve 节点
         // 模板（与 approvals/apply、register.rs 写入契约一致）
         let flow_binding: Option<(i64, Option<i64>)> = sqlx::query_as(
             r#"
-            SELECT p.id,
-                   (SELECT rro.ref_right FROM isahl.zc_id_process_rr_operation rro
-                    JOIN isahl."zc_id_oper-approve" oa
-                      ON oa.id = rro.ref_right AND oa.deleted_at IS NULL
-                    WHERE rro.ref_left = p.id AND rro.deleted_at IS NULL LIMIT 1)
-            FROM isahl.zc_id_process p
-            WHERE p.code = $1 AND p.deleted_at IS NULL
-            LIMIT 1
-            "#,
+        SELECT p.id,
+               (SELECT rro.ref_right FROM isahl.zc_id_process_rr_operation rro
+                JOIN isahl."zc_id_oper-approve" oa
+                  ON oa.id = rro.ref_right AND oa.deleted_at IS NULL
+                WHERE rro.ref_left = p.id AND rro.deleted_at IS NULL LIMIT 1)
+        FROM isahl.zc_id_process p
+        WHERE p.code = $1 AND p.deleted_at IS NULL
+        LIMIT 1
+        "#,
         )
-        .bind(AUTHORIZATION_FLOW_CODE)
+        .bind(heal_flow_code)
         .fetch_optional(pool)
         .await
         .ok()
         .flatten();
         let sla_duration_id: Option<i64> = sqlx::query_scalar(
             r#"SELECT id FROM isahl."zc_id_scal-duration"
-               WHERE o_number = $1 AND deleted_at IS NULL LIMIT 1"#,
+           WHERE o_number = $1 AND deleted_at IS NULL LIMIT 1"#,
         )
         .bind(REGISTRATION_SLA_HOURS)
         .fetch_optional(pool)
@@ -201,17 +225,17 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
         // 由人工核查（fix-approval-event-adaptive-write 契约）。
         let broken_ops: Vec<(i64, String, Option<i64>, String)> = sqlx::query_as(
             r#"SELECT oa.id, oa.notice, oa.fk_subject, oa.code
-               FROM isahl."zc_id_oper-approve" oa
-               WHERE oa.code = $1 AND oa.deleted_at IS NULL
-                 AND NOT EXISTS (
-                     SELECT 1 FROM isahl.zc_id_operation_rr_event rr
-                     JOIN isahl."zc_id_even-approve" e ON e.id = rr.ref_right AND e.deleted_at IS NULL
-                     WHERE rr.ref_left = oa.id AND rr.deleted_at IS NULL
-                 )
-                 AND oa.fk_subject IS NOT NULL
-                 AND EXISTS (SELECT 1 FROM isahl_auth.auth_users u
-                             WHERE u.id = oa.fk_subject AND u.is_active = TRUE)
-               ORDER BY oa.id"#,
+           FROM isahl."zc_id_oper-approve" oa
+           WHERE oa.code = $1 AND oa.deleted_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM isahl.zc_id_operation_rr_event rr
+                 JOIN isahl."zc_id_even-approve" e ON e.id = rr.ref_right AND e.deleted_at IS NULL
+                 WHERE rr.ref_left = oa.id AND rr.deleted_at IS NULL
+             )
+             AND oa.fk_subject IS NOT NULL
+             AND EXISTS (SELECT 1 FROM isahl_auth.auth_users u
+                         WHERE u.id = oa.fk_subject AND u.is_active = TRUE)
+           ORDER BY oa.id"#,
         )
         .bind(event_code)
         .fetch_all(pool)
@@ -221,40 +245,53 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
         // broken_after 覆盖（人工核查）
         let broken_no_subject: i64 = sqlx::query_scalar(
             r#"SELECT COUNT(*) FROM isahl."zc_id_oper-approve" oa
-               WHERE oa.code = $1 AND oa.deleted_at IS NULL
-                 AND NOT EXISTS (
-                     SELECT 1 FROM isahl.zc_id_operation_rr_event rr
-                     JOIN isahl."zc_id_even-approve" e ON e.id = rr.ref_right AND e.deleted_at IS NULL
-                     WHERE rr.ref_left = oa.id AND rr.deleted_at IS NULL
-                 )
-                 AND (oa.fk_subject IS NULL OR NOT EXISTS (
-                     SELECT 1 FROM isahl_auth.auth_users u
-                     WHERE u.id = oa.fk_subject AND u.is_active = TRUE
-                 ))"#,
+           WHERE oa.code = $1 AND oa.deleted_at IS NULL
+             AND NOT EXISTS (
+                 SELECT 1 FROM isahl.zc_id_operation_rr_event rr
+                 JOIN isahl."zc_id_even-approve" e ON e.id = rr.ref_right AND e.deleted_at IS NULL
+                 WHERE rr.ref_left = oa.id AND rr.deleted_at IS NULL
+             )
+             AND (oa.fk_subject IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM isahl_auth.auth_users u
+                 WHERE u.id = oa.fk_subject AND u.is_active = TRUE
+             ))"#,
         )
         .bind(event_code)
         .fetch_one(pool)
         .await
         .unwrap_or(0);
+        // 流程模板缺失降级告警：事件/桥仍重建（tpl_id/fk_process 置 NULL），
+        // MUST NOT 创建模板行——模板本体归模型级种子 seed-auth-approval-flows.sql（NGAC_SPEC §7.3.1）
+        if flow_binding.is_none() && !broken_ops.is_empty() {
+            common::telemetry::warn!(
+                    "seed[approval]: {event_code} 流程模板 {heal_flow_code} 缺失——自愈降级重建（模板由模型级种子重放修复）"
+                );
+        }
         if broken_no_subject > 0 {
             common::telemetry::warn!(
-                "seed[approval]: {event_code} {} 个断链实例主体已删除/停用（无法自愈，保持告警人工核查）",
-                broken_no_subject
-            );
+            "seed[approval]: {event_code} {} 个断链实例主体已删除/停用（无法自愈，保持告警人工核查）",
+            broken_no_subject
+        );
         }
         for (oper_id, notice, applicant_id, code) in &broken_ops {
             // 防御：broken_ops 查询已保证 fk_subject 非空且主体存在，此处仅防御性跳过
             // （写 0 会污染事件 created_by/comments，主体缺失的断链由 broken_after 告警）
             let Some(applicant_id) = applicant_id else {
                 common::telemetry::warn!(
-                    "seed[approval]: {event_code} oper→even 跳过重建 oper={oper_id}（fk_subject 为空，无法确定 applicant）"
-                );
+                "seed[approval]: {event_code} oper→even 跳过重建 oper={oper_id}（fk_subject 为空，无法确定 applicant）"
+            );
                 continue;
             };
             // applicant_name 从 notice 提取（"用户 <name> 访问授权审批"）
+            // applicant_name 从 notice 提取（写侧 notice 契约：register/apply
+            // "用户 <name> 访问授权审批"；user-verify "用户 <id> 实名审核"）
+            let notice_tail = match event_code {
+                USER_VERIFY_CODE => " 实名审核",
+                _ => " 访问授权审批",
+            };
             let applicant_name = notice
                 .strip_prefix("用户 ")
-                .and_then(|s| s.strip_suffix(" 访问授权审批"))
+                .and_then(|s| s.strip_suffix(notice_tail))
                 .unwrap_or("用户")
                 .to_string();
             // comments 为纯文本语义（remove-comments-json-embedding）：人类可读申请人摘要
@@ -270,78 +307,67 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                     continue;
                 }
             };
-            let event_id: Result<i64, _> = if leaf_table_exists {
+            let event_id: Result<i64, _> = {
                 // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
                 // （审批叶表继承 even-approve 坐标 JC/FTA/↑_NA）
-                let (leaf_dk_scene, leaf_dk_factor, leaf_dk_function) =
-                    match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
-                        Ok(v) => v,
-                        Err(e) => {
-                            let _ = tx.rollback().await;
-                            common::telemetry::warn!(
-                                "seed[approval]: {event_code} appr-authorization 坐标解析失败 oper={oper_id}: {e}"
-                            );
-                            continue;
-                        }
-                    };
-                sqlx::query_scalar(
-                    r#"
-                    INSERT INTO isahl."zc_id_appr-authorization" (
-                        created_by_id, updated_by_id, notice, code, comments,
-                        tpl_id, qk_sla, created_at, updated_at,
-                        dk_scene, dk_factor, dk_function
-                    ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
-                    RETURNING id
-                    "#,
-                )
-                .bind(applicant_id)
-                .bind(notice)
-                .bind(code)
-                .bind(&comments)
-                .bind(flow_binding.as_ref().and_then(|(_, t)| *t))
-                .bind(sla_duration_id)
-                .bind(leaf_dk_scene)
-                .bind(leaf_dk_factor)
-                .bind(leaf_dk_function)
-                .fetch_one(&mut *tx)
-                .await
-            } else {
-                // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
-                // （事件族坐标，与上方 oper-approve 的 JE/FTA/↓_EZ 不同 → 分离命名）
-                // 落点：审批域叶表 zc_id_appr-authorization（§ENVIRONMENT_SPEC「只能写叶表」；
-                // 注册行语义 = 访问授权审批，与上方 leaf 分支同表——回退不再写域父表）
                 let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
                     match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
                         Ok(v) => v,
                         Err(e) => {
                             let _ = tx.rollback().await;
                             common::telemetry::warn!(
-                                "seed[approval]: {event_code} even-approve 坐标解析失败 oper={oper_id}: {e}"
-                            );
+                                    "seed[approval]: {event_code} 叶表 {leaf_table} 坐标解析失败 oper={oper_id}: {e}"
+                                );
                             continue;
                         }
                     };
-                sqlx::query_scalar(
-                    r#"
-                    INSERT INTO isahl."zc_id_appr-authorization" (
-                        created_by_id, updated_by_id, notice, code, comments,
-                        tpl_id, qk_sla, created_at, updated_at,
-                        dk_scene, dk_factor, dk_function
-                    ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
-                    RETURNING id
-                    "#,
-                )
-                .bind(applicant_id)
-                .bind(notice)
-                .bind(code)
-                .bind(&comments)
-                .bind(flow_binding.as_ref().and_then(|(_, t)| *t))
-                .bind(sla_duration_id)
-                .bind(ev_dk_scene)
-                .bind(ev_dk_factor)
-                .bind(ev_dk_function)
-                .fetch_one(&mut *tx)
-                .await
+                if leaf_table == "zc_id_appr-user_verify" {
+                    // 实名审核叶表（identity.rs 写入契约：fk_process/tpl_id/_f_/_t_/qk_sla）
+                    sqlx::query_scalar(
+                            r#"
+                            INSERT INTO isahl."zc_id_appr-user_verify" (
+                                created_by_id, updated_by_id, notice, code, comments,
+                                fk_process, tpl_id, qk_sla, _f_, _t_, created_at, updated_at,
+                                dk_scene, dk_factor, dk_function
+                            ) VALUES ($1, $1, $2, $3, $4, $5, $6, $7, '实现', '实例', NOW(), NOW(), $8, $9, $10)
+                            RETURNING id
+                            "#,
+                        )
+                        .bind(applicant_id)
+                        .bind(notice)
+                        .bind(code)
+                        .bind(&comments)
+                        .bind(flow_binding.as_ref().map(|(flow_id, _)| *flow_id))
+                        .bind(flow_binding.as_ref().and_then(|(_, t)| *t))
+                        .bind(sla_duration_id)
+                        .bind(ev_dk_scene)
+                        .bind(ev_dk_factor)
+                        .bind(ev_dk_function)
+                        .fetch_one(&mut *tx)
+                        .await
+                } else {
+                    sqlx::query_scalar(
+                        r#"
+                            INSERT INTO isahl."zc_id_appr-authorization" (
+                                created_by_id, updated_by_id, notice, code, comments,
+                                tpl_id, qk_sla, created_at, updated_at,
+                                dk_scene, dk_factor, dk_function
+                            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
+                            RETURNING id
+                            "#,
+                    )
+                    .bind(applicant_id)
+                    .bind(notice)
+                    .bind(code)
+                    .bind(&comments)
+                    .bind(flow_binding.as_ref().and_then(|(_, t)| *t))
+                    .bind(sla_duration_id)
+                    .bind(ev_dk_scene)
+                    .bind(ev_dk_factor)
+                    .bind(ev_dk_function)
+                    .fetch_one(&mut *tx)
+                    .await
+                }
             };
 
             match event_id {
@@ -349,12 +375,14 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                     // fk_process 列已物理移除（2026-08-30）：事件↔流程归属经桥链——
                     // 'register-context' 上下文 oper 行（每流程复用）+
                     // process_rr_operation 归属桥 + rr_event 模板桥
-                    if let Some((flow_id, _)) = flow_binding {
+                    if let Some((flow_id, _)) =
+                        flow_binding.filter(|_| event_code == REGISTRATION_APPROVAL_CODE)
+                    {
                         let ctx_oper: Option<i64> = sqlx::query_scalar(
                             r#"SELECT rro.ref_right FROM isahl.zc_id_process_rr_operation rro
-                               JOIN isahl."zc_id_oper-approve" oa ON oa.id = rro.ref_right
-                                 AND oa.deleted_at IS NULL AND oa.notice = 'register-context'
-                               WHERE rro.ref_left = $1 AND rro.deleted_at IS NULL LIMIT 1"#,
+                       JOIN isahl."zc_id_oper-approve" oa ON oa.id = rro.ref_right
+                         AND oa.deleted_at IS NULL AND oa.notice = 'register-context'
+                       WHERE rro.ref_left = $1 AND rro.deleted_at IS NULL LIMIT 1"#,
                         )
                         .bind(flow_id)
                         .fetch_optional(&mut *tx)
@@ -365,8 +393,8 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                             None => {
                                 match sqlx::query_scalar::<_, i64>(
                                     r#"INSERT INTO isahl."zc_id_oper-approve"
-                                           (notice, created_by_id, dk_scene, dk_factor, dk_function)
-                                       VALUES ('register-context', 1, $1, $2, $3) RETURNING id"#,
+                                   (notice, created_by_id, dk_scene, dk_factor, dk_function)
+                               VALUES ('register-context', 1, $1, $2, $3) RETURNING id"#,
                                 )
                                 .bind(dk_scene)
                                 .bind(dk_factor)
@@ -376,92 +404,92 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                                 {
                                     Ok(new_id) => {
                                         if let Err(e) = sqlx::query(
-                                            "INSERT INTO isahl.zc_id_process_rr_operation (ref_left, ref_right, created_by_id)
-                                             VALUES ($1, $2, 1)",
-                                        )
-                                        .bind(flow_id)
-                                        .bind(new_id)
-                                        .execute(&mut *tx)
-                                        .await
-                                        {
-                                            let _ = tx.rollback().await;
-                                            common::telemetry::warn!(
-                                                "seed[approval]: {event_code} 流程归属桥失败 oper={oper_id}: {e}"
-                                            );
-                                            continue;
-                                        }
+                                    "INSERT INTO isahl.zc_id_process_rr_operation (ref_left, ref_right, created_by_id)
+                                     VALUES ($1, $2, 1)",
+                                )
+                                .bind(flow_id)
+                                .bind(new_id)
+                                .execute(&mut *tx)
+                                .await
+                                {
+                                    let _ = tx.rollback().await;
+                                    common::telemetry::warn!(
+                                        "seed[approval]: {event_code} 流程归属桥失败 oper={oper_id}: {e}"
+                                    );
+                                    continue;
+                                }
                                         new_id
                                     }
                                     Err(e) => {
                                         let _ = tx.rollback().await;
                                         common::telemetry::warn!(
-                                            "seed[approval]: {event_code} register-context 创建失败 oper={oper_id}: {e}"
-                                        );
+                                    "seed[approval]: {event_code} register-context 创建失败 oper={oper_id}: {e}"
+                                );
                                         continue;
                                     }
                                 }
                             }
                         };
                         if let Err(e) = sqlx::query(
-                            "INSERT INTO isahl.zc_id_operation_rr_event (ref_left, ref_right, created_by_id)
-                             VALUES ($1, $2, 1)",
-                        )
-                        .bind(ctx_oper)
-                        .bind(new_event_id)
-                        .execute(&mut *tx)
-                        .await
-                        {
-                            let _ = tx.rollback().await;
-                            common::telemetry::warn!(
-                                "seed[approval]: {event_code} 事件模板桥失败 oper={oper_id}: {e}"
-                            );
-                            continue;
-                        }
+                    "INSERT INTO isahl.zc_id_operation_rr_event (ref_left, ref_right, created_by_id)
+                     VALUES ($1, $2, 1)",
+                )
+                .bind(ctx_oper)
+                .bind(new_event_id)
+                .execute(&mut *tx)
+                .await
+                {
+                    let _ = tx.rollback().await;
+                    common::telemetry::warn!(
+                        "seed[approval]: {event_code} 事件模板桥失败 oper={oper_id}: {e}"
+                    );
+                    continue;
+                }
                     }
 
                     // 桥行回填（同事务）。校验 rows_affected==1：事件已插入但
                     // 回填 0 行（oper 并发删除/软删/桥已存在）→ 事务回滚，不计 healed，
                     // 避免孤儿事件 + 虚报自愈数。
                     match sqlx::query(
-                        r#"INSERT INTO isahl.zc_id_operation_rr_event
-                           (ref_left, ref_right, created_by_id)
-                           SELECT $2, $1, 1
-                           WHERE EXISTS (
-                               SELECT 1 FROM isahl."zc_id_oper-approve" oa
-                               WHERE oa.id = $2 AND oa.deleted_at IS NULL
-                           )
-                           AND NOT EXISTS (
-                               SELECT 1 FROM isahl.zc_id_operation_rr_event rr
-                               WHERE rr.ref_left = $2 AND rr.ref_right = $1 AND rr.deleted_at IS NULL
-                           )"#,
-                    )
-                    .bind(new_event_id)
-                    .bind(oper_id)
-                    .execute(&mut *tx)
-                    .await
-                    {
-                        Ok(rows) if rows.rows_affected() == 1 => match tx.commit().await {
-                            Ok(_) => healed_to_event += 1,
-                            // commit 失败：事务已尝试提交并结束（tx 被消费），无法 rollback
-                            Err(e) => common::telemetry::warn!(
-                                "seed[approval]: {event_code} oper→even 事务提交失败 oper={oper_id}: {e}"
-                            ),
-                        },
-                        Ok(rows) => {
-                            // 回填 0 行：oper 已不存在/软删/桥已存在 → 回滚（不产生孤儿事件）
-                            let _ = tx.rollback().await;
-                            common::telemetry::warn!(
-                                "seed[approval]: {event_code} oper→even 回填影响 {} 行（oper 可能已删或桥已存在），回滚 oper={oper_id}",
-                                rows.rows_affected()
-                            );
-                        }
-                        Err(e) => {
-                            let _ = tx.rollback().await;
-                            common::telemetry::warn!(
-                                "seed[approval]: {event_code} oper→even 回填失败 oper={oper_id}: {e}"
-                            );
-                        }
+                    r#"INSERT INTO isahl.zc_id_operation_rr_event
+                       (ref_left, ref_right, created_by_id)
+                       SELECT $2, $1, 1
+                       WHERE EXISTS (
+                           SELECT 1 FROM isahl."zc_id_oper-approve" oa
+                           WHERE oa.id = $2 AND oa.deleted_at IS NULL
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1 FROM isahl.zc_id_operation_rr_event rr
+                           WHERE rr.ref_left = $2 AND rr.ref_right = $1 AND rr.deleted_at IS NULL
+                       )"#,
+                )
+                .bind(new_event_id)
+                .bind(oper_id)
+                .execute(&mut *tx)
+                .await
+                {
+                    Ok(rows) if rows.rows_affected() == 1 => match tx.commit().await {
+                        Ok(_) => healed_to_event += 1,
+                        // commit 失败：事务已尝试提交并结束（tx 被消费），无法 rollback
+                        Err(e) => common::telemetry::warn!(
+                            "seed[approval]: {event_code} oper→even 事务提交失败 oper={oper_id}: {e}"
+                        ),
+                    },
+                    Ok(rows) => {
+                        // 回填 0 行：oper 已不存在/软删/桥已存在 → 回滚（不产生孤儿事件）
+                        let _ = tx.rollback().await;
+                        common::telemetry::warn!(
+                            "seed[approval]: {event_code} oper→even 回填影响 {} 行（oper 可能已删或桥已存在），回滚 oper={oper_id}",
+                            rows.rows_affected()
+                        );
                     }
+                    Err(e) => {
+                        let _ = tx.rollback().await;
+                        common::telemetry::warn!(
+                            "seed[approval]: {event_code} oper→even 回填失败 oper={oper_id}: {e}"
+                        );
+                    }
+                }
                 }
                 Err(e) => {
                     let _ = tx.rollback().await;
@@ -473,9 +501,9 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
         }
         if healed_to_event > 0 {
             common::telemetry::info!(
-                "seed[approval]: 自愈 {} 个 {event_code} 断链实例（oper→even 重建并回填 rr_event 桥）",
-                healed_to_event
-            );
+            "seed[approval]: 自愈 {} 个 {event_code} 断链实例（oper→even 重建并回填 rr_event 桥）",
+            healed_to_event
+        );
         }
     }
 

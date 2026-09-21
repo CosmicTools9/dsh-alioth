@@ -891,6 +891,7 @@ fn collect_expr_usage(e: &Expr, usage: &mut QueryUsage) {
         | Expr::OuterJoin(x)
         | Expr::Prior(x)
         | Expr::IsNormalized { expr: x, .. }
+        | Expr::IsJson { expr: x, .. }
         | Expr::Named { expr: x, .. }
         | Expr::Prefixed { value: x, .. }
         | Expr::JsonAccess { value: x, .. } => collect_expr_usage(x, usage),
@@ -1421,16 +1422,17 @@ mod tests {
 
     /// 测试用 ActionHandler：固定确认级别 + 共享调用日志
     /// （锁约定与 crate 内既有 fake adapter 一致：std Mutex 直锁）
+    /// FakeActionHandler 调用日志型（工具名 + 参数 id 集）
+    type CallLog = Arc<Mutex<Vec<(String, Vec<i64>)>>>;
+
     struct FakeActionHandler {
         level: ConfirmationLevel,
-        calls: Arc<Mutex<Vec<(String, Vec<i64>)>>>,
+        calls: CallLog,
     }
 
     impl FakeActionHandler {
-        fn boxed(
-            level: ConfirmationLevel,
-        ) -> (Arc<dyn ActionHandler>, Arc<Mutex<Vec<(String, Vec<i64>)>>>) {
-            let calls: Arc<Mutex<Vec<(String, Vec<i64>)>>> = Arc::new(Mutex::new(vec![]));
+        fn boxed(level: ConfirmationLevel) -> (Arc<dyn ActionHandler>, CallLog) {
+            let calls: CallLog = Arc::new(Mutex::new(vec![]));
             let handler: Arc<dyn ActionHandler> = Arc::new(FakeActionHandler {
                 level,
                 calls: calls.clone(),

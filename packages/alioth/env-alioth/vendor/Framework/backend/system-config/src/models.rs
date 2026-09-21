@@ -43,8 +43,10 @@ pub struct SystemConfig {
     pub public: Option<bool>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub created_by_id: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub updated_by_id: Option<i64>,
     pub deleted_at: Option<DateTime<Utc>>,

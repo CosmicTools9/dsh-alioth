@@ -33,6 +33,7 @@ mod preproc;
 mod standalone_auth;
 use alioth_gateway::api::approval_formula;
 use alioth_gateway::api::approvals;
+use alioth_gateway::api::business_audit;
 use alioth_gateway::api::chat_sessions;
 use alioth_gateway::api::entity_binding;
 // OpenAPI 数据服务产品 backend（namespace 级通用，{ns}/openapi/）。
@@ -44,6 +45,7 @@ use alioth_gateway::api::contacts;
 use alioth_gateway::api::dashboard;
 use alioth_gateway::api::global_overview;
 use alioth_gateway::api::inbox;
+use alioth_gateway::api::knowledge;
 use alioth_gateway::api::legal_search;
 use alioth_gateway::api::profile;
 use alioth_gateway::api::standard_search;
@@ -133,7 +135,7 @@ async fn init_state() -> std::io::Result<(Config, sqlx::PgPool, Vec<u8>)> {
 
 /// 初始化 Trigger Registry、log_event 分区与 isahl.mv_inventory / mv_title_ownership 自愈
 async fn init_framework(state: &(Config, sqlx::PgPool, Vec<u8>)) -> std::io::Result<()> {
-    // 初始化 Trigger Registry（Gateway 模式：禁止访问 isahl_meta，使用硬编码层次结构）
+    // 初始化 Trigger Registry（Gateway 模式：禁止访问 isahl_meta —— 容器边界）
     if let Err(e) = trigger_registry::init::init_smart_registry_global(
         &state.1,
         trigger_registry::AppContainer::Gateway,
@@ -141,6 +143,15 @@ async fn init_framework(state: &(Config, sqlx::PgPool, Vec<u8>)) -> std::io::Res
     .await
     {
         common::telemetry::warn!("Failed to initialize smart trigger registry: {}", e);
+    }
+
+    // 运行时触发面 MUST 覆盖数据库真实继承树：编译期图（`load_default_alioth_hierarchy`）
+    // 只收录家族根与少数子类，未收录的叶表取不到注册点 ⇒ 触发器不触发（`o_number` 等派生列缺失）。
+    // 边界：Gateway MUST NOT 读 `isahl_meta` ⇒ 从 `pg_catalog.pg_inherits` 装载（只读 isahl schema）；
+    // Meta 容器用 `refresh_smart_registry_from_db`（读 `meta_collections.config.inherits`）。
+    // 失败仅告警（保持启动可用），但触发面退回编译期图。
+    if let Err(e) = trigger_registry::init::refresh_smart_registry_from_pg_catalog(&state.1).await {
+        common::telemetry::warn!("Failed to load inheritance graph from pg_catalog: {}", e);
     }
 
     // 侦测 log_event 分区状态，未分表则自动补充
@@ -301,6 +312,32 @@ async fn load_extensions(_pool: &sqlx::PgPool) -> AppExtensionRegistry {
                     ext.business_rules.len(),
                     ext.state_machines.len(),
                     ext.workflows.len());
+                    // 实体/字段引用校验（`extension.rs:917` 既定意图的落地调用点）：
+                    // 违规逐条 ERROR，MUST NOT 阻止加载、MUST NOT fail-fast——运行期可用性优先，
+                    // 阻断职责归 compose-time / repo 门禁。已知实体面取 app 产物目录内 Service
+                    // 单元的本体声明（见 `extension_validation` 模块文档的候选取舍）；
+                    // 该面缺失 → 跳过并 WARN（缺失即跳过，避免把未知当缺失产生假阳性）。
+                    let known_face =
+                        alioth_gateway::extension_validation::known_entity_face_from_app_dir(&path);
+                    if known_face.is_empty() {
+                        common::telemetry::warn!(
+                            "App '{}': 无已知实体面（{}/Services/*/service.json 缺失或无实体声明），跳过扩展实体引用校验",
+                            app_name,
+                            app_name
+                        );
+                    } else {
+                        let violations = alioth_gateway::extension_validation::validate_and_log(
+                            &ext,
+                            &known_face,
+                        );
+                        if violations > 0 {
+                            common::telemetry::error!(
+                                "App '{}': {} 条扩展实体/字段引用非法（扩展已加载，未阻断启动）",
+                                app_name,
+                                violations
+                            );
+                        }
+                    }
                     extension_registry.register(ext);
                 }
             }
@@ -381,6 +418,20 @@ async fn main() -> std::io::Result<()> {
     // 失败 WARN 不阻断启动（与 Deploy start.sh 4b/4c 语义对齐）。
     alioth_gateway::seed::ensure_startup_seed_self_check(&state.1).await;
 
+    // NGAC AGE 图投影启动自愈（内嵌 SSO 形态 = dev:{ns} 与生产 ns 部署共用入口）。
+    // `ensure_ngac_age_projection`（037 幂等重放：图引导 + label ensure + 触发器重建 +
+    // 全量 rebuild）原仅挂在独立 SSO 的 `gateway_sso::build_server` 组合根，而内嵌形态
+    // 手工组装 SSO 状态、不经过该组合根 —— 缺此调用则 restore/重建后 `isahl_auth` 图注册
+    // 丢失（ag_catalog 被 pg_dump 排除的必然副作用）无人补，AGE 读路径持续 GraphMissing 降级。
+    // 与独立 SSO 同语义：fire-and-forget（投影层，失败仅降级读路径，不阻断启动）。
+    #[cfg(feature = "sso")]
+    {
+        let heal_pool = state.1.clone();
+        tokio::spawn(async move {
+            gateway_sso::ngac::age_projection::ensure_ngac_age_projection(&heal_pool).await;
+        });
+    }
+
     // WZ namespace 专属：wz_fssc 业务 schema（开票/收款/认领共享对接表） 自检自愈（invoice-sync 开票申请单 4 表 + receipt-sync 收款单 2 表）
     // 幂等检查 wz_fssc.* 业务表是否存在，缺失则自动执行内嵌 DDL 建表；
     // 失败则 fail-fast 阻止启动（与 sync_namespace_schema 的框架 schema 同步点并列）。
@@ -401,8 +452,15 @@ async fn main() -> std::io::Result<()> {
             .map_err(|e| {
                 std::io::Error::other(format!("WZ wz_fssc claim schema self-heal failed: {e}"))
             })?;
+        // 应付侧镜像 12 表（费用科目/打款历史/账单校验/出向凭据等）——本变更前无自愈入口，
+        // 缺表时 `/fee-subjects`、`/outgo-waybills` 等端点 500（2026-09-16 实证）。
+        wz_service_accounts_payable::db_init::ensure_fssc_schema(&state.1)
+            .await
+            .map_err(|e| {
+                std::io::Error::other(format!("WZ wz_fssc payable schema self-heal failed: {e}"))
+            })?;
         common::telemetry::info!(
-            "WZ wz_fssc schema self-heal passed (invoice-sync + receipt-sync + claim tables ready)"
+            "WZ wz_fssc schema self-heal passed (invoice-sync + receipt-sync + claim + payable tables ready)"
         );
     }
 
@@ -483,6 +541,17 @@ async fn main() -> std::io::Result<()> {
                 .with_messaging(sla_messaging.clone()),
         ))
         .await;
+    // 注册审批自动通过（配置项 approval:auto-approve，默认关闭）：
+    // 开关开启时扫无终态的注册类审批实例，以系统身份走与人工审批同一条通过链路
+    // （状态桥 → 激活 → 主体绑定 → 流程推进）并写 approval.auto_approve 审计事件。
+    scheduler
+        .register(std::sync::Arc::new(
+            alioth_gateway::auto_approve::AutoApproveHandler::new(
+                state.1.clone(),
+                event_bus.clone(),
+            ),
+        ))
+        .await;
     // 审批抄送通知消费（fix-approval-engine-gap-closure D9）：消费引擎推进 cc 节点
     // 发布的 ApprovalCc——resolvedUsers 逐人站内信（messaging 复用 SLA 注入实例）；
     // resolvedUsers 空（legacy 文本收件人）warn 跳过，投递失败不阻断发布方。
@@ -545,7 +614,7 @@ async fn main() -> std::io::Result<()> {
     }
     scheduler.start(60);
     common::telemetry::info!(
-        "framework-scheduler started（5 个业务定时计划：SLA/FSSC×2/压车费/共享流水）"
+        "framework-scheduler started（业务定时计划：SLA 驳回/注册审批自动通过/日程提醒/任务到期/物化视图刷新/FSSC×2/压车费/共享流水/协定到期）"
     );
     common::telemetry::info!(
         "DomainEventBus: InMemoryEventBus (module.json event declarations no longer loaded)"
@@ -610,6 +679,41 @@ async fn main() -> std::io::Result<()> {
             wz_service_contract::events::subscribe_contract_events(bus_for_events, pool_for_events);
         });
         common::telemetry::info!("[events] contract ApprovalCompleted 订阅已装配（WZ）");
+    }
+
+    // wz namespace 下，accounts-payable 订阅 ApprovalCompleted → FLOW-FREIGHT 终态驱动
+    // 承运账单审核状态（add-wz-flow-business-initiation 链 A）：submit-audit 同事务创建
+    // 审批实例（部门→财务），终审 approved → AuditPass、rejected/withdrawn → AuditReject。
+    // 与 contract 装配点并列，feature（wz-service-accounts-payable）条件。
+    #[cfg(feature = "wz-service-accounts-payable")]
+    if std::env::var("NAMESPACE").as_deref() == Ok("WZ") {
+        let bus_for_events = event_bus.clone();
+        let pool_for_events = state.1.clone();
+        actix_web::rt::spawn(async move {
+            // 等 state 完全就绪（短延迟避免启动竞态；事件为幂等重放，漏单可重试）
+            actix_web::rt::time::sleep(std::time::Duration::from_millis(500)).await;
+            wz_service_accounts_payable::events::subscribe_payable_events(
+                bus_for_events,
+                pool_for_events,
+            );
+        });
+        common::telemetry::info!("[events] payable ApprovalCompleted 订阅已装配（WZ）");
+    }
+
+    // wz namespace 下，isahl-db 订阅 ApprovalCompleted → FLOW-DRIVER-ONBOARD 终态驱动
+    // 司机实体状态（add-wz-flow-business-initiation 链 B 回写侧）：OA 门户司机注册已同事务
+    // 置 ENT-PENDING + 建实例（安全审核→车队审批），终审 approved → ENT-ACTIVE、
+    // rejected/withdrawn → ENT-DISABLED。feature（wz-service-isahl-db）条件。
+    #[cfg(feature = "wz-service-isahl-db")]
+    if std::env::var("NAMESPACE").as_deref() == Ok("WZ") {
+        let bus_for_events = event_bus.clone();
+        let pool_for_events = state.1.clone();
+        actix_web::rt::spawn(async move {
+            // 等 state 完全就绪（短延迟避免启动竞态；事件为幂等重放，漏单可重试）
+            actix_web::rt::time::sleep(std::time::Duration::from_millis(500)).await;
+            wz_service_isahl_db::events::subscribe_driver_events(bus_for_events, pool_for_events);
+        });
+        common::telemetry::info!("[events] driver-onboarding ApprovalCompleted 订阅已装配（WZ）");
     }
 
     // wz namespace 下，employee-onboarding 审批闭环订阅 ApprovalCompleted →
@@ -1033,9 +1137,13 @@ async fn main() -> std::io::Result<()> {
                             // 仅放行两个回调子路径：GET /fssc-callbacks（回调历史查询）需 JWT+NGAC
                             "/api/service/accounts-payable/fssc-callbacks/audit".to_string(),
                             "/api/service/accounts-payable/fssc-callbacks/ocr".to_string(),
+                            // 微信支付回调（无 JWT，服务侧验签补偿——WECHATPAY2-SHA256-RSA2048 验签 + AES-256-GCM 解密 fail-closed）
+                            "/api/service/wechat-pay/notify".to_string(),
                             // 承运门户回传（契约 §服务身份）：门户以 X-Service-Key 共享密钥
                             // 转调（无 JWT），服务侧 verify_service_key fail-closed 补偿校验
                             "/api/service/transport-operations/carrier-portal".to_string(),
+                            // 文档识别服务间转调（X-Service-Key fail-closed，同上）
+                            "/api/service/doc-recognition".to_string(),
                             // 门户转调报价（矩阵 #4 单一实现收口）：门户以 X-Service-Key 转调
                             // transport-dispatch 报价逻辑（服务侧 verify_service_key fail-closed）
                             "/api/service/transport-dispatch/carrier-portal".to_string(),
@@ -1053,11 +1161,16 @@ async fn main() -> std::io::Result<()> {
                     .wrap(openapi_idempotency.clone())
                     // Framework AI 聊天服务
                     .configure(chat_sessions::configure_routes)
+                    // 文档识别服务（doc-recognition Framework 能力的 Gateway 接入面：
+                    // OA 等门户经 X-Service-Key 服务间转调，门户自身不接大模型）
+                    .configure(alioth_gateway::api::doc_recognition::configure_routes)
                     // 应用发现（add-app-visibility-ngac-isolation D3）：认证化 +
                     // PDP resource_type='app' fail-closed 按人过滤
                     .configure(alioth_gateway::apps::configure_routes)
                     // 通用法律本体检索（EmpAgent 上下文增强，所有 namespace）
                     .configure(legal_search::configure_routes)
+                    // 通用知识检索（E3）：业务静态域 + 关系驱动（合同引用法条）
+                    .configure(knowledge::configure_routes)
                     .configure(standard_search::configure_routes)
                     // 系统推送服务（站内信 + 设备推送）
                     .configure(system_push::configure_routes)
@@ -1065,6 +1178,8 @@ async fn main() -> std::io::Result<()> {
                     .configure(global_overview::configure_routes)
                     // 审批操作（批准/拒绝）
                     .configure(approvals::configure_routes)
+                    // 业务审计域（审计项目 + 审计取数导出；change wire-business-audit-domain）
+                    .configure(business_audit::configure_routes)
                     // 公式 AI 生成与模拟执行（formula-assist / expr-simulate）
                     .configure(approval_formula::configure_routes)
                     // 注册后主体绑定（个人自然人/企业法人 + 引导）
@@ -1121,7 +1236,10 @@ async fn main() -> std::io::Result<()> {
 }
 
 async fn health_check() -> HttpResponse {
-    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "ok",
+        "commit": env!("ALIOTH_BUILD_COMMIT"),
+    }))
 }
 
 async fn metrics_handler(metrics: web::Data<Arc<Metrics>>) -> HttpResponse {
@@ -1151,6 +1269,8 @@ async fn system_check() -> HttpResponse {
         "status": "ok",
         "namespace": namespace,
         "version": env!("CARGO_PKG_VERSION"),
+        "commit": env!("ALIOTH_BUILD_COMMIT"),
+        "builtAt": env!("ALIOTH_BUILD_TIME"),
         "uptimeSeconds": uptime_secs,
         "startedAt": started_iso,
     }))

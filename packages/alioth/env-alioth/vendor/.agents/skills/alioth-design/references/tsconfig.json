@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "jsx": "react-jsx",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowUmdGlobalAccess": true,
+    "types": [],
+    "paths": {
+      "react": ["../../../../Framework/frontend/components/node_modules/@types/react/index.d.ts"],
+      "react/*": ["../../../../Framework/frontend/components/node_modules/@types/react/*"],
+      "react-dom": ["../../../../Framework/frontend/components/node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/*": ["../../../../Framework/frontend/components/node_modules/@types/react-dom/*"]
+    }
+  },
+  "include": ["gateway-shell.tsx", "activity-shell.tsx", "shells/*.ts", "shells/*.tsx"]
+}

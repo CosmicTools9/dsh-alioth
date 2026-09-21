@@ -28,8 +28,8 @@ pub async fn publish_flow(
 
     // 1. 读取流程 + 设计图 JSON（meta jsonb——migrate-flow-design-storage-to-meta-mermaid；
     //    结构源唯一，不回退解析 comments 惰性文本）
-    //    + 治理标记（add-model-seed-flow-guard）：meta.managed='model-seed' 的模型级
-    //    种子流程（注册/实名/入驻审批链）拒绝发布——物化会覆盖种子图
+    //    + 治理标记（add-model-seed-flow-guard，extend-managed-guard-to-ns-seeds 泛化）：
+    //    meta.managed 非空的种子流程拒绝发布——物化会覆盖种子图
     let row = sqlx::query_as::<_, (String, Option<Value>, Option<String>)>(
         r#"SELECT notice, meta, meta->>'managed' FROM isahl.zc_id_process
            WHERE id = $1 AND deleted_at IS NULL"#,
@@ -41,10 +41,10 @@ pub async fn publish_flow(
     .ok_or_else(|| ApiError::NotFound(format!("ApprovalFlow {} not found", flow_id)))?;
 
     let (flow_name, meta_json, managed) = row;
-    if managed.as_deref() == Some("model-seed") {
+    if let Some(managed) = managed.as_deref() {
         return Err(ApiError::Validation {
             field: "managed".into(),
-            message: "模型级种子流程不可发布——由模型种子通道持有".into(),
+            message: format!("种子流程（{managed}）不可发布——由种子通道持有"),
         });
     }
     // 2. 设计图（jsonb 直取，无序列化解析）
@@ -116,11 +116,12 @@ pub(crate) async fn update_flow_lifecycle_status_tx(
         Some(id) => id,
         None => {
             sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice)
-                   VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice, flag)
+                   VALUES (isahl.gen_next_uid(105), $1, $2, $3::isahl.status_flag) RETURNING id"#,
             )
             .bind(status_code)
             .bind(status_notice)
+            .bind(common::status::flag_for_status_code(status_code))
             .fetch_one(&mut **tx)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?
@@ -158,7 +159,7 @@ pub(crate) async fn update_flow_lifecycle_status_tx(
         None => {
             sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-                   VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+                   VALUES (isahl.gen_next_uid(260), $1, $2)"#,
             )
             .bind(flow_id)
             .bind(status_id)
@@ -224,11 +225,12 @@ pub(crate) async fn update_flow_lifecycle_status(
         Some(id) => id,
         None => {
             sqlx::query_scalar::<_, i64>(
-                r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice)
-                   VALUES (isahl.gen_next_zuid(), $1, $2) RETURNING id"#,
+                r#"INSERT INTO isahl."zc_id_stus-process" (id, code, notice, flag)
+                   VALUES (isahl.gen_next_uid(105), $1, $2, $3::isahl.status_flag) RETURNING id"#,
             )
             .bind(status_code)
             .bind(status_notice)
+            .bind(common::status::flag_for_status_code(status_code))
             .fetch_one(pool)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?
@@ -266,7 +268,7 @@ pub(crate) async fn update_flow_lifecycle_status(
         None => {
             sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right)
-                   VALUES (isahl.gen_next_zuid(), $1, $2)"#,
+                   VALUES (isahl.gen_next_uid(260), $1, $2)"#,
             )
             .bind(flow_id)
             .bind(status_id)
@@ -652,7 +654,7 @@ pub(crate) async fn materialize_graph(
 
     // 坐标静态绑定（§6.12；循环外一次解析，循环内复用）：even-approve 事件模板 = JC/FTA/↑_NA
     let (even_dk_scene, even_dk_factor, even_dk_function) =
-        crate::dk::resolve_ontology_coords_conn(&mut *tx, crate::dk::DkEntity::DkJcFtaNa)
+        crate::dk::resolve_ontology_coords_conn(&mut tx, crate::dk::DkEntity::JcFtaNa)
             .await
             .map_err(|e| ApiError::Database(e.to_string()))?;
 
@@ -931,7 +933,7 @@ pub(crate) async fn materialize_graph(
                         .map_err(|e| ApiError::Database(format!("resolve vote engineer[{}]: {}", idx, e)))?
                     } else {
                         // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
-                        common::ngac_org::resolve_member_user_ids(&mut *tx, id, 200).await
+                        common::ngac_org::resolve_member_user_ids(&mut tx, id, 200).await
                     };
                     for uid in users {
                         resolved.push(serde_json::json!({ "uid": uid, "weight": weight }));
@@ -1108,7 +1110,7 @@ pub(crate) async fn materialize_graph(
                 .expect("whitelisted statement leaf has insert arm");
             // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
             let (dk_scene, dk_factor, dk_function) = match context_meta::leaf_coords(leaf) {
-                Some((s, f, fx)) => ontology_binding::resolve_conn(&mut *tx, (s, f, fx))
+                Some((s, f, fx)) => ontology_binding::resolve_conn(&mut tx, (s, f, fx))
                     .await
                     .map_err(|e| {
                         ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
@@ -1151,7 +1153,7 @@ pub(crate) async fn materialize_graph(
                 .expect("whitelisted task leaf has insert arm");
             // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
             let (dk_scene, dk_factor, dk_function) = match context_meta::leaf_coords(leaf) {
-                Some((s, f, fx)) => ontology_binding::resolve_conn(&mut *tx, (s, f, fx))
+                Some((s, f, fx)) => ontology_binding::resolve_conn(&mut tx, (s, f, fx))
                     .await
                     .map_err(|e| {
                         ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
@@ -1253,11 +1255,11 @@ pub(crate) async fn materialize_graph(
                     .expect("whitelisted event leaf has insert arm");
                 // 坐标三元组（§6.12/§7.3.3）：按叶表取静态声明并解析；未声明 → (None,None,None)
                 let (dk_scene, dk_factor, dk_function) = match context_meta::leaf_coords(leaf) {
-                    Some((s, f, fx)) => ontology_binding::resolve_conn(&mut *tx, (s, f, fx))
+                    Some((s, f, fx)) => ontology_binding::resolve_conn(&mut tx, (s, f, fx))
                         .await
                         .map_err(|e| {
-                            ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
-                        })?,
+                        ApiError::Database(format!("resolve coords for {}: {}", leaf, e))
+                    })?,
                     None => (None, None, None),
                 };
                 let row_id: i64 = sqlx::query_scalar(insert_sql)
@@ -1292,12 +1294,10 @@ pub(crate) async fn materialize_graph(
                     .and_then(|v| v.as_i64())
                     .map(|n| serde_json::json!({ "backupThreshold": n }));
                 // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
-                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
-                    &mut *tx,
-                    crate::dk::DkEntity::DkJeFtaEz,
-                )
-                .await
-                .map_err(|e| ApiError::Database(e.to_string()))?;
+                let (dk_scene, dk_factor, dk_function) =
+                    crate::dk::resolve_ontology_coords_conn(&mut tx, crate::dk::DkEntity::JeFtaEz)
+                        .await
+                        .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar::<_, i64>(
                     r#"INSERT INTO isahl."zc_id_oper-approve"
                            (notice, code, created_by_id, _f_, _t_, meta, dk_scene, dk_factor, dk_function)
@@ -1316,12 +1316,10 @@ pub(crate) async fn materialize_graph(
             }
             "action" => {
                 // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
-                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
-                    &mut *tx,
-                    crate::dk::DkEntity::DkJeFtaEz,
-                )
-                .await
-                .map_err(|e| ApiError::Database(e.to_string()))?;
+                let (dk_scene, dk_factor, dk_function) =
+                    crate::dk::resolve_ontology_coords_conn(&mut tx, crate::dk::DkEntity::JeFtaEz)
+                        .await
+                        .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar(
                     r#"INSERT INTO isahl."zc_id_oper-action"
                            (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
@@ -1340,12 +1338,10 @@ pub(crate) async fn materialize_graph(
             "review" => {
                 // 评审动作 → oper-check 子类（检查/评审语义；叶表 INSERT 规约）
                 // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
-                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
-                    &mut *tx,
-                    crate::dk::DkEntity::DkJeFtaEz,
-                )
-                .await
-                .map_err(|e| ApiError::Database(e.to_string()))?;
+                let (dk_scene, dk_factor, dk_function) =
+                    crate::dk::resolve_ontology_coords_conn(&mut tx, crate::dk::DkEntity::JeFtaEz)
+                        .await
+                        .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar(
                     r#"INSERT INTO isahl."zc_id_oper-check"
                        (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
@@ -1365,12 +1361,10 @@ pub(crate) async fn materialize_graph(
                 // 自动节点（start/end/condition/cc/parallel/branch/gate/loop）
                 // → oper-gate 子类（无 fk_approve 列；模板关联走 rr_event 桥）
                 // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
-                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
-                    &mut *tx,
-                    crate::dk::DkEntity::DkJeFbbEz,
-                )
-                .await
-                .map_err(|e| ApiError::Database(e.to_string()))?;
+                let (dk_scene, dk_factor, dk_function) =
+                    crate::dk::resolve_ontology_coords_conn(&mut tx, crate::dk::DkEntity::JeFbbEz)
+                        .await
+                        .map_err(|e| ApiError::Database(e.to_string()))?;
                 sqlx::query_scalar(
                     r#"INSERT INTO isahl."zc_id_oper-gate"
                        (notice, code, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
@@ -1520,12 +1514,10 @@ pub(crate) async fn materialize_graph(
                 // standard 范例 find-or-create + 实现·实例（tpl_id→范例）
                 let std_code = format!("LOOP-STD-{}", graph_id);
                 // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）
-                let (dk_scene, dk_factor, dk_function) = crate::dk::resolve_ontology_coords_conn(
-                    &mut *tx,
-                    crate::dk::DkEntity::DkJeFbaAb,
-                )
-                .await
-                .map_err(|e| ApiError::Database(e.to_string()))?;
+                let (dk_scene, dk_factor, dk_function) =
+                    crate::dk::resolve_ontology_coords_conn(&mut tx, crate::dk::DkEntity::JeFbaAb)
+                        .await
+                        .map_err(|e| ApiError::Database(e.to_string()))?;
                 let std_tpl: i64 = match sqlx::query_scalar(
                     r#"SELECT id FROM isahl.zc_id_standard
                        WHERE code = $1 AND deleted_at IS NULL AND tpl_id IS NULL LIMIT 1"#,
@@ -1764,22 +1756,22 @@ pub(crate) async fn materialize_graph(
                     let cate_err = |e: sqlx::Error| {
                         ApiError::Database(format!("node {action} cate lookup[{}]: {}", idx, e))
                     };
-                    let direct_cate = approval_role_cate_id(&mut *tx, "ROLE-DIRECT")
+                    let direct_cate = approval_role_cate_id(&mut tx, "ROLE-DIRECT")
                         .await
                         .map_err(cate_err)?;
-                    let deputy_cate = approval_role_cate_id(&mut *tx, "ROLE-DEPUTY")
+                    let deputy_cate = approval_role_cate_id(&mut tx, "ROLE-DEPUTY")
                         .await
                         .map_err(cate_err)?;
-                    let escalate_cate = approval_role_cate_id(&mut *tx, "ROLE-ESCALATE")
+                    let escalate_cate = approval_role_cate_id(&mut tx, "ROLE-ESCALATE")
                         .await
                         .map_err(cate_err)?;
-                    let backup_cate = approval_role_cate_id(&mut *tx, "ROLE-BACKUP")
+                    let backup_cate = approval_role_cate_id(&mut tx, "ROLE-BACKUP")
                         .await
                         .map_err(cate_err)?;
                     // 直管解析：员工优先（user 有值→该员工名下岗位行），
                     // 否则岗位名组全部任职记录；缺位兜底：直管未解析到 → 代理接管
                     let mut pending: Vec<(i64, Option<i64>)> =
-                        resolve_approver_sel(&mut *tx, &direct)
+                        resolve_approver_sel(&mut tx, &direct)
                             .await
                             .map_err(|e| {
                                 ApiError::Database(format!("resolve direct[{}]: {}", idx, e))
@@ -1791,7 +1783,7 @@ pub(crate) async fn materialize_graph(
                         let deputy = approver_sel_of(node, "deputy", Some("roleDeputy"), None);
                         if !deputy.pos.is_empty() || deputy.user.is_some() {
                             let deputies =
-                                resolve_approver_sel(&mut *tx, &deputy).await.map_err(|e| {
+                                resolve_approver_sel(&mut tx, &deputy).await.map_err(|e| {
                                     ApiError::Database(format!("resolve deputy[{}]: {}", idx, e))
                                 })?;
                             pending.extend(deputies.into_iter().map(|p| (p, deputy_cate)));
@@ -1809,7 +1801,7 @@ pub(crate) async fn materialize_graph(
                         }
                     }
                     if !escalate.pos.is_empty() || escalate.user.is_some() {
-                        let es = resolve_approver_sel(&mut *tx, &escalate)
+                        let es = resolve_approver_sel(&mut tx, &escalate)
                             .await
                             .map_err(|e| {
                                 ApiError::Database(format!("resolve escalate[{}]: {}", idx, e))
@@ -1819,7 +1811,7 @@ pub(crate) async fn materialize_graph(
                     // 备选岗位（直管过载后备选；运行时由 advance 按积压阈值判定并入待办）
                     let backup = approver_sel_of(node, "backup", Some("roleBackup"), None);
                     if !backup.pos.is_empty() || backup.user.is_some() {
-                        let bs = resolve_approver_sel(&mut *tx, &backup).await.map_err(|e| {
+                        let bs = resolve_approver_sel(&mut tx, &backup).await.map_err(|e| {
                             ApiError::Database(format!("resolve backup[{}]: {}", idx, e))
                         })?;
                         pending.extend(bs.into_iter().map(|p| (p, backup_cate)));
@@ -1838,7 +1830,7 @@ pub(crate) async fn materialize_graph(
                     }
                 } else {
                     // review/action：单岗位直配（无岗位类别；员工优先同直管）
-                    let pos_ids = resolve_approver_sel(&mut *tx, &direct).await.map_err(|e| {
+                    let pos_ids = resolve_approver_sel(&mut tx, &direct).await.map_err(|e| {
                         ApiError::Database(format!("resolve role positions: {}", e))
                     })?;
                     for pid in pos_ids {
@@ -1877,7 +1869,7 @@ pub(crate) async fn materialize_graph(
                             .map_err(|e| ApiError::Database(format!("vote src user[{}]: {}", idx, e)))?
                         } else {
                             // 岗位类别成员经 common::ngac_org 收敛解析（指派 UA ∪ 岗位持有者）
-                            common::ngac_org::resolve_member_user_ids(&mut *tx, id, 200).await
+                            common::ngac_org::resolve_member_user_ids(&mut tx, id, 200).await
                         };
                         for uid in users {
                             let pos_ids: Vec<i64> = sqlx::query_scalar(
@@ -1918,7 +1910,7 @@ pub(crate) async fn materialize_graph(
         node_map.push(serde_json::json!({
             "index": idx,
             "id": op_id.to_string(),
-            "graphId": graph_id,
+            "graphId": graph_id.to_string(),
             "type": node_type,
             "label": label,
             "drive": if is_task_start { "task" } else { "event" },
@@ -2666,8 +2658,8 @@ pub async fn unpublish_flow(
     let flow_id = path.into_inner();
     let user_id = context::require_auth(&req)?;
 
-    // 守卫：模型级种子流程不可下线（add-model-seed-flow-guard）；
-    // 及仅已发布（主状态桥 published）流程可停用——单查双取，零额外往返
+    // 守卫：种子流程不可下线（add-model-seed-flow-guard → extend-managed-guard-to-ns-seeds
+    // 泛化为 managed 非空）；及仅已发布（主状态桥 published）流程可停用——单查双取，零额外往返
     let (managed, published): (Option<String>, bool) = sqlx::query_as(
         r#"SELECT (SELECT meta->>'managed' FROM isahl.zc_id_process
                     WHERE id = $1 AND deleted_at IS NULL),
@@ -2681,10 +2673,10 @@ pub async fn unpublish_flow(
     .fetch_one(&**pool)
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;
-    if managed.as_deref() == Some("model-seed") {
+    if let Some(managed) = managed.as_deref() {
         return Err(ApiError::Validation {
             field: "managed".into(),
-            message: "模型级种子流程不可下线——由模型种子通道持有".into(),
+            message: format!("种子流程（{managed}）不可下线——由种子通道持有"),
         });
     }
     if !published {

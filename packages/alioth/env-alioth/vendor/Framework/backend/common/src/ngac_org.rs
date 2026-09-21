@@ -49,7 +49,8 @@ delegated_ua AS (
 /// （NGAC_SPEC §2.2.3/§2.2.4 消费同源义务）。
 /// 推导链与 `/auth/me` 主体认知同构：
 /// user → empl-agent/empl-natural(fk_user) → post_rr_employee(ref_left=岗位, ref_right=雇员)
-///      → position；岗位 → relation-post_view_r_tags → tags-post_view。全部边 deleted_at IS NULL。
+///      → position；岗位 → 视角关联行（`zc_id_subj-post_rr_view`）→ relation-post_view_r_tags
+///      → tags-post_view。全部边 deleted_at IS NULL。
 /// `position:` 派生名取岗位 `ck_category` → `zc_id_category` 的类别 code；类别行须为基表行
 /// （`tableoid = 'isahl.zc_id_category'::regclass`）——`zc_id_cate-position` 等子族字典
 /// （组织架构岗分类）与空 `ck_category` 均不派生（B-1 align-cognition-ua-category）。
@@ -85,8 +86,10 @@ cognition_ua_names AS (
     UNION
     SELECT 'view:' || vt.code
     FROM my_positions mp
+    JOIN isahl."zc_id_subj-post_rr_view" v
+        ON v.ref_left = mp.id AND v.deleted_at IS NULL
     JOIN isahl."zc_id_relation-post_view_r_tags" r
-        ON r.ref_left = mp.id AND r.deleted_at IS NULL
+        ON r.ref_left = v.id AND r.deleted_at IS NULL
     JOIN isahl."zc_id_tags-post_view" vt
         ON vt.id = r.ref_right AND vt.deleted_at IS NULL
     WHERE vt.code IS NOT NULL AND vt.code <> ''
@@ -283,8 +286,10 @@ pub async fn cognition_derived_user_holders(
             WHERE category_code IS NOT NULL AND 'position:' || category_code = $1
             UNION
             SELECT p.fk_user FROM pos p
+            JOIN isahl."zc_id_subj-post_rr_view" v
+                ON v.ref_left = p.position_id AND v.deleted_at IS NULL
             JOIN isahl."zc_id_relation-post_view_r_tags" r
-                ON r.ref_left = p.position_id AND r.deleted_at IS NULL
+                ON r.ref_left = v.id AND r.deleted_at IS NULL
             JOIN isahl."zc_id_tags-post_view" vt
                 ON vt.id = r.ref_right AND vt.deleted_at IS NULL
             WHERE vt.code IS NOT NULL AND 'view:' || vt.code = $1
@@ -339,8 +344,10 @@ pub async fn cognition_derived_holders_batch(
             UNION
             SELECT 'view:' || vt.code, p.fk_user
             FROM pos p
+            JOIN isahl."zc_id_subj-post_rr_view" v
+                ON v.ref_left = p.position_id AND v.deleted_at IS NULL
             JOIN isahl."zc_id_relation-post_view_r_tags" r
-                ON r.ref_left = p.position_id AND r.deleted_at IS NULL
+                ON r.ref_left = v.id AND r.deleted_at IS NULL
             JOIN isahl."zc_id_tags-post_view" vt
                 ON vt.id = r.ref_right AND vt.deleted_at IS NULL
             WHERE vt.code IS NOT NULL AND vt.code <> ''
@@ -393,8 +400,10 @@ async fn cognition_holders(conn: &mut PgConnection, o_name: &str) -> Result<Vec<
             WHERE category_code IS NOT NULL AND 'position:' || category_code = $1
             UNION
             SELECT p.fk_user FROM pos p
+            JOIN isahl."zc_id_subj-post_rr_view" v
+                ON v.ref_left = p.position_id AND v.deleted_at IS NULL
             JOIN isahl."zc_id_relation-post_view_r_tags" r
-                ON r.ref_left = p.position_id AND r.deleted_at IS NULL
+                ON r.ref_left = v.id AND r.deleted_at IS NULL
             JOIN isahl."zc_id_tags-post_view" vt
                 ON vt.id = r.ref_right AND vt.deleted_at IS NULL
             WHERE vt.code IS NOT NULL AND 'view:' || vt.code = $1

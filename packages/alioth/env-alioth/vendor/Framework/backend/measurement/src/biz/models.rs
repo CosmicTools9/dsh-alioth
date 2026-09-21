@@ -44,8 +44,8 @@ impl AliothDbEntity for MeasurementUnit {
         "isahl.zc_id_unit"
     }
     const SELECT_FIELDS: &'static str = "id, notice AS name, code, symbol, \
-         CASE WHEN tableoid = 'isahl.zc_id_unit'::regclass THEN NULL \
-              ELSE replace(replace(tableoid::regclass::text, '\"zc_id_unit-', ''), '\"', '') END AS dimension, \
+         CASE WHEN e.tableoid = 'isahl.zc_id_unit'::regclass THEN NULL \
+              ELSE replace((SELECT relname FROM pg_class WHERE oid = e.tableoid), 'zc_id_unit-', '') END AS dimension, \
          system::text AS system, base, t_color_, created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "measurement_unit";
     const SOFT_DELETE: bool = true;
@@ -247,8 +247,8 @@ impl AliothDbEntity for UnitConversionRate {
     }
     const SELECT_FIELDS: &'static str = "id, notice AS name, ck_left AS left, ck_right AS right, \
          multiply, division, precision_, intrinsic, \
-         CASE WHEN tableoid = 'isahl.zc_id_rate'::regclass THEN NULL \
-              ELSE replace(replace(tableoid::regclass::text, '\"zc_id_rate-', ''), '\"', '') END AS dimension, \
+         CASE WHEN e.tableoid = 'isahl.zc_id_rate'::regclass THEN NULL \
+              ELSE replace((SELECT relname FROM pg_class WHERE oid = e.tableoid), 'zc_id_rate-', '') END AS dimension, \
          created_at, updated_at, deleted_at";
     const ENTITY_NAME: &'static str = "unit_conversion_rate";
     const SOFT_DELETE: bool = true;

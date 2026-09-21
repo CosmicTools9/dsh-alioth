@@ -89,7 +89,7 @@ impl LanguageRepository {
                 .await
                 .map_err(AliothError::from)?;
         let id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO isahl."zc_id_prot-env_config"" (notice, code, settings, created_by_id,
+            r#"INSERT INTO isahl."zc_id_prot-env_config" (notice, code, settings, created_by_id,
                                                            dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7) RETURNING id"#,
         )
@@ -121,7 +121,7 @@ impl LanguageRepository {
         user_id: i64,
     ) -> Result<Option<Language>, AliothError> {
         let rows = sqlx::query(
-            r#"UPDATE isahl."zc_id_prot-env_config""
+            r#"UPDATE isahl."zc_id_prot-env_config"
                SET notice = COALESCE($1, notice),
                    settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb,
                    updated_at = NOW(), updated_by_id = $3
@@ -152,7 +152,7 @@ impl LanguageRepository {
     /// 软删除语言包 — 命中返回 `true`，否则 `false`
     pub async fn delete(&self, id: i64, user_id: i64) -> Result<bool, AliothError> {
         let rows = sqlx::query(
-            r#"UPDATE isahl."zc_id_prot-env_config""
+            r#"UPDATE isahl."zc_id_prot-env_config"
                SET deleted_at = NOW(), updated_by_id = $2
                WHERE id = $1 AND code LIKE $3 AND deleted_at IS NULL"#,
         )

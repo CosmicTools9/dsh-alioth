@@ -4,6 +4,12 @@
 # If this file is missing or unreadable, RunCommandTool falls back to the
 # hardcoded DEFAULT_ALLOWED_PROGRAMS list in the Rust source.
 #
+# 回退必留证据（add-appagent-degradation-evidence）：回退 MUST NOT 静默——
+# 生效来源经 `tool_registry::allowed_programs_status()` 只读可查
+# （`file` = 本文件 / `code_default` = 代码常量），并附可区分的降级原因
+# （缺失或不可读 / allowed_programs 为空 / 解析失败）。
+# 回退不改变放行面：匹配规则与清单集合与代码清单一致。
+#
 # Matching rule: program MUST either equal an entry exactly, or start with
 # "<entry>/" so path-prefix entries like `target/debug/ontology-mapping`
 # work alongside bare-name entries like `bun`.

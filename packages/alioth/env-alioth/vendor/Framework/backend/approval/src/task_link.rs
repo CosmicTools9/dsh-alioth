@@ -49,16 +49,47 @@ pub mod event_types {
     pub const SOURCE_ORCHESTRATION: &str = "orchestration";
 }
 
-/// taskType → 任务叶表名（静态白名单，对齐 orchestration models_task
+/// 任务叶表静态 SQL 集：`table`（schema 限定名，诊断文案用）与 `insert`（表名编译期
+/// 固化的 INSERT）均来自同一个 `$table:literal`——运行期零表名拼接。
+struct TaskLeafSql {
+    table: &'static str,
+    insert: &'static str,
+}
+
+/// 单表构造（多行字面量的缩进即 SQL 正文，勿重排）。
+macro_rules! task_leaf_sql {
+    ($table:literal) => {
+        TaskLeafSql {
+            table: concat!("isahl.\"", $table, "\""),
+            insert: concat!(
+                "INSERT INTO isahl.\"",
+                $table,
+                "\" (id, notice, code, comments, fk_place, fk_subject, timeline, \
+                 created_by_id, dk_scene, dk_factor, dk_function) \
+                 VALUES (isahl.gen_next_zuid(), $1, NULL, $2, $3, $4, $5, $6, $7, $8, $9) \
+                 RETURNING id"
+            ),
+        }
+    };
+}
+
+static TASK_LEAF_DESIGN: TaskLeafSql = task_leaf_sql!("zc_id_task-design");
+static TASK_LEAF_DEVELOP: TaskLeafSql = task_leaf_sql!("zc_id_task-develop");
+static TASK_LEAF_TESTING: TaskLeafSql = task_leaf_sql!("zc_id_task-testing");
+static TASK_LEAF_COMMISSION: TaskLeafSql = task_leaf_sql!("zc_id_task-commission");
+static TASK_LEAF_FIX: TaskLeafSql = task_leaf_sql!("zc_id_task-fix");
+static TASK_LEAF_STORAGE: TaskLeafSql = task_leaf_sql!("zc_id_task-storage");
+
+/// taskType → 任务叶表静态 SQL（静态白名单，对齐 orchestration models_task
 /// TASK_TYPES；未知类型不入 SQL）
-fn leaf_table(task_type: &str) -> Option<&'static str> {
+fn leaf_sql(task_type: &str) -> Option<&'static TaskLeafSql> {
     match task_type {
-        "design" => Some(r#"isahl."zc_id_task-design""#),
-        "develop" => Some(r#"isahl."zc_id_task-develop""#),
-        "testing" => Some(r#"isahl."zc_id_task-testing""#),
-        "commission" => Some(r#"isahl."zc_id_task-commission""#),
-        "fix" => Some(r#"isahl."zc_id_task-fix""#),
-        "storage" => Some(r#"isahl."zc_id_task-storage""#),
+        "design" => Some(&TASK_LEAF_DESIGN),
+        "develop" => Some(&TASK_LEAF_DEVELOP),
+        "testing" => Some(&TASK_LEAF_TESTING),
+        "commission" => Some(&TASK_LEAF_COMMISSION),
+        "fix" => Some(&TASK_LEAF_FIX),
+        "storage" => Some(&TASK_LEAF_STORAGE),
         _ => None,
     }
 }
@@ -199,7 +230,7 @@ pub(crate) async fn maybe_create_node_task(
         );
         return Ok(());
     };
-    let Some(leaf) = leaf_table(&task_type) else {
+    let Some(leaf) = leaf_sql(&task_type) else {
         common::telemetry::warn!(
             "taskTemplate: node {} taskType '{}' 不在白名单（design|develop|testing|commission|fix|storage）——跳过任务生成",
             node_op_id,
@@ -255,16 +286,10 @@ pub(crate) async fn maybe_create_node_task(
         "entityTable": entity.map(|(t, _)| t),
         "entityId": entity.map(|(_, id)| id.to_string()),
     });
-    let insert_sql = format!(
-        "INSERT INTO {leaf} (id, notice, code, comments, fk_place, fk_subject, timeline, \
-         created_by_id, dk_scene, dk_factor, dk_function) \
-         VALUES (isahl.gen_next_zuid(), $1, NULL, $2, $3, $4, $5, $6, $7, $8, $9) \
-         RETURNING id"
-    );
     // 静态白名单表名（match 常量）+ 参数化值；AssertSqlSafe 声明已审计
     let comments =
         format!("流程执行 {execution_id} 节点 {node_op_id} 物化生成（节点「{node_label}」）");
-    let task_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(insert_sql.as_str()))
+    let task_id: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(leaf.insert))
         .bind(&name)
         .bind(&comments)
         .bind(entity.map(|(_, id)| *id))
@@ -276,7 +301,9 @@ pub(crate) async fn maybe_create_node_task(
         .bind(dk_function)
         .fetch_one(pool)
         .await
-        .map_err(|e| ApiError::Database(format!("task insert into {} failed: {}", leaf, e)))?;
+        .map_err(|e| {
+            ApiError::Database(format!("task insert into {} failed: {}", leaf.table, e))
+        })?;
 
     // 6. 初始主状态桥 TASK-PENDING（与 orchestration create 对齐；字典缺行
     //    属环境问题——warn 跳过不阻断，任务中心无桥行按初始态展示）
@@ -291,7 +318,7 @@ pub(crate) async fn maybe_create_node_task(
         Some(pid) => {
             sqlx::query(
                 r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (id, ref_left, ref_right, created_by_id)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3)"#,
+                   VALUES (isahl.gen_next_uid(260), $1, $2, $3)"#,
             )
             .bind(task_id)
             .bind(pid)
@@ -313,7 +340,7 @@ pub(crate) async fn maybe_create_node_task(
         node_op_id,
         execution_id,
         task_id,
-        leaf,
+        leaf.table,
         name,
         entity
             .map(|(t, id)| format!("{}#{}", t, id))

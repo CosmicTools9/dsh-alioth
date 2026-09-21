@@ -105,7 +105,7 @@ impl AliothRepository<Environment, CreateEnvironmentRequest, UpdateEnvironmentRe
         let id_param = idx + 1;
 
         let sql = format!(
-            r#"UPDATE "isahl.zc_id_prot-env_config" SET {} WHERE id = ${} AND deleted_at IS NULL
+            r#"UPDATE isahl."zc_id_prot-env_config" SET {} WHERE id = ${} AND deleted_at IS NULL
                RETURNING id, notice AS name, created_at, updated_at, deleted_at"#,
             sets.join(", "),
             id_param

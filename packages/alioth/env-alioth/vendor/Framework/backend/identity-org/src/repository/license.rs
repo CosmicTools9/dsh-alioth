@@ -104,7 +104,7 @@ impl AliothRepository<License, CreateLicenseRequest, UpdateLicenseRequest, ApiEr
         sets.push(format!("updated_by_id = ${}", idx));
         let id_param = idx + 1;
         let sql = format!(
-            r#"UPDATE "isahl.zc_id_prod-license-purchase" SET {} WHERE id = ${} AND deleted_at IS NULL
+            r#"UPDATE isahl."zc_id_prod-license-purchase" SET {} WHERE id = ${} AND deleted_at IS NULL
                RETURNING id, notice AS name, qk_capacity AS qk_qty, qk_period, created_at, updated_at, deleted_at"#,
             sets.join(", "),
             id_param

@@ -52,8 +52,10 @@ pub struct EnrichedItem {
     // 与 EnrichedRow 对齐：实例 notice 可空，响应返回 null 而非 500
     pub node_name: Option<String>,
     pub code: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_approve: Option<i64>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>,
     pub comments: Option<String>,
@@ -61,6 +63,7 @@ pub struct EnrichedItem {
     pub status: String,
     pub result: String,
     pub priority: Option<String>,
+    #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub sla: Option<i64>,
     pub timeline: Option<serde_json::Value>,
@@ -127,7 +130,18 @@ pub async fn list_enriched(
     // Single CTE: derive status in SQL, apply ALL filters, paginate, count via window function
     let rows: Vec<EnrichedRow> = sqlx::query_as(
         r#"
-        WITH base AS (
+        WITH src AS (
+            -- 申请人 id 归一：`fk_subject` 在本表的既有契约是**用户 id**（写入侧存调用者 user_id：
+            -- advance::create_approval_instances 的 actx.initiator；既有消费侧 analytics/notify/remind
+            -- 亦按 auth_users 解析）；早期/种子实例该列为 NULL 且均为首实例（fk_previous IS NULL）⇒
+            -- 以 created_by_id 兜底（首实例的 created_by_id 即发起人；下游实例的 created_by_id 是
+            -- 上一节点触发者，不可当申请人，故仅在首实例兜底）。
+            SELECT i.*,
+                   COALESCE(i.fk_subject,
+                            CASE WHEN i.fk_previous IS NULL THEN i.created_by_id END) AS applicant_uid
+            FROM isahl."zc_id_oper-approve" i
+        ),
+        base AS (
             SELECT i.id, i.notice AS node_name, i.code,
                    (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe
                     WHERE oe.ref_left = i.id AND oe.deleted_at IS NULL
@@ -137,13 +151,24 @@ pub async fn list_enriched(
                                   WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL)
                     ORDER BY oe.created_at LIMIT 1) AS fk_approve,
                    i.fk_subject, i.comments,
-                   ev.lk_urgent, ev.timeline, e.notice AS applicant_name,
+                   ev.lk_urgent, ev.timeline,
+                   COALESCE(e.notice, u.display_name, u.name, u.username) AS applicant_name,
                    lu.notice AS priority_label,
                    sd.mark::bigint AS sla_hours,
                    COALESCE(st.code, 'pending') AS derived_status,
                    i.created_at, i.updated_at
-            FROM isahl."zc_id_oper-approve" i
-            LEFT JOIN isahl."zc_id_subj-employee" e ON e.id = i.fk_subject
+            FROM src i
+            -- 员工主体行按 fk_user（用户 id → 员工）解析；兼容少量历史行直接存员工 id
+            LEFT JOIN LATERAL (
+                SELECT ee.notice
+                FROM isahl."zc_id_subj-employee" ee
+                WHERE ee.deleted_at IS NULL
+                  AND (ee.fk_user = i.applicant_uid OR ee.id = i.applicant_uid)
+                ORDER BY (ee.fk_user = i.applicant_uid) DESC
+                LIMIT 1
+            ) e ON true
+            -- 无员工主体绑定时回退账号显示名（auth_users 主键唯一，无笛卡尔展开）
+            LEFT JOIN isahl_auth.auth_users u ON u.id = i.applicant_uid
             LEFT JOIN isahl."zc_id_even-approve" ev ON ev.id = (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe
                     WHERE oe.ref_left = i.id AND oe.deleted_at IS NULL
                       AND EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_event oe2

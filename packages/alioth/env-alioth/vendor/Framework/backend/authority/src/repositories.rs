@@ -91,6 +91,12 @@ impl AliothRepository<Employee, CreateEmployeeRequest, UpdateEmployeeRequest, Al
         req: CreateEmployeeRequest,
         user_id: i64,
     ) -> Result<Employee, AliothError> {
+        // 坐标三元组（§6.12/§7.3.3 静态绑定）：empl-natural = TX/FJA/↓_GG（approval/src/dk.rs
+        // DkTxFjaGg 同口径）；运行时 code→id 解析，严禁硬编码 ZUID（旧 514/529/527 为恢复性
+        // 提交带入的悬空值，测试库重建即 FK 违规 400）。
+        let (ds, df, dfn) = ontology_binding::resolve(&self.pool, ("TX", "FJA", "↓_GG"))
+            .await
+            .map_err(AliothError::from)?;
         sqlx::query_as::<_, Employee>(
             r#"INSERT INTO isahl."zc_id_empl-natural"
                (notice, code, fk_user, sk_currency, ck_category, sk_unit, created_by_id, dk_scene, dk_factor, dk_function)
@@ -105,9 +111,9 @@ impl AliothRepository<Employee, CreateEmployeeRequest, UpdateEmployeeRequest, Al
         .bind(req.role)
         .bind(req.team)
         .bind(user_id)
-        .bind(514i64)
-        .bind(529i64)
-        .bind(527i64)
+        .bind(ds)
+        .bind(df)
+        .bind(dfn)
         .fetch_one(&self.pool)
         .await
         .map_err(AliothError::from)

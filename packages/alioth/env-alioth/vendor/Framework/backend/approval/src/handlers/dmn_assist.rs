@@ -443,12 +443,13 @@ async fn dmn_llm_roundtrip(
     pool: web::Data<PgPool>,
     req: HttpRequest,
     kind: &str,
-    message: &str,
-    context_fields: &[String],
-    outputs: &[String],
-    allow_unlisted: bool,
-    existing: Option<&Value>,
+    body: &DmnAssistRequest,
 ) -> Result<HttpResponse, common::error::AliothError> {
+    let message = body.message.trim();
+    let context_fields: &[String] = &body.context_fields;
+    let outputs: &[String] = &body.outputs;
+    let allow_unlisted = body.allow_unlisted;
+    let existing: Option<&Value> = body.existing.as_ref();
     let _user_id = context::require_auth(&req)?;
 
     match dmn_generate_core(
@@ -509,17 +510,7 @@ pub async fn dmn_assist(
             "请描述决策规则（message 不能为空）".to_string(),
         ])));
     }
-    dmn_llm_roundtrip(
-        pool,
-        req,
-        "dmn-assist",
-        body.message.trim(),
-        &body.context_fields,
-        &body.outputs,
-        body.allow_unlisted,
-        None,
-    )
-    .await
+    dmn_llm_roundtrip(pool, req, "dmn-assist", &body).await
 }
 
 /// POST /approval-flows/dmn-fix — 修订自愈：当前表/草案 + 诉求或错误 → 重新生成 + 同校验
@@ -538,17 +529,7 @@ pub async fn dmn_fix(
             "dmn-fix 需要携带 existing 当前决策表".to_string(),
         ])));
     }
-    dmn_llm_roundtrip(
-        pool,
-        req,
-        "dmn-fix",
-        body.message.trim(),
-        &body.context_fields,
-        &body.outputs,
-        body.allow_unlisted,
-        body.existing.as_ref(),
-    )
-    .await
+    dmn_llm_roundtrip(pool, req, "dmn-fix", &body).await
 }
 
 /// 路由注册（scope 由调用方委托：Gateway 主挂 `/api` 裸路径、ns 服务挂

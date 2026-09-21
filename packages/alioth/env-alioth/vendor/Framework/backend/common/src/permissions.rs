@@ -195,3 +195,52 @@ pub async fn require_resource_access(
     }
     Ok(())
 }
+
+/// 行级判定拒绝时回落集合级（fk_resource=0）判定（fix-avic-fd-e2e D7）。
+///
+/// 背景：`require_resource_access` 的 resource_attrs CTE 在**存在行级 OA 时不再回落
+/// 集合 OA**（NGAC_SPEC 全局属性回落语义）。实例创建路径注册的行级 OA 仅关联创建者
+/// UA → 持集合 approver 权的审批人被行 OA 存在性遮蔽（403），与 monitor 旧路径
+/// （无行 OA，集合权治理实例动作）语义回归。
+///
+/// 本函数语义：行级命中 → 放行；行级 Forbidden 且集合级命中（approver UA 类权）→
+/// 放行；两级皆拒 → 返回行级原始错误。prohibition 治理不回落（集合级 prohibited
+/// 同样拒绝——deny-overrides 在两级判定内各自先行）。
+pub async fn require_row_or_collection_access(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+    resource_type: &str,
+    resource_id: i64,
+    action: &str,
+) -> Result<(), AliothError> {
+    match require_resource_access(pool, user_id, resource_type, resource_id, action).await {
+        Ok(()) => Ok(()),
+        Err(first @ AliothError::Forbidden(_)) => {
+            // 集合级回落双形尝试：调用方（approval crate 动作端点）硬编码连字符
+            // resource_type，而种子/引擎注册的集合 OA 多为下划线形（resource_registry
+            // PEP 归一化 vs permissions.rs 字面精确匹配的既有错位——monitor 双侧注册
+            // 注释在案）。两形任一命中即放行。
+            let alt: String = resource_type.replace('-', "_");
+            let candidates = if alt == resource_type {
+                vec![0i64]
+            } else {
+                vec![0i64, -1i64]
+            };
+            for flag in candidates {
+                let rt = if flag == -1 {
+                    alt.as_str()
+                } else {
+                    resource_type
+                };
+                if require_resource_access(pool, user_id, rt, 0, action)
+                    .await
+                    .is_ok()
+                {
+                    return Ok(());
+                }
+            }
+            Err(first)
+        }
+        Err(e) => Err(e),
+    }
+}

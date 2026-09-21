@@ -202,7 +202,7 @@ pub async fn create_subject_identity(
 
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
-        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+        ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG"))
             .await
             .map_err(ApiError::from_sqlx)?;
 

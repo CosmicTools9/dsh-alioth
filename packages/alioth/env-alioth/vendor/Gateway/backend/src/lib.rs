@@ -2,10 +2,12 @@
 
 pub mod api;
 pub mod apps;
+pub mod auto_approve;
 pub mod config;
 pub mod db;
 pub mod epp;
 pub mod errors;
+pub mod extension_validation;
 pub mod i18n;
 pub mod models;
 pub mod monitoring;
