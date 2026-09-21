@@ -21,6 +21,7 @@ import {
   artifactFingerprint,
   buildEvalReport,
   evaluateStageGate,
+  EXTENSION_FORMS,
   latestMatchingVerdict,
   readClosureVerdicts,
   verifyExtensions,
@@ -31,7 +32,6 @@ import {
   type StageId,
 } from '@dsh-alioth/verify-alioth'
 import { extensionsGateItem, extensionsGateScope } from './extensions-gate.ts'
-import { GATEWAY_EXTENSION_FORMS } from './gateway-extensions.ts'
 import { asJsonOutput } from './json-output.ts'
 import { appDirOf, assertNamespaceApp, namespaceRootOf, requireString } from './paths.ts'
 
@@ -171,7 +171,7 @@ export function registerVerifyTools(
           app,
           namespace,
           appDir,
-          allowedForms: GATEWAY_EXTENSION_FORMS,
+          allowedForms: EXTENSION_FORMS,
         })
         const reportPath = persist ? await writeExtensionVerify(appDir, report) : ''
         const gateScope = extensionsGateScope(namespace, app)
@@ -198,7 +198,7 @@ export function registerVerifyTools(
           passed: report.status === 'passed',
           report: asJsonOutput(report),
           reportPath,
-          allowedForms: [...GATEWAY_EXTENSION_FORMS],
+          allowedForms: [...EXTENSION_FORMS],
           gateScope,
           gateRegistered,
           gatesCleared,

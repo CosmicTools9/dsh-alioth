@@ -88,7 +88,12 @@ const FORM_SPECS: Record<string, FormSpec> = {
   },
 }
 
-const KNOWN_FORMS: readonly string[] = Object.values(FORM_SPECS).map(spec => spec.form)
+/**
+ * 加载器认的形态名，**派生自 {@link FORM_SPECS}**（顺序 = `load_from_dir` 的读取顺序）——
+ * 这是全仓唯一的形态清单：调用方（`tool-alioth-verify`、orchestrator）MUST 引用它，
+ * MUST NOT 另抄一份字面量数组（抄一份就多一处会随上游漂移的真相源）。
+ */
+export const EXTENSION_FORMS: readonly string[] = Object.values(FORM_SPECS).map(spec => spec.form)
 
 function entryId(entry: Record<string, unknown>, spec: FormSpec, fallback: string): string {
   for (const key of spec.idKeys) {
@@ -291,7 +296,7 @@ export async function verifyExtensions(input: {
   const formsSeen = [...new Set(yamlNames.map(name => FORM_SPECS[name]?.form ?? name))].join(',')
   return finalize(
     uncovered > 0
-      ? `degraded：${uncovered} 条声明未被运行时覆盖（covered=${covered}，文件族=[${formsSeen}]，词汇 allowedForms=[${input.allowedForms.join(',')}]，已知形态=[${KNOWN_FORMS.join(',')}]）——未执行面 MUST NOT 判通过`
+      ? `degraded：${uncovered} 条声明未被运行时覆盖（covered=${covered}，文件族=[${formsSeen}]，词汇 allowedForms=[${input.allowedForms.join(',')}]，已知形态=[${EXTENSION_FORMS.join(',')}]）——未执行面 MUST NOT 判通过`
       : `passed：${covered} 条声明全部进入引擎装配路径（文件族=[${formsSeen}]）`,
   )
 }

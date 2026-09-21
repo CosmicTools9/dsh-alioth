@@ -19,6 +19,7 @@ export {
 export {
   verifyExtensions,
   writeExtensionVerify,
+  EXTENSION_FORMS,
   EXTENSION_VERIFY_SCHEMA_VERSION,
   type DeclarationCoverage,
   type ExtensionVerification,

@@ -40,6 +40,7 @@ import {
   artifactFingerprint,
   buildEvalReport,
   createDeferredStore,
+  EXTENSION_FORMS,
   evaluatePublishShadow,
   evaluateStageGate,
   latestMatchingVerdict,
@@ -159,7 +160,7 @@ async function preflightEntities(ctx: Context, exec: ToolRunContext, entities: C
  * 形态名与 verify-alioth `verifyExtensions` 的 `FORM_SPECS.form` 同表；调用方注入，
  * 库不读 Rust 源码。
  */
-const GATEWAY_EXTENSION_FORMS: readonly string[] = ['constraints', 'rules', 'statemachines', 'workflows', 'profiles']
+
 
 /** 未配置 preProcRoot 时的根解析链（逐阶段现读：部署可改环境变量）。 */
 function preProcRootOf(configured: string | undefined): string {
@@ -517,7 +518,7 @@ export function buildPrimitives(
           app: args.code,
           namespace: args.namespace,
           appDir,
-          allowedForms: [...GATEWAY_EXTENSION_FORMS],
+          allowedForms: [...EXTENSION_FORMS],
         })
         extensionStatus = verification.status
         evidenceArtifacts.push(await writeExtensionVerify(appDir, verification))
