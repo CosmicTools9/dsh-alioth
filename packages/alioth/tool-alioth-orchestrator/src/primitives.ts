@@ -222,11 +222,17 @@ async function readQualityReport(appDir: string): Promise<'passed' | 'failed' | 
  * 扫描口径（上游 `deferred.rs:267-271`：会话级扫描会失明）：先 `sweep()` 全库解除
  * **触发条件成立**的挂起项（未成立者原地不动），再按 `app` + `namespace` 跨会话归属过滤
  * ——先前会话登记的未决门对新会话的发布同样可见。
+ *
+ * 缺省归属 = fail-closed 匹配（上游 `deferred.rs:286` 对缺 `app_code` 的记录
+ * `map_or(true, …)` 同判）：不带 app/namespace 的登记（含 verify-alioth 对损坏
+ * 登记文件合成的显式阻塞项）对**任何** App 的 publish 都可见，修好前持续阻断。
  */
-async function openDegradedGates(dataRoot: string, namespace: string, app: string): Promise<DeferredItem[]> {
+export async function openDegradedGates(dataRoot: string, namespace: string, app: string): Promise<DeferredItem[]> {
   const store = createDeferredStore(dataRoot)
   await store.sweep()
-  return (await store.all()).filter(item => item.app === app && item.namespace === namespace)
+  return (await store.all()).filter(
+    item => (item.app ?? app) === app && (item.namespace ?? namespace) === namespace,
+  )
 }
 
 /** publish 前置的本地规则行（skill-alioth 的修复表无 publish 前置特征；渲染仍走 formatRepairError）。 */

@@ -89,7 +89,9 @@ function resolveJsonPointer(document: unknown, pointer: string): { readonly foun
   for (const rawToken of pointer.slice(1).split('/')) {
     const token = rawToken.replaceAll('~1', '/').replaceAll('~0', '~')
     if (Array.isArray(current)) {
-      if (!/^\d+$/.test(token)) return { found: false, value: undefined }
+      // RFC 6901 数组下标 ABNF：`"0" / non-zero-digit *DIGIT`——前导零（"01"）非法。
+      // 触发条件是解锁判据：非法下标一律判 not-found（fail-closed），绝不宽松解析。
+      if (!/^(0|[1-9]\d*)$/.test(token)) return { found: false, value: undefined }
       const index = Number.parseInt(token, 10)
       if (index >= current.length) return { found: false, value: undefined }
       current = current[index]
@@ -227,8 +229,10 @@ export function createDeferredStore(root: string): DeferredStore {
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith('.json')) continue
         const sessionId = entry.name.slice(0, -'.json'.length)
-        const items = await readSession(sessionId)
-        if (items.length === 0) continue
+        // 损坏的登记文件：无法求值就不能解除（也不会误解除），跳过本文件；
+        // 它作为「未决门」继续存在——all() 会把它合成为显式阻塞项（见下）。
+        const items = await readSession(sessionId).catch(() => null)
+        if (items === null || items.length === 0) continue
         const remaining: DeferredItem[] = []
         for (const item of items) {
           if (await triggerSatisfied(base, item.trigger)) released.push(item)
@@ -246,14 +250,34 @@ export function createDeferredStore(root: string): DeferredStore {
       const collected: DeferredItem[] = []
       for (const entry of entries) {
         if (!entry.isFile() || !entry.name.endsWith('.json')) continue
-        const text = await readFile(path.join(dir, entry.name), 'utf8').catch(() => null)
-        if (text === null) continue
-        try {
-          const parsed = JSON.parse(text) as DeferredFile
-          if (Array.isArray(parsed.items)) collected.push(...parsed.items)
-        } catch {
+        const file = path.join(dir, entry.name)
+        const sessionId = entry.name.slice(0, -'.json'.length)
+        const text = await readFile(file, 'utf8').catch(() => null)
+        let parsed: DeferredFile | null = null
+        if (text !== null) {
+          try {
+            parsed = JSON.parse(text) as DeferredFile
+          } catch {
+            parsed = null
+          }
+        }
+        if (parsed !== null && Array.isArray(parsed.items)) {
+          collected.push(...parsed.items)
           continue
         }
+        // 损坏/不可读的登记 = 隐藏的未决门：跳过它等于把门悄悄打开（正是本模块
+        // 文档禁止的「损坏登记被当作无阻塞」）。合成为一条**不限 App** 的显式
+        // 阻塞项——按 App 扫描的 publish 前置对缺省 app 采取 fail-closed 匹配
+        // （上游 `deferred.rs:269-271` 对缺 app_code 的记录同判）。
+        collected.push({
+          id: `corrupt:${sessionId}`,
+          sessionId,
+          reason: 'deferred 登记文件不可解析或不可读',
+          adjudication: '损坏登记 MUST NOT 被当作「无阻塞」：修复或删除该文件前，publish 前置持续阻断',
+          successors: ['人工核对 deferred/ 目录中该会话的登记并修复'],
+          createdTs: '',
+          trigger: { kind: 'artifact-exists', path: file },
+        })
       }
       return collected.sort((a, b) => {
         if (a.createdTs !== b.createdTs) return a.createdTs < b.createdTs ? -1 : 1

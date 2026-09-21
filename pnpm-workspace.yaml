@@ -294,3 +294,10 @@ auditConfig:
   ignoreGhsas:
     - GHSA-jmr9-qjv8-65gv
     - GHSA-7pqw-9j4j-h8q3
+    # fflate <0.8.3（moderate）唯一消费路径是 harness 侧
+    # office-to-pdf → @deepseek-ai/libreoffice-kit（tarball 钉在 lockfile，非
+    # workspace 链接）。在这仓强设 `fflate >=0.8.3` floor 会迫使该 tarball 重新
+    # 物化——而它不在任何可达 registry 上（mirror relay 000、npmjs 不可达），
+    # frozen install 直接拉死。真修在 harness 线（libreoffice-kit 升 fflate 或
+    # 改 workspace 链接）；两侧修好前在此显式忽略并留痕。
+    - GHSA-px8p-9vwx-vf98
