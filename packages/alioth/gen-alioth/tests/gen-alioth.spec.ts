@@ -18,6 +18,10 @@ const VALID_APP = {
   },
   routing: { base: '/apps/demo-app', defaultRoute: '/inventory' },
   navigation: [{ group: '系统管理', icon: 'Settings', modules: ['inventory', 'demand'] }],
+  // Lifecycle status: the AppAgent evaluation requires the field
+  // (`evaluate.rs:234-242`), so the generator emits it and the canonical
+  // hand-written app carries it too.
+  status: 'developing',
   min_alioth_version: '10.0.0',
 }
 

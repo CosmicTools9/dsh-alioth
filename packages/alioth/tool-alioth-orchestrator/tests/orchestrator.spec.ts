@@ -7,6 +7,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolExecutionToken, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { STAGE_IDS } from '@dsh-alioth/skill-alioth/agent-contract'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as orchestrator from '../src/index.ts'
@@ -117,8 +118,43 @@ afterAll(async () => {
   await rm(preProcRoot, { recursive: true, force: true })
 })
 
+/**
+ * Namespace-level artifacts the PTC pipeline does not author (the AppAgent track
+ * authors them in gated steps): the standalone prototype (quality dimension), a
+ * block declaration (block-extract / block-refinement) and a service artifact
+ * (factor-dev). The honest stage gates fail closed without them, so a fixture
+ * that wants the sweep to pass stands in for those model-authored steps.
+ */
+async function seedNamespaceArtifacts(
+  root: string,
+  namespace: string,
+  app: string,
+  options: { readonly blocks?: readonly string[]; readonly prototype?: boolean; readonly service?: boolean } = {},
+): Promise<void> {
+  const namespaceRoot = path.join(root, namespace)
+  if (options.prototype !== false) {
+    const prototypeDir = path.join(namespaceRoot, 'Prototypes', 'Apps', app)
+    await mkdir(prototypeDir, { recursive: true })
+    await writeFile(
+      path.join(prototypeDir, 'prototype.html'),
+      '<!doctype html>\n<html><body><div id="app"></div></body></html>\n',
+    )
+  }
+  for (const block of options.blocks ?? []) {
+    const blockDir = path.join(namespaceRoot, 'Sources', 'Apps', 'Blocks', block)
+    await mkdir(blockDir, { recursive: true })
+    await writeFile(path.join(blockDir, 'block.json'), `${JSON.stringify({ id: block, app, interactionMode: 'workbench' }, null, 2)}\n`)
+  }
+  if (options.service !== false) {
+    const serviceDir = path.join(namespaceRoot, 'Sources', 'Apps', 'Services', app)
+    await mkdir(serviceDir, { recursive: true })
+    await writeFile(path.join(serviceDir, 'service.json'), '{}\n')
+  }
+}
+
 describe('alioth_app_create (PTC orchestrator)', () => {
   it('runs the full pipeline: entity register → artifact write → verify', async () => {
+    await seedNamespaceArtifacts(preProcRoot, 'Demo', 'ptc-app', { blocks: ['inventory-board'] })
     const result = await callCreate({
       namespace: 'Demo',
       code: 'ptc-app',
@@ -172,6 +208,7 @@ describe('alioth_app_create (PTC orchestrator)', () => {
   }, 120_000)
 
   it('creates an app with no new entities', async () => {
+    await seedNamespaceArtifacts(preProcRoot, 'Demo', 'ptc-plain', { blocks: ['orders-board'] })
     const result = await callCreate({
       namespace: 'Demo',
       code: 'ptc-plain',
@@ -234,6 +271,7 @@ tracks:
     const orchestration = await workflowCtx.plugin(orchestrator, { adapter: 'alioth-app.yaml', preProcRoot: workflowPreProc })
     workflowDisposers.push(() => orchestration.dispose())
 
+    await seedNamespaceArtifacts(workflowPreProc, 'Demo', 'wf-app', { blocks: ['wf-board'] })
     const result = await workflowCtx.tools.execute({
       signal,
       callId: ToolCallId('create-wf'),
@@ -274,7 +312,8 @@ tracks:
     // Publishing then reports the finished run instead of stepping again.
     const published = await primitives.publishing(buildPlan(args), 1)
     expect(published.output.evidence).toContain('workflow=finished')
-    expect(published.result.runtimeValidation?.checks[1]).toMatchObject({
+    const checks = published.result.runtimeValidation?.checks ?? []
+    expect(checks.find(check => check.name === 'workflow-gate')).toMatchObject({
       name: 'workflow-gate',
       ok: true,
       detail: 'finished',
@@ -297,8 +336,12 @@ tracks:
 
 describe('alioth_app_create terminal states', () => {
   it('fails the metadata gate when a declared block has no artifact', async () => {
+    // A dedicated namespace: prototype + service exist (the model-authored
+    // steps ran), the block declaration has no artifact — the stage gate must
+    // fail closed on it (no placeholder pass).
+    await seedNamespaceArtifacts(preProcRoot, 'Gate', 'ptc-gate-fail')
     const result = await callCreate({
-      namespace: 'Demo',
+      namespace: 'Gate',
       code: 'ptc-gate-fail',
       name: '门禁失败应用',
       modules: [{ id: 'gate', name: '门禁' }],
@@ -309,7 +352,7 @@ describe('alioth_app_create terminal states', () => {
     expect(result.error.message).toContain('gate block-extract failed')
 
     // The artifacts stay on disk: the repair loop fixes them and re-runs.
-    const appJson = await readFile(path.join(preProcRoot, 'Demo', 'Apps', 'ptc-gate-fail', 'app.json'), 'utf8')
+    const appJson = await readFile(path.join(preProcRoot, 'Gate', 'Apps', 'ptc-gate-fail', 'app.json'), 'utf8')
     expect(appJson).toContain('"code": "ptc-gate-fail"')
   }, 120_000)
 })
@@ -458,8 +501,12 @@ describe('buildPrimitives stage guards', () => {
       namespace: 'Demo',
       attempt: 2,
       passed: false,
-      failures: [{ id: 'app-json' }, { id: 'module-json' }],
     })
+    // The artifact checks are reported by id; the extra quality/closure checks
+    // the E2E stage now produces fail closed for the same missing tree.
+    const failures = (report as { failures: Array<{ id: string }> }).failures.map(entry => entry.id)
+    expect(failures).toContain('app-json')
+    expect(failures).toContain('module-json')
   }, 120_000)
 
   it('keeps the artifact list honest when the E2E evidence file cannot land', async () => {
@@ -469,17 +516,20 @@ describe('buildPrimitives stage guards', () => {
     const args = { namespace: 'Demo', code: 'cover-e2e-write', name: 'E2E 写失败', modules: [{ id: 'cover', name: '覆盖' }] }
     const primitives = buildPrimitives(ctx, stageExec('cover-e2e-write'), args, undefined, path.join(blocker, 'sub'))
 
-    // Incomplete artifacts AND no evidence file: the failure is still reported.
+    // Incomplete artifacts AND no evidence file: the failure is still reported
+    // and no bogus evidence path is claimed.
     const failed = await primitives.e2eVerification(1, buildPlan(args))
     expect(failed.evidence).toContain('E2E failed (attempt 1)')
     expect(failed.evidence).toContain('evidence report write failed')
+    expect(failed.artifacts).toEqual([])
 
-    // Complete artifacts AND no evidence file: keep the artifacts, no bogus path.
     const created = await primitives.appCreation('write failure')
-    const passed = await primitives.e2eVerification(1, buildPlan(args))
-    expect(passed.evidence).toContain('E2E verification (attempt 1): artifacts complete')
-    expect(passed.evidence).toContain('evidence report write failed')
-    expect(passed.artifacts).toEqual(created.artifacts)
+
+    // Complete artifacts, but the evidence tree cannot be written: the artifact
+    // list stays exactly the written tree (never a path that does not exist).
+    const second = await primitives.e2eVerification(2, buildPlan(args))
+    expect(second.evidence).toContain('evidence report write failed')
+    expect(second.artifacts).toEqual(created.artifacts)
   }, 120_000)
 
   it('anchors the E2E report under ALIOTH_PRE_PROC_ROOT when no root is configured', async () => {
@@ -537,10 +587,50 @@ describe('buildPrimitives stage guards', () => {
     const primitives = buildPrimitives(ctx, stageExec('cover-gates'), args, undefined, preProcRoot)
 
     const unknown = await primitives.pipelineAdvance('not-a-stage', buildPlan(args))
-    expect(unknown.evidence).toBe('GATE-FAIL not-a-stage: artifact missing')
+    expect(unknown.evidence).toContain('GATE-FAIL not-a-stage')
+    expect(unknown.evidence).toContain('未知 stage')
     expect(unknown.artifacts).toBeUndefined()
 
     expect(await primitives.resolveGate('human-review', 'approve?')).toBe('confirm')
+  }, 120_000)
+
+  it('fails every stage gate on a missing artifact instead of passing a placeholder', async () => {
+    // An untouched namespace: no namespace-level artifacts exist at all, so every
+    // stage gate must fail closed (no `() => true` placeholder anywhere).
+    const appDir = path.join(preProcRoot, 'Bare', 'Apps', 'bare-stages')
+    await mkdir(appDir, { recursive: true })
+    await writeFile(path.join(appDir, 'app.json'), '{}\n')
+    const args = { namespace: 'Bare', code: 'bare-stages', name: '阶段', modules: [{ id: 'bare', name: '裸' }] }
+    const primitives = buildPrimitives(ctx, stageExec('bare-stages'), args, undefined, preProcRoot)
+
+    for (const stage of STAGE_IDS) {
+      const outcome = await primitives.pipelineAdvance(stage, buildPlan(args))
+      // appagent-ready is the only stage whose declared artifact exists here.
+      expect(outcome.evidence.startsWith(stage === 'appagent-ready' ? 'gate appagent-ready passed' : 'GATE-FAIL')).toBe(true)
+      if (stage !== 'appagent-ready') {
+        expect(outcome.evidence).toContain(`GATE-FAIL ${stage}`)
+        expect(outcome.artifacts).toBeUndefined()
+      }
+    }
+  }, 120_000)
+
+  it('passes the stage gates once the declared artifacts (and the module mirror) exist', async () => {
+    const args = { namespace: 'Demo', code: 'cover-stages-full', name: '阶段完', modules: [{ id: 'cover', name: '覆盖' }] }
+    const primitives = buildPrimitives(ctx, stageExec('cover-stages-full'), args, undefined, preProcRoot)
+    const created = await primitives.appCreation('stage sweep')
+    expect(created.artifacts).toContain('app.json')
+    // The module mirror is the pipeline's per-module write-out (parallel unit).
+    const modules = await primitives.moduleCreation(buildPlan(args))
+    expect(modules.evidence).toContain('mirrored into Sources/Apps/Modules')
+    await seedNamespaceArtifacts(preProcRoot, 'Demo', 'cover-stages-full', { blocks: ['cover-board'] })
+    await primitives.ontologyTransfer(buildPlan(args))
+    const e2e = await primitives.e2eVerification(1, buildPlan(args))
+    expect(e2e.evidence).toContain('E2E verification (attempt 1)')
+
+    for (const stage of STAGE_IDS) {
+      const outcome = await primitives.pipelineAdvance(stage, buildPlan(args))
+      expect(outcome.evidence).toContain(`gate ${stage} passed`)
+    }
   }, 120_000)
 
   it('refuses to publish an app whose artifact lacks the required fields', async () => {
@@ -552,9 +642,13 @@ describe('buildPrimitives stage guards', () => {
 
     const published = await primitives.publishing(buildPlan(args), 1)
     expect(published.result.runtimeValidation).toMatchObject({ valid: false })
-    expect(published.result.runtimeValidation?.checks[0]?.detail)
-      .toBe('missing: id, code, namespace, name, version, config')
-    expect(published.result.runtimeValidation?.checks[1]).toMatchObject({ name: 'workflow-gate', ok: true, detail: 'not-configured' })
+    const checks = published.result.runtimeValidation?.checks ?? []
+    expect(checks[0]?.detail).toBe('missing: id, code, namespace, name, version, config')
+    expect(checks.find(check => check.name === 'workflow-gate')).toMatchObject({
+      name: 'workflow-gate',
+      ok: true,
+      detail: 'not-configured',
+    })
     expect(published.output.evidence).toContain('verified=false, workflow=not-configured')
   }, 120_000)
 })

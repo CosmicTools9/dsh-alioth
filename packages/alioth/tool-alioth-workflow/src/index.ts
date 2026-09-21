@@ -12,20 +12,21 @@ import { provisionPrototypeRoot } from '@dsh-alioth/env-alioth'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import z from '@deepseek-ai/schemastery'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ObjectValueSchemaSpec } from '@deepseek-ai/dsh-tools'
 import {
   ADAPTER_TOOL_TO_DSH,
   checkStepGates,
   completeCurrentStep,
   createProgramRunner,
   currentStep,
+  formatRepairError,
   GATE_PROGRAM_WHITELIST,
-  isLlmFixable,
   loadAdapter,
   loadRun,
   manualToolSurface,
   missingToolSurface,
   parseRuntimeAllowedPrograms,
+  repairContractFor,
   saveRun,
   type Adapter,
   type GateContext,
@@ -63,6 +64,24 @@ export const Config: z<Config> = z.object({
 
 const NAMESPACE_PATTERN_RE = /^[A-Z][a-zA-Z0-9-]*$/
 const APP_PATTERN_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/
+
+/**
+ * One gate as presented to the model (read-only projection of the adapter's
+ * `StepGate`): both forms, program parameters, and the content predicate
+ * (`requireJsonEquals` is the expected value as JSON text — the adapter value
+ * is any JSON value). Nothing here weakens execution: the gates still run
+ * through `checkStepGates`.
+ */
+export interface GateView {
+  readonly kind: 'output-glob' | 'program'
+  readonly outputGlob?: string
+  readonly program?: string
+  readonly args?: string[]
+  readonly expectedExitCode?: number
+  readonly timeoutSec?: number
+  readonly requireJsonPointer?: string
+  readonly requireJsonEquals?: string
+}
 
 function assertNsApp(namespace: string, app: string): void {
   if (!NAMESPACE_PATTERN_RE.test(namespace)) {
@@ -136,15 +155,57 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
 
-  /** Human-facing gate summary: glob form, or program form with contract fields. */
-  function formatGates(gates: readonly StepGate[]): string[] {
-    return gates.map(gate => {
-      if (gate.kind === 'output-glob') {
-        return `output_glob: ${gate.outputGlob}`
-      }
-      const exit = gate.expectedExitCode === 0 ? '' : ` expected_exit=${gate.expectedExitCode}`
-      return `program: ${gate.program} ${gate.args.join(' ')}${exit} timeout=${gate.timeoutSec}s`
-    })
+  /**
+   * Gate form as presented to the model — the **whole** adapter gate, read-only:
+   * both forms keep their `output_glob`, program gates keep args/expected exit
+   * code/timeout, and a content predicate keeps both halves
+   * (`require_json_pointer` + the expected value as JSON text). Presentation
+   * only: the executor still runs the gate through skill-alioth's
+   * `checkStepGates` (no re-implementation, no weakening).
+   */
+  function gateView(gate: StepGate): GateView {
+    const predicate = {
+      ...(gate.requireJsonPointer === undefined ? {} : { requireJsonPointer: gate.requireJsonPointer }),
+      ...(gate.requireJsonEquals === undefined ? {} : { requireJsonEquals: JSON.stringify(gate.requireJsonEquals) }),
+    }
+    if (gate.kind === 'output-glob') {
+      return { kind: 'output-glob', outputGlob: gate.outputGlob, ...predicate }
+    }
+    return {
+      kind: 'program',
+      program: gate.program,
+      args: [...gate.args],
+      expectedExitCode: gate.expectedExitCode,
+      timeoutSec: gate.timeoutSec,
+      ...(gate.outputGlob === undefined ? {} : { outputGlob: gate.outputGlob }),
+      ...predicate,
+    }
+  }
+
+  /** Output-schema node for one {@link GateView} (presentation only). */
+  const GATE_VIEW_SCHEMA = {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      kind: { type: 'string', required: true },
+      outputGlob: { type: 'string' },
+      program: { type: 'string' },
+      args: { type: 'array', items: { type: 'string' } },
+      expectedExitCode: { type: 'number' },
+      timeoutSec: { type: 'number' },
+      requireJsonPointer: { type: 'string' },
+      requireJsonEquals: { type: 'string' },
+    },
+  } as const satisfies ObjectValueSchemaSpec
+
+  /** The step's resolved write surface: every `output_glob` the step gates on
+   * (plan steps write only these; the reviewer sees the same set the guard
+   * enforces). */
+  function stepWriteGlobs(step: Step, context: GateContext): string[] {
+    const resolved = step.gates.flatMap(gate =>
+      gate.outputGlob === undefined ? [] : [gate.outputGlob.replace(/\{(\w+)\}/g, (match, key: string) => context.variables[key] ?? match)],
+    )
+    return [...new Set(resolved)]
   }
 
   const MAX_INPUT_CHARS = 4000
@@ -198,8 +259,9 @@ export function apply(ctx: Context, config: Config): void {
                     properties: {
                       id: { type: 'string', required: true },
                       instruction: { type: 'string', required: true },
+                      phase: { type: 'string', required: true },
                       tools: { type: 'array', required: true, items: { type: 'string' } },
-                      gates: { type: 'array', required: true, items: { type: 'string' } },
+                      gates: { type: 'array', required: true, items: GATE_VIEW_SCHEMA },
                     },
                   },
                 },
@@ -231,8 +293,9 @@ export function apply(ctx: Context, config: Config): void {
           steps: track.steps.map(step => ({
             id: step.id,
             instruction: step.instruction,
+            phase: step.phase,
             tools: [...step.tools],
-            gates: formatGates(step.gates),
+            gates: step.gates.map(gateView),
           })),
         })),
         runtime: { allowedPrograms: [...await allowedGatePrograms()] },
@@ -276,6 +339,8 @@ export function apply(ctx: Context, config: Config): void {
           track: { type: 'string', required: true },
           stepId: { type: 'string', required: true },
           instruction: { type: 'string', required: true },
+          phase: { type: 'string', required: true },
+          planWriteGlobs: { type: 'array', required: true, items: { type: 'string' } },
           tools: { type: 'array', required: true, items: { type: 'string' } },
           harnessTools: { type: 'array', required: true, items: { type: 'string' } },
           manualTools: {
@@ -290,7 +355,7 @@ export function apply(ctx: Context, config: Config): void {
             },
           },
           missingTools: { type: 'array', required: true, items: { type: 'string' } },
-          gates: { type: 'array', required: true, items: { type: 'string' } },
+          gates: { type: 'array', required: true, items: GATE_VIEW_SCHEMA },
           referencePaths: { type: 'array', required: true, items: { type: 'string' } },
           inputs: {
             type: 'array', required: true,
@@ -317,7 +382,7 @@ export function apply(ctx: Context, config: Config): void {
       const state = await stateFor(args.namespace, args.app)
       const current = currentStep(state)
       if (current === undefined) {
-        return { finished: true, track: '', stepId: '', instruction: '', tools: [], harnessTools: [], manualTools: [], missingTools: [], gates: [], referencePaths: [], inputs: [] }
+        return { finished: true, track: '', stepId: '', instruction: '', phase: 'apply', planWriteGlobs: [], tools: [], harnessTools: [], manualTools: [], missingTools: [], gates: [], referencePaths: [], inputs: [] }
       }
       // The step's declared tools are an execution contract, not a suggestion
       // (upstream rejects calls outside `default_tools ∪ step.tools`). The
@@ -330,20 +395,23 @@ export function apply(ctx: Context, config: Config): void {
       const declared = current.step.tools
       const manual = manualToolSurface(adapter).filter(entry => declared.includes(entry.adapterTool))
       const missing = missingToolSurface(adapter, registered).filter(entry => declared.includes(entry.adapterTool))
+      const context = gateContext(args.namespace, args.app)
       return {
         finished: false,
         track: current.track.name,
         stepId: current.step.id,
         instruction: current.step.instruction,
+        phase: current.step.phase,
+        planWriteGlobs: stepWriteGlobs(current.step, context),
         tools: [...declared],
         harnessTools: declared
           .flatMap(tool => ADAPTER_TOOL_TO_DSH[tool] ?? [])
           .filter(name => registered.has(name)),
         manualTools: manual.map(entry => ({ adapterTool: entry.adapterTool, reason: entry.reason })),
         missingTools: missing.map(entry => entry.adapterTool),
-        gates: formatGates(current.step.gates),
+        gates: current.step.gates.map(gateView),
         referencePaths: [...current.step.referencePaths],
-        inputs: await readStepInputs(current.step, gateContext(args.namespace, args.app)),
+        inputs: await readStepInputs(current.step, context),
       }
     },
     presentCall: args => ({
@@ -424,8 +492,17 @@ export function apply(ctx: Context, config: Config): void {
       const results = await checkStepGates(current.step.gates, context, runner)
       const failed = results.filter(result => result.status === 'fail')
       if (failed.length > 0) {
-        throw new Error(`alioth_workflow: gates failed for step ${current.step.id}:\n`
-          + failed.map(result => `- [${result.errorKind ?? 'other'}/${isLlmFixable(result.errorKind ?? 'other') ? 'llm-fixable' : 'environment'}] ${result.detail}`).join('\n'))
+        // Structured repair contract per failed gate (rule id + class +
+        // suggested action + the raw output as evidence) instead of a bare
+        // terminal dump: the error text is the single carrier, and
+        // `ruleIdFromError` is the only parser. Nothing advances.
+        const lines = failed.map(result =>
+          formatRepairError(result.repair ?? repairContractFor('unknown', current.step.id, result.detail)),
+        )
+        throw new Error(
+          `alioth_workflow: gates failed for step ${current.step.id}`
+          + `（${failed.length}/${results.length} 门禁未通过，未推进）\n${lines.join('\n')}`,
+        )
       }
       const advanced = completeCurrentStep(state)
       const workflowRoot = config.workflowRoot ?? path.join(ctx.aliothEnv.dataRoot(), 'workflows')

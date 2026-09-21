@@ -122,7 +122,13 @@ describe('alioth workflow bridge', () => {
       finished: false,
       track: 'App 构建',
       stepId: '1.1',
+      phase: 'apply',
       tools: ['write_file'],
+      // The step's resolved write surface: the gate's output_glob with the run
+      // coordinates substituted.
+      planWriteGlobs: ['Pre-Proc/Alioth/Apps/demo-app/app.json'],
+      // The whole gate form, not a summary string.
+      gates: [{ kind: 'output-glob', outputGlob: 'Pre-Proc/{ns}/Apps/{app}/app.json' }],
     })
     expect(String(value.instruction)).toContain('preflight')
     // The declared adapter vocabulary is translated into the concrete harness
@@ -186,8 +192,17 @@ describe('alioth workflow bridge', () => {
           id: 'App 构建',
           name: 'App 构建',
           steps: [
-            { id: '1.1', tools: ['write_file'], gates: ['output_glob: Pre-Proc/{ns}/Apps/{app}/app.json'] },
-            { id: '2.1', gates: ['output_glob: Pre-Proc/{ns}/Apps/{app}/extensions/constraints.yaml'] },
+            {
+              id: '1.1',
+              phase: 'apply',
+              tools: ['write_file'],
+              gates: [{ kind: 'output-glob', outputGlob: 'Pre-Proc/{ns}/Apps/{app}/app.json' }],
+            },
+            {
+              id: '2.1',
+              phase: 'apply',
+              gates: [{ kind: 'output-glob', outputGlob: 'Pre-Proc/{ns}/Apps/{app}/extensions/constraints.yaml' }],
+            },
           ],
         },
       ],
@@ -315,10 +330,15 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
       missingTools: ['run_command', 'quantum_analyzer'],
     })
     expect(step.gates).toEqual([
-      'output_glob: Pre-Proc/{ns}/Apps/{app}/app.json',
-      // expected_exit is printed only when the gate wants a non-zero code.
-      'program: bun --version timeout=120s',
-      'program: target/debug/ontology-mapping --probe {ns} expected_exit=3 timeout=5s',
+      { kind: 'output-glob', outputGlob: 'Pre-Proc/{ns}/Apps/{app}/app.json' },
+      { kind: 'program', program: 'bun', args: ['--version'], expectedExitCode: 0, timeoutSec: 120 },
+      {
+        kind: 'program',
+        program: 'target/debug/ontology-mapping',
+        args: ['--probe', '{ns}'],
+        expectedExitCode: 3,
+        timeoutSec: 5,
+      },
     ])
     expect(step.inputs).toEqual([
       { path: 'Pre-Proc/Demo/Apps/cover-app/brief.md', content: '任务简述\n' },
@@ -340,8 +360,11 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     const result = await callCover('alioth_workflow_complete', { namespace: 'Demo', app: 'cover-app' })
     if (!result.isError) throw new Error('expected alioth_workflow_complete failure')
     expect(result.error.message).toContain('gates failed for step 1.1')
-    // A missing gate binary is not model-fixable: classified as environment.
-    expect(result.error.message).toContain('[path-missing/environment]')
+    // A gate program that cannot run is not model-fixable: the repair contract
+    // carries the rule id (the only stable signature) plus the class.
+    expect(result.error.message).toContain('[rule:gate-program-not-whitelisted] class=not-fixable')
+    // The raw output still rides along as evidence.
+    expect(result.error.message).toContain('证据：')
 
     const step = expectOk(await callCover('alioth_workflow_step', { namespace: 'Demo', app: 'cover-app' }))
     expect(step.stepId).toBe('1.1')

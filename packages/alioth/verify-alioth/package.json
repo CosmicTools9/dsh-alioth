@@ -1,0 +1,20 @@
+{
+  "name": "@dsh-alioth/verify-alioth",
+  "description": "Alioth AppAgent verification/closure library: eval reports, extension runtime verification, closure audit, artifact versioning/rollback, staged patches, build-eval baseline, capability advertisement, deferred store, usage aggregation, stage gates, publish shadow",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "yaml": "^2.8.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "@dsh-alioth/guard-alioth",
+  "description": "Alioth AppAgent execution guards: declared tool-surface enforcement, namespace write sandbox, plan-phase write narrowing, repair wall, closure-evidence nudge, turn budget",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./rules": "./src/rules.ts",
+    "./scope": "./src/scope.ts",
+    "./surface": "./src/surface.ts",
+    "./whitelist": "./src/whitelist.ts",
+    "./ledger": "./src/ledger.ts",
+    "./nudge": "./src/nudge.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/skill-alioth": "workspace:*",
+    "@dsh-alioth/verify-alioth": "workspace:*",
+    "yaml": "^2.8.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-agent": "^0.1.6-alpha.2",
+    "@deepseek-ai/dsh-llm": "^0.1.6-alpha.2",
+    "@deepseek-ai/dsh-session": "^0.1.6-alpha.2",
+    "@deepseek-ai/dsh-tools": "^0.1.6-alpha.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  }
+}

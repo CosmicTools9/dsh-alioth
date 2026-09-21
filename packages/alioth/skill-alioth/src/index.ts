@@ -9,9 +9,11 @@ export {
   parseAdapterDocument,
   loadAdapter,
   parseRuntimeAllowedPrograms,
+  validateAdapterStructure,
   type Adapter,
   type Step,
   type StepGate,
+  type StepPhase,
   type StepSchema,
   type Track,
 } from './adapter.ts'
@@ -44,12 +46,33 @@ export {
 export { loadRun, saveRun, type RunMeta } from './workspace.ts'
 export {
   ADAPTER_TOOL_TO_DSH,
+  ADAPTER_TOOL_VOCABULARY,
   MANUAL_ADAPTER_TOOLS,
   manualToolSurface,
   missingToolSurface,
   type ManualTool,
   type MissingTool,
 } from './mapping.ts'
+export {
+  EVIDENCE_HEAD_LIMIT,
+  REGISTERED_RULE_IDS,
+  RULE_PREFIX,
+  formatRepairError,
+  repairContractFor,
+  ruleIdFromError,
+  type FailureKind,
+  type RepairClass,
+  type RepairContract,
+} from './repair.ts'
+export {
+  MAX_REPEAT_CALL,
+  MAX_REPEAT_ERROR,
+  RetryBudget,
+  callSignature,
+  errorSignature,
+  type RetryBudgetOptions,
+  type RetryDecision,
+} from './retry-budget.ts'
 export { createProgramRunner, bunAvailable, type ProgramRunnerOptions } from './bun.ts'
 export {
   validateCoordinates,

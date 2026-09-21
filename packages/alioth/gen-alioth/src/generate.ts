@@ -42,6 +42,12 @@ export interface AppSpec {
   readonly goal?: string
   /** Explicit non-scope statements (model wire shape: string[]). */
   readonly nonScope?: readonly string[]
+  /**
+   * Lifecycle status. The AppAgent evaluation requires the field
+   * (`evaluate.rs:234-242` required set includes `status`), so the generator emits it
+   * rather than leaving a downstream stage to patch the artifact after the fact.
+   */
+  readonly status?: string
 }
 
 export interface GeneratedApp {
@@ -51,6 +57,8 @@ export interface GeneratedApp {
 
 const DEFAULT_VERSION = '0.1.0'
 const DEFAULT_MIN_ALIOTH_VERSION = '10.0.0'
+/** Newly generated apps are under construction; `developing` is in the AppAgent evaluation's enum. */
+const DEFAULT_APP_STATUS = 'developing'
 
 /** The app-level extensions per the distribution's artifact tree (DESIGN_INTENT). */
 export const EXTENSION_FILES = ['constraints', 'rules', 'statemachines', 'workflows'] as const
@@ -137,6 +145,7 @@ export function generateApp(spec: AppSpec): GeneratedApp {
     },
     routing: { base, defaultRoute },
     navigation,
+    status: spec.status ?? DEFAULT_APP_STATUS,
     min_alioth_version: DEFAULT_MIN_ALIOTH_VERSION,
   }
   const modules = spec.modules.map(module => generateModule({ namespace: spec.namespace, version }, module))

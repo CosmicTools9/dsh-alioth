@@ -231,10 +231,10 @@ describe('skill-alioth tool-surface mapping', () => {
   })
 
   it('maps write_file to the harness write surface (code files in gated steps)', () => {
-    const registered = new Set(['read', 'tool:read', 'write', 'tool:write', 'glob', 'tool:glob', 'grep', 'tool:grep'])
+    const registered = new Set(['read', 'write', 'edit', 'glob', 'grep'])
     const missing = missingToolSurface(adapter, registered)
     expect(missing.find(item => item.adapterTool === 'write_file')).toBeUndefined()
-    expect(ADAPTER_TOOL_TO_DSH.write_file).toEqual(['write', 'tool:write'])
+    expect(ADAPTER_TOOL_TO_DSH.write_file).toEqual(['write'])
   })
 
   it('classifies the upstream vocabulary: mapped, manual, or missing', () => {
