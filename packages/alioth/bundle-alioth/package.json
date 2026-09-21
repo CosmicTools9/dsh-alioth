@@ -11,12 +11,21 @@
     }
   },
   "dependencies": {
+    "@dsh-alioth/app-picker": "workspace:*",
+    "@dsh-alioth/auth-alioth": "workspace:*",
+    "@dsh-alioth/auth-web-alioth": "workspace:*",
+    "@dsh-alioth/billing-alioth": "workspace:*",
+    "@dsh-alioth/billing-web-alioth": "workspace:*",
     "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/feedback-web-alioth": "workspace:*",
+    "@dsh-alioth/guard-alioth": "workspace:*",
+    "@dsh-alioth/landing-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth-meta": "workspace:*",
-    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
     "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",
-    "@dsh-alioth/auth-alioth": "workspace:*"
+    "@dsh-alioth/tool-alioth-verify": "workspace:*",
+    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
+    "@dsh-alioth/tool-feedback-alioth": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2"

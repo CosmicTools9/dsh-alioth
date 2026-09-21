@@ -12714,12 +12714,33 @@ importers:
       '@deepseek-ai/cordis':
         specifier: ^4.0.2
         version: link:../../../../deepseek-harness/vendor/cordis
+      '@dsh-alioth/app-picker':
+        specifier: workspace:*
+        version: link:../app-picker
       '@dsh-alioth/auth-alioth':
         specifier: workspace:*
         version: link:../auth-alioth
+      '@dsh-alioth/auth-web-alioth':
+        specifier: workspace:*
+        version: link:../auth-web-alioth
+      '@dsh-alioth/billing-alioth':
+        specifier: workspace:*
+        version: link:../billing-alioth
+      '@dsh-alioth/billing-web-alioth':
+        specifier: workspace:*
+        version: link:../billing-web-alioth
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
+      '@dsh-alioth/feedback-web-alioth':
+        specifier: workspace:*
+        version: link:../feedback-web-alioth
+      '@dsh-alioth/guard-alioth':
+        specifier: workspace:*
+        version: link:../guard-alioth
+      '@dsh-alioth/landing-alioth':
+        specifier: workspace:*
+        version: link:../landing-alioth
       '@dsh-alioth/tool-alioth':
         specifier: workspace:*
         version: link:../tool-alioth
@@ -12729,9 +12750,15 @@ importers:
       '@dsh-alioth/tool-alioth-orchestrator':
         specifier: workspace:*
         version: link:../tool-alioth-orchestrator
+      '@dsh-alioth/tool-alioth-verify':
+        specifier: workspace:*
+        version: link:../tool-alioth-verify
       '@dsh-alioth/tool-alioth-workflow':
         specifier: workspace:*
         version: link:../tool-alioth-workflow
+      '@dsh-alioth/tool-feedback-alioth':
+        specifier: workspace:*
+        version: link:../tool-feedback-alioth
 
   packages/alioth/env-alioth:
     dependencies:

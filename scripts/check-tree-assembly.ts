@@ -24,6 +24,7 @@
  * Usage: node --import tsx scripts/check-tree-assembly.ts
  */
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -39,6 +40,15 @@ interface Composition {
   readonly expectPlugins: readonly string[]
   /** Text that must appear in the persona (patch replaced the row). */
   readonly expectPersona: string
+  /**
+   * Manifest that must DECLARE every `@dsh-alioth/*` plugin this composition
+   * mounts. Mounting is by package name, so an undeclared row silently drops
+   * out of the package's `pnpm deploy` closure and any consumer that derives
+   * the plugin set from the manifest — re-found by hand, hence asserted here.
+   * Harness rows (`@deepseek-ai/*`) are exempt: they resolve through the
+   * profile fallback, which `link-dsh-profiles.sh` owns.
+   */
+  readonly declaringManifest?: string
 }
 
 const ALIOTH_PLUGINS = [
@@ -56,6 +66,7 @@ const COMPOSITIONS: readonly Composition[] = [
     name: 'bundle (headless deployment)',
     profile: 'headless',
     patch: 'packages/alioth/bundle-alioth/cordis.patch.yml',
+    declaringManifest: 'packages/alioth/bundle-alioth/package.json',
     expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
   },
@@ -79,6 +90,7 @@ const COMPOSITIONS: readonly Composition[] = [
     name: 'web + bundle patch (launch GUI)',
     profile: 'web',
     patch: 'packages/alioth/bundle-alioth/cordis.patch.yml',
+    declaringManifest: 'packages/alioth/bundle-alioth/package.json',
     expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
   },
@@ -122,6 +134,18 @@ function main(): void {
     }
     if (!out.includes(comp.expectPersona)) {
       problems.push(`${label}: persona marker "${comp.expectPersona}" not found (system-prompt row not patched)`)
+    }
+    if (comp.declaringManifest !== undefined) {
+      const manifest = JSON.parse(readFileSync(path.join(ROOT, comp.declaringManifest), 'utf8')) as {
+        dependencies?: Record<string, string>
+      }
+      const declared = new Set(Object.keys(manifest.dependencies ?? {}))
+      const mounted = [...out.matchAll(/^  name: '(@dsh-alioth\/[^']+)'$/gm)].map(match => match[1] as string)
+      for (const pkg of new Set(mounted)) {
+        if (!declared.has(pkg)) {
+          problems.push(`${label}: \`${pkg}\` is mounted but not declared in ${comp.declaringManifest} — add it to dependencies (mounting is by name; the manifest is the declared plugin set)`)
+        }
+      }
     }
     const warningLines = (out + err)
       .split('\n')

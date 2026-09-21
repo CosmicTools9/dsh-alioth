@@ -20,7 +20,10 @@ parameters and semantic decisions only, never artifact text.
 | `tool-alioth` | `alioth_app_list` / `alioth_app_inspect` / `alioth_app_write` / `alioth_app_configure` / `alioth_app_delete` — contract-validated artifact tools (discover, create, grow, enrich, retire/delete) |
 | `tool-alioth-meta` | `alioth_schema_info` / `alioth_schema_semantic_search` / `alioth_entity_write` — registry + embedding search (bge-small-zh, deterministic) |
 | `tool-alioth-workflow` | `alioth_workflow_step` / `alioth_workflow_complete` — AppAgent track/step/gate bridge |
-| `tool-alioth-orchestrator` | `alioth_app_create` — PTC pipeline: validate → entity → app → verify (atomic, zero LLM) |
+| `tool-alioth-orchestrator` | `alioth_app_create` — PTC pipeline: validate → entity → app → verify (atomic, zero LLM); 7 stage gates, publish preconditions, controlled parallel dispatch |
+| `tool-alioth-verify` | `alioth_verify` / `alioth_closure` / `alioth_version` / `alioth_patch_assets` / `alioth_capabilities` / `alioth_deferred` / `alioth_usage` — eval report, extension runtime verification, closure verdicts, artifact versioning + rollback, two-stage asset patches, capability advertisement, deferred blockers, usage |
+| `guard-alioth` | Execution-surface guard: declared tool surface, write sandbox (`Pre-Proc/{ns}/…` + plan-step write scope), repair wall, turn budget (wall-clock / steps / optional cost), closure-evidence nudge |
+| `verify-alioth` | Verification/closure library behind the tools above (extension loader contract, artifact fingerprints, all-or-nothing restore, build-eval scoring, honest `unknown` advertisement) |
 | `auth-alioth` | B/S auth + workspace: scrypt passwords, token sessions, namespace guard, workspace mode (unlimited opens 自定义工作区), `Pre-Proc/{ns}`+`Deploy/{ns}` bootstrap |
 | `skill-alioth` | Adapter state machine, entity-validate (real dictionary data), 9-stage AppAgent machine |
 | `gen-alioth` | Artifact JSON-Schema contracts + pure generators |
