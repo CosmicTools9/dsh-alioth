@@ -456,7 +456,6 @@ export function apply(ctx: Context, config: Config): void {
               properties: {
                 status: { type: 'string', required: true },
                 detail: { type: 'string', required: true },
-                errorKind: { type: 'string' },
               },
             },
           },
@@ -514,7 +513,6 @@ export function apply(ctx: Context, config: Config): void {
         gateResults: results.map(result => ({
           status: result.status,
           detail: result.detail,
-          ...(result.errorKind === undefined ? {} : { errorKind: result.errorKind }),
         })),
         nextStep: next === undefined ? '' : next.step.id,
       }

@@ -46,7 +46,8 @@ const SYNC_SET: readonly { readonly source: string; readonly dest: string }[] = 
   { source: 'scripts/check/check-nav-hrefs.ts', dest: 'scripts/check/check-nav-hrefs.ts' },
   // Gate programs the adapters invoke directly: alioth-block 1.1 (check-block-json)
   // and alioth-service 1.5 (audit-service-spec). Absent here they spawn ENOENT →
-  // GateErrorKind path-missing (not LLM-fixable) and the track stalls for good.
+  // GateErrorKind path-missing (now: the repair rule `gate-program-not-whitelisted`,
+  // class not-fixable) and the track stalls for good.
   { source: 'scripts/check/check-block-json.ts', dest: 'scripts/check/check-block-json.ts' },
   { source: 'scripts/check/audit-service-spec.ts', dest: 'scripts/check/audit-service-spec.ts' },
   { source: 'scripts/check/audit-css-framework.mjs', dest: 'scripts/check/audit-css-framework.mjs' },

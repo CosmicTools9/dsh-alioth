@@ -28,10 +28,7 @@ export {
 export {
   checkGate,
   checkStepGates,
-  classifyGateError,
-  isLlmFixable,
   type GateContext,
-  type GateErrorKind,
   type GateResult,
   type GateStatus,
   type ProgramResult,

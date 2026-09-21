@@ -26,23 +26,17 @@ import { repairContractFor, type FailureKind, type RepairContract } from './repa
 export type GateStatus = 'pass' | 'not-attempted' | 'fail'
 
 /**
- * Upstream GateErrorKind — decides the retry policy: contract failures are
- * LLM-output quality (retryable in dialogue); tool-whitelist and path-missing
- * are environment refusals (fast-fail); other is uncategorized/transient.
+ * Local failure classification from a gate's evidence text — **internal** to this
+ * module: it only feeds `programFailureKind` → the repair rule table (`repair.ts`).
+ * Upstream deleted its same-named `GateErrorKind` (the wire contract is
+ * `RepairClass` + `ruleId`), so this is deliberately NOT part of the public API and
+ * MUST NOT be re-exported: one classification vocabulary, not two.
+ * Precedence: runner refusals → environment paths → timeouts → default contract
+ * (an exit-code mismatch is output quality by definition).
  */
-export type GateErrorKind = 'contract' | 'tool-whitelist' | 'path-missing' | 'other'
+type GateErrorKind = 'contract' | 'tool-whitelist' | 'path-missing' | 'other'
 
-export function isLlmFixable(kind: GateErrorKind): boolean {
-  return kind === 'contract' || kind === 'other'
-}
-
-/**
- * Classify a gate failure from its evidence (upstream `classify_error`
- * marker style, narrowed to the GateErrorKind set). Precedence: runner
- * refusals → environment paths → timeouts → default contract (an exit-code
- * mismatch is output quality by definition).
- */
-export function classifyGateError(detail: string): GateErrorKind {
+function classifyGateError(detail: string): GateErrorKind {
   const lowered = detail.toLowerCase()
   if (/whitelist|allowlist|not allowed|rejected|denied|permission denied|forbidden/.test(lowered)) {
     return 'tool-whitelist'
@@ -60,7 +54,6 @@ export interface GateResult {
   readonly gate: StepGate
   readonly status: GateStatus
   readonly detail: string
-  readonly errorKind?: GateErrorKind
   /** Structured repair contract on failures (upstream `repair.rs`); absent on pass/not-attempted. */
   readonly repair?: RepairContract
 }
@@ -256,13 +249,12 @@ function programFailureKind(detail: string): FailureKind {
   return 'gate-exit'
 }
 
-/** Build a failed gate result: detail + error kind + structured repair contract. */
+/** Build a failed gate result: detail + structured repair contract. */
 function failed(gate: StepGate, failure: FailureKind, source: string, detail: string): GateResult {
   return {
     gate,
     status: 'fail',
     detail,
-    errorKind: classifyGateError(detail),
     repair: repairContractFor(failure, source, detail),
   }
 }

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseAdapterDocument, loadAdapter, parseRuntimeAllowedPrograms, type Adapter } from '../src/adapter.ts'
 import { completeCurrentStep, currentStep, initialRunState, type RunState } from '../src/state.ts'
-import { checkStepGates, classifyGateError, isLlmFixable } from '../src/gates.ts'
+import { checkGate, checkStepGates } from '../src/gates.ts'
 import { loadRun, saveRun } from '../src/workspace.ts'
 import { ADAPTER_TOOL_TO_DSH, manualToolSurface, missingToolSurface } from '../src/mapping.ts'
 import { bunAvailable, createProgramRunner } from '../src/bun.ts'
@@ -307,9 +307,16 @@ describe('skill-alioth program runner', () => {
     expect(result.ok).toBe(false)
     expect(result.exitCode).toBe(null)
     // The refusal text classifies as an environment refusal, never an
-    // LLM-fixable contract failure — the model must not be told to retry.
-    expect(isLlmFixable(classifyGateError(result.detail))).toBe(false)
-    expect(classifyGateError(result.detail)).toBe('tool-whitelist')
+    // LLM-fixable contract failure — the model must not be told to retry. The
+    // durable contract for that claim is the repair rule the gate returns
+    // (`not-fixable`), not the retired GateErrorKind vocabulary.
+    const gate = {
+      kind: 'program', program: 'node', args: [], expectedExitCode: 0, timeoutSec: 15,
+    } as const
+    const checked = await checkGate(gate, { preProcRoot: '/tmp', variables: {} }, whitelisted)
+    expect(checked.status).toBe('fail')
+    expect(checked.repair?.ruleId).toBe('gate-program-not-whitelisted')
+    expect(checked.repair?.class).toBe('not-fixable')
     expect(result.detail).not.toContain('exited')
   })
 
