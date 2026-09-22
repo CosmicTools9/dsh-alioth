@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot the DeepSeek Harness web profile with the full Alioth plugin group
-# (bundle patch: env + 4 tool plugins + auth trio + billing + feedback) and
-# open the browser. Needs DEEPSEEK_API_KEY for real model calls;
+# (bundle patch: env + tool/guard/verify plugins + auth trio + billing +
+# feedback) and open the browser. Needs DEEPSEEK_API_KEY for real model calls;
 # ALIOTH_PRE_PROC_ROOT overrides the default Pre-Proc root. A previous dsh
 # instance still holding the port is stopped automatically (SIGTERM, then
 # SIGKILL); a non-dsh process on the port aborts the launch instead.
@@ -12,6 +12,13 @@ PORT="${DSH_WEB_PORT:-3100}"
 URL="http://${HOST}:${PORT}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# The bundle mounts every plugin BY PACKAGE NAME and the web profile resolves
+# them through DSH's profile fallback, so the @dsh-alioth/* links must exist
+# before boot — otherwise the launch dies with "Cannot find package … imported
+# from ~/.dsh/profiles/web/". Idempotent, and it fails loudly on a missing
+# package directory, which is the right place to notice one.
+bash "$ROOT/scripts/link-dsh-profiles.sh"
 
 # Stop a previous dsh web instance on $PORT. Only processes whose command line
 # contains "/dsh/" are reaped; anything else must be freed by the operator.
