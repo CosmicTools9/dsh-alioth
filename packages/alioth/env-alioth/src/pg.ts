@@ -12,15 +12,60 @@ import { access, readFile } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import EmbeddedPostgres from 'embedded-postgres'
-import { Client } from 'pg'
+import { Client, type QueryResult, type QueryResultRow } from 'pg'
 
-/** A connected single client plus the URL it came from. */
+/**
+ * The one way to run SQL against the resolved database.
+ *
+ * Every caller funnels through the handle instead of holding a `Client`: a session can
+ * outlive its socket (server restart, idle kill, network drop), and a bare client never
+ * recovers — every later query then fails with pg's "not queryable" guard. The handle
+ * reconnects once for exactly those failures.
+ */
+export type QueryFn = <T extends QueryResultRow>(
+  text: string,
+  values?: readonly unknown[],
+) => Promise<QueryResult<T>>
+
+/** A live query surface plus the URL it came from. */
 export interface PgHandle {
-  readonly client: Client
+  readonly query: QueryFn
   /** Connection URL (contains credentials — mask before display). */
   readonly url: string
-  /** Close the client and, when we own it, stop the embedded server. */
+  /** Close the connection and, when we own it, stop the embedded server. */
   close(): Promise<void>
+}
+
+/**
+ * The failure where pg *refused to send* the statement because the connection was
+ * already known dead — so it provably never executed server-side, and replaying it
+ * on a fresh connection cannot double-apply a write.
+ */
+function isUnsentConnectionFailure(error: unknown): boolean {
+  return error instanceof Error
+    && error.message.includes('encountered a connection error and is not queryable')
+}
+
+/**
+ * Failures that came from the socket rather than from the server answering the
+ * statement. The statement may or may not have executed — it is NEVER replayed —
+ * but the connection is gone, so the next query must open a fresh one instead of
+ * inheriting a corpse. Matched by message because pg surfaces these without a
+ * stable error class; anything unrecognised stays untouched and propagates.
+ */
+function isConnectionLevelFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false
+  }
+  const code = (error as { code?: unknown }).code
+  // 57P01: "terminating connection due to administrator command" — the session was
+  // killed, so the connection is dead even though the server answered first.
+  if (code === '57P01' || code === 'ECONNRESET' || code === 'EPIPE') {
+    return true
+  }
+  return error.message.includes('Connection terminated unexpectedly')
+    || error.message.includes('socket hang up')
+    || isUnsentConnectionFailure(error)
 }
 
 export interface PgOptions {
@@ -95,10 +140,13 @@ async function assertClusterFree(dataDir: string): Promise<void> {
   }
 }
 
-async function acquireExternal(url: string): Promise<PgHandle> {
-  const client = new Client({ connectionString: url })
-  await client.connect()
-  return { client, url, close: () => client.end() }
+async function acquireExternal(url: string, onLog?: (line: string) => void): Promise<PgHandle> {
+  const open = async (): Promise<Client> => {
+    const client = new Client({ connectionString: url })
+    await client.connect()
+    return client
+  }
+  return createHandle({ initial: await open(), url, reconnect: open, onLog, release: async () => {} })
 }
 
 async function acquireEmbedded(options: PgOptions): Promise<PgHandle> {
@@ -171,17 +219,71 @@ async function acquireEmbedded(options: PgOptions): Promise<PgHandle> {
     await stopInstance()
     throw error
   })
-  return {
-    client,
+  return createHandle({
+    initial: client,
     url,
+    reconnect: connectWithCreate,
+    onLog: options.onLog,
+    release: stopInstance,
+  })
+}
+
+interface HandleParts {
+  readonly initial: Client
+  readonly url: string
+  /** Open a replacement connection after the previous one died. */
+  readonly reconnect: () => Promise<Client>
+  readonly onLog?: ((line: string) => void) | undefined
+  /** Release what we own (the embedded server, when we own one). */
+  readonly release: () => Promise<void>
+}
+
+function createHandle(parts: HandleParts): PgHandle {
+  let current = parts.initial
+  const arm = (client: Client): void => {
+    // Without a listener a dying idle socket emits an unhandled 'error' and takes the
+    // process down; with one, the failure is recorded and the next query reconnects.
+    client.on('error', (error: unknown) => {
+      parts.onLog?.(`env-alioth: db connection error (${String(error)}) — the next query reconnects`)
+    })
+  }
+  arm(current)
+  const replace = async (): Promise<Client> => {
+    const replacement = await parts.reconnect()
+    arm(replacement)
+    current = replacement
+    return replacement
+  }
+  const query: QueryFn = async (text, values) => {
+    const args = values === undefined ? undefined : [...values]
+    try {
+      return await current.query(text, args)
+    } catch (error) {
+      if (isUnsentConnectionFailure(error)) {
+        // Refused before sending: replaying is safe and keeps a long session alive.
+        parts.onLog?.('env-alioth: db connection was dead — reconnecting once')
+        return await (await replace()).query(text, args)
+      }
+      if (isConnectionLevelFailure(error)) {
+        // May have executed: never replayed. Drop the corpse so the *next* query
+        // (e.g. the next pipeline stage) reconnects instead of failing forever.
+        parts.onLog?.('env-alioth: db connection lost — the next query reconnects')
+        current = await replace()
+      }
+      throw error
+    }
+  }
+  return {
+    query,
+    url: parts.url,
     close: async () => {
-      await client.end()
-      await stopInstance()
+      await current.end().catch(() => {})
+      await parts.release()
     },
   }
 }
 
 /** Connect per `options`: external URL when given, else a provisioned embedded cluster. */
 export function acquirePostgres(options: PgOptions): Promise<PgHandle> {
-  return options.url === undefined ? acquireEmbedded(options) : acquireExternal(options.url)
+  return options.url === undefined ? acquireEmbedded(options) : acquireExternal(options.url, options.onLog)
 }

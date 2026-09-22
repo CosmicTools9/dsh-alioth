@@ -1,13 +1,13 @@
 /**
  * Read-only environment health checks. Doctor never mutates: it inspects a
- * resolved environment (snapshot + connected client) and reports a structured
+ * resolved environment (snapshot + query surface) and reports a structured
  * green/red verdict with one line of evidence per check.
  * @module @dsh-alioth/env-alioth/doctor
  */
 
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import type { Client } from 'pg'
+import type { QueryFn } from './pg.ts'
 import type { ModelSnapshot } from './model-source.ts'
 import { readStamp } from './bootstrap.ts'
 
@@ -27,14 +27,14 @@ export function maskUrl(url: string): string {
   return url.replace(/(postgres(?:ql)?:\/\/[^:/@]+:)[^@]+@/, '$1***@')
 }
 
-async function checkDatabase(client: Client): Promise<DoctorCheck> {
-  const res = await client.query<{ version: string }>('SELECT version()')
+async function checkDatabase(query: QueryFn): Promise<DoctorCheck> {
+  const res = await query<{ version: string }>('SELECT version()')
   const version = res.rows[0]?.version ?? 'unknown'
   return { name: 'database', ok: true, detail: version.split(',')[0] ?? 'connected' }
 }
 
-async function checkRegistrySchema(client: Client): Promise<DoctorCheck> {
-  const res = await client.query<{ table_name: string }>(
+async function checkRegistrySchema(query: QueryFn): Promise<DoctorCheck> {
+  const res = await query<{ table_name: string }>(
     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'isahl_meta'",
   )
   const tables = res.rows.map(row => row.table_name)
@@ -44,8 +44,8 @@ async function checkRegistrySchema(client: Client): Promise<DoctorCheck> {
     : { name: 'isahl-meta', ok: false, detail: `schema present but missing: ${missing.join(', ')}` }
 }
 
-async function checkStamp(client: Client, snapshot: ModelSnapshot): Promise<DoctorCheck> {
-  const stamp = await readStamp(client)
+async function checkStamp(query: QueryFn, snapshot: ModelSnapshot): Promise<DoctorCheck> {
+  const stamp = await readStamp(query)
   if (stamp === null) {
     return { name: 'model-stamp', ok: false, detail: 'no dsh_alioth.model_state row — registry not bootstrapped by this plugin' }
   }
@@ -98,7 +98,7 @@ async function checkDictionarySnapshots(modelDir: string): Promise<DoctorCheck> 
  * Run all checks. Each check's failure is contained: a throwing check becomes
  * `ok: false` with the error message as evidence, never aborting the report.
  */
-export async function runDoctor(client: Client, snapshot: ModelSnapshot, dataRoot?: string): Promise<DoctorReport> {
+export async function runDoctor(query: QueryFn, snapshot: ModelSnapshot, dataRoot?: string): Promise<DoctorReport> {
   const artifacts = snapshot.artifacts
   const checks: DoctorCheck[] = [
     {
@@ -108,9 +108,9 @@ export async function runDoctor(client: Client, snapshot: ModelSnapshot, dataRoo
         + `${artifacts.artifactSchemaFiles.length} schemas @ ${snapshot.sourceRef.slice(0, 12)} (model ${snapshot.modelVersion})`,
     },
   ]
-  for (const run of [checkDatabase, checkRegistrySchema, (c: Client) => checkStamp(c, snapshot)]) {
+  for (const run of [checkDatabase, checkRegistrySchema, (q: QueryFn) => checkStamp(q, snapshot)]) {
     try {
-      checks.push(await run(client))
+      checks.push(await run(query))
     } catch (error) {
       checks.push({ name: 'unknown', ok: false, detail: error instanceof Error ? error.message : String(error) })
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { acquirePostgres } from '../src/pg.ts'
+import { acquirePostgres, type PgHandle, type QueryFn } from '../src/pg.ts'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -160,45 +160,51 @@ interface FakeState {
   executedDdl: string[]
 }
 
-/** Answers the exact queries `bootstrapDatabase` issues, recording DDL runs. */
-class FakeClient {
-  constructor(private readonly state: FakeState) {}
-
-  async query(sql: string, values?: readonly unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }> {
+/**
+ * Answers the exact queries `bootstrapDatabase` issues, recording DDL runs.
+ * A bare query function, like the handle it stands in for — the module under test
+ * takes a `QueryFn`, never a client object.
+ */
+function fakeQuery(state: FakeState): QueryFn {
+  const run = async (
+    sql: string,
+    values?: readonly unknown[],
+  ): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }> => {
     if (sql.includes('information_schema.schemata')) {
-      return { rows: [{ exists: this.state.isahlSchema }], rowCount: 1 }
+      return { rows: [{ exists: state.isahlSchema }], rowCount: 1 }
     }
     if (sql.includes('CREATE TABLE IF NOT EXISTS dsh_alioth.model_state')) {
-      this.state.stampTable = true
+      state.stampTable = true
       return { rows: [], rowCount: 0 }
     }
     if (sql.includes('to_regclass')) {
-      return { rows: [{ oid: this.state.stampTable ? 101 : null }], rowCount: 1 }
+      return { rows: [{ oid: state.stampTable ? 101 : null }], rowCount: 1 }
     }
     if (sql.includes('FROM dsh_alioth.model_state')) {
-      if (this.state.stamp === null) {
+      if (state.stamp === null) {
         return { rows: [], rowCount: 0 }
       }
       return {
         rows: [{
-          model_version: this.state.stamp.modelVersion,
-          source_ref: this.state.stamp.sourceRef,
-          bootstrapped_at: this.state.stamp.bootstrappedAt,
+          model_version: state.stamp.modelVersion,
+          source_ref: state.stamp.sourceRef,
+          bootstrapped_at: state.stamp.bootstrappedAt,
         }],
         rowCount: 1,
       }
     }
     if (sql.includes('INSERT INTO dsh_alioth.model_state')) {
-      this.state.stamp = {
+      state.stamp = {
         modelVersion: String(values?.[0]),
         sourceRef: String(values?.[1]),
         bootstrappedAt: new Date(),
       }
       return { rows: [], rowCount: 1 }
     }
-    this.state.executedDdl.push(sql)
+    state.executedDdl.push(sql)
     return { rows: [], rowCount: 0 }
   }
+  return run as QueryFn
 }
 
 describe('env-alioth bootstrapDatabase', () => {
@@ -217,7 +223,7 @@ describe('env-alioth bootstrapDatabase', () => {
 
   it('creates the registry from DDL then stamps, in order', async () => {
     const state: FakeState = { isahlSchema: false, stamp: null, stampTable: false, executedDdl: [] }
-    const result = await bootstrapDatabase(new FakeClient(state) as never, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
+    const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: true, stamped: true })
     // Schema creation precedes the baseline, which ran in filename order.
     expect(state.executedDdl).toEqual(['CREATE SCHEMA IF NOT EXISTS isahl_meta', SCHEMA_DDL, SEED_COLLECTIONS_DDL, SEED_FIELDS_DDL])
@@ -231,14 +237,14 @@ describe('env-alioth bootstrapDatabase', () => {
       stampTable: true,
       executedDdl: [],
     }
-    const result = await bootstrapDatabase(new FakeClient(state) as never, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
+    const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: false, stamped: false })
     expect(state.executedDdl).toEqual([])
   })
 
   it('adopts a foreign registry by stamping it without running DDL', async () => {
     const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [] }
-    const result = await bootstrapDatabase(new FakeClient(state) as never, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
+    const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: false, stamped: true })
     expect(state.executedDdl).toEqual([])
   })
@@ -250,7 +256,7 @@ describe('env-alioth bootstrapDatabase', () => {
       stampTable: true,
       executedDdl: [],
     }
-    const result = await bootstrapDatabase(new FakeClient(state) as never, ddlFiles, { modelVersion: '10.1.0', sourceRef: 'sha-new' })
+    const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.1.0', sourceRef: 'sha-new' })
     expect(result.created).toBe(false)
     expect(result.stamped).toBe(false)
     expect(result.drift).toEqual({
@@ -443,6 +449,68 @@ describe('env-alioth doctor observability', () => {
 })
 
 
+
+describe('env-alioth PgHandle resilience', () => {
+  let root: string
+  let handle: PgHandle
+
+  beforeAll(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'env-pg-reconnect-'))
+    handle = await acquirePostgres({ dataRoot: root })
+  }, 120_000)
+
+  afterAll(async () => {
+    await handle?.close().catch(() => {})
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('recovers when the connection dies while the session is idle', async () => {
+    // The product case: the AppAgent pipeline runs for minutes between registry
+    // queries, so a socket can die of old age with nobody looking. A long-lived
+    // session used to hold one bare `Client`, and after that every later query
+    // failed with pg's "not queryable" guard until the process restarted.
+    const victim = await handle.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+    const killer = await acquirePostgres({ url: handle.url, dataRoot: root })
+    try {
+      // Killed from a *second* connection, so the victim learns about it while idle
+      // (an in-flight kill is the ambiguous case pinned by the next test).
+      await killer.query('SELECT pg_terminate_backend($1)', [victim.rows[0]?.pid]).catch(() => {})
+      await new Promise(resolve => setTimeout(resolve, 250))
+      const recovered = await handle.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
+      expect(recovered.rows[0]?.pid).not.toBe(victim.rows[0]?.pid)
+      expect((await handle.query<{ ok: number }>('SELECT 1 AS ok')).rows[0]?.ok).toBe(1)
+    } finally {
+      await killer.close()
+    }
+  })
+
+  it('never replays a statement that may already have executed', async () => {
+    // The reconnect covers only failures where pg refused to *send* the statement.
+    // A statement that dies in flight may have executed, and replaying it would
+    // double-apply — so it must propagate and the connection must be replaced.
+    //
+    // The sequence makes a replay observable: nextval is not transactional, so its
+    // advance survives the rolled-back batch. Two advances = one replay too many.
+    // (Note a "the previous query succeeded, so this one is safe" gate would fail
+    // here: that gate is open, yet this batch is exactly the unsafe case.)
+    await handle.query('DROP SCHEMA IF EXISTS dsh_alioth_probe CASCADE')
+    await handle.query('CREATE SCHEMA dsh_alioth_probe')
+    await handle.query('CREATE SEQUENCE dsh_alioth_probe.attempts')
+    try {
+      await handle
+        .query(`CREATE TABLE dsh_alioth_probe.writes AS SELECT nextval('dsh_alioth_probe.attempts') AS attempt
+                WHERE false; SELECT pg_terminate_backend(pg_backend_pid())`)
+        .catch(() => {})
+      const rows = await handle.query<{ last_value: string }>(
+        'SELECT last_value::text FROM dsh_alioth_probe.attempts',
+      )
+      expect(rows.rows[0]?.last_value).toBe('1')
+      expect((await handle.query<{ ok: number }>('SELECT 1 AS ok')).rows[0]?.ok).toBe(1)
+    } finally {
+      await handle.query('DROP SCHEMA IF EXISTS dsh_alioth_probe CASCADE').catch(() => {})
+    }
+  })
+})
 
 describe('env-alioth embedded cluster lock', () => {
   it('fails loud (no hang) when the data dir is held by a live postmaster', async () => {

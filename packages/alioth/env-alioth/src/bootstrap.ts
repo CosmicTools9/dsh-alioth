@@ -11,7 +11,8 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import type { Client, QueryResult, QueryResultRow } from 'pg'
+import type { QueryResult, QueryResultRow } from 'pg'
+import type { QueryFn } from './pg.ts'
 
 /** The registry schema bootstrapped from the model DDL baseline. */
 const REGISTRY_SCHEMA = 'isahl_meta'
@@ -50,8 +51,8 @@ export interface BootstrapResult {
   readonly drift?: { readonly stamped: BootstrapStamp; readonly current: ModelProvenance }
 }
 
-async function schemaExists(client: Client, schema: string): Promise<boolean> {
-  const res = await client.query<{ exists: boolean }>(
+async function schemaExists(query: QueryFn, schema: string): Promise<boolean> {
+  const res = await query<{ exists: boolean }>(
     'SELECT exists(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS exists',
     [schema],
   )
@@ -59,15 +60,15 @@ async function schemaExists(client: Client, schema: string): Promise<boolean> {
 }
 
 /** Read the stamp row; `null` when the table or row is absent. */
-export async function readStamp(client: Client): Promise<BootstrapStamp | null> {
-  const table = await client.query<{ oid: number | null }>(
+export async function readStamp(query: QueryFn): Promise<BootstrapStamp | null> {
+  const table = await query<{ oid: number | null }>(
     'SELECT to_regclass($1) AS oid',
     [`${STAMP_SCHEMA}.model_state`],
   )
   if (table.rows[0]?.oid == null) {
     return null
   }
-  const rows = await client.query<QueryResultRow & { model_version: string; source_ref: string; bootstrapped_at: Date }>(
+  const rows = await query<QueryResultRow & { model_version: string; source_ref: string; bootstrapped_at: Date }>(
     `SELECT model_version, source_ref, bootstrapped_at FROM ${STAMP_SCHEMA}.model_state WHERE id = 1`,
   )
   const row = rows.rows[0]
@@ -86,23 +87,23 @@ export async function readStamp(client: Client): Promise<BootstrapStamp | null> 
  * 3. Never re-run DDL over an existing registry; report provenance drift.
  */
 export async function bootstrapDatabase(
-  client: Client,
+  query: QueryFn,
   ddlFiles: readonly string[],
   current: ModelProvenance,
 ): Promise<BootstrapResult> {
   let created = false
-  if (!await schemaExists(client, REGISTRY_SCHEMA)) {
-    await client.query(`CREATE SCHEMA IF NOT EXISTS ${REGISTRY_SCHEMA}`)
+  if (!await schemaExists(query, REGISTRY_SCHEMA)) {
+    await query(`CREATE SCHEMA IF NOT EXISTS ${REGISTRY_SCHEMA}`)
     for (const file of ddlFiles) {
       // Simple-query protocol: multi-statement DDL (enums, tables, seeds) in one round trip.
-      await client.query(await readFile(file, 'utf8'))
+      await query(await readFile(file, 'utf8'))
     }
     created = true
   }
-  await client.query(STAMP_DDL)
-  const stamped = await readStamp(client)
+  await query(STAMP_DDL)
+  const stamped = await readStamp(query)
   if (stamped === null) {
-    const insert: QueryResult = await client.query(
+    const insert: QueryResult = await query(
       `INSERT INTO ${STAMP_SCHEMA}.model_state (id, model_version, source_ref)
        VALUES (1, $1, $2)
        ON CONFLICT (id) DO NOTHING`,

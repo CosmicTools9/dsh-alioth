@@ -101,7 +101,7 @@ export class AliothEnv extends Service {
     if (handle === undefined) {
       throw new Error('env-alioth: sql ran without a resolved environment')
     }
-    return handle.client.query<T>(text, values === undefined ? undefined : [...values])
+    return handle.query<T>(text, values)
   }
 
   /** Read-only health report over the resolved environment. */
@@ -112,7 +112,7 @@ export class AliothEnv extends Service {
     if (handle === undefined || snapshot === undefined) {
       throw new Error('env-alioth: doctor ran without a resolved environment')
     }
-    return runDoctor(handle.client, snapshot, this.dataRoot())
+    return runDoctor(handle.query, snapshot, this.dataRoot())
   }
 
   /**
@@ -127,8 +127,8 @@ export class AliothEnv extends Service {
     if (handle === undefined) {
       throw new Error('env-alioth: reset ran without a resolved environment')
     }
-    await handle.client.query('DROP SCHEMA IF EXISTS isahl_meta CASCADE')
-    await handle.client.query('DROP SCHEMA IF EXISTS dsh_alioth CASCADE')
+    await handle.query('DROP SCHEMA IF EXISTS isahl_meta CASCADE')
+    await handle.query('DROP SCHEMA IF EXISTS dsh_alioth CASCADE')
     this.snapshot = undefined
     this.ensure = undefined
   }
@@ -145,7 +145,7 @@ export class AliothEnv extends Service {
       this.handle = await acquirePostgres(pgOptions)
     }
     this.snapshot = snapshot
-    const bootstrap = await bootstrapDatabase(this.handle.client, snapshot.artifacts.ddlFiles, {
+    const bootstrap = await bootstrapDatabase(this.handle.query, snapshot.artifacts.ddlFiles, {
       modelVersion: snapshot.modelVersion,
       sourceRef: snapshot.sourceRef,
     })
