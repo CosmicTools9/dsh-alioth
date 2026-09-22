@@ -56,6 +56,15 @@ COPY dsh-alioth/tsconfig*.json ./
 # steps; allowBuilds in pnpm-workspace.yaml already whitelists them.
 RUN pnpm install --frozen-lockfile
 # Native deps must be present for the runtime stage without the toolchain.
+#
+# STALE / DEAD (noted 2026-09-22, left in place deliberately): the runtime stage
+# below never copies /app/runtime-* — it copies the whole /app/packages and
+# /app/node_modules trees, so these six filters produce nothing the image uses.
+# Their package list is also frozen at the pre-2026-09-22 set and does not name
+# guard-alioth / tool-alioth-verify / verify-alioth. Removing them is a
+# behaviour-adjacent change to another author's build steps, so it is flagged
+# here rather than done: either delete the block or point it at the packages
+# that actually need their native deps materialised.
 RUN pnpm --filter '@dsh-alioth/env-alioth' deploy --legacy --prod /app/runtime-env \
   && pnpm --filter '@dsh-alioth/tool-alioth' deploy --legacy --prod /app/runtime-tool \
   && pnpm --filter '@dsh-alioth/tool-alioth-meta' deploy --legacy --prod /app/runtime-meta \
