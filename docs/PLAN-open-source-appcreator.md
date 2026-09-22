@@ -1,5 +1,10 @@
 # 行动计划（v2 定稿）：dsh-alioth 成为自足的独立开源 AppCreator 等价物
 
+> **清单权威性（2026-09-22 注）**：下表是定稿当时的快照，此后 vendor 集已被
+> `pnpm run sync:framework` 重同步过（体积/文件数已变）。**当前 vendor 集的权威清单是
+> `packages/alioth/env-alioth/vendor/PROVENANCE.json`（逐文件 sha256，由 `pnpm run check:vendor` 门禁）
+> 与 AGENTS.md 的 Framework 同步段**——本表不再作为现状判据。
+
 > **核心事实**（2026-08-18 确认）：
 > - AliothStudio 从未开源；`CosmicTools9/AppCreator` 将停止维护
 > - dsh-alioth **内置冻结模型工件**——全新机器首次安装零网络

@@ -33,7 +33,7 @@ parameters and semantic decisions only, never artifact text.
 
 ```sh
 pnpm install                 # registry pinned to npmjs (see .npmrc)
-pnpm run test                # 152 tests, real embedded PostgreSQL
+pnpm run test                # full suite (real embedded PostgreSQL); counts live in AGENTS.md's verification matrix
 mise run dev                 # headless dialogue (needs DEEPSEEK_API_KEY)
 mise run launch              # web GUI on :3100
 mise run alioth:doctor       # environment self-check (exit 0 = green)
