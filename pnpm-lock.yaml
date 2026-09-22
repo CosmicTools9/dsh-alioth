@@ -12621,6 +12621,9 @@ importers:
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../../packages/alioth/env-alioth
+      '@dsh-alioth/guard-alioth':
+        specifier: workspace:*
+        version: link:../../packages/alioth/guard-alioth
       '@dsh-alioth/tool-alioth':
         specifier: workspace:*
         version: link:../../packages/alioth/tool-alioth
@@ -12630,6 +12633,9 @@ importers:
       '@dsh-alioth/tool-alioth-orchestrator':
         specifier: workspace:*
         version: link:../../packages/alioth/tool-alioth-orchestrator
+      '@dsh-alioth/tool-alioth-verify':
+        specifier: workspace:*
+        version: link:../../packages/alioth/tool-alioth-verify
       '@dsh-alioth/tool-alioth-workflow':
         specifier: workspace:*
         version: link:../../packages/alioth/tool-alioth-workflow

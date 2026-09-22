@@ -1,7 +1,8 @@
 #!/bin/sh
 # Keyless container self-check (entry `--check`):
-#   1. composition smoke — full plugin group on a real Context (8 tools,
-#      builtin env ready, schema_info round-trip, doctor core green)
+#   1. composition smoke — full plugin group on a real Context (it asserts the
+#      model-facing tool set itself, so the count is never stale here),
+#      builtin env ready, schema_info round-trip, doctor core green
 #   2. doctor — model snapshot + embedded PG + isahl_meta health
 # Exits non-zero on any failure. No LLM key, no network needed.
 set -eu

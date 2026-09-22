@@ -74,6 +74,7 @@ const COMPOSITIONS: readonly Composition[] = [
     name: 'example overlay (headless dev)',
     profile: 'headless',
     patch: 'examples/alioth-agent/cordis.yml',
+    declaringManifest: 'examples/alioth-agent/package.json',
     expectPlugins: [...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
   },
@@ -81,6 +82,7 @@ const COMPOSITIONS: readonly Composition[] = [
     name: 'example web patch (web GUI dev)',
     profile: 'web',
     patch: 'examples/alioth-agent/web.patch.yml',
+    declaringManifest: 'examples/alioth-agent/package.json',
     expectPlugins: [...ALIOTH_PLUGINS],
     // web patch only inserts plugins; the base persona (harness default
     // "coding agent") stays untouched — assert its marker, not an Alioth one.
