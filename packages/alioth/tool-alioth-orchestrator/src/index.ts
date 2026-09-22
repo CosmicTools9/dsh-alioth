@@ -32,16 +32,22 @@ export interface Config {
    */
   readonly adapter?: string
   /**
-   * Pre-Proc artifact tree root — anchors the e2e evidence report
-   * (`Pre-Proc/{ns}/Apps/{app}/e2e-report.json`). Defaults to
-   * ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (the workspace convention).
+   * Pre-Proc artifact tree root — anchors every artifact path this pipeline reads or
+   * writes (`Pre-Proc/{ns}/Apps/{app}/…`, the module mirrors, the evidence reports).
+   *
+   * REQUIRED, not defaulted: the pipeline drives the sibling tool plugins by name, and
+   * those resolve their own configured root. A default here would let a mount that
+   * configures the tools but not the pipeline look complete while the pipeline reads a
+   * *different* tree — the module mirror then fails reporting a path the operator never
+   * configured. Mount it with the same expression the tool rows use
+   * (`process.env.ALIOTH_PRE_PROC_ROOT ?? $HOME/.dsh-alioth/Pre-Proc`).
    */
-  readonly preProcRoot?: string
+  readonly preProcRoot: string
 }
 
 export const Config: z<Config> = z.object({
   adapter: z.string(),
-  preProcRoot: z.string(),
+  preProcRoot: z.string().required(),
 })
 
 export function apply(ctx: Context, config: Config): void {

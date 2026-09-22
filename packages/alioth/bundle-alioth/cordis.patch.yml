@@ -107,7 +107,8 @@
 
     - id: tool-alioth-orchestrator
       name: '@dsh-alioth/tool-alioth-orchestrator'
-      config: {}
+      config:
+        preProcRoot: !!js "process.env.ALIOTH_PRE_PROC_ROOT ?? process.env.HOME + '/.dsh-alioth/Pre-Proc'"
 
     # Execution-surface guard: declared tool surface, write sandbox (namespace
     # scope + plan write narrowing), repair wall, turn budget, closure-evidence

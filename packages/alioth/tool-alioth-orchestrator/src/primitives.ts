@@ -26,7 +26,7 @@ import { STAGE_IDS } from '@dsh-alioth/skill-alioth/agent-contract'
 import type { BuildResult, FlowPlan } from '@dsh-alioth/skill-alioth/agent-contract'
 import {
   formatRepairError,
-  repairContractFor,
+  type RepairContract,
   validateEntitySpec,
   writeE2eReport,
   type E2eCheck,
@@ -235,6 +235,14 @@ export async function openDegradedGates(dataRoot: string, namespace: string, app
   )
 }
 
+/** 管线本地规则：模块镜像的源产物缺失（不是模型能产出的文件）。 */
+const MODULE_ARTIFACT_MISSING_RULE = {
+  ruleId: 'pipeline-module-artifact-missing',
+  class: 'not-fixable',
+  message: 'PTC 管线 module-creation：app 创建阶段未写出该模块的 module.json，镜像无法进行',
+  suggestedAction: '先查 app-creation 是否写出 modules/{id}/module.json，再核对 orchestrator 与工具插件的 preProcRoot 是否同一棵树',
+} as const
+
 /** publish 前置的本地规则行（skill-alioth 的修复表无 publish 前置特征；渲染仍走 formatRepairError）。 */
 interface PublishRule {
   readonly ruleId: string
@@ -429,14 +437,20 @@ export function buildPrimitives(
         { sharedWriteSurfaces: PIPELINE_SHARED_SURFACES },
       )
       if (!outcome.ok) {
-        const contract = repairContractFor(
-          'gate-output-missing',
-          outcome.incomplete.join(','),
-          outcome.results
+        // Pipeline-local rule, not the step-gate `gate-output-missing`: that rule's action
+        // tells the model to author the missing file, but a module mirror is produced by
+        // the pipeline itself — a model cannot fix it, and the operator's real lead is a
+        // root mismatch or an app-creation that did not write the module artifact.
+        const contract: RepairContract = {
+          ruleId: MODULE_ARTIFACT_MISSING_RULE.ruleId,
+          class: MODULE_ARTIFACT_MISSING_RULE.class,
+          message: MODULE_ARTIFACT_MISSING_RULE.message,
+          suggestedAction: `${MODULE_ARTIFACT_MISSING_RULE.suggestedAction}（本管线根 = ${path.dirname(path.dirname(appDir))}；若与工具插件的 preProcRoot 不一致，模块产物在另一棵树下）`,
+          evidence: outcome.results
             .filter(result => result.status !== 'ok')
             .map(result => `${result.id}: ${result.error ?? 'skipped（前序失败）'}`)
             .join('; '),
-        )
+        }
         throw new Error(
           `alioth_app_pipeline module-creation: 模块产物写出未完成（${outcome.incomplete.join(', ')}）\n${formatRepairError(contract)}`,
         )

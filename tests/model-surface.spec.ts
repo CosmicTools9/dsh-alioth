@@ -44,7 +44,7 @@ describe('model-visible surface snapshot', () => {
       await ctx.plugin(toolAlioth, { preProcRoot }),
       await ctx.plugin(toolMeta, {}),
       await ctx.plugin(workflow, { preProcRoot }),
-      await ctx.plugin(orchestrator, {}),
+      await ctx.plugin(orchestrator, { preProcRoot }),
       await ctx.plugin(guardAlioth, { preProcRoot, dataRoot }),
       await ctx.plugin(toolVerify, { preProcRoot }),
       await ctx.plugin(authAlioth, { mode: 'open' }),

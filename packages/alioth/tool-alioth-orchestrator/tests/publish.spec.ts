@@ -9,6 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { Config as OrchestratorConfig } from '../src/index.ts'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolExecutionToken, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
@@ -163,6 +164,17 @@ afterAll(async () => {
   }
   await rm(preProcRoot, { recursive: true, force: true })
   await rm(dataRoot, { recursive: true, force: true })
+})
+
+describe('orchestrator mount contract', () => {
+  it('requires preProcRoot: a pipeline reading a different tree than its tools cannot be configured', () => {
+    // The pipeline drives the sibling tool plugins by name and resolves artifact
+    // paths itself; a defaulted root let a mount that configured the tools but not
+    // the pipeline run until module-creation failed, reporting a path the operator
+    // never configured. The schema now refuses that configuration outright.
+    expect(() => OrchestratorConfig({ preProcRoot: '/tmp/pp' })).not.toThrow()
+    expect(() => OrchestratorConfig({} as never)).toThrow(/preProcRoot/)
+  })
 })
 
 describe('publish preconditions (fail-closed, each on its own)', () => {

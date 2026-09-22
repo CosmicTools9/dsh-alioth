@@ -66,7 +66,7 @@ try {
   disposers.push(() => meta.dispose())
   const wf = await ctx.plugin(workflow, { preProcRoot })
   disposers.push(() => wf.dispose())
-  const orch = await ctx.plugin(orchestrator, {})
+  const orch = await ctx.plugin(orchestrator, { preProcRoot })
   disposers.push(() => orch.dispose())
   const guard = await ctx.plugin(guardAlioth, { preProcRoot, dataRoot })
   disposers.push(() => guard.dispose())
