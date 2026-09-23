@@ -18,6 +18,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../packages/alioth/env-alioth/tests/test-db.ts'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as workflow from '@dsh-alioth/tool-alioth-workflow'
@@ -33,14 +34,16 @@ const GOLDEN = new URL('./__snapshots__/model-surface.json', import.meta.url)
 describe('model-visible surface snapshot', () => {
   let ctx: Context
   const disposers: Array<() => Promise<void>> = []
+  let testDb: TestDatabase
   beforeAll(async () => {
+    testDb = await createTestDatabase('surface')
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'model-surface-'))
     const preProcRoot = await mkdtemp(path.join(tmpdir(), 'model-surface-pp-'))
     ctx = new Context()
     const plugins = [
       await ctx.plugin(SystemPrompt),
       await ctx.plugin(ToolRuntime),
-      await ctx.plugin(envAlioth, { modelSource: 'builtin', dataRoot }),
+      await ctx.plugin(envAlioth, { modelSource: 'builtin', dataRoot, databaseUrl: testDb.url }),
       await ctx.plugin(toolAlioth, { preProcRoot }),
       await ctx.plugin(toolMeta, {}),
       await ctx.plugin(workflow, { preProcRoot }),
@@ -51,14 +54,14 @@ describe('model-visible surface snapshot', () => {
       await ctx.plugin(pageFeedback, {}),
       await ctx.plugin(toolFeedback, {}),
     ]
-    // Reverse-order teardown (same pattern as smoke-composition.ts): stops
-    // the embedded PG server before vitest exits.
+    // Reverse-order teardown (same pattern as smoke-composition.ts).
     plugins.reverse()
     disposers.push(...plugins.map(p => () => p.dispose()))
   })
 
   afterAll(async () => {
     for (const dispose of disposers.reverse()) await dispose()
+    await testDb.dispose()
   })
 
   it('tool schemas match the golden snapshot', async () => {

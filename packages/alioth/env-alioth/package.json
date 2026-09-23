@@ -1,7 +1,7 @@
 {
   "name": "@dsh-alioth/env-alioth",
   "license": "Apache-2.0",
-  "description": "Self-bootstrapping Alioth environment: model snapshot sync, PostgreSQL lifecycle, isahl_meta bootstrap, and health doctor",
+  "description": "Alioth environment against the deployment's PostgreSQL: model snapshot sync, isahl_meta bootstrap, and health doctor",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,14 +11,9 @@
     "./package.json": "./package.json"
   },
   "dependencies": {
-    "@embedded-postgres/darwin-arm64": "18.4.0-beta.17",
-    "@embedded-postgres/darwin-x64": "18.4.0-beta.17",
-    "@embedded-postgres/linux-arm64": "18.4.0-beta.17",
-    "@embedded-postgres/linux-x64": "18.4.0-beta.17",
     "acorn": "8.15.0",
     "cheerio": "^1.2.0",
     "css-tree": "^3.2.1",
-    "embedded-postgres": "18.4.0-beta.17",
     "meriyah": "^7.3.2",
     "pg": "8.23.0",
     "postcss-selector-parser": "^7.1.5",

@@ -12,6 +12,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as workflow from '../src/index.ts'
 
 const signal = new AbortController().signal
@@ -67,7 +68,10 @@ function expectOk(result: Awaited<ReturnType<typeof callTool>>): Record<string, 
   return result.value as Record<string, unknown>
 }
 
+let testDb: TestDatabase
+
 beforeAll(async () => {
+  testDb = await createTestDatabase('payload')
   const modelDir = await mkdtemp(path.join(tmpdir(), 'pp-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'pp-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'pp-preproc-'))
@@ -89,7 +93,7 @@ beforeAll(async () => {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
   const wf = await ctx.plugin(workflow, { preProcRoot, contentRoot, adapter: 'plan.yaml' })
   disposers.push(() => wf.dispose())
@@ -103,6 +107,7 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(async () => {
+  await testDb.dispose()
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})
   }

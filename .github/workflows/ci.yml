@@ -30,6 +30,27 @@ jobs:
     defaults:
       run:
         working-directory: dsh-alioth
+    # The suite and the composition smoke run against a real PostgreSQL 18:
+    # env-alioth uses the deployment's server and no longer provisions an
+    # embedded cluster, so the runner must provide one.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Per-suite throwaway databases (tests) and the smoke's own database.
+      DSH_ALIOTH_TEST_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+      ALIOTH_DATABASE_URL: postgres://postgres:postgres@localhost:5432/dsh_alioth_ci
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,6 +67,8 @@ jobs:
         run: pnpm run typecheck
       - name: lint
         run: pnpm run lint
+      - name: create the smoke database
+        run: psql "$DSH_ALIOTH_TEST_ADMIN_URL" -c 'CREATE DATABASE dsh_alioth_ci'
       - name: test + coverage thresholds
         run: pnpm run test:coverage
       - name: knip (unused deps/exports/files)

@@ -95,7 +95,7 @@ describe('feedback carrier', () => {
 
   it('upgrades mutation endpoints to admin bearer when the auth capability is present', async () => {
     // Hand-built context providing a fake auth service — exercises the
-    // requireAdmin branch without the embedded-PG fixture.
+    // requireAdmin branch without a database fixture.
     const dir = await mkdtemp(path.join(tmpdir(), 'feedbackweb-admin-'))
     const adminCtx = new Context()
     adminCtx.provide('aliothAuth', {

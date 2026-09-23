@@ -51,6 +51,14 @@ export interface BootstrapResult {
   readonly drift?: { readonly stamped: BootstrapStamp; readonly current: ModelProvenance }
 }
 
+async function tableExists(query: QueryFn, schema: string, table: string): Promise<boolean> {
+  const result = await query(
+    'SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2 LIMIT 1',
+    [schema, table],
+  )
+  return (result.rowCount ?? 0) > 0
+}
+
 async function schemaExists(query: QueryFn, schema: string): Promise<boolean> {
   const res = await query<{ exists: boolean }>(
     'SELECT exists(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS exists',
@@ -99,6 +107,19 @@ export async function bootstrapDatabase(
       await query(await readFile(file, 'utf8'))
     }
     created = true
+  } else if (!await tableExists(query, REGISTRY_SCHEMA, 'meta_collections')) {
+    // The baseline is load-once BY CONTRACT, so a same-named schema is adopted, never
+    // re-created. Now that the database belongs to the deployment (one server, many
+    // databases — see pg.ts) a half-made or foreign `isahl_meta` is reachable, and
+    // adopting it would fail much later as a missing-relation error inside a tool call.
+    const database = await query<{ name: string }>('SELECT current_database() AS name')
+    throw new Error(
+      `env-alioth: database "${database.rows[0]?.name ?? '?'}" already has an \`${REGISTRY_SCHEMA}\` schema `
+      + `without \`meta_collections\` — it is not this plugin's registry (the DDL baseline is load-once and is `
+      + 'never re-applied over an existing schema). Point ALIOTH_DATABASE_URL at a clean database, or drop the '
+      + 'partial schema first (`DROP SCHEMA isahl_meta CASCADE`; `mise run alioth:doctor --reset` does that and '
+      + 're-bootstraps).',
+    )
   }
   await query(STAMP_DDL)
   const stamped = await readStamp(query)

@@ -19,17 +19,21 @@ import { bootstrapDatabase, type BootstrapResult } from './bootstrap.ts'
 import { runDoctor, type DoctorReport } from './doctor.ts'
 import { parseModelSource, resolveModelSnapshot, type ModelSnapshot } from './model-source.ts'
 import type { QueryResult, QueryResultRow } from 'pg'
-import { acquirePostgres, type PgHandle, type PgOptions } from './pg.ts'
+import { acquirePostgres, type PgHandle } from './pg.ts'
 export const name = 'env-alioth'
 export const inject: readonly string[] = []
 
 /** Deployment choices for the Alioth environment. */
 export interface Config {
-  /** Existing PostgreSQL URL (`postgres://...`). Omit to auto-provision an embedded instance under `dataRoot`. */
+  /**
+   * The environment's PostgreSQL URL (`postgres://...`). Required: this plugin uses the
+   * deployment stack's own PostgreSQL 18 and never provisions one. Absent (dev with no
+   * `~/.dsh-alioth.env`, or a deployment with no `/etc/dsh-alioth/env`) it fails loud.
+   */
   readonly databaseUrl?: string
   /** `github:owner/repo[@ref]` or a filesystem path to a model-distribution checkout. */
   readonly modelSource: string
-  /** State root for model snapshots and the embedded cluster. Default: XDG data home + `/dsh-alioth`. */
+  /** State root for model snapshots. Default: XDG data home + `/dsh-alioth`. */
   readonly dataRoot?: string
 }
 
@@ -54,7 +58,7 @@ export interface AliothEnvInfo {
  * The database handle lives for the service's lifetime (a reset drops the
  * registry schemas but keeps the cluster), while the snapshot memo clears on
  * reset so the next `ready()` re-bootstraps from the current model.
- * Disposal closes the database client and stops an owned embedded server.
+ * Disposal closes the database client (the server belongs to the deployment).
  */
 export class AliothEnv extends Service {
   private readonly config: Config
@@ -88,7 +92,7 @@ export class AliothEnv extends Service {
     return this.ensure
   }
 
-  /** State root (model snapshots + embedded cluster + derived artifacts). */
+  /** State root (model snapshots + derived artifacts). */
   dataRoot(): string {
     return this.config.dataRoot
       ?? path.join(process.env.XDG_DATA_HOME ?? path.join(homedir(), '.local', 'share'), 'dsh-alioth')
@@ -139,10 +143,7 @@ export class AliothEnv extends Service {
     await mkdir(dataRoot, { recursive: true })
     const snapshot = await resolveModelSnapshot(parseModelSource(this.config.modelSource), dataRoot)
     if (this.handle === undefined) {
-      const pgOptions: PgOptions = this.config.databaseUrl === undefined
-        ? { dataRoot }
-        : { url: this.config.databaseUrl, dataRoot }
-      this.handle = await acquirePostgres(pgOptions)
+      this.handle = await acquirePostgres({ url: this.config.databaseUrl ?? '' })
     }
     this.snapshot = snapshot
     const bootstrap = await bootstrapDatabase(this.handle.query, snapshot.artifacts.ddlFiles, {

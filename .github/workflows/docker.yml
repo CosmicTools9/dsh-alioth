@@ -38,5 +38,7 @@ jobs:
         # Context is the workspace root: it holds dsh-alioth/ and the sibling
         # deepseek-harness/, which is exactly what the Dockerfile consumes.
         run: docker build -f dsh-alioth/Dockerfile -t dsh-alioth:ci .
+      # `--check` goes through the entry script, which starts PostgreSQL 18 on
+      # /data and exports ALIOTH_DATABASE_URL before running docker-check.sh.
       - name: keyless self-check (composition smoke + doctor, no API key)
-        run: docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth:ci
+        run: docker run --rm dsh-alioth:ci --check

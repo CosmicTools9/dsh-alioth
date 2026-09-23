@@ -7,6 +7,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as auth from '../src/index.ts'
 import { hashPassword, verifyPassword } from '../src/password.ts'
@@ -63,7 +64,10 @@ function fakeAgent(sessionId: string): Agent {
   return { id: sessionId as SessionId, session } as unknown as Agent
 }
 
+let testDb: TestDatabase
+
 beforeAll(async () => {
+  testDb = await createTestDatabase('auth')
   const modelDir = await mkdtemp(path.join(tmpdir(), 'auth-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'auth-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'auth-preproc-'))
@@ -85,7 +89,7 @@ beforeAll(async () => {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
   await ctx.aliothEnv.ready()
   const appTool = await ctx.plugin(toolAlioth, { preProcRoot })
@@ -99,6 +103,7 @@ afterAll(async () => {
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})
   }
+  await testDb.dispose()
   await rm(preProcRoot, { recursive: true, force: true })
   await rm(deployRoot, { recursive: true, force: true })
 })

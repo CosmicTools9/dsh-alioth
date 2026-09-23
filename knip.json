@@ -19,7 +19,6 @@
         "@deepseek-ai/dsh-credentials-local",
         "@deepseek-ai/dsh-llm-deepseek",
         "@deepseek-ai/dsh-session-persistence-jsonl",
-        "@deepseek-ai/dsh-settings-file",
         "@deepseek-ai/dsh-tool-todo",
         "pg"
       ]
@@ -39,10 +38,6 @@
     },
     "packages/alioth/env-alioth": {
       "ignoreDependencies": [
-        "@embedded-postgres/darwin-arm64",
-        "@embedded-postgres/darwin-x64",
-        "@embedded-postgres/linux-arm64",
-        "@embedded-postgres/linux-x64",
         "acorn",
         "cheerio",
         "css-tree",

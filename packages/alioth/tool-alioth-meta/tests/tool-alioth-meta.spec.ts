@@ -8,6 +8,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as toolMeta from '../src/index.ts'
 
 const signal = new AbortController().signal
@@ -77,7 +78,10 @@ function callSchemaInfo(args: unknown) {
   })
 }
 
+let testDb: TestDatabase
+
 beforeAll(async () => {
+  testDb = await createTestDatabase('meta')
   const modelDir = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-meta-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-meta-data-'))
   await mkdir(path.join(modelDir, 'backend', 'ddl'), { recursive: true })
@@ -99,7 +103,7 @@ beforeAll(async () => {
   disposers.push(() => systemFiber.dispose())
   const toolsFiber = await ctx.plugin(ToolRuntime)
   disposers.push(() => toolsFiber.dispose())
-  const envFiber = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+  const envFiber = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => envFiber.dispose())
   const metaFiber = await ctx.plugin(toolMeta, {})
   disposers.push(() => metaFiber.dispose())
@@ -109,6 +113,7 @@ afterAll(async () => {
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})
   }
+  await testDb.dispose()
 })
 
 function expectSuccess(result: Awaited<ReturnType<typeof callSchemaInfo>>): Record<string, unknown> {
@@ -297,15 +302,18 @@ describe('dsh-alioth alioth_entity_write (bypass)', () => {
 })
 
 describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
-  // One embedded-PG cluster per test: two env-alioth instances over the same
-  // data root would start a second postgres on the same dataDir.
+  // One throwaway database per boot: the registry bootstrap writes `isahl_meta`, so
+  // sharing a database across boots would let one case observe another's writes.
   let approvalModelDir: string
   const disposers: Array<() => Promise<void>> = []
   const dataRoots: string[] = []
+  const dbs: TestDatabase[] = []
 
   async function bootWithApproval(answer: 'allowed-once' | 'rejected'): Promise<Context> {
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-entity-data-'))
     dataRoots.push(dataRoot)
+    const db = await createTestDatabase('entity')
+    dbs.push(db)
     const ctx = new Context()
     const system = await ctx.plugin(SystemPrompt)
     disposers.push(() => system.dispose())
@@ -313,7 +321,7 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     disposers.push(() => tools.dispose())
     ctx.provide('approval')
     ctx.set('approval', { request: async () => answer } as never)
-    const envFiber = await ctx.plugin(envAlioth, { modelSource: approvalModelDir, dataRoot })
+    const envFiber = await ctx.plugin(envAlioth, { modelSource: approvalModelDir, dataRoot, databaseUrl: db.url })
     disposers.push(() => envFiber.dispose())
     const metaFiber = await ctx.plugin(toolMeta, { approvalMode: 'required' })
     disposers.push(() => metaFiber.dispose())
@@ -343,6 +351,9 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     await rm(approvalModelDir, { recursive: true, force: true })
     for (const dataRoot of dataRoots) {
       await rm(dataRoot, { recursive: true, force: true })
+    }
+    for (const db of dbs) {
+      await db.dispose()
     }
   })
 

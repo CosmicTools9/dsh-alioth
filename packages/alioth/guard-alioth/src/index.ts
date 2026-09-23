@@ -44,6 +44,16 @@ import {
 } from './surface.ts'
 import { readWhitelistSource, type WhitelistSourceReport } from './whitelist.ts'
 
+// harness 0.1.7 起 `MessageSourceMap` 是「各 producer 在自身模块声明 kind」的合并可扩展联合，
+// **没有 catch-all 的 `plugin` kind**（见 dsh-llm/message.ts 的注释）。本插件注入的消息是
+// 自己的生产者，故在此声明自有 kind——上游 dsh-tools 的 `tool-registry` 即同一模式。
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    /** guard-alioth 注入的闭环证据追问（每 turn 至多一次，与澄清提问/终态汇报互斥）。 */
+    'alioth-guard': { kind: 'alioth-guard' }
+  }
+}
+
 export const name = 'guard-alioth'
 export const inject = ['aliothEnv', 'tools']
 
@@ -378,7 +388,7 @@ export function apply(ctx: Context, config: Config): void {
         ...admitted.messages,
         createUserMessage({
           content: [{ type: 'text', text: decision.text }],
-          source: { kind: 'plugin', plugin: name },
+          source: { kind: 'alioth-guard' },
         }),
       ],
       ...admitted.startsRequestSeries === true ? { startsRequestSeries: true as const } : {},

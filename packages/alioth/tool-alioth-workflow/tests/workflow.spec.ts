@@ -7,6 +7,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import { GATE_PROGRAM_WHITELIST } from '@dsh-alioth/skill-alioth'
 import * as workflow from '../src/index.ts'
 
@@ -57,7 +58,10 @@ function callTool(name: string, args: unknown) {
   })
 }
 
+let testDb: TestDatabase
+
 beforeAll(async () => {
+  testDb = await createTestDatabase('wf')
   const modelDir = await mkdtemp(path.join(tmpdir(), 'wf-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'wf-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'wf-preproc-'))
@@ -81,7 +85,7 @@ beforeAll(async () => {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
   const wf = await ctx.plugin(workflow, { preProcRoot, contentRoot })
   disposers.push(() => wf.dispose())
@@ -101,6 +105,7 @@ beforeAll(async () => {
 }, 120_000)
 
 afterAll(async () => {
+  await testDb.dispose()
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})
   }
@@ -267,7 +272,9 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     })
   }
 
+  let coverDb: TestDatabase
   beforeAll(async () => {
+    coverDb = await createTestDatabase('wfcover')
     const modelDir = await mkdtemp(path.join(tmpdir(), 'wf-cover-model-'))
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'wf-cover-data-'))
     coverPreProc = await mkdtemp(path.join(tmpdir(), 'wf-cover-preproc-'))
@@ -286,7 +293,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     coverDisposers.push(() => system.dispose())
     const tools = await coverCtx.plugin(ToolRuntime)
     coverDisposers.push(() => tools.dispose())
-    const env = await coverCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+    const env = await coverCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: coverDb.url })
     coverDisposers.push(() => env.dispose())
     const wf = await coverCtx.plugin(workflow, { preProcRoot: coverPreProc, contentRoot: coverContent, adapter: 'cover.yaml' })
     coverDisposers.push(() => wf.dispose())
@@ -306,6 +313,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     for (const dispose of coverDisposers.reverse()) {
       await dispose().catch(() => {})
     }
+    await coverDb.dispose()
     await rm(coverPreProc, { recursive: true, force: true })
     await rm(coverContent, { recursive: true, force: true })
   })
@@ -392,7 +400,8 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     const defaultsCtx = new Context()
     const system = await defaultsCtx.plugin(SystemPrompt)
     const tools = await defaultsCtx.plugin(ToolRuntime)
-    const env = await defaultsCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+    const defaultsDb = await createTestDatabase('wfdefaults')
+    const env = await defaultsCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: defaultsDb.url })
     // No Loader: no schema defaults for adapter/contentRoot.
     workflow.apply(defaultsCtx, { preProcRoot: preProc })
     defaultsCtx.tools.register(defineTool({
@@ -437,6 +446,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
       await tools.dispose().catch(() => {})
       await env.dispose().catch(() => {})
       await system.dispose().catch(() => {})
+      await defaultsDb.dispose()
     }
   }, 120_000)
 

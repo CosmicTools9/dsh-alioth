@@ -10,6 +10,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
 import * as landingAlioth from '@dsh-alioth/landing-alioth'
 import * as authWeb from '../src/index.ts'
@@ -46,6 +47,7 @@ const disposers: Array<() => Promise<void>> = []
 let port: number
 let previewPreProcRoot: string
 let dataRoot: string
+let testDb: TestDatabase
 
 /** Harness account-resolver face the carrier registers into `connection`. */
 type AccountResolver = (headers: { cookie?: string; host?: string }) => string | null | Promise<string | null>
@@ -163,6 +165,7 @@ async function waitForAccountResolver(timeoutMs = 5000): Promise<AccountResolver
 }
 
 beforeAll(async () => {
+  testDb = await createTestDatabase('authweb')
   const modelDir = await mkdtemp(path.join(tmpdir(), 'authweb-model-'))
   dataRoot = await mkdtemp(path.join(tmpdir(), 'authweb-data-'))
   await mkdir(path.join(modelDir, 'backend', 'ddl'), { recursive: true })
@@ -186,7 +189,7 @@ beforeAll(async () => {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
   await ctx.aliothEnv.ready()
 
@@ -227,6 +230,7 @@ afterAll(async () => {
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})
   }
+  await testDb.dispose()
 })
 
 describe('B/S HTTP surface (real server)', () => {

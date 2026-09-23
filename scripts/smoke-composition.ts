@@ -2,7 +2,8 @@
  * Composition smoke test: mounts the full Alioth plugin group (bundle) on a
  * real Context and verifies, in order:
  *   1. every mounted plugin registers its model-facing tools (asserted by name)
- *   2. env-alioth ready() boots the builtin frozen model (zero network)
+ *   2. env-alioth ready() connects to the environment's PostgreSQL 18 (ALIOTH_DATABASE_URL)
+ *      and boots the builtin frozen model (zero network for the model itself)
  *   3. one real tool call round-trips (schema_info entities)
  *   4. doctor reports the expected health state
  * Usage: node --import tsx scripts/smoke-composition.ts [--verbose]
@@ -31,6 +32,18 @@ import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as feedbackWebAlioth from '@dsh-alioth/feedback-web-alioth'
 import * as toolFeedbackAlioth from '@dsh-alioth/tool-feedback-alioth'
 
+const databaseUrl = process.env.ALIOTH_DATABASE_URL
+if (databaseUrl === undefined || databaseUrl.trim().length === 0) {
+  // env-alioth talks to the deployment's server and never provisions one, so the
+  // database is a prerequisite of the smoke rather than an optional extra.
+  console.error(
+    'smoke-composition: ALIOTH_DATABASE_URL is required — env-alioth uses the environment\'s '
+    + 'PostgreSQL 18 (host server / container PGDG build / `postgres:18` in CI) and no longer '
+    + 'starts an embedded cluster.',
+  )
+  process.exit(2)
+}
+
 const verbose = process.argv.includes('--verbose')
 const log = (msg: string): void => { if (verbose) console.log(msg) }
 
@@ -57,7 +70,7 @@ try {
   const env = await ctx.plugin(envAlioth, {
     modelSource: 'builtin',
     dataRoot,
-    ...(process.env.ALIOTH_DATABASE_URL === undefined ? {} : { databaseUrl: process.env.ALIOTH_DATABASE_URL }),
+    databaseUrl,
   })
   disposers.push(() => env.dispose())
   const appTool = await ctx.plugin(toolAlioth, { preProcRoot })

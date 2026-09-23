@@ -1,17 +1,15 @@
 /**
- * PostgreSQL lifecycle for the Alioth environment. Two paths:
- * - `url` given → reuse an existing server (e.g. a developer's AliothStudio DB).
- * - no `url` → auto-provision an embedded PostgreSQL under `<dataRoot>/postgres`
- *   (real PG binaries via `embedded-postgres`): first run `initdb`s and creates
- *   the `alioth` database; later runs skip `initdb` and restart the persisted
- *   cluster on a freshly probed port.
+ * PostgreSQL lifecycle for the Alioth environment.
+ *
+ * One path only: an externally provisioned server reached through a URL
+ * (`ALIOTH_DATABASE_URL` / `Config.databaseUrl`) — the deployment stack's own
+ * PostgreSQL 18 (dev/m2/prod: host PG 18.6; container: the PGDG build started by
+ * `scripts/docker-entry.sh`). The plugin NEVER provisions a database: a silently
+ * auto-started cluster competes with the environment's server for the data and
+ * hides a missing DSN until something else fails.
  * @module @dsh-alioth/env-alioth/pg
  */
 
-import { access, readFile } from 'node:fs/promises'
-import net from 'node:net'
-import path from 'node:path'
-import EmbeddedPostgres from 'embedded-postgres'
 import { Client, type QueryResult, type QueryResultRow } from 'pg'
 
 /**
@@ -32,7 +30,7 @@ export interface PgHandle {
   readonly query: QueryFn
   /** Connection URL (contains credentials — mask before display). */
   readonly url: string
-  /** Close the connection and, when we own it, stop the embedded server. */
+  /** Close the connection. */
   close(): Promise<void>
 }
 
@@ -69,76 +67,30 @@ function isConnectionLevelFailure(error: unknown): boolean {
 }
 
 export interface PgOptions {
-  /** Reuse an existing PostgreSQL; omit to auto-provision under `dataRoot`. */
-  readonly url?: string
-  /** State root; the embedded cluster lives at `<dataRoot>/postgres`. */
-  readonly dataRoot: string
-  /** Receives embedded-server process output (initdb/postgres logs). */
+  /** The environment's PostgreSQL URL (`postgres://…`). Required — see the module doc. */
+  readonly url: string
   readonly onLog?: (line: string) => void
 }
 
-const EMBEDDED_USER = 'alioth'
-const EMBEDDED_PASSWORD = 'alioth'
-const EMBEDDED_DATABASE = 'alioth'
-
-/** Probe an OS-assigned free TCP port (listen on :0, read it, release). */
-async function reservePort(): Promise<number> {
-  const { promise, resolve, reject } = Promise.withResolvers<number>()
-  const server = net.createServer()
-  server.unref()
-  server.once('error', reject)
-  server.listen(0, '127.0.0.1', () => {
-    const address = server.address()
-    if (address === null || typeof address === 'string') {
-      server.close(() => reject(new Error('env-alioth: no port assigned')))
-      return
-    }
-    const { port } = address
-    server.close(() => resolve(port))
-  })
-  return promise
-}
-
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await access(target)
-    return true
-  } catch {
-    return false
-  }
-}
-
 /**
- * Fail loud when the cluster's data dir is held by a LIVE postmaster.
- * Without this guard the failure mode is a silent infinite hang: the start
- * attempt fails, and the `stop()` in the retry path waits for the OTHER
- * instance's healthy postmaster to exit — which never happens.
- * A stale lock (dead pid) is left for postgres itself to clear on start.
+ * Connect to the environment's PostgreSQL. A blank/absent URL is a deployment
+ * misconfiguration — this plugin never provisions a cluster of its own, so the
+ * error names every place an operator can set one.
  */
-async function assertClusterFree(dataDir: string): Promise<void> {
-  const lockFile = path.join(dataDir, 'postmaster.pid')
-  if (!await pathExists(lockFile)) {
-    return
+export function acquirePostgres(options: PgOptions): Promise<PgHandle> {
+  const url = options.url.trim()
+  if (url.length === 0) {
+    return Promise.reject(new Error(
+      'env-alioth: no PostgreSQL URL configured. This plugin uses the environment\'s PostgreSQL 18 '
+      + '(it no longer starts an embedded cluster). Set ALIOTH_DATABASE_URL — e.g. '
+      + '`ALIOTH_DATABASE_URL=postgres://alioth@127.0.0.1:5432/alioth` in ~/.dsh-alioth.env (dev) or '
+      + '/etc/dsh-alioth/env (prod) — or pass Config.databaseUrl',
+    ))
   }
-  const firstLine = (await readFile(lockFile, 'utf8')).split('\n')[0] ?? ''
-  const pid = Number.parseInt(firstLine, 10)
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return
-  }
-  let alive = true
-  try {
-    process.kill(pid, 0)
-  } catch (error) {
-    alive = (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-  if (alive) {
-    throw new Error(
-      `env-alioth: the embedded cluster at ${dataDir} is already running (postmaster pid ${pid}). `
-      + 'Another dsh instance holds this data root — stop that instance first, '
-      + 'or point this deployment at a different data root (ALIOTH_DATA_ROOT / Config.dataRoot).',
-    )
-  }
+  return acquireExternal(url, options.onLog)
 }
+
+
 
 async function acquireExternal(url: string, onLog?: (line: string) => void): Promise<PgHandle> {
   const open = async (): Promise<Client> => {
@@ -146,86 +98,7 @@ async function acquireExternal(url: string, onLog?: (line: string) => void): Pro
     await client.connect()
     return client
   }
-  return createHandle({ initial: await open(), url, reconnect: open, onLog, release: async () => {} })
-}
-
-async function acquireEmbedded(options: PgOptions): Promise<PgHandle> {
-  const dataDir = path.join(options.dataRoot, 'postgres')
-  await assertClusterFree(dataDir)
-  const fresh = !await pathExists(path.join(dataDir, 'PG_VERSION'))
-  // reservePort is TOCTOU (probe port, release, then PG binds): under
-  // parallel boot (test suite) the probed port can be taken between probe and
-  // bind, and a just-stopped sibling cluster may not have released its port
-  // yet — retry with a fresh port instead of failing the whole boot.
-  let initialised = false
-  let instance: EmbeddedPostgres | undefined
-  let usedPort = 0
-  let lastError: unknown
-  for (let attempt = 1; attempt <= 3 && instance === undefined; attempt++) {
-    const port = await reservePort()
-    const candidate = new EmbeddedPostgres({
-      databaseDir: dataDir,
-      port,
-      user: EMBEDDED_USER,
-      password: EMBEDDED_PASSWORD,
-      authMethod: 'password',
-      persistent: true,
-      onLog: line => options.onLog?.(line),
-      onError: message => options.onLog?.(String(message)),
-    })
-    try {
-      if (fresh && !initialised) {
-        await candidate.initialise()
-        initialised = true
-      }
-      await candidate.start()
-      instance = candidate
-      usedPort = port
-    } catch (error) {
-      lastError = error
-      await candidate.stop().catch(() => {})
-      options.onLog?.(`env-alioth: embedded PG start attempt ${attempt} failed (${String(error)}) — retrying on a fresh port`)
-    }
-  }
-  if (instance === undefined) {
-    throw lastError ?? new Error('env-alioth: embedded PG failed to start after 3 attempts')
-  }
-  const pg = instance
-  const url = `postgres://${EMBEDDED_USER}:${EMBEDDED_PASSWORD}@127.0.0.1:${usedPort}/${EMBEDDED_DATABASE}`
-
-  async function connectWithCreate(): Promise<Client> {
-    const client = pg.getPgClient(EMBEDDED_DATABASE)
-    try {
-      await client.connect()
-      return client
-    } catch (error) {
-      // "database ... does not exist": a persisted cluster that never got the
-      // `alioth` database (foreign data dir, or interrupted first run).
-      if (!(error instanceof Error) || !error.message.includes('does not exist')) {
-        throw error
-      }
-      await pg.createDatabase(EMBEDDED_DATABASE)
-      const retry = pg.getPgClient(EMBEDDED_DATABASE)
-      await retry.connect()
-      return retry
-    }
-  }
-
-  async function stopInstance(): Promise<void> {
-    await pg.stop()
-  }
-
-  const client = await connectWithCreate().catch(async (error: unknown) => {
-    await stopInstance()
-    throw error
-  })
-  return createHandle({
-    initial: client,
-    url,
-    reconnect: connectWithCreate,
-    onLog: options.onLog,
-    release: stopInstance,
-  })
+  return createHandle({ initial: await open(), url, reconnect: open, onLog })
 }
 
 interface HandleParts {
@@ -234,8 +107,6 @@ interface HandleParts {
   /** Open a replacement connection after the previous one died. */
   readonly reconnect: () => Promise<Client>
   readonly onLog?: ((line: string) => void) | undefined
-  /** Release what we own (the embedded server, when we own one). */
-  readonly release: () => Promise<void>
 }
 
 function createHandle(parts: HandleParts): PgHandle {
@@ -278,12 +149,7 @@ function createHandle(parts: HandleParts): PgHandle {
     url: parts.url,
     close: async () => {
       await current.end().catch(() => {})
-      await parts.release()
     },
   }
 }
 
-/** Connect per `options`: external URL when given, else a provisioned embedded cluster. */
-export function acquirePostgres(options: PgOptions): Promise<PgHandle> {
-  return options.url === undefined ? acquireEmbedded(options) : acquireExternal(options.url, options.onLog)
-}

@@ -7,6 +7,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolExecutionToken, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import { STAGE_IDS } from '@dsh-alioth/skill-alioth/agent-contract'
 import * as toolAlioth from '@dsh-alioth/tool-alioth'
 import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
@@ -80,7 +81,10 @@ function callCreate(args: unknown) {
   })
 }
 
+let testDb: TestDatabase
+
 beforeAll(async () => {
+  testDb = await createTestDatabase('ptc')
   const modelDir = await mkdtemp(path.join(tmpdir(), 'ptc-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'ptc-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'ptc-preproc-'))
@@ -101,7 +105,7 @@ beforeAll(async () => {
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
-  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+  const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
   const appTool = await ctx.plugin(toolAlioth, { preProcRoot })
   disposers.push(() => appTool.dispose())
@@ -115,6 +119,7 @@ afterAll(async () => {
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})
   }
+  await testDb.dispose()
   await rm(preProcRoot, { recursive: true, force: true })
 })
 
@@ -224,6 +229,7 @@ describe('alioth_app_create with workflow adapter', () => {
   let workflowCtx: Context
   const workflowDisposers: Array<() => Promise<void>> = []
   let workflowPreProc: string
+  let workflowDb: TestDatabase
 let workflowContentRoot: string
 
   it('runs the workflow gate after writing artifacts', async () => {
@@ -255,12 +261,13 @@ tracks:
       'pub static ALIOTH_MODEL_VERSION: LazyLock<String> =\n    LazyLock::new(|| env::var("MODEL_VERSION").unwrap_or_else(|_| "10.0.0".to_string()));\n',
     )
 
+    workflowDb = await createTestDatabase('ptcwf')
     workflowCtx = new Context()
     const system = await workflowCtx.plugin(SystemPrompt)
     workflowDisposers.push(() => system.dispose())
     const tools = await workflowCtx.plugin(ToolRuntime)
     workflowDisposers.push(() => tools.dispose())
-    const env = await workflowCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
+    const env = await workflowCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: workflowDb.url })
     workflowDisposers.push(() => env.dispose())
     const appTool = await workflowCtx.plugin(toolAlioth, { preProcRoot: workflowPreProc })
     workflowDisposers.push(() => appTool.dispose())
@@ -324,6 +331,7 @@ tracks:
     for (const dispose of workflowDisposers.reverse()) {
       await dispose().catch(() => {})
     }
+    await workflowDb.dispose()
     await rm(workflowPreProc, { recursive: true, force: true }).catch(() => {})
   })
 })

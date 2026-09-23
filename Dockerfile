@@ -1,6 +1,8 @@
 # dsh-alioth — the complete AppAgent pipeline as a deployable container.
 #
-# The image ships the full Alioth consumer plugin group: embedded PostgreSQL 18,
+# The image ships the full Alioth consumer plugin group: PostgreSQL 18 (PGDG build,
+# started by the entry script on /data — env-alioth connects through
+# ALIOTH_DATABASE_URL and never provisions a cluster of its own),
 # the frozen builtin model (vendor artifacts, zero network at first boot),
 # the file-based semantic dictionaries, bun (prototype gates), and the dsh web
 # entry point. Model-visible behavior: `dsh --profile web --patch <bundle>`.
@@ -13,7 +15,7 @@
 #
 # Build (CI layout): docker build -f dsh-alioth/Dockerfile .
 # Run:    docker run --rm -p 3100:3100 -e DEEPSEEK_API_KEY=... -v alioth-data:/data dsh-alioth
-# Self-check (keyless): docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth
+# Self-check (keyless): docker run --rm dsh-alioth --check   # entry starts PG, then runs docker-check.sh
 
 # ── build stage: install the workspace with production binaries ──
 FROM node:24.20-slim AS build
@@ -52,8 +54,8 @@ COPY dsh-alioth/packages ./packages
 COPY dsh-alioth/examples ./examples
 COPY dsh-alioth/scripts ./scripts
 COPY dsh-alioth/tsconfig*.json ./
-# onnxruntime-node / embedded-postgres / sharp run their native postinstall
-# steps; allowBuilds in pnpm-workspace.yaml already whitelists them.
+# onnxruntime-node / sharp run their native postinstall steps; allowBuilds in
+# pnpm-workspace.yaml already whitelists them.
 RUN pnpm install --frozen-lockfile
 # Native deps must be present for the runtime stage without the toolchain.
 #
@@ -77,11 +79,9 @@ FROM node:24.20-slim AS runtime
 # bun — the declared prototype-gate runtime (distribution dependency).
 # bun pinned to the AliothStudio stack version (prototype gates must match).
 RUN npm install -g bun@1.4.2 --silent
-# embedded-postgres hard-codes LC_MESSAGES=en_US.UTF-8 for initdb; Debian
-# slim ships only C/POSIX — generate the locale or PG init fails.
-# PostgreSQL 18.6 via PGDG — aligned with the AliothStudio stack (Homebrew
-# 18.6); embedded-postgres (npm) tops out at 18.4, so the container runs the
-# official build and env-alioth connects through ALIOTH_DATABASE_URL.
+# PostgreSQL 18.6 via PGDG — aligned with the AliothStudio stack (Homebrew 18.6)
+# and with the host deployments. This is THE database the container uses:
+# env-alioth takes it through ALIOTH_DATABASE_URL (set by docker-entry.sh).
 RUN apt-get update && apt-get install -y --no-install-recommends locales curl ca-certificates gnupg \
   && sed -i 's/# en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen en_US.UTF-8 \
   && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
@@ -116,9 +116,8 @@ ENV DSH_WEB_PORT=3100 \
     PGPASSWORD=alioth
 
 # Entry/check scripts (root-owned, world-readable, executable) and the data
-# volume, then drop to the non-root node user — Postgres refuses root, and
-# embedded-postgres chmods its PG binary at startup (needs write access to
-# node_modules; chown is metadata-only, no data copy).
+# volume, then drop to the non-root node user — Postgres refuses to run as root,
+# and the cluster lives under /data (metadata-only chown, no data copy).
 COPY dsh-alioth/scripts/docker-entry.sh dsh-alioth/scripts/docker-check.sh /app/scripts/
 RUN chmod +x /app/scripts/docker-entry.sh /app/scripts/docker-check.sh \
   && chown -R node:node /app \

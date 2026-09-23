@@ -15,6 +15,7 @@ import {
 import { bootstrapDatabase, type BootstrapStamp } from '../src/bootstrap.ts'
 import { maskUrl } from '../src/doctor.ts'
 import { AliothEnv, type AliothEnvInfo, type Config } from '../src/index.ts'
+import { createTestDatabase, type TestDatabase } from './test-db.ts'
 
 // ── fixtures ─────────────────────────────────────────────────────────────
 
@@ -158,6 +159,8 @@ interface FakeState {
   stamp: BootstrapStamp | null
   stampTable: boolean
   executedDdl: string[]
+  /** Whether the existing registry looks like this plugin's (has `meta_collections`). Defaults true. */
+  registryTable?: boolean
 }
 
 /**
@@ -172,6 +175,12 @@ function fakeQuery(state: FakeState): QueryFn {
   ): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }> => {
     if (sql.includes('information_schema.schemata')) {
       return { rows: [{ exists: state.isahlSchema }], rowCount: 1 }
+    }
+    if (sql.includes('information_schema.tables')) {
+      return { rows: state.registryTable === false ? [] : [{ '?column?': 1 }], rowCount: state.registryTable === false ? 0 : 1 }
+    }
+    if (sql.includes('current_database()')) {
+      return { rows: [{ name: 'fake_db' }], rowCount: 1 }
     }
     if (sql.includes('CREATE TABLE IF NOT EXISTS dsh_alioth.model_state')) {
       state.stampTable = true
@@ -236,6 +245,7 @@ describe('env-alioth bootstrapDatabase', () => {
       stamp: { modelVersion: '10.0.0', sourceRef: 'sha-1', bootstrappedAt: new Date() },
       stampTable: true,
       executedDdl: [],
+      registryTable: true,
     }
     const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: false, stamped: false })
@@ -243,9 +253,22 @@ describe('env-alioth bootstrapDatabase', () => {
   })
 
   it('adopts a foreign registry by stamping it without running DDL', async () => {
-    const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [] }
+    const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: true }
     const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: false, stamped: true })
+    expect(state.executedDdl).toEqual([])
+  })
+
+  it('refuses a same-named schema that is not this registry (no meta_collections)', async () => {
+    // The DDL baseline is load-once, so an existing `isahl_meta` is adopted. If it was
+    // not created by the baseline, adopting it fails much later as a missing relation —
+    // refuse up front with the actionable message instead.
+    const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: false }
+    const err = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
+      .then(() => null, error => error)
+    expect(err).toBeInstanceOf(Error)
+    expect(err?.message).toContain('fake_db')
+    expect(err?.message).toContain('meta_collections')
     expect(state.executedDdl).toEqual([])
   })
 
@@ -255,6 +278,7 @@ describe('env-alioth bootstrapDatabase', () => {
       stamp: { modelVersion: '10.0.0', sourceRef: 'sha-old', bootstrappedAt: new Date() },
       stampTable: true,
       executedDdl: [],
+      registryTable: true,
     }
     const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.1.0', sourceRef: 'sha-new' })
     expect(result.created).toBe(false)
@@ -275,13 +299,15 @@ describe('env-alioth doctor maskUrl', () => {
   })
 })
 
-// ── integration: real embedded PostgreSQL, full plugin lifecycle ─────────
+// ── integration: the environment's PostgreSQL, full plugin lifecycle ─────
 
-describe('env-alioth embedded end-to-end', () => {
+describe('env-alioth end-to-end (environment PostgreSQL)', () => {
   let modelDir: string
   let dataRoot: string
+  let db: TestDatabase
 
   beforeAll(async () => {
+    db = await createTestDatabase('e2e')
     modelDir = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-e2e-model-'))
     dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-e2e-data-'))
     await makeModelFixture(modelDir, '10.0.0')
@@ -292,25 +318,26 @@ describe('env-alioth embedded end-to-end', () => {
   })
 
   afterAll(async () => {
+    await db.dispose()
     await rm(modelDir, { recursive: true, force: true })
     await rm(dataRoot, { recursive: true, force: true })
   })
 
   async function boot(): Promise<{ ctx: Context; dispose: () => Promise<void>; info: AliothEnvInfo }> {
     const ctx = new Context()
-    const config: Config = { modelSource: modelDir, dataRoot }
+    const config: Config = { modelSource: modelDir, dataRoot, databaseUrl: db.url }
     const fiber = await ctx.plugin(AliothEnv, config)
     const info = await ctx.aliothEnv.ready()
     return { ctx, dispose: () => fiber.dispose(), info }
   }
 
-  it('bootstraps a fresh embedded cluster, seeds land, doctor green', { timeout: 120_000 }, async () => {
+  it('bootstraps the registry into a fresh database, seeds land, doctor green', { timeout: 120_000 }, async () => {
     const { ctx, dispose, info } = await boot()
     try {
       expect(info.sourceRef).toBe('local')
       expect(info.modelVersion).toBe('10.0.0')
       expect(info.bootstrap).toEqual({ created: true, stamped: true })
-      expect(info.databaseUrl).toMatch(/^postgres:\/\/alioth:[^@]+@127\.0\.0\.1:\d+\/alioth$/)
+      expect(info.databaseUrl).toBe(db.url)
       const report = await ctx.aliothEnv.doctor()
       expect(report.status).toBe('green')
       expect(report.checks.map(check => check.name)).toEqual(['model-snapshot', 'database', 'isahl-meta', 'model-stamp', 'semantic-index', 'dictionary-snapshots'])
@@ -407,8 +434,9 @@ describe('env-alioth doctor observability', () => {
     const modelDir = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-obs-model-'))
     const dataRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-obs-data-'))
     await makeModelFixture(modelDir, '10.0.0')
+    const db = await createTestDatabase('obs')
     const ctx = new Context()
-    const fiber = await ctx.plugin(AliothEnv, { modelSource: modelDir, dataRoot })
+    const fiber = await ctx.plugin(AliothEnv, { modelSource: modelDir, dataRoot, databaseUrl: db.url })
     try {
       await ctx.aliothEnv.ready()
       const report = await ctx.aliothEnv.doctor()
@@ -420,6 +448,7 @@ describe('env-alioth doctor observability', () => {
       expect(dicts?.detail).toContain('FROZEN')
     } finally {
       await fiber.dispose()
+      await db.dispose()
       await rm(modelDir, { recursive: true, force: true })
       await rm(dataRoot, { recursive: true, force: true })
     }
@@ -432,8 +461,9 @@ describe('env-alioth doctor observability', () => {
     await mkdir(path.join(dataRoot, 'semantic'), { recursive: true })
     await writeFile(path.join(dataRoot, 'semantic', 'meta.json'),
       JSON.stringify({ model: 'fake', entriesHash: 'x', count: 12, dimension: 8 }))
+    const db = await createTestDatabase('obs2')
     const ctx = new Context()
-    const fiber = await ctx.plugin(AliothEnv, { modelSource: modelDir, dataRoot })
+    const fiber = await ctx.plugin(AliothEnv, { modelSource: modelDir, dataRoot, databaseUrl: db.url })
     try {
       await ctx.aliothEnv.ready()
       const report = await ctx.aliothEnv.doctor()
@@ -442,26 +472,25 @@ describe('env-alioth doctor observability', () => {
       expect(semantic?.detail).toContain('12 entries')
     } finally {
       await fiber.dispose()
+      await db.dispose()
       await rm(modelDir, { recursive: true, force: true })
       await rm(dataRoot, { recursive: true, force: true })
     }
   }, 120_000)
 })
 
-
-
 describe('env-alioth PgHandle resilience', () => {
-  let root: string
+  let db: TestDatabase
   let handle: PgHandle
 
   beforeAll(async () => {
-    root = await mkdtemp(path.join(tmpdir(), 'env-pg-reconnect-'))
-    handle = await acquirePostgres({ dataRoot: root })
+    db = await createTestDatabase('pghandle')
+    handle = await acquirePostgres({ url: db.url })
   }, 120_000)
 
   afterAll(async () => {
     await handle?.close().catch(() => {})
-    await rm(root, { recursive: true, force: true })
+    await db.dispose()
   })
 
   it('recovers when the connection dies while the session is idle', async () => {
@@ -470,7 +499,7 @@ describe('env-alioth PgHandle resilience', () => {
     // session used to hold one bare `Client`, and after that every later query
     // failed with pg's "not queryable" guard until the process restarted.
     const victim = await handle.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')
-    const killer = await acquirePostgres({ url: handle.url, dataRoot: root })
+    const killer = await acquirePostgres({ url: handle.url })
     try {
       // Killed from a *second* connection, so the victim learns about it while idle
       // (an in-flight kill is the ambiguous case pinned by the next test).
@@ -512,49 +541,43 @@ describe('env-alioth PgHandle resilience', () => {
   })
 })
 
-describe('env-alioth embedded cluster lock', () => {
-  it('fails loud (no hang) when the data dir is held by a live postmaster', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'env-pg-lock-'))
+describe('env-alioth half-made registry', () => {
+  it('fails loud when the target database has an isahl_meta schema this plugin did not create', async () => {
+    // The baseline is load-once by contract, so a same-named schema is adopted. A
+    // half-made one (here: a bare schema, as left behind by an experiment) would
+    // otherwise surface much later as a missing-relation error inside a tool call.
+    const db = await createTestDatabase('foreignregistry')
+    const handle = await acquirePostgres({ url: db.url })
     try {
-      // Synthetic postmaster.pid naming a LIVE process (this test runner):
-      // the guard must fail fast with the actionable error (regression: a
-      // held data dir used to hang forever in stop()).
-      await mkdir(path.join(root, 'postgres'), { recursive: true })
-      await writeFile(path.join(root, 'postgres', 'postmaster.pid'), `${process.pid}\n`, 'utf8')
-      const started = Date.now()
-      const err = await acquirePostgres({ dataRoot: root }).then(
-        () => null,
-        error => error,
-      )
+      await handle.query('CREATE SCHEMA isahl_meta')
+      const err = await bootstrapDatabase(handle.query, [], { modelVersion: '10.0.0', sourceRef: 'local' })
+        .then(() => null, error => error)
       expect(err).toBeInstanceOf(Error)
-      expect(err?.message).toContain(`already running (postmaster pid ${process.pid})`)
-      expect(err?.message).toContain('ALIOTH_DATA_ROOT')
-      expect(Date.now() - started).toBeLessThan(5000)
+      expect(err?.message).toContain('meta_collections')
+      expect(err?.message).toContain('load-once')
+      expect(err?.message).toContain('ALIOTH_DATABASE_URL')
     } finally {
-      await rm(root, { recursive: true, force: true })
+      await handle.close()
+      await db.dispose()
     }
   })
+})
 
-  it('ignores a stale postmaster.pid (dead pid)', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'env-pg-lock-'))
-    try {
-      await mkdir(path.join(root, 'postgres'), { recursive: true })
-      // A dead pid: spawn-and-reap leaves no live process behind.
-      const dead = 4194304
-      await writeFile(path.join(root, 'postgres', 'postmaster.pid'), `${dead}\n`, 'utf8')
-      // The guard must NOT fail on a stale lock — postgres clears it on start.
-      // acquireEmbedded proceeds past the guard (it fails later on missing PG
-      // binaries config in the unit environment — assert the guard passed by
-      // never seeing the lock error).
-      const err = await acquirePostgres({ dataRoot: root }).then(
-        () => null,
-        error => error,
-      )
-      if (err !== null && err.message.includes('already running (postmaster pid')) {
-        throw new Error('stale lock was treated as live')
-      }
-    } finally {
-      await rm(root, { recursive: true, force: true })
-    }
+describe('env-alioth database configuration', () => {
+  it('fails loud with the settable places when no URL is configured', async () => {
+    // The plugin never provisions a cluster: an unset DSN is a deployment error the
+    // operator must see at boot, not a silently auto-started embedded server that
+    // competes with the environment's PostgreSQL.
+    const started = Date.now()
+    const err = await acquirePostgres({ url: '   ' }).then(
+      () => null,
+      error => error,
+    )
+    expect(err).toBeInstanceOf(Error)
+    expect(err?.message).toContain('no PostgreSQL URL configured')
+    expect(err?.message).toContain('ALIOTH_DATABASE_URL')
+    expect(err?.message).toContain('~/.dsh-alioth.env')
+    expect(err?.message).toContain('Config.databaseUrl')
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 })

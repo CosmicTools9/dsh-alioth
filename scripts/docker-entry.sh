@@ -7,8 +7,8 @@ set -eu
 PATCH_FILE="${ALIOTH_PATCH:-/app/packages/alioth/bundle-alioth/cordis.patch.yml}"
 
 # Start PostgreSQL 18.6 (PGDG) on /data/pg unless an external database URL is
-# given. The alioth superuser/database mirror the embedded defaults so
-# ALIOTH_DATABASE_URL semantics are identical.
+# given. This is the database env-alioth uses — the plugin never provisions a
+# cluster of its own, so a container with neither fails loud.
 ensure_pg() {
   if [ -n "${ALIOTH_DATABASE_URL:-}" ]; then
     echo "dsh-alioth: using external database ${ALIOTH_DATABASE_URL%%@*}@${ALIOTH_DATABASE_URL##*@}"

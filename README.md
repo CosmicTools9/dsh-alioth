@@ -9,14 +9,14 @@ through a **deterministic, programmatic pipeline** — the LLM supplies structur
 parameters and semantic decisions only, never artifact text.
 
 - Pure consumer of the published Alioth model ([CosmicTools9/Alioth](https://github.com/CosmicTools9/Alioth), Apache-2.0) — never advances it.
-- Zero-network first boot: frozen model artifacts vendored, embedded PostgreSQL 18 auto-provisioned.
+- Zero-network first boot: frozen model artifacts vendored; PostgreSQL 18 comes from the environment (host server, the container's PGDG build, or the CI service) through `ALIOTH_DATABASE_URL`.
 - B/S deliverable: register/login, per-user `U-<username>` namespace isolation over a shared workspace.
 
 ## Packages
 
 | Package | Role |
 |---|---|
-| `env-alioth` | Model snapshot sync, embedded PG lifecycle, `isahl_meta` bootstrap, doctor |
+| `env-alioth` | Model snapshot sync, PostgreSQL connection lifecycle, `isahl_meta` bootstrap, doctor |
 | `tool-alioth` | `alioth_app_list` / `alioth_app_inspect` / `alioth_app_write` / `alioth_app_configure` / `alioth_app_delete` — contract-validated artifact tools (discover, create, grow, enrich, retire/delete) |
 | `tool-alioth-meta` | `alioth_schema_info` / `alioth_schema_semantic_search` / `alioth_entity_write` — registry + embedding search (bge-small-zh, deterministic) |
 | `tool-alioth-workflow` | `alioth_workflow_step` / `alioth_workflow_complete` — AppAgent track/step/gate bridge |
@@ -33,7 +33,7 @@ parameters and semantic decisions only, never artifact text.
 
 ```sh
 pnpm install                 # registry pinned to npmjs (see .npmrc)
-pnpm run test                # full suite (real embedded PostgreSQL); counts live in AGENTS.md's verification matrix
+pnpm run test                # full suite (needs PostgreSQL 18 — per-suite throwaway databases); counts live in AGENTS.md's verification matrix
 mise run dev                 # headless dialogue (needs DEEPSEEK_API_KEY)
 mise run launch              # web GUI on :3100
 mise run alioth:doctor       # environment self-check (exit 0 = green)
