@@ -91,6 +91,11 @@ export async function collectSourcePackage(
   let bytes = 0
 
   const add = async (absolute: string, rel: string, info: { size: number; mtimeMs: number }): Promise<void> => {
+    // The walker and the rule stay one source of truth: anything the walk reaches
+    // that the allowlist rejects is a bug here, not a silent extra in the package.
+    if (!isSourcePackagePath(rel)) {
+      throw new Error(`source package: ${rel} is not a deliverable path`)
+    }
     bytes += info.size
     if (bytes > limit) throw new SourcePackageTooLargeError(bytes, limit)
     // The archive carries a per-app root folder so extracting never scatters
