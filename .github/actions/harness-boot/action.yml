@@ -11,8 +11,15 @@
 # (William-d-zk/deepseek-harness@Alioth), pinned to a commit so CI verifies a
 # reproducible revision. The public fork is required because the line carries
 # commits that are not in deepseek-ai/deepseek-harness yet (connection account
-# context, page-feedback). Advance the SHA together with the local checkout:
-#   git -C ../deepseek-harness rev-parse HEAD
+# context, page-feedback). The ref must equal **the local checkout AND the revision
+# this repo's lockfile was last generated against**: the consumer lockfile carries an
+# importer section for every harness workspace member, so a ref that differs in any
+# member's specifier fails every job at `install (frozen)` with "specifiers in the
+# lockfile don't match specifiers in package.json" — a harness-side manifest edit
+# (e.g. page-feedback's `workspace:^` vs `workspace:~`) is enough to do it. Advance
+# both in one change:
+#   git -C ../deepseek-harness rev-parse HEAD   # then pin it here
+#   cd .. && pnpm install --lockfile-only      # and regenerate with that tree checked out
 name: harness boot
 description: Check out the pinned harness line as a sibling checkout and build its host libs.
 
@@ -32,7 +39,7 @@ runs:
         # globs, so it must NOT live at dsh-alioth/deepseek-harness. Verified
         # locally in this exact layout: `pnpm install --frozen-lockfile` passes.
         repository: William-d-zk/deepseek-harness
-        ref: cf5dedb5823b4140d8cc9d673bab036a803101bc
+        ref: 2c1c749b3a0e2b3ecc53b20e6285401027ddf9fc
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
