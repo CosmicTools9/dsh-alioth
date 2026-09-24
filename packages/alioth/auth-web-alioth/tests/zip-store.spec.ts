@@ -16,7 +16,7 @@
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { zipStore, type ZipEntry } from '../src/zip-store.ts'
@@ -194,14 +194,25 @@ describe.skipIf(!unzipAvailable)('zip-store round trip through the system `unzip
     expect(parsed.entries[0]?.uncompressedSize).toBe(large.length)
   })
 
-  it('reports the DOS timestamp taken from `mtime`', async () => {
+  it('encodes the DOS timestamp from `mtime`', async () => {
+    const mtime = new Date(2024, 4, 6, 7, 8, 10)
     const file = await writeArchive('stamped.zip', [
-      { name: 'stamped.txt', data: UTF8.encode('stamped'), mtime: new Date(2024, 4, 6, 7, 8, 10) },
+      { name: 'stamped.txt', data: UTF8.encode('stamped'), mtime },
     ])
 
+    // The encoded pair is the contract; DOS packs LOCAL date/time into its own
+    // fields, and `unzip -l` renders them per platform and version (a printed
+    // string assertion is a timezone trap, not a zip guarantee).
+    const stamp = readDosStamp(await readFile(file))
+    expect(stamp).toEqual({
+      date: ((mtime.getFullYear() - 1980) << 9) | ((mtime.getMonth() + 1) << 5) | mtime.getDate(),
+      time: (mtime.getHours() << 11) | (mtime.getMinutes() << 5) | (mtime.getSeconds() >> 1),
+    })
+
+    // …and the system unzip still recognises the entry it stamped.
     const listed = unzip(['-l', file])
     expect(listed.status, listed.stderr).toBe(0)
-    expect(new TextDecoder().decode(listed.stdout)).toMatch(/05-06-2024 07:08 +stamped\.txt/)
+    expect(new TextDecoder().decode(listed.stdout)).toContain('stamped.txt')
   })
 })
 

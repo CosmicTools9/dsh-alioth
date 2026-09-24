@@ -18,6 +18,14 @@
 
 import { randomUUID } from 'node:crypto'
 import { Context } from '@deepseek-ai/cordis'
+import {
+  createMemoryLicenseStore,
+  createPgLicenseStore,
+  ensureLicenseSchema,
+  type LicenseStore,
+  type LicenseView,
+  type SqlFn,
+} from './license-store.ts'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'billing-alioth'
@@ -25,6 +33,15 @@ export const inject: readonly string[] = []
 
 /** L1 subscription price in CNY cents (confirmed pricing ladder). */
 export const L1_AMOUNT_CENTS = 139900
+
+export {
+  createMemoryLicenseStore,
+  createPgLicenseStore,
+  ensureLicenseSchema,
+  LICENSE_SCHEMA,
+  type LicenseStore,
+  type LicenseView,
+} from './license-store.ts'
 
 export interface Config {
   /**
@@ -118,7 +135,17 @@ export interface AliothBillingService {
    */
   sourceLicense(userId: string): Promise<SourceLicense | null>
   /** Operator action: grant/replace an L2 authorization. A back-office or PSP lands here. */
-  grantSourceLicense(userId: string, until: Date): Promise<SourceLicense>
+  grantSourceLicense(userId: string, until: Date, note?: string): Promise<SourceLicense>
+  /**
+   * The account asks for L2 (用户中心「申请」). Idempotent: asking again never
+   * shortens or clears a window that was already granted.
+   */
+  requestSourceLicense(userId: string): Promise<LicenseView>
+  /**
+   * Read-only view of this account's request/grant row (`null` when it never
+   * asked) — the user center renders 未申请 / 申请中 / 已开通至 … from it.
+   */
+  sourceLicenseRequest(userId: string): Promise<LicenseView | null>
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -140,16 +167,18 @@ export function currentPeriod(now: Date = new Date()): string {
 /** Construction options for the volatile provider. */
 export interface MemoryBillingOptions {
   resolveUsername?: (userId: string) => Promise<string | null>
-  /** Operator-configured L2 authorizations, keyed by username (a grant wins over this). */
+  /** Operator-configured L2 authorizations, keyed by username (a recorded grant wins over this). */
   sourceLicenses?: ReadonlyMap<string, Date>
+  /** Where authorizations are recorded; defaults to the in-memory store. */
+  licenses?: LicenseStore
 }
 
 export function createMemoryBilling(opts: MemoryBillingOptions = {}): AliothBillingService {
   const subscriptions = new Map<string, Subscription>()
   const bills = new Map<string, Bill>()
   const invoices = new Map<string, Invoice>()
-  /** Explicit grants, keyed by user id — they outrank the operator's list. */
-  const grantedLicenses = new Map<string, Date>()
+  /** Recorded authorizations (user-center requests + operator grants). */
+  const licenses: LicenseStore = opts.licenses ?? createMemoryLicenseStore()
 
   const myBills = (userId: string): Bill[] =>
     [...bills.values()].filter(b => b.userId === userId).sort((a, b) => b.period.localeCompare(a.period))
@@ -162,8 +191,11 @@ export function createMemoryBilling(opts: MemoryBillingOptions = {}): AliothBill
     },
 
     async sourceLicense(userId) {
-      const granted = grantedLicenses.get(userId)
-      if (granted !== undefined) return { userId, until: granted, grantedBy: 'grant' }
+      // A recorded grant is the negotiated truth and outranks the operator's list.
+      const row = await licenses.read(userId)
+      if (row !== null && row.grantedAt !== null && row.until !== null) {
+        return { userId, until: row.until, grantedBy: 'grant' }
+      }
       const configured = opts.sourceLicenses
       if (configured === undefined || configured.size === 0) return null
       const username = await opts.resolveUsername?.(userId) ?? null
@@ -171,9 +203,17 @@ export function createMemoryBilling(opts: MemoryBillingOptions = {}): AliothBill
       return until === undefined ? null : { userId, until, grantedBy: 'operator-config' }
     },
 
-    async grantSourceLicense(userId, until) {
-      grantedLicenses.set(userId, until)
-      return { userId, until, grantedBy: 'grant' }
+    async grantSourceLicense(userId, until, note) {
+      const row = await licenses.grant(userId, until, note)
+      return { userId, until: row.until ?? until, grantedBy: 'grant' }
+    },
+
+    async requestSourceLicense(userId) {
+      return licenses.request(userId)
+    },
+
+    async sourceLicenseRequest(userId) {
+      return licenses.read(userId)
     },
 
     async subscribe(userId) {
@@ -282,6 +322,64 @@ export function parseSourceLicenses(raw: string): ReadonlyMap<string, Date> {
   return licenses
 }
 
+/** Structural face of the env service (absent in trees without a database). */
+interface EnvLike {
+  sql: SqlFn
+}
+
+function envOf(ctx: Context): EnvLike | undefined {
+  try {
+    const value = (ctx.get as (name: string) => unknown).call(ctx, 'aliothEnv')
+    return typeof value === 'object' && value !== null && typeof (value as EnvLike).sql === 'function'
+      ? value as EnvLike
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The license store for this deployment: durable when a database is mounted, and
+ * the in-memory one otherwise.
+ *
+ * Resolution is LAZY and memoized on first use, not decided at mount: cordis mounts
+ * plugins asynchronously, so reading `aliothEnv` while billing itself is being
+ * applied sees no provider — and locking that in would silently downgrade a
+ * deployment to the volatile store, which is how a request lands in memory and
+ * vanishes on restart.
+ *
+ * `env.sql` is a method too: called detached it would lose `this` (its ready()/
+ * handle state), so it is wrapped once. The schema is created on first use.
+ */
+function durableLicenses(ctx: Context): LicenseStore {
+  let resolved: LicenseStore | undefined
+  const store = (): LicenseStore => {
+    if (resolved !== undefined) return resolved
+    const env = envOf(ctx)
+    if (env === undefined) {
+      resolved = createMemoryLicenseStore()
+      return resolved
+    }
+    const sql: SqlFn = (text, values) => env.sql(text, values)
+    const pg = createPgLicenseStore(sql)
+    let schemaReady: Promise<void> | undefined
+    const ensureSchema = (): Promise<void> => (schemaReady ??= ensureLicenseSchema(sql))
+    resolved = {
+      read: async userId => { await ensureSchema(); return pg.read(userId) },
+      request: async userId => { await ensureSchema(); return pg.request(userId) },
+      grant: async (userId, until, note) => { await ensureSchema(); return pg.grant(userId, until, note) },
+      pending: async () => { await ensureSchema(); return pg.pending() },
+    }
+    return resolved
+  }
+  return {
+    read: userId => store().read(userId),
+    request: userId => store().request(userId),
+    grant: (userId, until, note) => store().grant(userId, until, note),
+    pending: () => store().pending(),
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   const sourceLicenses = parseSourceLicenses(config.sourceLicenses ?? '')
   // The operator's list is keyed by username, so the provider has to resolve an
@@ -298,7 +396,13 @@ export function apply(ctx: Context, config: Config): void {
       return null
     }
   }
-  // The pre-backend volatile provider. A backend integration replaces this
-  // provide call with a persistent implementation of the same interface.
-  ctx.provide('aliothBilling', createMemoryBilling({ sourceLicenses, resolveUsername }))
+  // Authorizations are durable wherever a database exists (the plugin mounts after
+  // env-alioth in the bundle); a DB-less tree keeps the in-memory store. The table
+  // is created lazily on first use, so mounting never touches the database — and a
+  // store that later fails must surface as an error, not as a silent "no license".
+  const licenses = durableLicenses(ctx)
+  // The pre-backend volatile provider for subscriptions/bills; a backend
+  // integration replaces this provide call with a persistent implementation of the
+  // same interface, keeping the license store underneath.
+  ctx.provide('aliothBilling', createMemoryBilling({ sourceLicenses, resolveUsername, licenses }))
 }

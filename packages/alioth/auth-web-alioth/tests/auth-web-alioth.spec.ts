@@ -1489,24 +1489,28 @@ describe('client face artifact', () => {
     expect(tabSeatKeys).toEqual(['@dsh-alioth/sidebar-alioth', '@dsh-alioth/sidebar-prototype'])
   })
 
-  it('shadows the settings seat off a loopback authority (设置 is the operator\'s surface)', async () => {
-    // The harness Settings panel reads and writes the Host's own configuration
-    // and its rich actions are themselves loopback-gated; this console is
-    // served to multi-tenant browsers. Two lines must hold at once: keep the
-    // shipped shell on localhost/127.0.0.1, and shadow it with an empty
-    // priority -1 occupant everywhere else (a single slot renders its lowest
-    // live entry). The predicate mirrors the harness's loopback rule, so
-    // look-alikes ('::1' unbracketed, '128.0.0.1', '127.0.0.256', '127.0.0')
-    // must all hide the seat.
+  it('shadows the operator surfaces off a loopback authority (设置 and 插件 are local-exclusive)', async () => {
+    // 设置 reads and writes the Host's own configuration and 插件 installs,
+    // enables and removes the Host's plugin rows; this console is served to
+    // multi-tenant browsers. Two lines must hold at once: keep the shipped
+    // surfaces on localhost/127.0.0.1, and shadow them everywhere else with
+    // priority -1 occupants (single/list/keyed cells all render their lowest
+    // live entry per cell). The predicate mirrors the harness's loopback rule,
+    // so look-alikes ('::1' unbracketed, '128.0.0.1', '127.0.0.256',
+    // '127.0.0') must all hide them. The 插件 row's chrome belongs to the
+    // sidebar, so its occupant additionally hides the row it renders into —
+    // asserted here against a stand-in DOM node.
     const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
     type Seat = { options: Record<string, unknown>; component: (props: unknown) => unknown }
-    const load = (connection: unknown, hostname: string | undefined): Seat[] => {
+    const load = (connection: unknown, hostname: string | undefined): { seats: Seat[]; effects: Array<() => void> } => {
       let registration: { factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
       new Function('window', source)({ __ModuleLoader__: { load: (r: typeof registration) => { registration = r } } })
+      const effects: Array<() => void> = []
       const reactStub = {
         createElement: (...args: unknown[]) => args,
         useState: (value: unknown) => [value, () => {}],
-        useEffect: () => {},
+        useEffect: (fn: () => unknown) => { effects.push(fn as () => void) },
+        useRef: (value: unknown) => ({ current: value }),
       }
       const exports = registration!.factory((name: string) => {
         if (name !== 'react') throw new Error(`unexpected require: ${name}`)
@@ -1535,32 +1539,66 @@ describe('client face artifact', () => {
         if (saved === undefined) delete globals.location
         else globals.location = saved
       }
-      return seats
+      return { seats, effects }
     }
     const settingsSeat = (seats: Seat[]): Seat | undefined =>
       seats.find(seat => seat.options.name === 'sidebar.settings')
+    const panelCell = (seats: Seat[]): Seat | undefined =>
+      seats.find(seat => seat.options.name === 'sidebar.panellist' && seat.options.id === 'plugins')
+    const panelPage = (seats: Seat[]): Seat | undefined =>
+      seats.find(seat => seat.options.name === 'main' && seat.options.key === 'plugins')
 
-    // Off loopback the seat is shadowed by an inert occupant (renders nothing).
+    // Off loopback every operator surface is shadowed by our occupant.
     const hidden = load({ isLoopback: false }, '127.0.0.1')
-    expect(settingsSeat(hidden)?.options).toEqual({
+    expect(settingsSeat(hidden.seats)?.options).toEqual({
       name: 'sidebar.settings',
       priority: -1,
       registrant: '@dsh-alioth/auth-web-alioth',
     })
-    expect(settingsSeat(hidden)?.component({})).toBeNull()
+    expect(settingsSeat(hidden.seats)?.component({})).toBeNull()
+    expect(panelCell(hidden.seats)?.options).toEqual({
+      name: 'sidebar.panellist',
+      id: 'plugins',
+      priority: -1,
+      registrant: '@dsh-alioth/auth-web-alioth',
+    })
+    expect(panelPage(hidden.seats)?.options).toEqual({
+      name: 'main',
+      key: 'plugins',
+      priority: -1,
+      registrant: '@dsh-alioth/auth-web-alioth',
+    })
+    expect(panelPage(hidden.seats)?.component({})).toBeNull()
+
+    // The 插件 glyph hides the sidebar row it is rendered into (the row's
+    // chrome is the sidebar's, so an empty glyph alone would leave a blank row).
+    const rendered = panelCell(hidden.seats)?.component({}) as unknown as [string, { ref: { current: unknown } }]
+    const row = { style: { display: '' } }
+    rendered[1].ref.current = { closest: (selector: string) => (selector === 'button' ? row : null) }
+    hidden.effects.forEach(run => { run() })
+    expect(row.style.display).toBe('none')
 
     // The connection service is authoritative whenever it answers.
-    expect(settingsSeat(load({ isLoopback: true }, 'console.example.com'))).toBeUndefined()
+    const loopback = load({ isLoopback: true }, 'console.example.com')
+    expect(settingsSeat(loopback.seats)).toBeUndefined()
+    expect(panelCell(loopback.seats)).toBeUndefined()
+    expect(panelPage(loopback.seats)).toBeUndefined()
 
     // The page authority is the fallback while that service is not yet mounted.
     for (const hostname of ['localhost', '127.0.0.1', '127.8.9.10', '[::1]']) {
-      expect([hostname, settingsSeat(load(undefined, hostname))]).toEqual([hostname, undefined])
+      const loaded = load(undefined, hostname)
+      expect([hostname, settingsSeat(loaded.seats), panelCell(loaded.seats), panelPage(loaded.seats)])
+        .toEqual([hostname, undefined, undefined, undefined])
     }
     for (const hostname of ['console.example.com', 'lvh.me', '::1', '128.0.0.1', '127.0.0.256', '127.0.0', '']) {
-      expect([hostname, settingsSeat(load(undefined, hostname))?.options.priority]).toEqual([hostname, -1])
+      const loaded = load(undefined, hostname)
+      expect([hostname, settingsSeat(loaded.seats)?.options.priority, panelCell(loaded.seats)?.options.priority,
+        panelPage(loaded.seats)?.options.priority]).toEqual([hostname, -1, -1, -1])
     }
-    // Without any authority evidence the seat stays hidden (fail-closed).
-    expect(settingsSeat(load(undefined, undefined))?.options.priority).toBe(-1)
+    // Without any authority evidence the surfaces stay hidden (fail-closed).
+    const unknown = load(undefined, undefined)
+    expect([settingsSeat(unknown.seats)?.options.priority, panelCell(unknown.seats)?.options.priority])
+      .toEqual([-1, -1])
   })
 
   it('renders the app-status panel from the session\'s app workspace', async () => {

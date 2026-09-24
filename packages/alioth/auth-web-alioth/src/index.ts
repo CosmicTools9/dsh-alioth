@@ -216,11 +216,15 @@ function billingOf(ctx: Context): BillingLike | undefined {
  * Whether this account may download source right now: an L2 authorization, read
  * from the billing capability. Fail-closed — a tree without that capability grants
  * nothing (an unmounted plugin must not read as "everyone is licensed").
+ *
+ * A store that THROWS is deliberately not swallowed here: it becomes a visible
+ * error, because a database outage must not read to a paying customer as "you have
+ * no license".
  */
 async function sourceAccessOf(ctx: Context, userId: string): Promise<SourceEntitlement> {
   const billing = billingOf(ctx)
   if (billing === undefined) return { entitled: false, until: null, reason: 'none' }
-  const license = await billing.sourceLicense(userId).catch(() => null)
+  const license = await billing.sourceLicense(userId)
   return sourceEntitlement(license, new Date())
 }
 

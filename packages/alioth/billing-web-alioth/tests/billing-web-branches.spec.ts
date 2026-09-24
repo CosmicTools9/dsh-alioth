@@ -13,6 +13,7 @@ import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { Bill, BillingUser, Invoice, PendingInvoice } from '@dsh-alioth/billing-alioth'
 import * as billingWeb from '../src/index.ts'
+import type { LicenseView } from '@dsh-alioth/billing-alioth'
 
 interface BillingStandIn {
   service: Record<string, unknown>
@@ -21,6 +22,10 @@ interface BillingStandIn {
     failure: unknown
     invoices: Invoice[]
     pending: PendingInvoice[]
+    /** L2 source authorization row the center renders (null = never asked). */
+    source: LicenseView | null
+    /** Requests the center made, in order (the 申请 button's audit trail). */
+    sourceRequests: string[]
   }
 }
 
@@ -35,7 +40,9 @@ function authStandIn(username: string, role: 'admin' | 'user'): Record<string, u
 }
 
 function billingStandIn(): BillingStandIn {
-  const state: BillingStandIn['state'] = { failure: null, invoices: [], pending: [] }
+  const state: BillingStandIn['state'] = {
+    failure: null, invoices: [], pending: [], source: null, sourceRequests: [],
+  }
   const guard = (): void => { if (state.failure !== null) throw state.failure }
   const service: Record<string, unknown> = {
     async getSubscription() {
@@ -57,6 +64,16 @@ function billingStandIn(): BillingStandIn {
     async subscribe() {
       guard()
       return { userId: 'id-center-admin', plan: 'L1', status: 'active', startedAt: new Date(), renewsAt: new Date() }
+    },
+    async sourceLicenseRequest() {
+      guard()
+      return state.source
+    },
+    async requestSourceLicense(userId: string) {
+      guard()
+      state.sourceRequests.push(userId)
+      state.source = { userId, requestedAt: new Date('2026-09-24T00:00:00.000Z'), grantedAt: null, until: null, note: '' }
+      return state.source
     },
     async cancel() {
       guard()
@@ -232,4 +249,69 @@ describe('web server shape mismatch', () => {
     expect(logs.filter(line => line.includes('shape mismatch'))).toHaveLength(2)
     expect(logs.some(line => line.includes('user center mounted'))).toBe(false)
   }, 30_000)
+})
+
+describe('L2 source authorization card', () => {
+  const base = (): string => `http://127.0.0.1:${ctx.webServer.port}`
+  const page = async (): Promise<string> =>
+    (await fetch(`${base()}/usercenter/subscription`, { headers: { cookie } })).text()
+
+  it('shows the tier and a 申请 button when nothing was asked yet', async () => {
+    billing.state.source = null
+    const html = await page()
+    expect(html).toContain('L2 · 源码下载授权')
+    expect(html).toContain('尚未申请')
+    expect(html).toContain('action="/api/billing/source"')
+  })
+
+  it('records a request over the form channel and reports it as pending', async () => {
+    billing.state.source = null
+    billing.state.sourceRequests = []
+    const response = await fetch(`${base()}/api/billing/source`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: '',
+      redirect: 'manual',
+    })
+    expect(response.status).toBe(302)
+    expect(response.headers.get('location')).toContain('/usercenter/subscription?notice=')
+    expect(billing.state.sourceRequests).toEqual(['id-center-admin'])
+
+    const html = await page()
+    expect(html).toContain('已提交申请')
+    expect(html).toContain('等待商务对接开通')
+    // Pending means no second button: asking again changes nothing.
+    expect(html).not.toContain('action="/api/billing/source"')
+  })
+
+  it('renders a granted window with the operator note, and an expired one with 重新申请', async () => {
+    billing.state.source = {
+      userId: 'id-center-admin',
+      requestedAt: new Date('2026-09-01T00:00:00.000Z'),
+      grantedAt: new Date('2026-09-02T00:00:00.000Z'),
+      until: new Date('2099-12-31T23:59:59.999Z'),
+      note: '合同 2026-114',
+    }
+    const granted = await page()
+    expect(granted).toContain('已开通至 2099-12-31')
+    expect(granted).toContain('合同 2026-114')
+    expect(granted).toContain('可在「原型」页下载源码')
+    expect(granted).not.toContain('action="/api/billing/source"')
+
+    billing.state.source = { ...billing.state.source, until: new Date('2020-01-01T00:00:00.000Z') }
+    const expired = await page()
+    expect(expired).toContain('授权已于 2020-01-01 到期')
+    expect(expired).toContain('重新申请 L2 授权')
+  })
+
+  it('serves the authorization on the JSON overview and answers JSON clients', async () => {
+    billing.state.source = null
+    const overview = await fetch(`${base()}/api/billing/overview`, { headers: { cookie } })
+    expect(overview.status).toBe(200)
+    expect(await overview.json()).toMatchObject({ namespace: 'U-center-admin', source: null })
+
+    const created = await fetch(`${base()}/api/billing/source`, { method: 'POST', headers: { cookie } })
+    expect(created.status).toBe(200)
+    expect(await created.json()).toMatchObject({ userId: 'id-center-admin', grantedAt: null })
+  })
 })

@@ -18,7 +18,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import type { Bill, Invoice, PendingInvoice, Subscription } from '@dsh-alioth/billing-alioth'
+import type { Bill, Invoice, LicenseView, PendingInvoice, Subscription } from '@dsh-alioth/billing-alioth'
 
 export const name = 'billing-web-alioth'
 export const inject = ['aliothBilling', 'aliothAuth']
@@ -135,7 +135,6 @@ function page(response: ServerResponse, status: number, title: string, body: str
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a0e14">
 <title>${title} — 用户中心 · Alioth AppCreator</title>
 <style>
@@ -201,6 +200,8 @@ ${icpFooter(icp)}
 interface ViewData {
   user: AuthedUser
   subscription: Subscription | null
+  /** L2 source-download authorization row (null = never asked). */
+  source: LicenseView | null
   bills: Bill[]
   invoices: Invoice[]
   pending: PendingInvoice[]
@@ -256,7 +257,33 @@ ${active
     ? `<form class="inline" method="post" action="/api/billing/cancel"><button class="btn ghost">取消订阅（期末生效）</button></form>`
     : `<form class="inline" method="post" action="/api/billing/subscribe"><button class="btn">订阅 L1</button></form>`}</div>
 </div>
-<p class="note">更高层级（L2 源码下载授权 ¥4,999 起 / L3 AliothStudio 私有化 ¥499,999）由原厂商务对接，详见首页。</p>`
+${sourceTier(data.source)}
+<p class="note">更高层级（L3 AliothStudio 私有化 ¥499,999）由原厂商务对接，详见首页。</p>`
+}
+
+/** Day precision is all the operator's `until` promises; render it that way. */
+function untilOf(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+/**
+ * The L2 source tier. Source is 商务对接 (no self-serve path), so this card offers
+ * exactly one action — 申请 — and then reports what the operator recorded.
+ */
+function sourceTier(source: LicenseView | null): string {
+  const granted = source !== null && source.grantedAt !== null && source.until !== null
+  const expired = granted && source.until !== null && source.until.getTime() < Date.now()
+  const request = `<form class="inline" method="post" action="/api/billing/source"><button class="btn">${granted ? '重新申请 L2 授权' : '申请 L2 授权'}</button></form>`
+  const state = source === null
+    ? `<p class="note">尚未申请。提交后由商务对接确认并开通。</p>${request}`
+    : granted && !expired
+      ? `<p class="note">已开通至 ${untilOf(source.until as Date)}。可在「原型」页下载源码。${source.note === '' ? '' : `（${esc(source.note)}）`}</p>`
+      : granted
+        ? `<p class="note">授权已于 ${untilOf(source.until as Date)} 到期。</p>${request}`
+        : `<p class="note">已提交申请（${untilOf(source.requestedAt)}），等待商务对接开通。</p>`
+  return `<div class="tier ${granted && !expired ? 'current' : ''}"><h3>L2 · 源码下载授权</h3><div class="price">¥4,999 起</div>
+<p>下载应用的完整源码包（app.json、modules/、extensions/、Sources/），由原厂商务对接开通。</p>
+${state}</div>`
 }
 
 function billsBody(data: ViewData): string {
@@ -342,6 +369,7 @@ export function apply(ctx: Context, config: Config): void {
     bills: await ctx.aliothBilling.bills(user.id),
     invoices: await ctx.aliothBilling.invoices(user.id),
     pending: user.role === 'admin' ? await ctx.aliothBilling.pendingInvoices(user) : [],
+    source: await ctx.aliothBilling.sourceLicenseRequest(user.id),
     notice,
     error,
   })
@@ -357,6 +385,7 @@ export function apply(ctx: Context, config: Config): void {
   const backTo: Record<string, string> = {
     subscribe: '/usercenter/subscription', cancel: '/usercenter/subscription',
     pay: '/usercenter/bills', invoice: '/usercenter/invoices', issue: '/usercenter/invoices',
+    source: '/usercenter/subscription',
   }
 
   const handler = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
@@ -382,12 +411,13 @@ export function apply(ctx: Context, config: Config): void {
       const data = await viewData(user)
       sendJson(response, 200, {
         username: user.username, namespace: user.namespace, role: user.role,
-        subscription: data.subscription, bills: data.bills, invoices: data.invoices,
+        subscription: data.subscription, source: data.source,
+        bills: data.bills, invoices: data.invoices,
       })
       return
     }
 
-    const actionMatch = /^\/api\/billing\/(subscribe|cancel|pay|invoice|issue)$/.exec(url.pathname)
+    const actionMatch = /^\/api\/billing\/(subscribe|cancel|pay|invoice|issue|source)$/.exec(url.pathname)
     if (request.method === 'POST' && actionMatch !== null) {
       // 同源加固：浏览器发出的状态变更必须携带匹配 Host 的 Origin
       // （SameSite=Lax 之上的第二道 CSRF 防线；无 Origin 的 JSON/curl
@@ -423,6 +453,9 @@ export function apply(ctx: Context, config: Config): void {
           const tax = typeof body.tax === 'string' ? body.tax : ''
           if (bill === '') throw new Error('缺少账单')
           result = await ctx.aliothBilling.requestInvoice(bill, user, title, tax)
+        } else if (action === 'source') {
+          // 申请 L2：只落一条请求行，开通由商务对接在库上确认（无自助通道）。
+          result = await ctx.aliothBilling.requestSourceLicense(user.id)
         } else {
           const invoice = typeof body.invoice === 'string' ? body.invoice : ''
           if (invoice === '') throw new Error('缺少发票申请')

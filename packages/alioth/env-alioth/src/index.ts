@@ -160,6 +160,8 @@ export class AliothEnv extends Service {
   }
 }
 export { maskUrl } from './doctor.ts'
+// A raw connection for tools that only need the database (no model snapshot).
+export { acquirePostgres, type PgHandle } from './pg.ts'
 export {
   provisionPrototypeRoot,
   removeProvisionedAssets,
