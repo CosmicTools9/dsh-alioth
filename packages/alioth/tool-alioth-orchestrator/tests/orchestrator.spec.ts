@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -515,6 +515,35 @@ describe('buildPrimitives stage guards', () => {
     const failures = (report as { failures: Array<{ id: string }> }).failures.map(entry => entry.id)
     expect(failures).toContain('app-json')
     expect(failures).toContain('module-json')
+  }, 120_000)
+
+  it('files one build-level verdict for a failing run, not one per internal retry', async () => {
+    // The retry loop is internal to one build: three tries of the same unrepaired
+    // tree are one rejected build. Per-try snapshots and verdicts inflated the
+    // rejection streak past ESCALATE_THRESHOLD (3), so a single call escalated the
+    // app to a human gate and blocked the repair path.
+    const args = { namespace: 'Demo', code: 'cover-e2e-retry', name: '重试证据', modules: [] }
+    const appDir = path.join(preProcRoot, 'Demo', 'Apps', 'cover-e2e-retry')
+    const count = async (relative: string): Promise<number> =>
+      (await readdir(path.join(appDir, relative)).catch(() => [] as string[])).length
+    const primitives = buildPrimitives(ctx, stageExec('cover-e2e-retry'), args, undefined, preProcRoot)
+    await primitives.appCreation('retry evidence')
+
+    for (const attempt of [1, 2]) {
+      const output = await primitives.e2eVerification(attempt, buildPlan(args), false)
+      expect(output.evidence).toContain(`E2E failed (attempt ${attempt})`)
+    }
+    expect(await count('versions')).toBe(0)
+    expect(await count(path.join('AppAgentTraces', 'closure-audit'))).toBe(0)
+
+    await primitives.e2eVerification(3, buildPlan(args), true)
+    expect(await count('versions')).toBe(1)
+    expect(await count(path.join('AppAgentTraces', 'closure-audit'))).toBe(1)
+    const verdict: unknown = JSON.parse(
+      await readFile(path.join(appDir, 'AppAgentTraces', 'closure-audit', '1.json'), 'utf8'),
+    )
+    // rejected — not escalated: the file is still repairable
+    expect(verdict).toMatchObject({ verdict: 'rejected' })
   }, 120_000)
 
   it('keeps the artifact list honest when the E2E evidence file cannot land', async () => {

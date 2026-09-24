@@ -48,8 +48,15 @@ export interface AgentPrimitives {
   readonly ontologyTransfer: (plan: FlowPlan) => Promise<StageOutput>
   /** Service API generation. */
   readonly serviceApi: (plan: FlowPlan) => Promise<StageOutput>
-  /** E2E verification (real browser full chain); false → repair loop. */
-  readonly e2eVerification: (attempt: number, plan: FlowPlan) => Promise<StageOutput>
+  /**
+   * E2E verification (real browser full chain); false → repair loop.
+   *
+   * `finalAttempt` tells the primitive whether this try concludes the run: the
+   * internal retry loop must not leave one audit record per try — three tries of
+   * one unrepaired build are one rejected build, not three (the closure audit
+   * escalates on a streak). Direct callers default to `true`.
+   */
+  readonly e2eVerification: (attempt: number, plan: FlowPlan, finalAttempt?: boolean) => Promise<StageOutput>
   /** Publishing: validation + build gate. */
   readonly publishing: (plan: FlowPlan, attempt: number) => Promise<{ output: StageOutput; result: BuildResult }>
   /** Pipeline advance: run the auto-gate for one metadata stage. */
@@ -84,7 +91,7 @@ export function stageOf(state: AgentState): string | null {
 /**
  * Advance the pipeline one stage. Deterministic: the transition depends only
  * on the current state and the injected primitive's output. Retry loops are
- * bounded: E2E verification ≤3 attempts, publishing ≤maxPublishAttempts.
+ * bounded: E2E verification ≤maxE2eAttempts, publishing ≤maxPublishAttempts.
  * PipelineAdvance walks STAGE_IDS; a human gate pauses the run
  * (pipeline-gate-awaiting) until resolveGate answers. Semantic analysis is
  * the only stage that may consult the LLM via the injected primitive — the
@@ -95,6 +102,7 @@ export async function advance(
   primitives: AgentPrimitives,
   input: string,
   maxPublishAttempts = 3,
+  maxE2eAttempts = 3,
 ): Promise<{ run: AgentRun; transition: PipelineTransition }> {
   const { state, plan, history } = run
   switch (state.kind) {
@@ -156,13 +164,13 @@ export async function advance(
     }
     case 'e2e-verification': {
       const attempt = state.attempt
-      const output = await primitives.e2eVerification(attempt, plan)
+      const output = await primitives.e2eVerification(attempt, plan, attempt >= maxE2eAttempts)
       if (output.evidence.startsWith('E2E failed')) {
-        if (attempt < 3) {
+        if (attempt < maxE2eAttempts) {
           const retry: AgentState = { kind: 'e2e-verification', attempt: attempt + 1 }
           return { run: { state: retry, plan, history }, transition: { from: state, to: retry, ...(output.artifacts === undefined ? {} : { artifacts: output.artifacts }), } }
         }
-        const terminal: AgentState = { kind: 'failed', error: `E2E verification exceeded 3 attempts: ${output.evidence}` }
+        const terminal: AgentState = { kind: 'failed', error: `E2E verification exceeded ${maxE2eAttempts} attempts: ${output.evidence}` }
         return { run: { state: terminal, plan, history }, transition: { from: state, to: terminal } }
       }
       return {
@@ -227,13 +235,15 @@ export async function runPipeline(
   input: string,
   primitives: AgentPrimitives,
   initialPlan: FlowPlan,
+  maxPublishAttempts = 3,
+  maxE2eAttempts = 3,
 ): Promise<AgentRun> {
   let run: AgentRun = { state: initialState(), plan: initialPlan, history: [] }
   const history: PipelineTransition[] = []
   // Bound: E2E ≤3 + publishing ≤3 + 7 gates + 9 stages + slack.
   const maxAdvances = PIPELINE_ORDER.length + 24
   for (let i = 0; i < maxAdvances && stageOf(run.state) !== null; i++) {
-    const advanced = await advance(run, primitives, input)
+    const advanced = await advance(run, primitives, input, maxPublishAttempts, maxE2eAttempts)
     history.push(advanced.transition)
     run = { ...advanced.run, history }
   }

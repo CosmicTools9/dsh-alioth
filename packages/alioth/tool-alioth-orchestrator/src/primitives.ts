@@ -517,7 +517,7 @@ export function buildPrimitives(
     //    并如实落盘 §5.2 的 publish 前置证据（extension-verify.json、eval-report.json、
     //    产物版本快照、closure-audit 裁决）。任一检查未通过或证据写盘失败 → 证据以
     //    "E2E failed" 开头驱动修复循环，绝不按通过处理。
-    async e2eVerification(attempt) {
+    async e2eVerification(attempt, _plan, finalAttempt = true) {
       const appDir = path.join(preProcRootOf(preProcRoot), args.namespace, 'Apps', args.code)
       // An unwritable tree must be reported by the evidence writes below, not
       // abort the stage before it can report anything.
@@ -566,46 +566,57 @@ export function buildPrimitives(
         description: 'eval-report 规则维度（schema_validity + prototype_standalone）',
       })
 
-      // 产物版本快照（publish 前置）：内容为空（无产物可快照）必须显式失败。
+      // 一份构建级证据（版本快照 + 结束审计）只属于**本次构建的终局尝试**：一次未修复
+      // 构建的 3 次内部重试若各写一份，会留下 3 个版本目录与 3 条 rejected 裁决，而
+      // closure audit 按连续 rejected 升级人工——一次调用就把该 App 打成人工升级。
+      // 判定：功能面全过即为终局（不会再重试）；否则以机器给的 finalAttempt 为准。
+      // 中间尝试仍写 e2e-report（本次尝试的判定），供重试循环与人工回溯。
+      const functionallyPassed = checks.every(check => check.passed)
+      const concluding = functionallyPassed || finalAttempt
+
       let snapshotDir = ''
-      try {
-        const snapshot = await snapshotArtifacts(appDir)
-        snapshotDir = snapshot.dir
-        evidenceArtifacts.push(snapshot.dir)
-      } catch (error) {
-        failures.push(`snapshot failed (${describe(error)})`)
+      if (concluding) {
+        try {
+          const snapshot = await snapshotArtifacts(appDir)
+          snapshotDir = snapshot.dir
+          evidenceArtifacts.push(snapshot.dir)
+        } catch (error) {
+          failures.push(`snapshot failed (${describe(error)})`)
+        }
       }
       checks.push({
         id: 'artifact-snapshot',
         passed: snapshotDir !== '',
-        description: '产物版本快照写入成功',
+        description: concluding ? '产物版本快照写入成功' : '中间尝试不落快照（终局尝试才写）',
       })
 
       // 独立结束审计：指纹锁死本次产物，裁决 append-only（连续 rejected 升级人工）。
       let closureSeq = 0
-      try {
-        const fingerprint = await artifactFingerprint(appDir)
-        const verdict = await appendClosureVerdict(appDir, {
-          app: args.code,
-          namespace: args.namespace,
-          fingerprint,
-          verdict: checks.every(check => check.passed) ? 'approved' : 'rejected',
-          findings: checks.map(check => ({
-            dimension: check.id,
-            verdict: check.passed ? 'pass' : 'fail',
-            detail: check.description,
-          })),
-          evidence: [...evidenceArtifacts],
-        })
-        closureSeq = verdict.seq
-        evidenceArtifacts.push(path.join(appDir, 'AppAgentTraces', 'closure-audit', `${verdict.seq}.json`))
-      } catch (error) {
-        failures.push(`closure-audit failed (${describe(error)})`)
+      if (concluding) {
+        try {
+          const fingerprint = await artifactFingerprint(appDir)
+          const verdict = await appendClosureVerdict(appDir, {
+            app: args.code,
+            namespace: args.namespace,
+            fingerprint,
+            verdict: checks.every(check => check.passed) ? 'approved' : 'rejected',
+            findings: checks.map(check => ({
+              dimension: check.id,
+              verdict: check.passed ? 'pass' : 'fail',
+              detail: check.description,
+            })),
+            evidence: [...evidenceArtifacts],
+          })
+          closureSeq = verdict.seq
+          evidenceArtifacts.push(path.join(appDir, 'AppAgentTraces', 'closure-audit', `${verdict.seq}.json`))
+        } catch (error) {
+          failures.push(`closure-audit failed (${describe(error)})`)
+        }
       }
       checks.push({
         id: 'closure-audit',
         passed: closureSeq > 0,
-        description: `独立结束审计裁决已落盘（seq=${closureSeq}）`,
+        description: concluding ? `独立结束审计裁决已落盘（seq=${closureSeq}）` : '中间尝试不落裁决（终局尝试才写）',
       })
 
       const passed = checks.every(check => check.passed)

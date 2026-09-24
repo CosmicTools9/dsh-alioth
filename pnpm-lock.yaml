@@ -8045,11 +8045,11 @@ importers:
   ../deepseek-harness/packages/feedback/page-feedback:
     dependencies:
       '@deepseek-ai/schemastery':
-        specifier: workspace:^
+        specifier: workspace:~
         version: link:../../../vendor/schemastery
     devDependencies:
       '@deepseek-ai/cordis':
-        specifier: workspace:^
+        specifier: workspace:~
         version: link:../../../vendor/cordis
 
   ../deepseek-harness/packages/fs/fs:
