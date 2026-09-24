@@ -8,7 +8,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { initialRunState, type RunState } from './state.ts'
+import { initialRunState, type RunPosition, type RunState } from './state.ts'
 import type { Adapter } from './adapter.ts'
 
 export interface RunMeta {
@@ -16,16 +16,25 @@ export interface RunMeta {
   readonly app: string
 }
 
-/** Load a run's state; starts a fresh run at the adapter's first step when absent. */
-export async function loadRun(workspaceRoot: string, meta: RunMeta, adapter: Adapter): Promise<RunState> {
+/** What a run file carries: positional indices plus the completed step ids. */
+export interface RunRecord {
+  readonly position: RunPosition
+  readonly completed: readonly string[]
+}
+
+/**
+ * Read a run's persisted state WITHOUT side effects — `null` when this app has no run
+ * file yet. `loadRun` builds on it: a read-only surface (the console's app status panel)
+ * must never materialize a fresh run just by looking at it, which `loadRun` does on
+ * purpose to start one.
+ */
+export async function readRun(workspaceRoot: string, meta: RunMeta): Promise<RunRecord | null> {
   const file = runFile(workspaceRoot, meta)
   let raw: string
   try {
     raw = await readFile(file, 'utf8')
   } catch {
-    const fresh = initialRunState(adapter)
-    await saveRun(workspaceRoot, meta, fresh)
-    return fresh
+    return null
   }
   let parsed: unknown
   try {
@@ -44,13 +53,23 @@ export async function loadRun(workspaceRoot: string, meta: RunMeta, adapter: Ada
     throw new Error(`skill-alioth: invalid run state at ${file}`)
   }
   return {
-    adapter,
     position: {
       trackIndex: (position as { trackIndex: number }).trackIndex,
       stepIndex: (position as { stepIndex: number }).stepIndex,
     },
     completed: completed as string[],
   }
+}
+
+/** Load a run's state; starts a fresh run at the adapter's first step when absent. */
+export async function loadRun(workspaceRoot: string, meta: RunMeta, adapter: Adapter): Promise<RunState> {
+  const record = await readRun(workspaceRoot, meta)
+  if (record !== null) {
+    return { adapter, position: record.position, completed: record.completed }
+  }
+  const fresh = initialRunState(adapter)
+  await saveRun(workspaceRoot, meta, fresh)
+  return fresh
 }
 
 /** Persist a run's state atomically-ish (write temp then rename). */

@@ -26,6 +26,7 @@ import { homedir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { buildAppStatus } from './app-status.ts'
 
 export const name = 'auth-web-alioth'
 export const inject = ['aliothAuth']
@@ -155,6 +156,24 @@ function asConnection(value: unknown): ConnectionLike | undefined {
 /** Parse the request body for both content types the B/S surface uses:
  * application/json (API clients) and application/x-www-form-urlencoded
  * (browser form submissions from the login/register pages). */
+/**
+ * Deployment data root: `workflows/` (AppAgent run state) and `deferred/` (pending
+ * gates) live under it. Read through the env service when it is mounted — the same
+ * root the verify/workflow tools write to — and mirror its default otherwise, so a
+ * console-only tree still reports real paths instead of failing.
+ */
+function dataRootOf(ctx: Context): string {
+  try {
+    const env = (ctx.get as (name: string) => unknown).call(ctx, 'aliothEnv') as { dataRoot?: () => string } | undefined
+    const value = typeof env?.dataRoot === 'function' ? env.dataRoot() : undefined
+    if (typeof value === 'string' && value !== '') return value
+  } catch {
+    // Service absent: fall through to the deployment default.
+  }
+  return process.env.ALIOTH_DATA_ROOT
+    ?? path.join(process.env.XDG_DATA_HOME ?? path.join(homedir(), '.local', 'share'), 'dsh-alioth')
+}
+
 function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -874,6 +893,36 @@ export function apply(ctx: Context, config: Config): void {
       }
       return
     }
+    // Read-only app status for the console's Alioth right-Sidebar tab: artifact
+    // contract health, the AppAgent run position, pending gates, and the last
+    // closure verdict. The session id comes from the caller, the app workspace
+    // from the harness workspace registry, and the namespace check against the
+    // caller's own identity is what authorises the read (a session outside the
+    // caller's namespace is refused, not reported).
+    if (request.method === 'GET' && url.pathname === '/api/alioth/app-status') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const sessionId = url.searchParams.get('sessionId') ?? ''
+      const app = auth().appForSession(sessionId)
+      if (app === null) {
+        sendJson(response, 200, { ok: true, app: null, reason: 'no-app-workspace' })
+        return
+      }
+      if (app.namespace !== user.namespace) {
+        sendJson(response, 403, { error: 'forbidden' })
+        return
+      }
+      try {
+        sendJson(response, 200, await buildAppStatus(app, dataRootOf(ctx)))
+      } catch (error) {
+        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
     // Cross-origin SSO handoff: the standalone (:3900) success page
     // auto-POSTs the fresh token here so the GUI origin gets its own
     // cookies — cookies are per-origin, a bare cross-origin link would

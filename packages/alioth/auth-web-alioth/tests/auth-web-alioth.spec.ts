@@ -1140,6 +1140,48 @@ describe('web gate form register (same-origin redirect)', () => {
   })
 })
 
+/**
+ * Flatten a React-element stand-in tree into its visible strings. The stand-in
+ * is what `createElement` returns (props-first arrays), so this walks props and
+ * children the way a renderer would.
+ */
+function treeTexts(tree: unknown): string[] {
+  if (typeof tree === 'string') return [tree]
+  if (Array.isArray(tree)) return tree.flatMap(treeTexts)
+  if (typeof tree === 'object' && tree !== null) {
+    const props = (tree as { props?: Record<string, unknown> }).props ?? {}
+    return [...Object.values(props).flatMap(value => (typeof value === 'string' ? [value] : [])),
+      ...treeTexts(props.children)]
+  }
+  return []
+}
+
+/**
+ * First element in the stand-in tree with `label` as a DIRECT text child — a
+ * descendant match would return the enclosing row instead of the control. The
+ * stand-in node shape is `[type, props, ...children]` (what the `createElement`
+ * stub returns), so children live in the array, not in `props.children`.
+ */
+function findNode(tree: unknown, label: string): { readonly props: Record<string, unknown> } | undefined {
+  if (!Array.isArray(tree)) return undefined
+  if (typeof tree[0] === 'string') {
+    const children = tree.slice(2)
+    if (children.some(child => typeof child === 'string' && child === label)) {
+      return { props: (tree[1] ?? {}) as Record<string, unknown> }
+    }
+    for (const child of children) {
+      const found = findNode(child, label)
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  for (const child of tree) {
+    const found = findNode(child, label)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
 describe('client face artifact', () => {
   it('ships a valid client module (shell.overlay user chip)', async () => {
     // Hand-authored closure-factory (no build step) — guard its contract:
@@ -1165,8 +1207,28 @@ describe('client face artifact', () => {
 
     let injectedKey: string | undefined
     let captured: { options: { name: string; id: string }; component: unknown } | undefined
+    let sidebarDeps: readonly string[] | undefined
+    let tabDefinition: Record<string, unknown> | undefined
+    let tabSeatKey: string | undefined
     const ctxStub = {
       effect: (fn: () => unknown) => { fn() },
+      // The right-Sidebar registration rides an optional service: it must not
+      // gate the chip, and it must declare what it needs.
+      inject: (deps: readonly string[], callback: (scope: unknown) => void) => {
+        sidebarDeps = deps
+        callback({
+          effect: (fn: () => unknown) => { fn() },
+          sidebarRightTabs: {
+            register: (definition: Record<string, unknown>) => { tabDefinition = definition; return () => {} },
+          },
+          slots: {
+            inject: (_key: string, cb: () => unknown) => { cb(); return () => {} },
+            register: (options: { key: string }, _body: unknown) => { tabSeatKey = options.key; return () => {} },
+          },
+          sidebarRight: { openTab: () => {} },
+        })
+        return () => {}
+      },
       slots: {
         // Registration defers through slots.inject (shell.overlay is declared
         // by ui-layout after plugin apply; direct register races it).
@@ -1185,6 +1247,148 @@ describe('client face artifact', () => {
     expect(injectedKey).toBe('shell.overlay')
     expect(captured?.options).toEqual({ name: 'shell.overlay', id: 'alioth-user-chip' })
     expect(typeof captured?.component).toBe('function')
+
+    // The Alioth app-status tab: registered through the optional sidebar
+    // registry, and its body under the keyed seat the sidebar renders.
+    expect(sidebarDeps).toEqual(['sidebarRightTabs'])
+    expect(tabDefinition).toMatchObject({ id: '@dsh-alioth/sidebar-alioth', kind: 'alioth' })
+    const guide = (tabDefinition as { guide: Array<{ title: () => string; description: () => string }> } | undefined)?.guide[0]
+    expect(guide).toBeDefined()
+    expect(guide?.title()).toBe('应用状态')
+    expect((guide?.description() ?? '').length).toBeGreaterThan(0)
+    expect(tabSeatKey).toBe('@dsh-alioth/sidebar-alioth')
+  })
+
+  it('renders the app-status panel from the session\'s app workspace', async () => {
+    const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+    let registration: { id: string; factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
+    new Function('window', source)({
+      __ModuleLoader__: { load: (r: typeof registration) => { registration = r } },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })
+
+    let cursor = 0
+    let hooks: unknown[] = []
+    const effects: Array<() => void> = []
+    const react = {
+      createElement: (...args: unknown[]) => args,
+      useState(initial: unknown) {
+        const at = cursor++
+        if (!(at in hooks)) hooks[at] = initial
+        return [hooks[at], (next: unknown) => {
+          hooks[at] = typeof next === 'function' ? (next as (prev: unknown) => unknown)(hooks[at]) : next
+        }]
+      },
+      useEffect(fn: () => unknown) {
+        const at = cursor++
+        if (!(at in hooks)) effects.push(fn as () => void)
+      },
+      useCallback: (fn: unknown) => fn,
+    }
+    const exports = registration!.factory((name: string) => {
+      if (name !== 'react') throw new Error(`unexpected require: ${name}`)
+      return react
+    })
+
+    const opened: string[] = []
+    let bodyInject: (() => Record<string, unknown>) | undefined
+    let body: ((props: unknown) => unknown) | undefined
+    const ctxStub = {
+      effect: (fn: () => unknown) => { fn() },
+      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
+        callback({
+          effect: (fn: () => unknown) => { fn() },
+          sidebarRightTabs: { register: () => () => {} },
+          slots: {
+            inject: (_key: string, cb: () => unknown) => { cb(); return () => {} },
+            register: (options: { inject?: () => Record<string, unknown> }, registered: unknown) => {
+              bodyInject = options.inject
+              body = registered as typeof body
+              return () => {}
+            },
+          },
+          sidebarRight: { openTab: (kind: string) => { opened.push(kind) } },
+        })
+        return () => {}
+      },
+      slots: {
+        inject: (_key: string, callback: () => unknown) => { callback(); return () => {} },
+        register: () => () => {},
+      },
+    }
+    ;(exports.apply as (c: unknown) => void)(ctxStub)
+
+    const panelBody = {
+      ok: true,
+      app: { namespace: 'U-ada', code: 'default', dir: '/data/Pre-Proc/U-ada/Apps/default' },
+      artifacts: {
+        appJson: {
+          present: true, valid: false, errors: ['//permissions: required'], name: '库存', status: 'developing',
+          version: '1.0.0', modules: 2, blocks: 3,
+        },
+        extensions: { files: 4, verification: 'degraded' },
+        sources: { dirs: 1 },
+        prototype: { html: true },
+        modulesOnDisk: 2,
+      },
+      pipeline: {
+        run: { present: true, trackIndex: 1, stepIndex: 2, completed: 5, lastCompleted: 'module-creation' },
+        deferred: { open: 1, items: [{ id: 'g1', app: 'default', reason: '扩展未装配', createdAt: '2026-09-24T00:00:00.000Z' }] },
+        closure: { present: true, verdict: 'rejected', seq: 3, at: '2026-09-24T01:00:00.000Z' },
+      },
+    }
+
+    const urls: string[] = []
+    const globals = globalThis as unknown as { fetch: unknown }
+    const savedFetch = globals.fetch
+    const renderPanel = (): unknown => {
+      cursor = 0
+      return body!({ sessionId: 's-1', openFilesTab: bodyInject!().openFilesTab })
+    }
+    try {
+      globals.fetch = (url: string) => {
+        urls.push(String(url))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(panelBody) })
+      }
+      renderPanel()
+      effects.forEach(fn => fn())
+      await delay(0)
+
+      const tree = renderPanel()
+      const texts = treeTexts(tree)
+      expect(urls[0]).toBe('/api/alioth/app-status?sessionId=s-1')
+      expect(texts).toContain('default')
+      expect(texts).toContain('U-ada')
+      expect(texts).toContain('1 项不合规')
+      expect(texts.some(text => text.includes('4 个 yaml · 降级（待人工门）'))).toBe(true)
+      expect(texts).toContain('轨道 1 · 步骤 2 · 已完成 5 步（最后 module-creation）')
+      expect(texts).toContain('rejected · #3 · 2026-09-24T01:00:00.000Z')
+      expect(texts.some(text => text.includes('扩展未装配'))).toBe(true)
+
+      // The actions row asks the sidebar to open the file tree, so the panel
+      // never has to reimplement the artifact browser.
+      const filesButton = findNode(tree, '文件树')
+      const openFiles = filesButton?.props.onClick
+      expect(typeof openFiles).toBe('function')
+      ;(openFiles as () => void)()
+      expect(opened).toEqual(['files'])
+
+      // A session outside any app workspace gets the picker hint, not a blank panel.
+      globals.fetch = () => Promise.resolve({
+        ok: true, status: 200, json: () => Promise.resolve({ ok: true, app: null, reason: 'no-app-workspace' }),
+      })
+      hooks = []
+      cursor = 0
+      effects.length = 0
+      renderPanel()
+      effects.forEach(fn => fn())
+      await delay(0)
+      const emptyTexts = treeTexts(renderPanel())
+      expect(emptyTexts.join('')).toContain('选择一个应用')
+    } finally {
+      globals.fetch = savedFetch
+    }
   })
 
   it('keeps login/logout reachable when the session is gone (chip must not vanish)', async () => {
@@ -1223,6 +1427,8 @@ describe('client face artifact', () => {
       let component: ((props: unknown) => unknown) | undefined
       const ctxStub = {
         effect: (fn: () => unknown) => { fn() },
+        // This tree has no right Sidebar: the optional service never arrives.
+        inject: () => () => {},
         slots: {
           inject: (_key: string, callback: () => unknown) => { callback(); return () => {} },
           register: (_options: unknown, registered: unknown) => { component = registered as typeof component; return () => {} },
@@ -1237,16 +1443,7 @@ describe('client face artifact', () => {
     const savedFetch = globals.fetch
     const savedDocument = globals.document
     const savedLocation = globals.location
-    const texts = (tree: unknown): string[] => {
-      if (typeof tree === 'string') return [tree]
-      if (Array.isArray(tree)) return tree.flatMap(texts)
-      if (typeof tree === 'object' && tree !== null) {
-        const props = (tree as { props?: Record<string, unknown> }).props ?? {}
-        return [...Object.values(props).flatMap(value => (typeof value === 'string' ? [value] : [])),
-          ...texts(props.children)]
-      }
-      return []
-    }
+    const texts = treeTexts
     const render = (): string[] => {
       cursor = 0
       return texts(Chip({}))

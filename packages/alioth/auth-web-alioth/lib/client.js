@@ -108,6 +108,157 @@ window.__ModuleLoader__.load({
         e('button', { style: styles.button, onClick: logout }, '退出'))
     }
 
+    // ── Right-Sidebar tab: this app's artifacts + AppAgent state ───────────
+    // The product's answer to the harness's generic right-Sidebar tabs: the Web
+    // terminal is disabled in the bundle patch (a browser user must never hold a
+    // shell as the service account), while this tab shows what the session is
+    // actually working on. Data comes from the same-origin
+    // GET /api/alioth/app-status?sessionId=…, which resolves the app from the
+    // session's workspace and authorises the read against the caller's namespace.
+    const ALIOTH_TAB_ID = '@dsh-alioth/sidebar-alioth'
+    const ALIOTH_TAB_KIND = 'alioth'
+
+    const panel = {
+      root: { font: '13px/1.6 system-ui', color: '#d7e0ea', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 },
+      hint: { color: '#7d8ca0', padding: '10px 12px', font: '13px system-ui' },
+      card: { border: '1px solid #1e2a3a', borderRadius: 10, padding: '8px 10px', background: '#0d1420' },
+      cardTitle: { fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: '#7d8ca0', marginBottom: 6 },
+      row: { display: 'flex', justifyContent: 'space-between', gap: 10 },
+      label: { color: '#7d8ca0', flex: '0 0 auto' },
+      value: { textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
+      actions: { display: 'flex', gap: 6 },
+      button: { background: 'none', border: '1px solid #1e2a3a', borderRadius: 999, color: '#7d8ca0', padding: '2px 10px', cursor: 'pointer', fontSize: 12 },
+      ok: { color: '#3ee6a8' },
+      warn: { color: '#e6b450' },
+      bad: { color: '#ff7b72' },
+      detail: { color: '#7d8ca0', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      path: { color: '#5d6b7f', fontSize: 11, wordBreak: 'break-all' },
+    }
+
+    /** One label/value line; `tone` colours the value when the state is notable. */
+    function statusRow(label, value, tone) {
+      return e('div', { style: panel.row },
+        e('span', { style: panel.label }, label),
+        e('span', { style: tone === undefined ? panel.value : Object.assign({}, panel.value, tone) }, value))
+    }
+
+    /** A titled group of rows (plus optional extra children). */
+    function card(title, children) {
+      return e('div', { style: panel.card },
+        e('div', { style: panel.cardTitle }, title),
+        ...children)
+    }
+
+    const EXTENSION_TONE = { passed: panel.ok, degraded: panel.warn, absent: panel.label }
+    const EXTENSION_TEXT = { passed: '已装配', degraded: '降级（待人工门）', absent: '未验证' }
+
+    /**
+     * The tab body. Session-scoped slots receive `sessionId` from the framework;
+     * everything else comes from our read-only status route.
+     * @param props - framework props plus this type's injected `openFilesTab`.
+     */
+    function AliothAppBody(props) {
+      const state = React.useState({ phase: 'loading' })
+      const view = state[0]
+      const setView = state[1]
+      const sessionId = props.sessionId
+      const load = React.useCallback(function () {
+        if (!sessionId) { setView({ phase: 'nosession' }); return }
+        setView({ phase: 'loading' })
+        fetch('/api/alioth/app-status?sessionId=' + encodeURIComponent(sessionId))
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status)
+            return res.json()
+          })
+          .then(function (body) { setView({ phase: 'ready', body: body }) })
+          .catch(function (err) { setView({ phase: 'error', error: String((err && err.message) || err) }) })
+      }, [sessionId])
+      React.useEffect(function () { load() }, [load])
+
+      const refresh = e('button', { style: panel.button, onClick: load }, '刷新')
+      const openFiles = e('button', { style: panel.button, onClick: props.openFilesTab }, '文件树')
+
+      if (view.phase === 'nosession') return e('div', { style: panel.hint }, '会话未就绪。')
+      if (view.phase === 'loading') return e('div', { style: panel.hint }, '读取中…', e('div', { style: panel.actions }, refresh))
+      if (view.phase === 'error') {
+        return e('div', { style: panel.hint }, '读取失败：' + view.error, e('div', { style: panel.actions }, refresh))
+      }
+      const body = view.body
+      if (body && body.app === null) {
+        return e('div', { style: panel.hint }, '当前会话不在应用工作区内——在「新建会话」里选择一个应用后回到这里。')
+      }
+
+      const artifacts = body.artifacts
+      const appJson = artifacts.appJson
+      const pipeline = body.pipeline
+      const run = pipeline.run
+      const closure = pipeline.closure
+
+      const appJsonTone = appJson.present && appJson.valid ? panel.ok : panel.bad
+      const appJsonText = appJson.present
+        ? (appJson.valid ? '契约通过' : appJson.errors.length + ' 项不合规')
+        : '缺失'
+      const runText = run.present === false
+        ? '无 run 记录（尚未启动流水线）'
+        : ('error' in run
+            ? '读取失败'
+            : '轨道 ' + run.trackIndex + ' · 步骤 ' + run.stepIndex + ' · 已完成 ' + run.completed + ' 步'
+              + (run.lastCompleted ? '（最后 ' + run.lastCompleted + '）' : ''))
+
+      const appCard = card('应用', [
+        statusRow('工作区', body.app.code, panel.mono),
+        statusRow('命名空间', body.app.namespace, panel.mono),
+        e('div', { style: panel.path }, body.app.dir),
+      ])
+      const artifactCard = card('产物', [
+        statusRow('app.json', appJsonText, appJsonTone),
+        statusRow('名称 / 状态', (appJson.name || '—') + ' · ' + (appJson.status || '—')),
+        statusRow('模块 / 块', appJson.modules + ' / ' + appJson.blocks + '（磁盘 ' + artifacts.modulesOnDisk + ' 个 module.json）'),
+        statusRow('extensions', artifacts.extensions.files + ' 个 yaml · ' + EXTENSION_TEXT[artifacts.extensions.verification], EXTENSION_TONE[artifacts.extensions.verification]),
+        statusRow('Sources / 原型', artifacts.sources.dirs + ' 个目录 · prototype.html ' + (artifacts.prototype.html ? '有' : '无')),
+        ...(appJson.errors.length === 0 ? [] : [e('div', { style: panel.detail }, '契约不合规：' + appJson.errors.slice(0, 3).join('；'))]),
+      ])
+      const pipelineChildren = [
+        statusRow('流水线', runText, run.present === false ? panel.label : undefined),
+        statusRow('未决门', pipeline.deferred.open + ' 项', pipeline.deferred.open > 0 ? panel.warn : panel.ok),
+        statusRow('闭环裁决', closure.present ? closure.verdict + ' · #' + closure.seq + ' · ' + closure.at : '无记录',
+          closure.present ? (closure.verdict === 'approved' ? panel.ok : panel.bad) : panel.label),
+      ]
+      const deferredDetails = pipeline.deferred.items.slice(0, 3).map(function (item) {
+        return e('div', { style: panel.detail }, '· ' + ((item.app === null ? '未归属' : item.app) + '：' + item.reason))
+      })
+      return e('div', { style: panel.root },
+        appCard,
+        artifactCard,
+        card('AppAgent', pipelineChildren.concat(deferredDetails)),
+        e('div', { style: panel.actions }, refresh, openFiles))
+    }
+
+    /** The tab type's guide glyph (the guide capsule renders `icon` at its size). */
+    function AliothTabGlyph(props) {
+      const size = props && props.size ? props.size : 16
+      return e('span', { style: { fontSize: size + 'px', lineHeight: 1, color: '#3ee6a8' } }, '◈')
+    }
+
+    /**
+     * Stage one: what the `alioth` tab type IS. No resource patterns — it is a
+     * page whose content is this session's app, so users reach it from the guide.
+     */
+    const aliothTabDefinition = {
+      id: ALIOTH_TAB_ID,
+      kind: ALIOTH_TAB_KIND,
+      priority: 'extension',
+      title: function () { return '应用状态' },
+      guide: [{
+        id: 'alioth-app',
+        order: 30,
+        title: function () { return '应用状态' },
+        description: function () { return '当前应用的产物契约、扩展装配验证与 AppAgent 流水线状态' },
+        icon: AliothTabGlyph,
+      }],
+    }
+
     /**
      * Client plugin body: one additive entry in the frame overlay layer.
      * Registration defers through ctx.slots.inject — shell.overlay is declared
@@ -119,6 +270,18 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register({ name: 'shell.overlay', id: 'alioth-user-chip' }, UserChip)))
+      // The right-Sidebar tab registers only where that registry exists (web
+      // profiles); a tree without it keeps the chip and gains nothing else.
+      ctx.inject(['sidebarRightTabs'], (scope) => {
+        scope.effect(() => scope.sidebarRightTabs.register(aliothTabDefinition))
+        scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
+          name: 'sidebar.right.pane.tab',
+          key: ALIOTH_TAB_ID,
+          inject: () => ({
+            openFilesTab: () => scope.sidebarRight.openTab('files'),
+          }),
+        }, AliothAppBody)))
+      })
     }
 
     exports.inject = ['slots']

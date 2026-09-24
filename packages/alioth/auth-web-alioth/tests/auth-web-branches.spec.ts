@@ -14,7 +14,10 @@
  * - `aliothLanding`: path/html.
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { createServer as createNetServer } from 'node:net'
 import { Context } from '@deepseek-ai/cordis'
 import * as authWeb from '../src/index.ts'
@@ -40,6 +43,8 @@ interface AuthStandIn {
     created: string[]
     /** App-workspace calls the carrier made, in order. */
     appCalls: Array<{ op: 'create' | 'rename'; namespace: string; from?: string; name: string }>
+    /** Session → app workspace, as the harness workspace registry would answer. */
+    sessionApps: Record<string, { namespace: string; code: string; dir: string }>
   }
 }
 
@@ -63,6 +68,7 @@ function authStandIn(): AuthStandIn {
     createFailure: null as unknown,
     appFailure: null as unknown,
     created: [] as string[],
+    sessionApps: {} as Record<string, { namespace: string; code: string; dir: string }>,
     appCalls: [] as Array<{ op: 'create' | 'rename'; namespace: string; from?: string; name: string }>,
   }
   const service: Record<string, unknown> = {
@@ -119,6 +125,9 @@ function authStandIn(): AuthStandIn {
       if (state.appFailure !== null) throw state.appFailure
       state.appCalls.push({ op: 'rename', namespace, from, name: to })
       return { code: to, name: '' }
+    },
+    appForSession(sessionId: string) {
+      return state.sessionApps[sessionId] ?? null
     },
   }
   return { service, state }
@@ -701,5 +710,95 @@ describe('filing footer is opt-in', () => {
     const html = await (await fetch(`http://127.0.0.1:${barePort}/login`)).text()
     expect(html).toContain('<h1>登录</h1>')
     expect(html).not.toContain('beian.miit.gov.cn')
+  })
+})
+
+describe('app status route (right-Sidebar tab data plane)', () => {
+  const base = (): string => `http://127.0.0.1:${port}`
+  let projectRoot: string
+  let previousDataRoot: string | undefined
+  let accounts = 0
+
+  beforeAll(async () => {
+    projectRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-appstatus-route-'))
+    // No env service in this suite: the carrier's dataRoot fallback is what a
+    // console-only tree takes, so the route reads run state and gates from here.
+    previousDataRoot = process.env.ALIOTH_DATA_ROOT
+    process.env.ALIOTH_DATA_ROOT = path.join(projectRoot, 'data')
+  })
+
+  afterAll(async () => {
+    if (previousDataRoot === undefined) delete process.env.ALIOTH_DATA_ROOT
+    else process.env.ALIOTH_DATA_ROOT = previousDataRoot
+    await rm(projectRoot, { recursive: true, force: true })
+  })
+
+  /** Register a fresh account; the app-status route keys off the session cookie. */
+  async function signIn(): Promise<{ cookie: string; namespace: string }> {
+    accounts += 1
+    const username = `panel-${accounts}`
+    const response = await fetch(`${base()}/api/auth/register`, {
+      method: 'POST',
+      ...formBody({ username, password: 'password-123' }),
+    })
+    expect(response.status).toBe(201)
+    return {
+      cookie: response.headers.getSetCookie().map(cookie => cookie.split(';')[0]).join('; '),
+      namespace: `U-${username}`,
+    }
+  }
+
+  it('refuses anonymous callers with 401', async () => {
+    const response = await fetch(`${base()}/api/alioth/app-status?sessionId=s-1`)
+    expect(response.status).toBe(401)
+    expect(await jsonError(response)).toBe('unauthorized')
+  })
+
+  it('answers "no app workspace" for a session the registry does not know', async () => {
+    const { cookie } = await signIn()
+    auth.state.sessionApps = {}
+    const response = await fetch(`${base()}/api/alioth/app-status?sessionId=unknown-session`, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, app: null, reason: 'no-app-workspace' })
+  })
+
+  it('refuses a session living in another namespace with 403', async () => {
+    const { cookie } = await signIn()
+    auth.state.sessionApps = {
+      'sess-other': { namespace: 'U-someone-else', code: 'default', dir: '/data/Pre-Proc/U-someone-else/Apps/default' },
+    }
+    const response = await fetch(`${base()}/api/alioth/app-status?sessionId=sess-other`, { headers: { cookie } })
+    expect(response.status).toBe(403)
+    expect(await jsonError(response)).toBe('forbidden')
+  })
+
+  it('projects the caller\'s own app workspace', async () => {
+    const { cookie, namespace } = await signIn()
+    const appDir = path.join(projectRoot, 'Pre-Proc', namespace, 'Apps', 'default')
+    await mkdir(appDir, { recursive: true })
+    await writeFile(path.join(appDir, 'app.json'), JSON.stringify({
+      id: 'app-1',
+      code: 'default',
+      namespace,
+      name: '面板应用',
+      version: '1.0.0',
+      status: 'developing',
+      config: { modules: ['m1'], blocks: ['b1'] },
+      permissions: { defaultRoles: [], adminRoles: [] },
+      routing: { base: '/apps/default', defaultRoute: '/apps/default/home' },
+      navigation: [],
+      min_alioth_version: '10.0.0',
+    }))
+    auth.state.sessionApps = { 'sess-mine': { namespace, code: 'default', dir: appDir } }
+
+    const response = await fetch(`${base()}/api/alioth/app-status?sessionId=sess-mine`, { headers: { cookie } })
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      app: { namespace, code: 'default', dir: appDir },
+      artifacts: { appJson: { present: true, valid: true, name: '面板应用', modules: 1, blocks: 1 } },
+      pipeline: { run: { present: false }, deferred: { open: 0, items: [] }, closure: { present: false } },
+    })
   })
 })

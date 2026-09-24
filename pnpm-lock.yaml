@@ -13708,6 +13708,15 @@ importers:
       '@dsh-alioth/auth-alioth':
         specifier: workspace:*
         version: link:../auth-alioth
+      '@dsh-alioth/gen-alioth':
+        specifier: workspace:*
+        version: link:../gen-alioth
+      '@dsh-alioth/skill-alioth':
+        specifier: workspace:*
+        version: link:../skill-alioth
+      '@dsh-alioth/verify-alioth':
+        specifier: workspace:*
+        version: link:../verify-alioth
     devDependencies:
       '@deepseek-ai/dsh-host-webserver':
         specifier: ^0.1.7-rc.1

@@ -41,6 +41,17 @@
 - id: directory-picker
   disabled: true
 
+# Right Sidebar: the harness Web terminal is NOT a product capability here.
+# Upstream runs it through the Session's subprocess provider with the execution
+# environment's system-user permissions — no Agent sandbox, no approval (Agent
+# Note 2026-09-16-user-terminal-permissions) — which its own note justifies by
+# "the person at the browser owns the machine". Our交付面 is multi-tenant B/S:
+# every registered account would get a shell as the service user, able to read
+# ~/.dsh-alioth.env (DSN), other accounts' Pre-Proc/U-*/ and psql into
+# dsh_alioth_auth. Fail-closed: drop the tab type from the tree.
+- id: ui-sidebar-terminal
+  disabled: true
+
 - insert:
     - id: directory-picker-app
       name: '@dsh-alioth/app-picker'

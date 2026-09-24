@@ -20,7 +20,10 @@
     }
   },
   "dependencies": {
-    "@dsh-alioth/auth-alioth": "workspace:*"
+    "@dsh-alioth/auth-alioth": "workspace:*",
+    "@dsh-alioth/gen-alioth": "workspace:*",
+    "@dsh-alioth/skill-alioth": "workspace:*",
+    "@dsh-alioth/verify-alioth": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

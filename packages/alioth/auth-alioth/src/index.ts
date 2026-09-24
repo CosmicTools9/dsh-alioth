@@ -81,6 +81,26 @@ function namespaceFromWorkspacePath(path: string): string | null {
   return ns === undefined ? null : ns
 }
 
+/** An app workspace path's namespace and app code (`Pre-Proc/{ns}/Apps/{app}`). */
+export interface SessionApp {
+  readonly namespace: string
+  readonly code: string
+  readonly dir: string
+}
+
+/**
+ * Extract namespace + app code from an app workspace path. Deliberately not
+ * restricted to `U-` namespaces: the caller's own namespace is checked against
+ * this result by whoever serves a read-only surface, so the matcher stays a
+ * plain shape check (any namespace, exactly one Apps level, single segment).
+ */
+function appFromWorkspacePath(workspacePath: string): { namespace: string; code: string } | null {
+  const match = /(?:^|\/)Pre-Proc\/([^/]+)\/Apps\/([^/]+)\/?$/.exec(workspacePath)
+  const namespace = match?.[1]
+  const code = match?.[2]
+  return namespace === undefined || code === undefined ? null : { namespace, code }
+}
+
 /** Read-only structural face of the harness workspace registry (absent in non-web trees). */
 interface WorkspaceRegistryLike {
   list(): ReadonlyArray<{ path: string; sessionIds: ReadonlyArray<string> }>
@@ -195,6 +215,13 @@ export interface AliothAuthService {
   authorizeNamespace(exec: ToolExecution, namespace: string): Promise<boolean>
   bind(token: string, sessionId: string): Promise<void>
   userForSessionId(sessionId: string): Promise<{ namespace: string; role: 'admin' | 'user' } | null>
+  /**
+   * The app workspace a session is scoped to (`Pre-Proc/{ns}/Apps/{app}`), for
+   * read-only console surfaces. `null` when the session is not in an app
+   * workspace. Callers MUST still check the namespace against their own
+   * identity — this answers "where is this session", not "may I look there".
+   */
+  appForSession(sessionId: string): SessionApp | null
   /** Resolved workspace mode ('standard' | 'unlimited'). */
   workspaceMode(): 'standard' | 'unlimited'
   /** Create the user's namespace workspace dirs (Pre-Proc/{ns}, Deploy/{ns}, Apps/default). Idempotent. */
@@ -400,6 +427,15 @@ export function apply(ctx: Context, config: Config): void {
       if (namespace === null) return null
       const user = await userByNamespace(ctx, namespace)
       return user === null ? null : { namespace: user.namespace, role: user.role }
+    },
+
+    /** The app workspace a session is scoped to (read-only; see the interface). */
+    appForSession(sessionId: string): SessionApp | null {
+      if (sessionId.trim() === '') return null
+      const owner = workspaceRegistryOf(ctx)?.list().find(workspace => workspace.sessionIds.includes(sessionId))
+      if (owner === undefined) return null
+      const app = appFromWorkspacePath(owner.path)
+      return app === null ? null : { namespace: app.namespace, code: app.code, dir: owner.path }
     },
 
     /** Resolved workspace mode ('standard' | 'unlimited'). */

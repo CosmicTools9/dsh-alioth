@@ -40,7 +40,7 @@ export {
   isAllowedGateProgram,
   type UnreachableGateProgram,
 } from './gate-programs.ts'
-export { loadRun, saveRun, type RunMeta } from './workspace.ts'
+export { loadRun, readRun, saveRun, type RunMeta, type RunRecord } from './workspace.ts'
 export {
   ADAPTER_TOOL_TO_DSH,
   ADAPTER_TOOL_VOCABULARY,
