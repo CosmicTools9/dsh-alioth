@@ -26,9 +26,19 @@ export const inject: readonly string[] = []
 /** L1 subscription price in CNY cents (confirmed pricing ladder). */
 export const L1_AMOUNT_CENTS = 139900
 
-export interface Config {}
+export interface Config {
+  /**
+   * Operator-configured L2 source-download authorizations, `username:YYYY-MM-DD`
+   * separated by commas (env `ALIOTH_SOURCE_LICENSES`, injected by the bundle).
+   * L2 is 商务对接 — it has no self-serve path, so the deployment writes it down
+   * until a back-office owns it. A malformed entry fails loud at mount.
+   */
+  readonly sourceLicenses?: string
+}
 
-export const Config: z<Config> = z.object({})
+export const Config: z<Config> = z.object({
+  sourceLicenses: z.string().default(''),
+})
 
 export interface BillingUser {
   readonly id: string
@@ -41,6 +51,19 @@ export interface Subscription {
   status: 'active' | 'canceled'
   startedAt: Date
   renewsAt: Date
+}
+
+/**
+ * An L2 source-download authorization. Deliberately NOT the L1 subscription: the
+ * published ladder sells source at L2 (¥4,999 起, 商务对接), so an L1 subscriber
+ * must not reach the source package.
+ */
+export interface SourceLicense {
+  readonly userId: string
+  /** Inclusive end of the negotiated window. */
+  readonly until: Date
+  /** `operator-config` = deployment's `ALIOTH_SOURCE_LICENSES`; `grant` = explicit call. */
+  readonly grantedBy: 'operator-config' | 'grant'
 }
 
 export interface Bill {
@@ -88,6 +111,14 @@ export interface AliothBillingService {
   pendingInvoices(actor: BillingUser): Promise<PendingInvoice[]>
   /** Admin action: mark a pending invoice issued. */
   issueInvoice(invoiceId: string, actor: BillingUser): Promise<Invoice>
+  /**
+   * L2 authorization for source download, or null. This — not `getSubscription` —
+   * is what the source gate reads, because the ladder prices source as its own
+   * tier (商务对接开通).
+   */
+  sourceLicense(userId: string): Promise<SourceLicense | null>
+  /** Operator action: grant/replace an L2 authorization. A back-office or PSP lands here. */
+  grantSourceLicense(userId: string, until: Date): Promise<SourceLicense>
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -106,10 +137,19 @@ export function currentPeriod(now: Date = new Date()): string {
  * in Maps inside this closure and resets on process restart. The backend
  * integration replaces exactly this provider (same interface).
  */
-export function createMemoryBilling(_opts: { resolveUsername?: (userId: string) => Promise<string | null> } = {}): AliothBillingService {
+/** Construction options for the volatile provider. */
+export interface MemoryBillingOptions {
+  resolveUsername?: (userId: string) => Promise<string | null>
+  /** Operator-configured L2 authorizations, keyed by username (a grant wins over this). */
+  sourceLicenses?: ReadonlyMap<string, Date>
+}
+
+export function createMemoryBilling(opts: MemoryBillingOptions = {}): AliothBillingService {
   const subscriptions = new Map<string, Subscription>()
   const bills = new Map<string, Bill>()
   const invoices = new Map<string, Invoice>()
+  /** Explicit grants, keyed by user id — they outrank the operator's list. */
+  const grantedLicenses = new Map<string, Date>()
 
   const myBills = (userId: string): Bill[] =>
     [...bills.values()].filter(b => b.userId === userId).sort((a, b) => b.period.localeCompare(a.period))
@@ -119,6 +159,21 @@ export function createMemoryBilling(_opts: { resolveUsername?: (userId: string) 
   const service: AliothBillingService = {
     async getSubscription(userId) {
       return subscriptions.get(userId) ?? null
+    },
+
+    async sourceLicense(userId) {
+      const granted = grantedLicenses.get(userId)
+      if (granted !== undefined) return { userId, until: granted, grantedBy: 'grant' }
+      const configured = opts.sourceLicenses
+      if (configured === undefined || configured.size === 0) return null
+      const username = await opts.resolveUsername?.(userId) ?? null
+      const until = username === null ? undefined : configured.get(username)
+      return until === undefined ? null : { userId, until, grantedBy: 'operator-config' }
+    },
+
+    async grantSourceLicense(userId, until) {
+      grantedLicenses.set(userId, until)
+      return { userId, until, grantedBy: 'grant' }
     },
 
     async subscribe(userId) {
@@ -204,9 +259,46 @@ export function createMemoryBilling(_opts: { resolveUsername?: (userId: string) 
 }
 
 
-export function apply(ctx: Context, _config: Config): void {
-  void _config
+/**
+ * Parse the operator's L2 authorization list. Malformed entries throw: a typo in a
+ * paid entitlement must not silently downgrade someone to "no license".
+ * @param raw - `username:YYYY-MM-DD[,username:YYYY-MM-DD…]`.
+ * @returns authorizations keyed by username.
+ */
+export function parseSourceLicenses(raw: string): ReadonlyMap<string, Date> {
+  const licenses = new Map<string, Date>()
+  for (const entry of raw.split(',').map(part => part.trim()).filter(part => part !== '')) {
+    const separator = entry.lastIndexOf(':')
+    const username = separator === -1 ? '' : entry.slice(0, separator).trim()
+    const until = separator === -1 ? '' : entry.slice(separator + 1).trim()
+    // Date-only, interpreted as end of that day, so a licence given to a date
+    // covers that whole day rather than expiring at its midnight start.
+    const parsed = /^\d{4}-\d{2}-\d{2}$/.test(until) ? new Date(`${until}T23:59:59.999Z`) : new Date(Number.NaN)
+    if (username === '' || Number.isNaN(parsed.getTime())) {
+      throw new Error(`aliothBilling: sourceLicenses entry is not "username:YYYY-MM-DD": ${JSON.stringify(entry)}`)
+    }
+    licenses.set(username, parsed)
+  }
+  return licenses
+}
+
+export function apply(ctx: Context, config: Config): void {
+  const sourceLicenses = parseSourceLicenses(config.sourceLicenses ?? '')
+  // The operator's list is keyed by username, so the provider has to resolve an
+  // account id back to one. Both halves are optional: a tree without the auth
+  // capability simply yields no configured authorization (never a false grant).
+  const resolveUsername = async (userId: string): Promise<string | null> => {
+    try {
+      const auth = (ctx.get as (name: string) => unknown).call(ctx, 'aliothAuth') as {
+        userById?: (id: string) => Promise<{ username: string } | null>
+      } | undefined
+      const user = await auth?.userById?.(userId) ?? null
+      return user?.username ?? null
+    } catch {
+      return null
+    }
+  }
   // The pre-backend volatile provider. A backend integration replaces this
   // provide call with a persistent implementation of the same interface.
-  ctx.provide('aliothBilling', createMemoryBilling())
+  ctx.provide('aliothBilling', createMemoryBilling({ sourceLicenses, resolveUsername }))
 }

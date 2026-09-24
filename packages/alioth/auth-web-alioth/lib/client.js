@@ -137,6 +137,9 @@ window.__ModuleLoader__.load({
       fileLink: { color: '#4fc3f7', textDecoration: 'none', wordBreak: 'break-all' },
       assetLink: { color: '#7d8ca0', textDecoration: 'none', wordBreak: 'break-all' },
       dim: { color: '#5d6b7f', fontSize: 11, flex: '0 0 auto' },
+      warnDetail: { color: '#e6b450', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      okDetail: { color: '#3ee6a8', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      badDetail: { color: '#ff7b72', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
     }
 
     /** One label/value line; `tone` colours the value when the state is notable. */
@@ -267,8 +270,51 @@ window.__ModuleLoader__.load({
       }, [sessionId])
       React.useEffect(function () { load() }, [load])
 
+      const notice = React.useState(null)
+      const setNotice = notice[1]
       const refresh = e('button', { style: panel.button, onClick: load }, '刷新')
       const status = e('button', { style: panel.button, onClick: props.openStatusTab }, '应用状态')
+      // Source is paid: ask the server for a short-lived, account-bound link and
+      // follow it. 402 carries the reason + where to subscribe, so the panel can
+      // say what is missing instead of failing silently.
+      const requestSource = function () {
+        setNotice(null)
+        fetch('/api/alioth/source/request', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId: sessionId }),
+        }).then(function (res) {
+          return res.json().then(function (body) { return { status: res.status, body: body } })
+        }).then(function (result) {
+          if (result.status === 200 && result.body && result.body.url) {
+            setNotice({ kind: 'ok', text: '已签发限时链接（' + result.body.expiresAt + ' 前有效），开始下载…' })
+            window.location.href = result.body.url
+            return
+          }
+          if (result.status === 402) {
+            // Source is L2 (¥4,999 起, 商务对接) — NOT the L1 subscription: the
+            // message must send people to the tier that actually unlocks it.
+            const until = result.body && result.body.until ? '（授权至 ' + result.body.until + '）' : ''
+            setNotice({
+              kind: 'need',
+              text: (result.body && result.body.reason === 'expired'
+                ? '源码下载授权已过期，续期后可下载'
+                : '源码下载需 L2 授权（¥4,999 起，商务对接）') + until,
+              url: (result.body && result.body.licenseUrl) || '/usercenter/subscription',
+            })
+            return
+          }
+          setNotice({ kind: 'error', text: '下载申请失败：' + ((result.body && result.body.error) || ('HTTP ' + result.status)) })
+        }).catch(function (err) {
+          setNotice({ kind: 'error', text: '下载申请失败：' + String((err && err.message) || err) })
+        })
+      }
+      // Declared after `requestSource`: the button's onClick closes over it, and a
+      // template literal would hit the TDZ if it were built first.
+      const sourceButton = e('button', { style: panel.button, onClick: requestSource }, '下载源码')
+      const noticeLine = notice[0] === null ? null : e('div', {
+        style: notice[0].kind === 'need' ? panel.warnDetail : (notice[0].kind === 'ok' ? panel.okDetail : panel.badDetail),
+      }, notice[0].text, notice[0].url === undefined ? null : e('a', { href: notice[0].url, style: panel.fileLink }, '查看 L2 授权'))
 
       if (view.phase === 'nosession') return e('div', { style: panel.hint }, '会话未就绪。')
       if (view.phase === 'loading') return e('div', { style: panel.hint }, '读取中…', e('div', { style: panel.actions }, refresh))
@@ -283,7 +329,8 @@ window.__ModuleLoader__.load({
       if (entries.length === 0) {
         return e('div', { style: panel.root },
           e('div', { style: panel.hint }, '尚无原型产物：先让 Agent 生成原型（prototype.html），这里就会出现。'),
-          e('div', { style: panel.actions }, refresh, status))
+          e('div', { style: panel.actions }, sourceButton, refresh, status),
+          noticeLine)
       }
       const section = function (title, group) {
         const rows = entries.filter(function (entry) { return entry.group === group })
@@ -303,8 +350,9 @@ window.__ModuleLoader__.load({
         e('div', { style: panel.path }, body.app.namespace + ' / ' + body.app.code),
         section('应用原型', 'app'),
         section('命名空间原型（共享壳与资源）', 'namespace'),
-        e('div', { style: panel.detail }, '源码不在控制台开放——付费后可限时下载。'),
-        e('div', { style: panel.actions }, refresh, status))
+        e('div', { style: panel.detail }, '源码不在控制台开放——L2 授权后可限时下载。'),
+        e('div', { style: panel.actions }, sourceButton, refresh, status),
+        noticeLine)
     }
 
     const prototypeTabDefinition = {
@@ -320,6 +368,47 @@ window.__ModuleLoader__.load({
         icon: AliothTabGlyph,
       }],
     }
+
+    // ── Settings seat: the operator's own surface, loopback only ──────────
+    // The harness Settings panel (模型 / 内置插件 / Agent 预设) is the machine
+    // owner's surface: it reads and writes the Host's own configuration and
+    // its rich actions are themselves gated on `connection.isLoopback` — off
+    // loopback it degrades into a half-broken page (the provider directory
+    // fails to load). This delivery is a multi-tenant B/S console whose
+    // browsers may sit behind a domain, a reverse proxy or a tunnel: the seat
+    // exists for the operator at localhost / 127.0.0.1 and nowhere else. The
+    // predicate is the harness's own loopback rule — the one behind the /api
+    // Host fence and `connection.isLoopback` (localhost, IPv6 loopback, or any
+    // 127/8 literal).
+    const SETTINGS_SEAT = 'sidebar.settings'
+
+    /** Loopback page authority — mirrors the harness's `isLoopbackHostname`. */
+    function isLoopbackAuthority(hostname) {
+      if (hostname === 'localhost' || hostname === '[::1]') return true
+      const parts = String(hostname || '').split('.')
+      return parts.length === 4
+        && parts[0] === '127'
+        && parts.every(function (part) { return /^\d{1,3}$/.test(part) && Number(part) <= 255 })
+    }
+
+    /**
+     * Whether the settings seat belongs on this page. `connection.isLoopback`
+     * is the harness's own answer (a shell that owns its Host reports true);
+     * the page authority is the fallback while that service is not yet mounted
+     * at apply time. No authority at all means no loopback evidence — the seat
+     * stays hidden (fail-closed: an unprovable authority is not the operator's
+     * machine).
+     * @param ctx - client root context (cordis ClientContext).
+     */
+    function settingsSeatVisible(ctx) {
+      const connection = ctx && typeof ctx.get === 'function' ? ctx.get('connection') : undefined
+      if (connection && typeof connection.isLoopback === 'boolean') return connection.isLoopback
+      const location = globalThis.location
+      return isLoopbackAuthority(location && location.hostname)
+    }
+
+    /** Empty occupant: shadowing the shipped settings shell renders nothing. */
+    function NoSettingsSeat() { return null }
 
     /** The tab type's guide glyph (the guide capsule renders `icon` at its size). */
     function AliothTabGlyph(props) {
@@ -356,6 +445,19 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register({ name: 'shell.overlay', id: 'alioth-user-chip' }, UserChip)))
+      // Off loopback an empty occupant shadows the shipped settings shell at
+      // priority -1 (a single slot renders its lowest live entry): neither the
+      // 设置 trigger nor the panel mounts, and the shipped registrant keeps
+      // owning its child declarations, so registrants waiting on `settings.*`
+      // seats are left undisturbed. On loopback nothing is registered and the
+      // harness shell stands as shipped.
+      if (!settingsSeatVisible(ctx)) {
+        ctx.effect(() => ctx.slots.inject(SETTINGS_SEAT, () => ctx.slots.register({
+          name: SETTINGS_SEAT,
+          priority: -1,
+          registrant: '@dsh-alioth/auth-web-alioth',
+        }, NoSettingsSeat)))
+      }
       // The right-Sidebar tab registers only where that registry exists (web
       // profiles); a tree without it keeps the chip and gains nothing else.
       ctx.inject(['sidebarRightTabs'], (scope) => {

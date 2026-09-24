@@ -28,6 +28,15 @@ import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { buildAppStatus } from './app-status.ts'
 import { isPrototypePath, listPrototypes, prototypeUrl } from './prototypes.ts'
+import { zipStore } from './zip-store.ts'
+import { collectSourcePackage, SourcePackageTooLargeError } from './source-package.ts'
+import {
+  appendSourceDownloadAudit,
+  loadSigningKey,
+  sourceEntitlement,
+  type SourceEntitlement,
+} from './source-download.ts'
+import { signSourceLink, verifySourceLink } from './source-link.ts'
 
 export const name = 'auth-web-alioth'
 export const inject = ['aliothAuth']
@@ -57,6 +66,13 @@ export interface Config {
   /** Mainland-China ICP filing number rendered in the auth-page footer
    * (env `ALIOTH_ICP` wins). Empty — the default — renders nothing. */
   readonly icp?: string
+  /**
+   * Source-download link lifetime in seconds (default 15 minutes). The link
+   * window is the second of two clocks: the entitlement (subscription period)
+   * decides whether a download may be requested at all, this decides how long the
+   * issued link stays redeemable.
+   */
+  readonly sourceLinkTtlSeconds?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -66,6 +82,7 @@ export const Config: z<Config> = z.object({
   preProcRoot: z.string(),
   publicOrigin: z.string().default(''),
   icp: z.string().default(''),
+  sourceLinkTtlSeconds: z.number().default(15 * 60),
 })
 
 /** 备案 footer for the styled pages, or '' when no filing number is configured.
@@ -175,6 +192,55 @@ function dataRootOf(ctx: Context): string {
     ?? path.join(process.env.XDG_DATA_HOME ?? path.join(homedir(), '.local', 'share'), 'dsh-alioth')
 }
 
+/**
+ * Structural face of the billing capability (absent in trees that do not mount it).
+ * Only the L2 authorization is read: wiring the download to `getSubscription` would
+ * sell the ¥4,999 tier for the ¥1,399 one.
+ */
+interface BillingLike {
+  sourceLicense(userId: string): Promise<{ readonly until: Date } | null>
+}
+
+function billingOf(ctx: Context): BillingLike | undefined {
+  try {
+    const value = (ctx.get as (name: string) => unknown).call(ctx, 'aliothBilling')
+    return typeof value === 'object' && value !== null && typeof (value as BillingLike).sourceLicense === 'function'
+      ? value as BillingLike
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether this account may download source right now: an L2 authorization, read
+ * from the billing capability. Fail-closed — a tree without that capability grants
+ * nothing (an unmounted plugin must not read as "everyone is licensed").
+ */
+async function sourceAccessOf(ctx: Context, userId: string): Promise<SourceEntitlement> {
+  const billing = billingOf(ctx)
+  if (billing === undefined) return { entitled: false, until: null, reason: 'none' }
+  const license = await billing.sourceLicense(userId).catch(() => null)
+  return sourceEntitlement(license, new Date())
+}
+
+/** Signing key per data root, memoized for the process lifetime. */
+const signingKeys = new Map<string, Promise<Uint8Array>>()
+
+function signingKey(ctx: Context): Promise<Uint8Array> {
+  const file = path.join(dataRootOf(ctx), 'source-signing.key')
+  const cached = signingKeys.get(file)
+  if (cached !== undefined) return cached
+  const loading = loadSigningKey(file)
+  signingKeys.set(file, loading)
+  return loading
+}
+
+/** Where redeemed downloads are recorded (one JSON line each). */
+function downloadAuditFile(ctx: Context): string {
+  return path.join(dataRootOf(ctx), 'source-downloads.jsonl')
+}
+
 function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
@@ -252,7 +318,6 @@ function sendAuthPage(response: ServerResponse, status: number, title: string, b
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a0e14">
 <title>${title} — Alioth AppCreator</title>
 <style>
@@ -528,7 +593,6 @@ ${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="manifest" href="/site.webmanifest">
 <meta name="theme-color" content="#0a0e14">
 <title>${title} — Alioth AppCreator</title>
 <style>
@@ -956,6 +1020,126 @@ export function apply(ctx: Context, config: Config): void {
           entries: entries.map(entry => ({ ...entry, url: prototypeUrl(entry.rel) })),
         })
       } catch (error) {
+        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // Source download, step one: authorise and hand out a short-lived link. The
+    // entitlement (subscription period) is the first clock; the link TTL is the
+    // second. Refusals are explicit so the console can point at 订阅.
+    if (request.method === 'POST' && url.pathname === '/api/alioth/source/request') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const body = await readBody(request)
+      const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+      const app = auth().appForSession(sessionId)
+      if (app === null) {
+        sendJson(response, 404, { error: 'no-app-workspace' })
+        return
+      }
+      if (app.namespace !== user.namespace) {
+        sendJson(response, 403, { error: 'forbidden' })
+        return
+      }
+      const entitlement = await sourceAccessOf(ctx, user.id)
+      if (!entitlement.entitled) {
+        sendJson(response, 402, {
+          error: 'not-entitled',
+          reason: entitlement.reason,
+          until: entitlement.until,
+          licenseUrl: '/usercenter/subscription',
+        })
+        return
+      }
+      const ttlSeconds = config.sourceLinkTtlSeconds ?? 15 * 60
+      const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds
+      const token = signSourceLink(await signingKey(ctx), {
+        namespace: app.namespace,
+        app: app.code,
+        userId: user.id,
+        expiresAt,
+      })
+      sendJson(response, 200, {
+        ok: true,
+        url: `/api/alioth/source/download?token=${encodeURIComponent(token)}`,
+        expiresAt: new Date(expiresAt * 1000).toISOString(),
+        until: entitlement.until,
+      })
+      return
+    }
+
+    // Source download, step two: redeem a link. Signature, expiry and account
+    // binding all hold before a single byte is read, and the entitlement is
+    // re-checked so a link issued inside a paid period cannot outlive it.
+    if (request.method === 'GET' && url.pathname === '/api/alioth/source/download') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const token = url.searchParams.get('token') ?? ''
+      const check = verifySourceLink(await signingKey(ctx), token, Math.floor(Date.now() / 1000))
+      if (!check.ok) {
+        sendJson(response, 403, { error: `link-${check.reason}` })
+        return
+      }
+      if (check.payload.userId !== user.id) {
+        sendJson(response, 403, { error: 'link-account' })
+        return
+      }
+      if (user.role !== 'admin' && check.payload.namespace !== user.namespace) {
+        sendJson(response, 403, { error: 'forbidden' })
+        return
+      }
+      const entitlement = await sourceAccessOf(ctx, user.id)
+      if (!entitlement.entitled) {
+        sendJson(response, 402, {
+          error: 'not-entitled',
+          reason: entitlement.reason,
+          until: entitlement.until,
+          licenseUrl: '/usercenter/subscription',
+        })
+        return
+      }
+      const appDir = path.join(preProcRoot(config), check.payload.namespace, 'Apps', check.payload.app)
+      if (!await stat(appDir).then(info => info.isDirectory(), () => false)) {
+        sendJson(response, 404, { error: 'not found' })
+        return
+      }
+      try {
+        const pkg = await collectSourcePackage(appDir, check.payload.app)
+        const archive = zipStore(pkg.entries)
+        const audit = {
+          ts: new Date().toISOString(),
+          userId: user.id,
+          username: user.username,
+          namespace: check.payload.namespace,
+          app: check.payload.app,
+          bytes: pkg.bytes,
+          files: pkg.entries.length,
+          linkExpiresAt: new Date(check.payload.expiresAt * 1000).toISOString(),
+        }
+        await appendSourceDownloadAudit(downloadAuditFile(ctx), audit).catch(error => {
+          // The download is already paid for: a failed audit write is reported,
+          // never turned into a failed download.
+          ctx.logger.warn(`auth-web-alioth: source-download audit write failed: ${String(error)}`)
+        })
+        response.writeHead(200, {
+          'content-type': 'application/zip',
+          'content-disposition': `attachment; filename="${check.payload.app}-source.zip"`,
+          'content-length': String(archive.byteLength),
+          'cache-control': 'no-store',
+        })
+        response.end(Buffer.from(archive))
+      } catch (error) {
+        if (error instanceof SourcePackageTooLargeError) {
+          sendJson(response, 413, { error: 'package-too-large', bytes: error.bytes, limit: error.limit })
+          return
+        }
         sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
       }
       return

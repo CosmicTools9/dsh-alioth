@@ -211,6 +211,11 @@ export interface AliothAuthService {
   register(username: string, password: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }>
   login(username: string, password: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }>
   userForToken(token: string | null): Promise<{ id: string; username: string; namespace: string; role: 'admin' | 'user' } | null>
+  /**
+   * Resolve an account id back to its account. Entitlement surfaces keyed by a
+   * human-readable name (the operator's L2 authorization list) need this direction.
+   */
+  userById(id: string): Promise<{ id: string; username: string; namespace: string; role: 'admin' | 'user' } | null>
   logout(token: string | null): Promise<void>
   authorizeNamespace(exec: ToolExecution, namespace: string): Promise<boolean>
   bind(token: string, sessionId: string): Promise<void>
@@ -427,6 +432,12 @@ export function apply(ctx: Context, config: Config): void {
       if (namespace === null) return null
       const user = await userByNamespace(ctx, namespace)
       return user === null ? null : { namespace: user.namespace, role: user.role }
+    },
+
+    /** Account for an id (see the interface). */
+    async userById(id: string) {
+      const user = await userById(ctx, id)
+      return user === null ? null : { id: user.id, username: user.username, namespace: user.namespace, role: user.role }
     },
 
     /** The app workspace a session is scoped to (read-only; see the interface). */

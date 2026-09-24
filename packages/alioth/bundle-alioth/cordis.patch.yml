@@ -76,6 +76,23 @@
 - id: ui-deliverables
   disabled: true
 
+# …nor "open in application". The Host half (`open-in-app`) registers three
+# webServer routes — probe `/open-in-app/apps`, per-app icon, and the
+# `POST /open-in-app/open` launcher — and the launcher spawns the resolved
+# desktop application ON THE SERVING HOST as the service user, on any absolute
+# existing directory the caller names. Remotely that is not "the browser user's
+# own machine" (the assumption upstream states for the Web terminal, Agent Note
+# 2026-09-16-user-terminal-permissions): it is a process launcher on the
+# deployment host, one click away for every signed-in account. Drop both halves
+# — the routes and the browser split button / path actions
+# (`ui-open-in-app`), which are a caller of those routes, not an independent
+# capability; leaving the browser half mounted over dead routes would only
+# render buttons that fail.
+- id: open-in-app
+  disabled: true
+- id: ui-open-in-app
+  disabled: true
+
 - insert:
     - id: directory-picker-app
       name: '@dsh-alioth/app-picker'
@@ -108,7 +125,9 @@
 
     - id: billing-alioth
       name: '@dsh-alioth/billing-alioth'
-      config: {}
+      config:
+        # L2 源码下载授权（商务对接开通，无自助通道）：username:YYYY-MM-DD 逗号分隔
+        sourceLicenses: !!js "process.env.ALIOTH_SOURCE_LICENSES ?? ''"
     - id: billing-web-alioth
       name: '@dsh-alioth/billing-web-alioth'
       config: {}

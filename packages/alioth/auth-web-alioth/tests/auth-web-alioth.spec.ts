@@ -14,6 +14,7 @@ import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/te
 import * as authAlioth from '@dsh-alioth/auth-alioth'
 import * as landingAlioth from '@dsh-alioth/landing-alioth'
 import * as authWeb from '../src/index.ts'
+import { signSourceLink } from '../src/source-link.ts'
 
 const SCHEMA_DDL = `
 CREATE TYPE isahl_meta.collection_type AS ENUM ('table', 'view');
@@ -55,6 +56,13 @@ let accountResolver: AccountResolver | undefined
 
 /** Session → app workspace, as the harness workspace registry answers. */
 let workspaceRegistry: { list: () => Array<{ path: string; sessionIds: readonly string[] }> }
+
+/**
+ * The billing face the source gate reads. `billingLicenseUntil` is the L2
+ * authorization; the stand-in ALSO reports an active L1 subscription so the test
+ * can prove the gate does not accept one (source is sold as its own tier).
+ */
+let billingLicenseUntil: Date | null = null
 
 /** The `connection` stand-in mounted in beforeAll (restored after variants). */
 let connectionStub: {
@@ -191,6 +199,16 @@ beforeAll(async () => {
   workspaceRegistry = { list: () => [] }
   ctx.provide('workspaceRegistry')
   ctx.set('workspaceRegistry', workspaceRegistry as never)
+  ctx.provide('aliothBilling')
+  ctx.set('aliothBilling', {
+    sourceLicense: async () => (billingLicenseUntil === null
+      ? null
+      : { userId: 'stub', until: billingLicenseUntil, grantedBy: 'grant' as const }),
+    getSubscription: async () => ({
+      userId: 'stub', plan: 'L1' as const, status: 'active' as const,
+      startedAt: new Date(), renewsAt: new Date(Date.now() + 86_400_000),
+    }),
+  } as never)
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
@@ -442,6 +460,102 @@ describe('B/S HTTP surface (real server)', () => {
     ])
     expect(body.entries[0]).toMatchObject({ url: '/preview/Pre-Proc/U-pl-owner/Apps/demo/prototype.html', kind: 'html' })
     expect(body.entries.some(entry => entry.rel.includes('Sources'))).toBe(false)
+  })
+
+  it('gates source download behind the subscription and hands out a bound, expiring link', async () => {
+    const appDir = path.join(previewPreProcRoot, 'U-dl-owner', 'Apps', 'dl-app')
+    await mkdir(path.join(appDir, 'Sources', 'Modules', 'stock'), { recursive: true })
+    await writeFile(path.join(appDir, 'app.json'), '{"code":"dl-app"}')
+    await writeFile(path.join(appDir, 'Sources', 'main.rs'), 'fn main() { /* paid source */ }')
+    await writeFile(path.join(appDir, 'Sources', 'Modules', 'stock', 'module.json'), '{}')
+    await writeFile(path.join(appDir, 'prototype.html'), '<html><body>free</body></html>')
+
+    const signIn = async (username: string): Promise<string> => {
+      const response = await fetch(`${base()}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: 'password-789' }),
+      })
+      if (response.status !== 201) throw new Error(`register ${username}: ${response.status}`)
+      return response.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+    }
+    const ownerCookie = await signIn('dl-owner')
+    const otherCookie = await signIn('dl-other')
+    workspaceRegistry.list = () => [{ path: appDir, sessionIds: ['sess-dl'] }]
+    billingLicenseUntil = null
+
+    const request = (cookie: string | undefined, sessionId = 'sess-dl'): Promise<Response> => fetch(`${base()}/api/alioth/source/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(cookie === undefined ? {} : { cookie }) },
+      body: JSON.stringify({ sessionId }),
+    })
+
+    // Anonymous, unknown session, someone else's session.
+    expect((await request(undefined)).status).toBe(401)
+    workspaceRegistry.list = () => []
+    expect((await request(ownerCookie)).status).toBe(404)
+    workspaceRegistry.list = () => [{ path: appDir, sessionIds: ['sess-dl'] }]
+    expect((await fetch(`${base()}/api/alioth/source/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: otherCookie },
+      body: JSON.stringify({ sessionId: 'sess-dl' }),
+    })).status).toBe(403)
+
+    // No L2 license: 402 pointing at the tier that unlocks source — even though
+    // this account has an ACTIVE L1 subscription in the stand-in.
+    const refused = await request(ownerCookie)
+    expect(refused.status).toBe(402)
+    expect(await refused.json()).toMatchObject({ error: 'not-entitled', reason: 'none', licenseUrl: '/usercenter/subscription' })
+
+    // L2 authorized: a link comes back, no zip yet.
+    billingLicenseUntil = new Date(Date.now() + 86_400_000)
+    const issued = await request(ownerCookie)
+    expect(issued.status).toBe(200)
+    const link = await issued.json() as { url: string; expiresAt: string; until: string }
+    expect(link.url).toContain('/api/alioth/source/download?token=')
+
+    // Redemption: anonymous, tampered, forwarded to another account, expired.
+    expect((await fetch(`${base()}${link.url}`)).status).toBe(401)
+    expect((await fetch(`${base()}${link.url.replace('token=', 'token=x')}`, { headers: { cookie: ownerCookie } })).status).toBe(403)
+    await expect(jsonError(await fetch(`${base()}${link.url}`, { headers: { cookie: otherCookie } }))).resolves.toBe('link-account')
+    const key = await readFile(path.join(dataRoot, 'source-signing.key'))
+    const me = await (await fetch(`${base()}/api/auth/me`, { headers: { cookie: ownerCookie } })).json() as { id: string }
+    const expiredToken = signSourceLink(key, {
+      namespace: 'U-dl-owner',
+      app: 'dl-app',
+      userId: me.id,
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+    })
+    const expiredUrl = `/api/alioth/source/download?token=${encodeURIComponent(expiredToken)}`
+    await expect(jsonError(await fetch(`${base()}${expiredUrl}`, { headers: { cookie: ownerCookie } }))).resolves.toBe('link-expired')
+
+    // A link issued inside a license window must not outlive it.
+    billingLicenseUntil = null
+    expect((await fetch(`${base()}${link.url}`, { headers: { cookie: ownerCookie } })).status).toBe(402)
+    billingLicenseUntil = new Date(Date.now() + 86_400_000)
+
+    // Entitled again: the archive arrives, carrying source and contract files.
+    const download = await fetch(`${base()}${link.url}`, { headers: { cookie: ownerCookie } })
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-type')).toBe('application/zip')
+    expect(download.headers.get('content-disposition')).toContain('dl-app-source.zip')
+    const archive = Buffer.from(await download.arrayBuffer())
+    expect(archive.byteLength).toBeGreaterThan(0)
+    const listing = await unzipList(archive)
+    expect(listing).toEqual([
+      'dl-app/app.json',
+      'dl-app/prototype.html',
+      'dl-app/Sources/main.rs',
+      'dl-app/Sources/Modules/stock/module.json',
+    ])
+    const extracted = await unzipRead(archive, 'dl-app/Sources/main.rs')
+    expect(extracted).toBe('fn main() { /* paid source */ }')
+
+    // One audit line per download.
+    const audit = await readFile(path.join(dataRoot, 'source-downloads.jsonl'), 'utf8')
+    const lines = audit.trim().split('\n')
+    expect(lines).toHaveLength(1)
+    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({ namespace: 'U-dl-owner', app: 'dl-app', files: 4 })
   })
 
   it('logs in via JSON API and reads /me', async () => {
@@ -1215,6 +1329,37 @@ describe('web gate form register (same-origin redirect)', () => {
   })
 })
 
+/** Read a store-only zip's entries (names + bytes) through its central directory. */
+function readZipEntries(archive: Buffer): Array<{ name: string; data: Buffer }> {
+  const eocd = archive.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]))
+  if (eocd < 0) throw new Error('no end-of-central-directory record')
+  const count = archive.readUInt16LE(eocd + 10)
+  let offset = archive.readUInt32LE(eocd + 16)
+  const entries: Array<{ name: string; data: Buffer }> = []
+  for (let index = 0; index < count; index += 1) {
+    if (archive.readUInt32LE(offset) !== 0x02014b50) throw new Error('bad central directory header')
+    const method = archive.readUInt16LE(offset + 10)
+    if (method !== 0) throw new Error(`unexpected compression method ${method}`)
+    const size = archive.readUInt32LE(offset + 24)
+    const nameLength = archive.readUInt16LE(offset + 28)
+    const extraLength = archive.readUInt16LE(offset + 30)
+    const commentLength = archive.readUInt16LE(offset + 32)
+    const localOffset = archive.readUInt32LE(offset + 42)
+    const name = archive.subarray(offset + 46, offset + 46 + nameLength).toString('utf8')
+    // Local header: 30 fixed bytes + its own name/extra lengths.
+    const localNameLength = archive.readUInt16LE(localOffset + 26)
+    const localExtraLength = archive.readUInt16LE(localOffset + 28)
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength
+    entries.push({ name, data: archive.subarray(dataStart, dataStart + size) })
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  return entries
+}
+
+const unzipList = (archive: Buffer): string[] => readZipEntries(archive).map(entry => entry.name)
+const unzipRead = (archive: Buffer, name: string): string | undefined =>
+  readZipEntries(archive).find(entry => entry.name === name)?.data.toString('utf8')
+
 /**
  * Flatten a React-element stand-in tree into its visible strings. The stand-in
  * is what `createElement` returns (props-first arrays), so this walks props and
@@ -1286,6 +1431,10 @@ describe('client face artifact', () => {
     const tabDefinitions = new Map<string, Record<string, unknown>>()
     const tabSeatKeys: string[] = []
     const ctxStub = {
+      // The real console always carries the connection service; this stub
+      // reports the operator's machine, so the settings seat keeps the
+      // harness shell (the gate only shadows it off loopback).
+      get: () => ({ isLoopback: true }),
       effect: (fn: () => unknown) => { fn() },
       // The right-Sidebar registration rides an optional service: it must not
       // gate the chip, and it must declare what it needs.
@@ -1340,6 +1489,80 @@ describe('client face artifact', () => {
     expect(tabSeatKeys).toEqual(['@dsh-alioth/sidebar-alioth', '@dsh-alioth/sidebar-prototype'])
   })
 
+  it('shadows the settings seat off a loopback authority (设置 is the operator\'s surface)', async () => {
+    // The harness Settings panel reads and writes the Host's own configuration
+    // and its rich actions are themselves loopback-gated; this console is
+    // served to multi-tenant browsers. Two lines must hold at once: keep the
+    // shipped shell on localhost/127.0.0.1, and shadow it with an empty
+    // priority -1 occupant everywhere else (a single slot renders its lowest
+    // live entry). The predicate mirrors the harness's loopback rule, so
+    // look-alikes ('::1' unbracketed, '128.0.0.1', '127.0.0.256', '127.0.0')
+    // must all hide the seat.
+    const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+    type Seat = { options: Record<string, unknown>; component: (props: unknown) => unknown }
+    const load = (connection: unknown, hostname: string | undefined): Seat[] => {
+      let registration: { factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
+      new Function('window', source)({ __ModuleLoader__: { load: (r: typeof registration) => { registration = r } } })
+      const reactStub = {
+        createElement: (...args: unknown[]) => args,
+        useState: (value: unknown) => [value, () => {}],
+        useEffect: () => {},
+      }
+      const exports = registration!.factory((name: string) => {
+        if (name !== 'react') throw new Error(`unexpected require: ${name}`)
+        return reactStub
+      })
+      const seats: Seat[] = []
+      const globals = globalThis as unknown as { location?: unknown }
+      const saved = globals.location
+      if (hostname === undefined) delete globals.location
+      else globals.location = { hostname }
+      try {
+        // The optional right-Sidebar registry never arrives in these trees.
+        ;(exports.apply as (c: unknown) => void)({
+          effect: (fn: () => unknown) => { fn() },
+          get: () => connection,
+          inject: () => () => {},
+          slots: {
+            inject: (_key: string, callback: () => unknown) => { callback(); return () => {} },
+            register: (options: Record<string, unknown>, component: unknown) => {
+              seats.push({ options, component: component as Seat['component'] })
+              return () => {}
+            },
+          },
+        })
+      } finally {
+        if (saved === undefined) delete globals.location
+        else globals.location = saved
+      }
+      return seats
+    }
+    const settingsSeat = (seats: Seat[]): Seat | undefined =>
+      seats.find(seat => seat.options.name === 'sidebar.settings')
+
+    // Off loopback the seat is shadowed by an inert occupant (renders nothing).
+    const hidden = load({ isLoopback: false }, '127.0.0.1')
+    expect(settingsSeat(hidden)?.options).toEqual({
+      name: 'sidebar.settings',
+      priority: -1,
+      registrant: '@dsh-alioth/auth-web-alioth',
+    })
+    expect(settingsSeat(hidden)?.component({})).toBeNull()
+
+    // The connection service is authoritative whenever it answers.
+    expect(settingsSeat(load({ isLoopback: true }, 'console.example.com'))).toBeUndefined()
+
+    // The page authority is the fallback while that service is not yet mounted.
+    for (const hostname of ['localhost', '127.0.0.1', '127.8.9.10', '[::1]']) {
+      expect([hostname, settingsSeat(load(undefined, hostname))]).toEqual([hostname, undefined])
+    }
+    for (const hostname of ['console.example.com', 'lvh.me', '::1', '128.0.0.1', '127.0.0.256', '127.0.0', '']) {
+      expect([hostname, settingsSeat(load(undefined, hostname))?.options.priority]).toEqual([hostname, -1])
+    }
+    // Without any authority evidence the seat stays hidden (fail-closed).
+    expect(settingsSeat(load(undefined, undefined))?.options.priority).toBe(-1)
+  })
+
   it('renders the app-status panel from the session\'s app workspace', async () => {
     const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
     let registration: { id: string; factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
@@ -1376,6 +1599,10 @@ describe('client face artifact', () => {
     const injects = new Map<string, () => Record<string, unknown>>()
     const bodies = new Map<string, (props: unknown) => unknown>()
     const ctxStub = {
+      // The real console always carries the connection service; this stub
+      // reports the operator's machine, so the settings seat keeps the
+      // harness shell (the gate only shadows it off loopback).
+      get: () => ({ isLoopback: true }),
       effect: (fn: () => unknown) => { fn() },
       inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
         callback({
@@ -1477,11 +1704,13 @@ describe('client face artifact', () => {
   it('renders the prototype tab with the authorised preview URLs only', async () => {
     const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
     let registration: { id: string; factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
-    new Function('window', source)({
+    const fakeWindow = {
       __ModuleLoader__: { load: (r: typeof registration) => { registration = r } },
       addEventListener: () => {},
       removeEventListener: () => {},
-    })
+      location: { href: '' },
+    }
+    new Function('window', source)(fakeWindow)
 
     let cursor = 0
     let hooks: unknown[] = []
@@ -1510,6 +1739,10 @@ describe('client face artifact', () => {
     const bodies = new Map<string, (props: unknown) => unknown>()
     const injects = new Map<string, () => Record<string, unknown>>()
     const ctxStub = {
+      // The real console always carries the connection service; this stub
+      // reports the operator's machine, so the settings seat keeps the
+      // harness shell (the gate only shadows it off loopback).
+      get: () => ({ isLoopback: true }),
       effect: (fn: () => unknown) => { fn() },
       inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
         callback({
@@ -1542,6 +1775,11 @@ describe('client face artifact', () => {
     }
 
     const urls: string[] = []
+    let sourceReply: { status: number; body: unknown } = {
+      status: 402,
+      body: { error: 'not-entitled', reason: 'none', until: null, licenseUrl: '/usercenter/subscription' },
+    }
+    const calls: Array<{ url: string; method: string | undefined; body: unknown }> = []
     const globals = globalThis as unknown as { fetch: unknown }
     const savedFetch = globals.fetch
     const renderPrototypes = (): unknown => {
@@ -1551,8 +1789,16 @@ describe('client face artifact', () => {
       return body!({ sessionId: 'session-9', openStatusTab: inject!().openStatusTab })
     }
     try {
-      globals.fetch = (url: string) => {
+      globals.fetch = (url: string, init?: { method?: string; body?: string }) => {
         urls.push(String(url))
+        if (String(url).startsWith('/api/alioth/source/request')) {
+          calls.push({ url: String(url), method: init?.method, body: init?.body })
+          return Promise.resolve({
+            ok: sourceReply.status === 200,
+            status: sourceReply.status,
+            json: () => Promise.resolve(sourceReply.body),
+          })
+        }
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(listing) })
       }
       renderPrototypes()
@@ -1577,6 +1823,38 @@ describe('client face artifact', () => {
       ;(openStatus as () => void)()
       expect(opened).toEqual(['alioth'])
       expect(texts.some(text => text.includes('Sources'))).toBe(false)
+
+      // Source download: a refusal is explained and linked, not swallowed.
+      const downloadButton = findNode(renderPrototypes(), '下载源码')
+      const requestClick = downloadButton?.props.onClick
+      expect(typeof requestClick).toBe('function')
+      ;(requestClick as () => void)()
+      await delay(0)
+      const refused = renderPrototypes()
+      expect(calls[0]).toMatchObject({ url: '/api/alioth/source/request', method: 'POST' })
+      expect(JSON.parse(String(calls[0]?.body))).toEqual({ sessionId: 'session-9' })
+      // The refusal names the tier that actually unlocks source (L2, 商务对接).
+      expect(treeTexts(refused).some(text => text.includes('源码下载需 L2 授权'))).toBe(true)
+      expect(findNode(refused, '查看 L2 授权')?.props.href).toBe('/usercenter/subscription')
+
+      // Entitled: the issued link is followed in place.
+      sourceReply = { status: 200, body: { ok: true, url: '/api/alioth/source/download?token=abc', expiresAt: '2026-09-24T01:15:00.000Z', until: '2026-10-01T00:00:00.000Z' } }
+      const again = findNode(renderPrototypes(), '下载源码')
+      const retryClick = again?.props.onClick
+      expect(typeof retryClick).toBe('function')
+      ;(retryClick as () => void)()
+      await delay(0)
+      expect(fakeWindow.location.href).toBe('/api/alioth/source/download?token=abc')
+      expect(treeTexts(renderPrototypes()).some(text => text.includes('已签发限时链接'))).toBe(true)
+
+      // Anything else surfaces the server's reason.
+      sourceReply = { status: 500, body: { error: 'package-too-large' } }
+      const third = findNode(renderPrototypes(), '下载源码')
+      const failingClick = third?.props.onClick
+      expect(typeof failingClick).toBe('function')
+      ;(failingClick as () => void)()
+      await delay(0)
+      expect(treeTexts(renderPrototypes()).some(text => text.includes('package-too-large'))).toBe(true)
 
       // Nothing generated yet: an actionable hint, not an empty panel.
       globals.fetch = () => Promise.resolve({
@@ -1629,6 +1907,10 @@ describe('client face artifact', () => {
     const Chip = (() => {
       let component: ((props: unknown) => unknown) | undefined
       const ctxStub = {
+        // The real console always carries the connection service; this stub
+        // reports the operator's machine, so the settings seat keeps the
+        // harness shell (the gate only shadows it off loopback).
+        get: () => ({ isLoopback: true }),
         effect: (fn: () => unknown) => { fn() },
         // This tree has no right Sidebar: the optional service never arrives.
         inject: () => () => {},
