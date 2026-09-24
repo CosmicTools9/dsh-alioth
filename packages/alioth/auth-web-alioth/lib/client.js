@@ -134,6 +134,9 @@ window.__ModuleLoader__.load({
       bad: { color: '#ff7b72' },
       detail: { color: '#7d8ca0', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
       path: { color: '#5d6b7f', fontSize: 11, wordBreak: 'break-all' },
+      fileLink: { color: '#4fc3f7', textDecoration: 'none', wordBreak: 'break-all' },
+      assetLink: { color: '#7d8ca0', textDecoration: 'none', wordBreak: 'break-all' },
+      dim: { color: '#5d6b7f', fontSize: 11, flex: '0 0 auto' },
     }
 
     /** One label/value line; `tone` colours the value when the state is notable. */
@@ -177,7 +180,7 @@ window.__ModuleLoader__.load({
       React.useEffect(function () { load() }, [load])
 
       const refresh = e('button', { style: panel.button, onClick: load }, '刷新')
-      const openFiles = e('button', { style: panel.button, onClick: props.openFilesTab }, '文件树')
+      const openPrototypes = e('button', { style: panel.button, onClick: props.openPrototypes }, '原型')
 
       if (view.phase === 'nosession') return e('div', { style: panel.hint }, '会话未就绪。')
       if (view.phase === 'loading') return e('div', { style: panel.hint }, '读取中…', e('div', { style: panel.actions }, refresh))
@@ -232,7 +235,90 @@ window.__ModuleLoader__.load({
         appCard,
         artifactCard,
         card('AppAgent', pipelineChildren.concat(deferredDetails)),
-        e('div', { style: panel.actions }, refresh, openFiles))
+        e('div', { style: panel.actions }, refresh, openPrototypes))
+    }
+
+    /** The prototype tab: the ONLY file surface the console exposes. */
+    const PROTOTYPE_TAB_ID = '@dsh-alioth/sidebar-prototype'
+    const PROTOTYPE_TAB_KIND = 'alioth-prototype'
+
+    /**
+     * Prototype listing. Source is a paid, time-limited download, so this tab —
+     * and the `/preview/…` allowlist behind every link — never shows it; the
+     * harness's own file Remote is disabled in the bundle patch, not merely
+     * unmounted.
+     * @param props - framework props plus this type's injected `openStatusTab`.
+     */
+    function PrototypeBody(props) {
+      const state = React.useState({ phase: 'loading' })
+      const view = state[0]
+      const setView = state[1]
+      const sessionId = props.sessionId
+      const load = React.useCallback(function () {
+        if (!sessionId) { setView({ phase: 'nosession' }); return }
+        setView({ phase: 'loading' })
+        fetch('/api/alioth/prototypes?sessionId=' + encodeURIComponent(sessionId))
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status)
+            return res.json()
+          })
+          .then(function (body) { setView({ phase: 'ready', body: body }) })
+          .catch(function (err) { setView({ phase: 'error', error: String((err && err.message) || err) }) })
+      }, [sessionId])
+      React.useEffect(function () { load() }, [load])
+
+      const refresh = e('button', { style: panel.button, onClick: load }, '刷新')
+      const status = e('button', { style: panel.button, onClick: props.openStatusTab }, '应用状态')
+
+      if (view.phase === 'nosession') return e('div', { style: panel.hint }, '会话未就绪。')
+      if (view.phase === 'loading') return e('div', { style: panel.hint }, '读取中…', e('div', { style: panel.actions }, refresh))
+      if (view.phase === 'error') {
+        return e('div', { style: panel.hint }, '读取失败：' + view.error, e('div', { style: panel.actions }, refresh))
+      }
+      const body = view.body
+      if (body && body.app === null) {
+        return e('div', { style: panel.hint }, '当前会话不在应用工作区内——在「新建会话」里选择一个应用后回到这里。')
+      }
+      const entries = (body && body.entries) || []
+      if (entries.length === 0) {
+        return e('div', { style: panel.root },
+          e('div', { style: panel.hint }, '尚无原型产物：先让 Agent 生成原型（prototype.html），这里就会出现。'),
+          e('div', { style: panel.actions }, refresh, status))
+      }
+      const section = function (title, group) {
+        const rows = entries.filter(function (entry) { return entry.group === group })
+        if (rows.length === 0) return null
+        return card(title, rows.map(function (entry) {
+          return e('div', { style: panel.row },
+            e('a', {
+              href: entry.url,
+              target: '_blank',
+              rel: 'noopener',
+              style: entry.kind === 'html' ? panel.fileLink : panel.assetLink,
+            }, entry.label),
+            e('span', { style: panel.dim }, entry.kind === 'html' ? '' : '资源'))
+        }))
+      }
+      return e('div', { style: panel.root },
+        e('div', { style: panel.path }, body.app.namespace + ' / ' + body.app.code),
+        section('应用原型', 'app'),
+        section('命名空间原型（共享壳与资源）', 'namespace'),
+        e('div', { style: panel.detail }, '源码不在控制台开放——付费后可限时下载。'),
+        e('div', { style: panel.actions }, refresh, status))
+    }
+
+    const prototypeTabDefinition = {
+      id: PROTOTYPE_TAB_ID,
+      kind: PROTOTYPE_TAB_KIND,
+      priority: 'extension',
+      title: function () { return '原型' },
+      guide: [{
+        id: 'alioth-prototypes',
+        order: 20,
+        title: function () { return '原型' },
+        description: function () { return '本应用的原型页面与共享资源（源码不在控制台开放）' },
+        icon: AliothTabGlyph,
+      }],
     }
 
     /** The tab type's guide glyph (the guide capsule renders `icon` at its size). */
@@ -278,9 +364,17 @@ window.__ModuleLoader__.load({
           name: 'sidebar.right.pane.tab',
           key: ALIOTH_TAB_ID,
           inject: () => ({
-            openFilesTab: () => scope.sidebarRight.openTab('files'),
+            openPrototypes: () => scope.sidebarRight.openTab(PROTOTYPE_TAB_KIND),
           }),
         }, AliothAppBody)))
+        scope.effect(() => scope.sidebarRightTabs.register(prototypeTabDefinition))
+        scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
+          name: 'sidebar.right.pane.tab',
+          key: PROTOTYPE_TAB_ID,
+          inject: () => ({
+            openStatusTab: () => scope.sidebarRight.openTab(ALIOTH_TAB_KIND),
+          }),
+        }, PrototypeBody)))
       })
     }
 

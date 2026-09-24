@@ -27,6 +27,7 @@ import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { buildAppStatus } from './app-status.ts'
+import { isPrototypePath, listPrototypes, prototypeUrl } from './prototypes.ts'
 
 export const name = 'auth-web-alioth'
 export const inject = ['aliothAuth']
@@ -429,17 +430,17 @@ async function handlePreview(
     sendJson(response, 404, { error: 'not found' })
     return
   }
-  if (rel.startsWith('Pre-Proc/')) {
+  // Prototypes only. Source is a paid, time-limited download, so the console
+  // serves nothing else: `isPrototypePath` is the same allowlist behind the 原型
+  // tab's listing, and the namespace check keeps one account out of another's
+  // tree. `.agents/` stays shared — those are design assets prototypes import.
+  if (!rel.startsWith('.agents/')) {
     const ns = rel.split('/')[1] ?? ''
-    if (user.role !== 'admin' && ns !== user.namespace) {
-      // Silent 404 — no existence leak across namespaces.
+    if (!isPrototypePath(rel) || (user.role !== 'admin' && ns !== user.namespace)) {
+      // Silent 404 — never leak whether a hidden path exists.
       sendJson(response, 404, { error: 'not found' })
       return
     }
-  } else if (!rel.startsWith('.agents/')) {
-    // Only the design-asset tree is shared; everything else is 404.
-    sendJson(response, 404, { error: 'not found' })
-    return
   }
   const full = path.resolve(contentRoot, rel)
   if (!full.startsWith(contentRoot + path.sep)) {
@@ -917,6 +918,43 @@ export function apply(ctx: Context, config: Config): void {
       }
       try {
         sendJson(response, 200, await buildAppStatus(app, dataRootOf(ctx)))
+      } catch (error) {
+        sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+
+    // The 原型 tab's listing: what the console may show of this app's
+    // prototypes. Same authorisation as app-status (session → app workspace by
+    // the harness registry, then the caller's own namespace), and every entry
+    // carries the authorised `/preview/…` URL it can be opened through.
+    if (request.method === 'GET' && url.pathname === '/api/alioth/prototypes') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const sessionId = url.searchParams.get('sessionId') ?? ''
+      const app = auth().appForSession(sessionId)
+      if (app === null) {
+        sendJson(response, 200, { ok: true, app: null, reason: 'no-app-workspace', entries: [] })
+        return
+      }
+      if (app.namespace !== user.namespace) {
+        sendJson(response, 403, { error: 'forbidden' })
+        return
+      }
+      try {
+        const entries = await listPrototypes({
+          preProcRoot: preProcRoot(config),
+          namespace: app.namespace,
+          appCode: app.code,
+        })
+        sendJson(response, 200, {
+          ok: true,
+          app: { namespace: app.namespace, code: app.code },
+          entries: entries.map(entry => ({ ...entry, url: prototypeUrl(entry.rel) })),
+        })
       } catch (error) {
         sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
       }

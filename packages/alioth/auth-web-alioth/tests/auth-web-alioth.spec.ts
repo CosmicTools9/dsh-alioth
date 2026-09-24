@@ -53,6 +53,9 @@ let testDb: TestDatabase
 type AccountResolver = (headers: { cookie?: string; host?: string }) => string | null | Promise<string | null>
 let accountResolver: AccountResolver | undefined
 
+/** Session → app workspace, as the harness workspace registry answers. */
+let workspaceRegistry: { list: () => Array<{ path: string; sessionIds: readonly string[] }> }
+
 /** The `connection` stand-in mounted in beforeAll (restored after variants). */
 let connectionStub: {
   authenticatedUrl: (base: string) => string
@@ -185,6 +188,9 @@ beforeAll(async () => {
   // Kept value-less so the carrier behaves as in a connection-less tree until
   // a test mounts the stand-in below.
   ctx.provide('connection')
+  workspaceRegistry = { list: () => [] }
+  ctx.provide('workspaceRegistry')
+  ctx.set('workspaceRegistry', workspaceRegistry as never)
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
@@ -362,11 +368,80 @@ describe('B/S HTTP surface (real server)', () => {
     })
     expect(leak.status).toBe(404)
 
+    // Source and contract files are NOT part of the console surface — not even
+    // for their own owner: they are a paid, time-limited download.
+    const ownApp = path.join(protoRoot, 'U-pv-owner', 'Apps', 'demo-app')
+    await mkdir(path.join(ownApp, 'Sources'), { recursive: true })
+    await writeFile(path.join(ownApp, 'Sources', 'main.rs'), 'fn main() {}')
+    await writeFile(path.join(ownApp, 'app.json'), '{}')
+    for (const hidden of [
+      'Pre-Proc/U-pv-owner/Apps/demo-app/app.json',
+      'Pre-Proc/U-pv-owner/Apps/demo-app/Sources/main.rs',
+      'Pre-Proc/U-pv-owner/Apps/demo-app/modules/stock/block.json',
+    ]) {
+      expect((await fetch(`${base()}/preview/${hidden}`, { headers: { cookie } })).status, hidden).toBe(404)
+    }
+    // …while the app's own prototype.html IS visible.
+    await writeFile(path.join(ownApp, 'prototype.html'), '<html><body>proto</body></html>')
+    const appProto = await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/Apps/demo-app/prototype.html`, { headers: { cookie } })
+    expect(appProto.status).toBe(200)
+    expect(await appProto.text()).toContain('proto')
+
     // Traversal is rejected before any filesystem access.
     expect((await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/..%2F..%2F..%2Fbackend%2Fddl%2F002_isahl_meta_schema.sql`, { headers: { cookie } })).status).toBe(404)
 
     // Unauthenticated requests get 401.
     expect((await fetch(`${base()}/preview/Pre-Proc/U-pv-owner/Prototypes/Apps/demo-app/a-v1.html`)).status).toBe(401)
+  })
+
+  it('lists prototypes over GET /api/alioth/prototypes (401 / no app / 403 / listing)', async () => {
+    const ownerApp = path.join(previewPreProcRoot, 'U-pl-owner', 'Apps', 'demo')
+    await mkdir(path.join(ownerApp), { recursive: true })
+    await writeFile(path.join(ownerApp, 'prototype.html'), '<html><body>app proto</body></html>')
+    await mkdir(path.join(previewPreProcRoot, 'U-pl-owner', 'Prototypes', 'Modules', 'stock'), { recursive: true })
+    await writeFile(path.join(previewPreProcRoot, 'U-pl-owner', 'Prototypes', 'Modules', 'stock', 'index.html'), '<html></html>')
+    await mkdir(path.join(previewPreProcRoot, 'U-pl-owner', 'Prototypes', '_shared'), { recursive: true })
+    await writeFile(path.join(previewPreProcRoot, 'U-pl-owner', 'Prototypes', '_shared', 'lifecycle.ts'), 'x')
+    // Source next to them must never appear in the listing.
+    await mkdir(path.join(ownerApp, 'Sources'), { recursive: true })
+    await writeFile(path.join(ownerApp, 'Sources', 'main.rs'), 'SECRET')
+
+    const cookieOf = async (username: string): Promise<string> => {
+      const response = await fetch(`${base()}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username, password: 'password-789' }),
+      })
+      if (response.status !== 201) throw new Error(`register ${username}: ${response.status}`)
+      return response.headers.getSetCookie().map(c => c.split(';')[0]).join('; ')
+    }
+    const owner = await cookieOf('pl-owner')
+    const outsider = await cookieOf('pl-outsider')
+
+    // Anonymous: 401 before anything else.
+    expect((await fetch(`${base()}/api/alioth/prototypes?sessionId=s-1`)).status).toBe(401)
+
+    // No app workspace for this session: an explicit empty answer, not an error.
+    workspaceRegistry.list = () => []
+    const none = await fetch(`${base()}/api/alioth/prototypes?sessionId=unknown`, { headers: { cookie: owner } })
+    expect(none.status).toBe(200)
+    expect(await none.json()).toMatchObject({ ok: true, app: null, reason: 'no-app-workspace', entries: [] })
+
+    // A session in another namespace is refused, not reported.
+    workspaceRegistry.list = () => [{ path: path.join(previewPreProcRoot, 'U-pl-owner', 'Apps', 'demo'), sessionIds: ['s-other'] }]
+    expect((await fetch(`${base()}/api/alioth/prototypes?sessionId=s-other`, { headers: { cookie: outsider } })).status).toBe(403)
+
+    // The owner gets prototypes only, each with its authorised preview URL.
+    const listed = await fetch(`${base()}/api/alioth/prototypes?sessionId=s-other`, { headers: { cookie: owner } })
+    expect(listed.status).toBe(200)
+    const body = await listed.json() as { entries: Array<{ rel: string; url: string; kind: string }> }
+    expect(body.entries.map(entry => entry.rel)).toEqual([
+      'Pre-Proc/U-pl-owner/Apps/demo/prototype.html',
+      'Pre-Proc/U-pl-owner/Prototypes/Modules/stock/index.html',
+      'Pre-Proc/U-pl-owner/Prototypes/_shared/lifecycle.ts',
+    ])
+    expect(body.entries[0]).toMatchObject({ url: '/preview/Pre-Proc/U-pl-owner/Apps/demo/prototype.html', kind: 'html' })
+    expect(body.entries.some(entry => entry.rel.includes('Sources'))).toBe(false)
   })
 
   it('logs in via JSON API and reads /me', async () => {
@@ -1208,8 +1283,8 @@ describe('client face artifact', () => {
     let injectedKey: string | undefined
     let captured: { options: { name: string; id: string }; component: unknown } | undefined
     let sidebarDeps: readonly string[] | undefined
-    let tabDefinition: Record<string, unknown> | undefined
-    let tabSeatKey: string | undefined
+    const tabDefinitions = new Map<string, Record<string, unknown>>()
+    const tabSeatKeys: string[] = []
     const ctxStub = {
       effect: (fn: () => unknown) => { fn() },
       // The right-Sidebar registration rides an optional service: it must not
@@ -1219,11 +1294,14 @@ describe('client face artifact', () => {
         callback({
           effect: (fn: () => unknown) => { fn() },
           sidebarRightTabs: {
-            register: (definition: Record<string, unknown>) => { tabDefinition = definition; return () => {} },
+            register: (definition: Record<string, unknown>) => {
+              tabDefinitions.set(String(definition.id), definition)
+              return () => {}
+            },
           },
           slots: {
             inject: (_key: string, cb: () => unknown) => { cb(); return () => {} },
-            register: (options: { key: string }, _body: unknown) => { tabSeatKey = options.key; return () => {} },
+            register: (options: { key: string }, _body: unknown) => { tabSeatKeys.push(options.key); return () => {} },
           },
           sidebarRight: { openTab: () => {} },
         })
@@ -1248,15 +1326,18 @@ describe('client face artifact', () => {
     expect(captured?.options).toEqual({ name: 'shell.overlay', id: 'alioth-user-chip' })
     expect(typeof captured?.component).toBe('function')
 
-    // The Alioth app-status tab: registered through the optional sidebar
-    // registry, and its body under the keyed seat the sidebar renders.
+    // Both Alioth tab types register through the optional sidebar registry,
+    // each body under its own keyed seat.
     expect(sidebarDeps).toEqual(['sidebarRightTabs'])
-    expect(tabDefinition).toMatchObject({ id: '@dsh-alioth/sidebar-alioth', kind: 'alioth' })
-    const guide = (tabDefinition as { guide: Array<{ title: () => string; description: () => string }> } | undefined)?.guide[0]
-    expect(guide).toBeDefined()
-    expect(guide?.title()).toBe('应用状态')
-    expect((guide?.description() ?? '').length).toBeGreaterThan(0)
-    expect(tabSeatKey).toBe('@dsh-alioth/sidebar-alioth')
+    const guideOf = (id: string): { title: () => string; description: () => string } | undefined =>
+      (tabDefinitions.get(id) as { guide?: Array<{ title: () => string; description: () => string }> } | undefined)?.guide?.[0]
+    expect(tabDefinitions.get('@dsh-alioth/sidebar-prototype')).toMatchObject({ kind: 'alioth-prototype' })
+    expect(tabDefinitions.get('@dsh-alioth/sidebar-alioth')).toMatchObject({ kind: 'alioth' })
+    expect(guideOf('@dsh-alioth/sidebar-prototype')?.title()).toBe('原型')
+    // The prototype tab is where the source policy is stated to the user.
+    expect(guideOf('@dsh-alioth/sidebar-prototype')?.description()).toContain('源码不在控制台开放')
+    expect(guideOf('@dsh-alioth/sidebar-alioth')?.title()).toBe('应用状态')
+    expect(tabSeatKeys).toEqual(['@dsh-alioth/sidebar-alioth', '@dsh-alioth/sidebar-prototype'])
   })
 
   it('renders the app-status panel from the session\'s app workspace', async () => {
@@ -1292,8 +1373,8 @@ describe('client face artifact', () => {
     })
 
     const opened: string[] = []
-    let bodyInject: (() => Record<string, unknown>) | undefined
-    let body: ((props: unknown) => unknown) | undefined
+    const injects = new Map<string, () => Record<string, unknown>>()
+    const bodies = new Map<string, (props: unknown) => unknown>()
     const ctxStub = {
       effect: (fn: () => unknown) => { fn() },
       inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
@@ -1302,9 +1383,9 @@ describe('client face artifact', () => {
           sidebarRightTabs: { register: () => () => {} },
           slots: {
             inject: (_key: string, cb: () => unknown) => { cb(); return () => {} },
-            register: (options: { inject?: () => Record<string, unknown> }, registered: unknown) => {
-              bodyInject = options.inject
-              body = registered as typeof body
+            register: (options: { key: string; inject?: () => Record<string, unknown> }, registered: unknown) => {
+              if (options.inject !== undefined) injects.set(options.key, options.inject)
+              bodies.set(options.key, registered as (props: unknown) => unknown)
               return () => {}
             },
           },
@@ -1344,7 +1425,9 @@ describe('client face artifact', () => {
     const savedFetch = globals.fetch
     const renderPanel = (): unknown => {
       cursor = 0
-      return body!({ sessionId: 's-1', openFilesTab: bodyInject!().openFilesTab })
+      const body = bodies.get('@dsh-alioth/sidebar-alioth')
+      const inject = injects.get('@dsh-alioth/sidebar-alioth')
+      return body!({ sessionId: 's-1', openPrototypes: inject!().openPrototypes })
     }
     try {
       globals.fetch = (url: string) => {
@@ -1366,13 +1449,13 @@ describe('client face artifact', () => {
       expect(texts).toContain('rejected · #3 · 2026-09-24T01:00:00.000Z')
       expect(texts.some(text => text.includes('扩展未装配'))).toBe(true)
 
-      // The actions row asks the sidebar to open the file tree, so the panel
-      // never has to reimplement the artifact browser.
-      const filesButton = findNode(tree, '文件树')
-      const openFiles = filesButton?.props.onClick
-      expect(typeof openFiles).toBe('function')
-      ;(openFiles as () => void)()
-      expect(opened).toEqual(['files'])
+      // The actions row opens the prototype tab — the only file surface the
+      // console exposes — rather than reimplementing any browser itself.
+      const prototypeButton = findNode(tree, '原型')
+      const openPrototypes = prototypeButton?.props.onClick
+      expect(typeof openPrototypes).toBe('function')
+      ;(openPrototypes as () => void)()
+      expect(opened).toEqual(['alioth-prototype'])
 
       // A session outside any app workspace gets the picker hint, not a blank panel.
       globals.fetch = () => Promise.resolve({
@@ -1386,6 +1469,126 @@ describe('client face artifact', () => {
       await delay(0)
       const emptyTexts = treeTexts(renderPanel())
       expect(emptyTexts.join('')).toContain('选择一个应用')
+    } finally {
+      globals.fetch = savedFetch
+    }
+  })
+
+  it('renders the prototype tab with the authorised preview URLs only', async () => {
+    const source = await readFile(new URL('../lib/client.js', import.meta.url), 'utf8')
+    let registration: { id: string; factory: (require: (name: string) => unknown) => Record<string, unknown> } | undefined
+    new Function('window', source)({
+      __ModuleLoader__: { load: (r: typeof registration) => { registration = r } },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })
+
+    let cursor = 0
+    let hooks: unknown[] = []
+    const effects: Array<() => void> = []
+    const react = {
+      createElement: (...args: unknown[]) => args,
+      useState(initial: unknown) {
+        const at = cursor++
+        if (!(at in hooks)) hooks[at] = initial
+        return [hooks[at], (next: unknown) => {
+          hooks[at] = typeof next === 'function' ? (next as (prev: unknown) => unknown)(hooks[at]) : next
+        }]
+      },
+      useEffect(fn: () => unknown) {
+        const at = cursor++
+        if (!(at in hooks)) effects.push(fn as () => void)
+      },
+      useCallback: (fn: unknown) => fn,
+    }
+    const exports = registration!.factory((name: string) => {
+      if (name !== 'react') throw new Error(`unexpected require: ${name}`)
+      return react
+    })
+
+    const opened: string[] = []
+    const bodies = new Map<string, (props: unknown) => unknown>()
+    const injects = new Map<string, () => Record<string, unknown>>()
+    const ctxStub = {
+      effect: (fn: () => unknown) => { fn() },
+      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
+        callback({
+          effect: (fn: () => unknown) => { fn() },
+          sidebarRightTabs: { register: () => () => {} },
+          slots: {
+            inject: (_key: string, cb: () => unknown) => { cb(); return () => {} },
+            register: (options: { key: string; inject?: () => Record<string, unknown> }, registered: unknown) => {
+              if (options.inject !== undefined) injects.set(options.key, options.inject)
+              bodies.set(options.key, registered as (props: unknown) => unknown)
+              return () => {}
+            },
+          },
+          sidebarRight: { openTab: (kind: string) => { opened.push(kind) } },
+        })
+        return () => {}
+      },
+      slots: { inject: (_key: string, callback: () => unknown) => { callback(); return () => {} }, register: () => () => {} },
+    }
+    ;(exports.apply as (c: unknown) => void)(ctxStub)
+
+    const listing = {
+      ok: true,
+      app: { namespace: 'U-ada', code: 'default' },
+      entries: [
+        { rel: 'Pre-Proc/U-ada/Apps/default/prototype.html', name: 'prototype.html', group: 'app', label: 'prototype.html', kind: 'html', bytes: 120, url: '/preview/Pre-Proc/U-ada/Apps/default/prototype.html' },
+        { rel: 'Pre-Proc/U-ada/Prototypes/Modules/stock/index.html', name: 'index.html', group: 'namespace', label: 'Modules/stock/index.html', kind: 'html', bytes: 200, url: '/preview/Pre-Proc/U-ada/Prototypes/Modules/stock/index.html' },
+        { rel: 'Pre-Proc/U-ada/Prototypes/_shared/lifecycle.ts', name: 'lifecycle.ts', group: 'namespace', label: '_shared/lifecycle.ts', kind: 'asset', bytes: 80, url: '/preview/Pre-Proc/U-ada/Prototypes/_shared/lifecycle.ts' },
+      ],
+    }
+
+    const urls: string[] = []
+    const globals = globalThis as unknown as { fetch: unknown }
+    const savedFetch = globals.fetch
+    const renderPrototypes = (): unknown => {
+      cursor = 0
+      const body = bodies.get('@dsh-alioth/sidebar-prototype')
+      const inject = injects.get('@dsh-alioth/sidebar-prototype')
+      return body!({ sessionId: 'session-9', openStatusTab: inject!().openStatusTab })
+    }
+    try {
+      globals.fetch = (url: string) => {
+        urls.push(String(url))
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(listing) })
+      }
+      renderPrototypes()
+      effects.forEach(fn => fn())
+      await delay(0)
+
+      const tree = renderPrototypes()
+      const texts = treeTexts(tree)
+      expect(urls[0]).toBe('/api/alioth/prototypes?sessionId=session-9')
+      expect(texts).toContain('prototype.html')
+      expect(texts).toContain('Modules/stock/index.html')
+      expect(texts.some(text => text.includes('源码不在控制台开放'))).toBe(true)
+      // Entries link straight at the authorised preview route.
+      const link = findNode(tree, 'prototype.html')
+      expect(link?.props.href).toBe('/preview/Pre-Proc/U-ada/Apps/default/prototype.html')
+      expect(link?.props.target).toBe('_blank')
+
+      // The sibling tab is one click away, and no source path is ever listed.
+      const statusButton = findNode(tree, '应用状态')
+      const openStatus = statusButton?.props.onClick
+      expect(typeof openStatus).toBe('function')
+      ;(openStatus as () => void)()
+      expect(opened).toEqual(['alioth'])
+      expect(texts.some(text => text.includes('Sources'))).toBe(false)
+
+      // Nothing generated yet: an actionable hint, not an empty panel.
+      globals.fetch = () => Promise.resolve({
+        ok: true, status: 200, json: () => Promise.resolve({ ok: true, app: { namespace: 'U-ada', code: 'default' }, entries: [] }),
+      })
+      hooks = []
+      cursor = 0
+      effects.length = 0
+      renderPrototypes()
+      effects.forEach(fn => fn())
+      await delay(0)
+      expect(treeTexts(renderPrototypes()).some(text => text.includes('尚无原型产物'))).toBe(true)
     } finally {
       globals.fetch = savedFetch
     }

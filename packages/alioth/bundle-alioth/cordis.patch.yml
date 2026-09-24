@@ -52,6 +52,30 @@
 - id: ui-sidebar-terminal
   disabled: true
 
+# …and neither must the browser read the app tree or hold a PTY. The two
+# capabilities behind those tabs are unbounded by design, so a signed-in console
+# user can reach them over the Remote regardless of which tabs are mounted:
+#   * `workspace-files` — its own contract says absolute paths OUTSIDE the
+#     workspace root are allowed, so `Sources/`, `app.json` and the deployment
+#     env file are all listable/readable;
+#   * `terminal-controller` — the browser half of the Web terminal (PTY as the
+#     service user). The Agent's own terminal tools are a different package
+#     (terminal/tool-terminal, sandboxed by Agent policy) and stay mounted.
+# Source is a paid, time-limited download; the console shows prototypes only,
+# through our own allowlisted /preview route (+ the 原型 tab's listing).
+- id: workspace-files
+  disabled: true
+- id: ui-sidebar-files
+  disabled: true
+- id: ui-sidebar-documentpreview
+  disabled: true
+- id: terminal-controller
+  disabled: true
+# …nor the changed-files / delivery cards: `ui-deliverables` renders the files a
+# turn touched (source included) and opens them through that same file Remote.
+- id: ui-deliverables
+  disabled: true
+
 - insert:
     - id: directory-picker-app
       name: '@dsh-alioth/app-picker'
