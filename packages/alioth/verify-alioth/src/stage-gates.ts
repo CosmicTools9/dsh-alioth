@@ -6,11 +6,13 @@
  * 判据一览（`preProcRoot` = `Pre-Proc/{namespace}`，`appDir` = `Pre-Proc/{namespace}/Apps/{app}`）：
  * - `appagent-ready`  → `{appDir}/pipeline_manifest.json` 或 `{appDir}/app.json` 可解析；
  * - `module-design`   → `Sources/Apps/Modules/{m}/module.json`（`modules` 非空时逐个须齐）；
- * - `block-extract`   → `Sources/Apps/Blocks/*​/block.json` 至少一个可解析；
+ * - `block-extract`   → **逐个已声明 block**：`Sources/Apps/Blocks/{block}/block.json`（上游
+ *   `stage_config.yaml` 按 `{block}` 模板化；未声明且盘上无产物 ⇒ 无可判对象，如实记）；
  * - `block-refinement`→ block.json 且含交互形态声明（`interactionMode` / `flows` / `workbenchPosts`）；
  * - `ontology-mapping`→ `{preProcRoot}/local/ontology-output.json` 可解析；
- * - `factor-dev`      → `Sources/Apps/Services/*​/service.json` 至少一个可解析；
- * - `quality`         → `{appDir}/eval-report.json` 可解析且 `passed === true`。
+ * - `factor-dev`      → **逐个已声明 service**：`Sources/Apps/Services/{service}/service.json`（同理）；
+ * - `quality`         → `{appDir}/eval-report.json` 可解析且 **`dimensions.schema_validity === 1`**
+ *   （产物契约面；原型面由 per-App 人工门承压——与 orchestrator 同口径）。
  *
  * 失败一律 fail-closed：缺失 / 不可解析 / 未声明 ⇒ `ok=false`，evidence 写明实际查过的路径。
  * @module @dsh-alioth/verify-alioth/stage-gates
@@ -98,6 +100,16 @@ export async function evaluateStageGate(
     readonly namespace: string
     readonly app: string
     readonly modules?: readonly string[]
+    /**
+     * 本 run 声明的 block 集合。上游 `stage_config.yaml` 的 block 产物是
+     * `Prototypes/Blocks/{block}/b-v{N}.html` + `Sources/Apps/Blocks/{block}/block.json`
+     * ——**按 `{block}` 模板化**，故判据 = 逐个已声明 block（与 `module-design` 对
+     * `modules` 同规），而不是「无条件至少一个」。未声明且盘上无产物 ⇒ 本 stage 无
+     * 可判对象（如实记入 evidence，不静默放行）。
+     */
+    readonly blocks?: readonly string[]
+    /** 本 run 声明的 service 集合（`Sources/Apps/Services/{service}/service.json` 同理模板化）。 */
+    readonly services?: readonly string[]
   },
 ): Promise<StageGateOutcome> {
   const appDir = path.resolve(input.appDir)
@@ -161,26 +173,41 @@ export async function evaluateStageGate(
 
     case 'block-extract': {
       const blockRootsAbs = BLOCK_ROOTS.map(root => path.join(preProcRoot, root))
-      const found = await scanChildFile(blockRootsAbs, 'block.json')
-      const usable: string[] = []
-      const unusable: string[] = []
-      for (const file of found) {
-        const probe = await probeJson(file)
-        if (probe.ok) usable.push(file)
-        else unusable.push(`${relToRoot(preProcRoot, file)}：${probe.reason}`)
+      const declared = input.blocks ?? []
+      if (declared.length === 0) {
+        const onDisk = await scanChildFile(blockRootsAbs, 'block.json')
+        return onDisk.length === 0
+          ? outcome(true, `本 run 未声明 block，${BLOCK_ROOTS.join('|')} 下亦无 block.json ⇒ 本 stage 无可判对象（未声明 ≠ 通过：block 由 BlockCreation/block 轨道产出，届时此处逐块判）`, [])
+          : outcome(true, `本 run 未声明 block；盘上发现 ${onDisk.length} 个 block.json（按存在如实记）`, onDisk.map(file => relToRoot(preProcRoot, file)))
       }
-      return usable.length > 0
-        ? outcome(
-            true,
-            `发现 ${usable.length} 个可解析 block.json${unusable.length > 0 ? `（另 ${unusable.length} 个不可用：${unusable.join('；')}）` : ''}`,
-            usable.map(file => relToRoot(preProcRoot, file)),
-          )
-        : outcome(false, `block-extract 未就绪：${BLOCK_ROOTS.join('|')} 下无可解析 block.json${unusable.length > 0 ? `（${unusable.join('；')}）` : ''}`, [])
+      const artifacts: string[] = []
+      const failures: string[] = []
+      for (const block of declared) {
+        let hit: string | null = null
+        for (const root of blockRootsAbs) {
+          const candidate = path.join(root, block, 'block.json')
+          if ((await probeJson(candidate)).ok) {
+            hit = candidate
+            artifacts.push(relToRoot(preProcRoot, candidate))
+            break
+          }
+        }
+        if (hit === null) failures.push(`${block}：block.json 缺失/不可解析`)
+      }
+      return failures.length === 0
+        ? outcome(true, `${declared.length} 个已声明 block 的 block.json 齐备且可解析`, artifacts)
+        : outcome(false, `block-extract 未就绪：${failures.join('；')}`, artifacts)
     }
 
     case 'block-refinement': {
       const blockRootsAbs = BLOCK_ROOTS.map(root => path.join(preProcRoot, root))
-      const found = await scanChildFile(blockRootsAbs, 'block.json')
+      const declaredBlocks = input.blocks ?? []
+      const found = declaredBlocks.length === 0
+        ? await scanChildFile(blockRootsAbs, 'block.json')
+        : declaredBlocks.map(block => path.join(blockRootsAbs[0] as string, block, 'block.json'))
+      if (declaredBlocks.length === 0 && found.length === 0) {
+        return outcome(true, `本 run 未声明 block，${BLOCK_ROOTS.join('|')} 下亦无 block.json ⇒ 本 stage 无可判对象`, [])
+      }
       const declaredArtifacts: string[] = []
       const declaredNotes: string[] = []
       const undeclared: string[] = []
@@ -213,7 +240,14 @@ export async function evaluateStageGate(
 
     case 'factor-dev': {
       const serviceRootsAbs = SERVICE_ROOTS.map(root => path.join(preProcRoot, root))
-      const found = await scanChildFile(serviceRootsAbs, 'service.json')
+      const declaredServices = input.services ?? []
+      if (declaredServices.length === 0) {
+        const onDisk = await scanChildFile(serviceRootsAbs, 'service.json')
+        return onDisk.length === 0
+          ? outcome(true, `本 run 未声明 service，${SERVICE_ROOTS.join('|')} 下亦无 service.json ⇒ 本 stage 无可判对象（service 由 factor/service 轨道产出）`, [])
+          : outcome(true, `本 run 未声明 service；盘上发现 ${onDisk.length} 个 service.json（按存在如实记）`, onDisk.map(file => relToRoot(preProcRoot, file)))
+      }
+      const found = declaredServices.map(service => path.join(serviceRootsAbs[0] as string, service, 'service.json'))
       const usable: string[] = []
       const unusable: string[] = []
       for (const file of found) {
@@ -223,7 +257,7 @@ export async function evaluateStageGate(
       }
       return usable.length > 0
         ? outcome(true, `发现 ${usable.length} 个可解析 service.json`, usable.map(file => relToRoot(preProcRoot, file)))
-        : outcome(false, `factor-dev 未就绪：${SERVICE_ROOTS.join('|')} 下无可解析 service.json${unusable.length > 0 ? `（${unusable.join('；')}）` : ''}`, [])
+        : outcome(false, `factor-dev 未就绪：${unusable.length > 0 ? unusable.join('；') : `已声明 ${declaredServices.length} 个 service，均无 service.json`}`, [])
     }
 
     case 'quality': {
@@ -234,9 +268,24 @@ export async function evaluateStageGate(
         typeof probe.value === 'object' && probe.value !== null && !Array.isArray(probe.value)
           ? (probe.value as Record<string, unknown>)['passed']
           : undefined
-      return passed === true
-        ? outcome(true, `${relToRoot(preProcRoot, target)} passed=true（quality 产物就绪）`, [relToRoot(preProcRoot, target)])
-        : outcome(false, `${relToRoot(preProcRoot, target)} passed=${JSON.stringify(passed)}（须为 true 才算通过，degraded/缺失均不得判通过）`, [])
+      const dimensions = typeof probe.value === 'object' && probe.value !== null && !Array.isArray(probe.value)
+        ? (probe.value as Record<string, unknown>)['dimensions']
+        : undefined
+      const schemaValidity = typeof dimensions === 'object' && dimensions !== null
+        && (dimensions as Record<string, unknown>)['schema_validity'] === 1
+      const prototypeStandalone = typeof dimensions === 'object' && dimensions !== null
+        && (dimensions as Record<string, unknown>)['prototype_standalone'] === 1
+      // 判据 = **产物契约面**（schema_validity），与 orchestrator 的 E2E/发布前置同口径：
+      // 原型面（prototype_standalone）是 workflow 步骤的产物，由 per-App 人工门带解锁条件
+      // 承压（publishing 前置 2 按 App 扫描）——两处口径若不一，一次 create 会自相矛盾。
+      return schemaValidity
+        ? outcome(
+            true,
+            `${relToRoot(preProcRoot, target)} schema_validity=1（overall passed=${String(passed)}，`
+              + `prototype_standalone=${prototypeStandalone ? '1' : '0 → 由 per-App 人工门承压'}）`,
+            [relToRoot(preProcRoot, target)],
+          )
+        : outcome(false, `${relToRoot(preProcRoot, target)} schema_validity 未达 1（dimensions=${JSON.stringify(dimensions)}，缺失按 0 分计）`, [])
     }
 
     default:

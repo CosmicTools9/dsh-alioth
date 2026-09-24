@@ -212,7 +212,18 @@ describe('publish 影子谓词 — degraded 不进通过面', () => {
 })
 
 describe('阶段判据 — 缺失/未通过一律 fail-closed', () => {
-  it('quality 门：eval-report 缺失 → false；passed=false → false；passed=true → true', async () => {
+  it('quality 门判产物契约面（schema_validity）；原型面由 per-App 人工门承压', async () => {
+    // 口径必须与 orchestrator 的 E2E/发布前置一致：一次 create 不能自相矛盾。
+    const probe = async (body: string): Promise<{ ok: boolean; evidence: string; artifacts: readonly string[] }> => {
+      const fixture = await app({ 'eval-report.json': body })
+      return await evaluateStageGate('quality', {
+        appDir: fixture.appDir,
+        preProcRoot: fixture.preProcRoot,
+        namespace: 'TestNS',
+        app: 'tm-app',
+      })
+    }
+
     const missing = await app()
     const missingOutcome = await evaluateStageGate('quality', {
       appDir: missing.appDir,
@@ -223,23 +234,21 @@ describe('阶段判据 — 缺失/未通过一律 fail-closed', () => {
     expect(missingOutcome.ok).toBe(false)
     expect(missingOutcome.evidence).toContain('缺失')
 
-    const notPassed = await app({ 'eval-report.json': '{"passed":false}\n' })
-    const notPassedOutcome = await evaluateStageGate('quality', {
-      appDir: notPassed.appDir,
-      preProcRoot: notPassed.preProcRoot,
-      namespace: 'TestNS',
-      app: 'tm-app',
-    })
-    expect(notPassedOutcome.ok).toBe(false)
+    // 契约面为 0 ⇒ 不过（缺失/不合格按 0 分计）
+    const zero = await probe('{"passed":false,"dimensions":{"schema_validity":0,"prototype_standalone":0}}\n')
+    expect(zero.ok).toBe(false)
+    expect(zero.evidence).toContain('schema_validity')
 
-    const passing = await app({ 'eval-report.json': '{"passed":true}\n' })
-    const passingOutcome = await evaluateStageGate('quality', {
-      appDir: passing.appDir,
-      preProcRoot: passing.preProcRoot,
-      namespace: 'TestNS',
-      app: 'tm-app',
-    })
-    expect(passingOutcome).toMatchObject({ ok: true, artifacts: ['Apps/tm-app/eval-report.json'] })
+    // 契约面达 1、原型面未达 ⇒ 本门通过（原型义务在人工门上，publish 前置 2 会阻断）
+    const contractOnly = await probe('{"passed":false,"dimensions":{"schema_validity":1,"prototype_standalone":0}}\n')
+    expect(contractOnly.ok).toBe(true)
+    expect(contractOnly.evidence).toContain('prototype_standalone=0')
+    expect(contractOnly.evidence).toContain('人工门')
+    expect(contractOnly.artifacts).toEqual(['Apps/tm-app/eval-report.json'])
+
+    const full = await probe('{"passed":true,"dimensions":{"schema_validity":1,"prototype_standalone":1}}\n')
+    expect(full.ok).toBe(true)
+    expect(full.evidence).toContain('passed=true')
   })
 
   it('factor-dev / ontology-mapping / block-refinement 判据按产物实质判定', async () => {

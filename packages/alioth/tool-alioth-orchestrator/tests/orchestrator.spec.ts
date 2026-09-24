@@ -631,24 +631,47 @@ describe('buildPrimitives stage guards', () => {
     expect(await primitives.resolveGate('human-review', 'approve?')).toBe('confirm')
   }, 120_000)
 
-  it('fails every stage gate on a missing artifact instead of passing a placeholder', async () => {
-    // An untouched namespace: no namespace-level artifacts exist at all, so every
-    // stage gate must fail closed (no `() => true` placeholder anywhere).
+  it('fails every stage gate on a missing declared artifact instead of passing a placeholder', async () => {
+    // An untouched namespace: no namespace-level artifacts exist at all. Stages whose
+    // declared set is non-empty must fail closed; stages whose declared set is empty
+    // (no block / no service declared) have nothing to judge and say so in the
+    // evidence — an explicit no-scope verdict, never a silent `() => true`.
     const appDir = path.join(preProcRoot, 'Bare', 'Apps', 'bare-stages')
     await mkdir(appDir, { recursive: true })
     await writeFile(path.join(appDir, 'app.json'), '{}\n')
     const args = { namespace: 'Bare', code: 'bare-stages', name: '阶段', modules: [{ id: 'bare', name: '裸' }] }
     const primitives = buildPrimitives(ctx, stageExec('bare-stages'), args, undefined, preProcRoot)
 
+    // 判据 = 声明集实例化（上游 stage_config 的 {module}/{block}/{service} 模板）：
+    // 无声明 ⇒ 无可判对象，但 evidence 必须写明原因。
+    const noScope = new Set(['block-extract', 'block-refinement', 'factor-dev'])
     for (const stage of STAGE_IDS) {
       const outcome = await primitives.pipelineAdvance(stage, buildPlan(args))
-      // appagent-ready is the only stage whose declared artifact exists here.
-      expect(outcome.evidence.startsWith(stage === 'appagent-ready' ? 'gate appagent-ready passed' : 'GATE-FAIL')).toBe(true)
-      if (stage !== 'appagent-ready') {
-        expect(outcome.evidence).toContain(`GATE-FAIL ${stage}`)
-        expect(outcome.artifacts).toBeUndefined()
+      if (stage === 'appagent-ready') {
+        // the only declared artifact that exists here
+        expect(outcome.evidence).toContain('gate appagent-ready passed')
+        continue
       }
+      if (noScope.has(stage)) {
+        expect(outcome.evidence).toContain(`gate ${stage} passed`)
+        expect(outcome.evidence).toContain('未声明')
+        continue
+      }
+      expect(outcome.evidence).toContain(`GATE-FAIL ${stage}`)
+      expect(outcome.artifacts).toBeUndefined()
     }
+
+    // 已声明但缺失 = 必失败（条件化只对「无声明」生效，不是放水）。
+    const declaring = buildPrimitives(
+      ctx,
+      stageExec('bare-stages'),
+      { ...args, blocks: ['missing-board'] },
+      undefined,
+      preProcRoot,
+    )
+    const declaredBlock = await declaring.pipelineAdvance('block-extract', buildPlan({ ...args, blocks: ['missing-board'] }))
+    expect(declaredBlock.evidence).toContain('GATE-FAIL block-extract')
+    expect(declaredBlock.evidence).toContain('missing-board')
   }, 120_000)
 
   it('passes the stage gates once the declared artifacts (and the module mirror) exist', async () => {

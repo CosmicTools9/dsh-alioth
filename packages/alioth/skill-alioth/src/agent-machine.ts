@@ -181,7 +181,10 @@ export async function advance(
     case 'publishing': {
       const attempt = state.publishAttempt
       if (attempt > maxPublishAttempts) {
-        const terminal: AgentState = { kind: 'failed', error: `publishing exceeded ${maxPublishAttempts} attempts` }
+        // 终局错误必须带上失败前置的取证：只报「超过 N 次」等于把原因丢掉，
+        // 调用方（模型/人）无从知道是扩展验证降级、未决人工门还是质量报告未达。
+        const detail = state.lastError === undefined ? '' : `：${state.lastError}`
+        const terminal: AgentState = { kind: 'failed', error: `publishing exceeded ${maxPublishAttempts} attempts${detail}` }
         return { run: { state: terminal, plan, history }, transition: { from: state, to: terminal } }
       }
       const { output, result } = await primitives.publishing(plan, attempt)

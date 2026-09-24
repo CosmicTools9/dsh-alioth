@@ -206,11 +206,68 @@ async function readExtensionReport(appDir: string): Promise<ExtensionEvidence> {
 }
 
 /** quality 评估报告的判定：缺失与 passed≠true 分态（缺失 ≠ 未通过 ≠ 通过）。 */
-async function readQualityReport(appDir: string): Promise<'passed' | 'failed' | 'missing'> {
+interface QualityReportView {
+  readonly status: 'passed' | 'failed' | 'missing'
+  /** 产物契约面（id/code/namespace/name/version/status）——管线自身的交付面。 */
+  readonly schemaValidity: boolean
+  /** 原型面——workflow 步骤的产物，由 per-App 人工门承压（见 prototypeGateItem）。 */
+  readonly prototypeStandalone: boolean
+}
+
+async function readQualityReport(appDir: string): Promise<QualityReportView> {
   const text = await readFile(path.join(appDir, 'eval-report.json'), 'utf8').catch(() => null)
-  if (text === null) return 'missing'
+  if (text === null) return { status: 'missing', schemaValidity: false, prototypeStandalone: false }
   const report = jsonObjectOf(text)
-  return report !== null && report['passed'] === true ? 'passed' : 'failed'
+  const dimensions = report === null ? null : report['dimensions']
+  const dimension = (name: string): boolean =>
+    typeof dimensions === 'object' && dimensions !== null
+    && (dimensions as Record<string, unknown>)[name] === 1
+  return {
+    status: report !== null && report['passed'] === true ? 'passed' : 'failed',
+    schemaValidity: dimension('schema_validity'),
+    prototypeStandalone: dimension('prototype_standalone'),
+  }
+}
+
+/** 原型人工门的作用域前缀（`alioth_deferred list` 依此识别人工门）。 */
+const PROTOTYPE_GATE_PREFIX = 'app-prototype-'
+
+/**
+ * 原型未产出的 per-App 人工门。解除条件 = **重跑后的** `eval-report.json` 里
+ * `/dimensions/prototype_standalone == 1`——即「一次真实通过」解除（与
+ * `extensions-degraded` 门同纪律），而不是锚死某个文件名。
+ *
+ * 为何不锚 `artifact-exists`：上游原型步骤（`alioth-app.yaml` / `alioth-compose.yaml`）
+ * 跑 `prototype-tool.js build …/Prototypes/Apps/{app}/llm-tsx/app.tsx`，产物是
+ * `Prototypes/Apps/{app}/a-v*.html`（其 `output_glob`），全链无人写 `prototype.html`；
+ * 锚文件名会把门锁在一条永不出现的路径上。以评估维度为判据，也让「先产出原型、
+ * 再重跑评估」这条正当路径自然解锁。
+ */
+function prototypeGateItem(input: {
+  readonly appDir: string
+  readonly namespace: string
+  readonly app: string
+}): DeferredItem {
+  return {
+    id: `prototype-standalone:${input.namespace}/${input.app}`,
+    sessionId: `${PROTOTYPE_GATE_PREFIX}${input.namespace}-${input.app}`,
+    app: input.app,
+    namespace: input.namespace,
+    reason: '原型未产出：eval-report 的 prototype_standalone 维度为 0（standalone 面无从判定，缺失记 0 分）',
+    adjudication: '原型是 workflow 步骤的产物（Pre-Proc/{ns}/Prototypes/Apps/{app}/，输出 a-v*.html），'
+      + '不属 PTC 管线职责；publish 前必须产出原型并重跑评估使该维度真实通过——本门不由管线自行解除',
+    trigger: {
+      kind: 'artifact-json-pointer',
+      path: path.join(input.appDir, 'eval-report.json'),
+      pointer: '/dimensions/prototype_standalone',
+      equals: 1,
+    },
+    successors: [
+      '在 workflow 步骤产出原型（llm-tsx/app.tsx → prototype-tool.js build）',
+      '重跑 alioth_verify artifacts 让 eval-report 重评该维度（只有真实通过才解除本门）',
+    ],
+    createdTs: new Date().toISOString(),
+  }
 }
 
 /**
@@ -551,11 +608,17 @@ export function buildPrimitives(
         description: `扩展声明运行时覆盖 status=${extensionStatus}`,
       })
 
-      // quality 评估报告：维度缺失按 0 分记（诚实评分）。
+      // quality 评估报告：维度缺失按 0 分记（诚实评分，报告口径不动）。本阶段的**通过
+      // 判据只取管线自己的产物契约面**（schema_validity）：原型是 workflow 步骤的产物
+      // （上游产物为 `Prototypes/Apps/{app}/a-v*.html`），PTC 管线不产出原型——把它算作
+      // 本阶段失败会让裸 create 必然三连败，并在无缺陷可修时驱动修复循环。原型面的义务
+      // 改由 per-App 人工门承压（publish 前置 2 按 App 扫描，fail-closed 不破）。
       let qualityPassed = false
+      let prototypeOk = false
       try {
         const report = await buildEvalReport({ app: args.code, namespace: args.namespace, appDir })
-        qualityPassed = report.passed
+        qualityPassed = report.dimensions.schema_validity === 1
+        prototypeOk = report.dimensions.prototype_standalone === 1
         evidenceArtifacts.push(await writeEvalReport(appDir, report))
       } catch (error) {
         failures.push(`eval-report write failed (${describe(error)})`)
@@ -563,7 +626,7 @@ export function buildPrimitives(
       checks.push({
         id: 'quality',
         passed: qualityPassed,
-        description: 'eval-report 规则维度（schema_validity + prototype_standalone）',
+        description: 'eval-report 产物契约面（schema_validity）',
       })
 
       // 一份构建级证据（版本快照 + 结束审计）只属于**本次构建的终局尝试**：一次未修复
@@ -573,6 +636,26 @@ export function buildPrimitives(
       // 中间尝试仍写 e2e-report（本次尝试的判定），供重试循环与人工回溯。
       const functionallyPassed = checks.every(check => check.passed)
       const concluding = functionallyPassed || finalAttempt
+
+      // 原型缺失 → 登记 per-App 人工门（幂等按 id）。阻断 publish 正是它的目的，
+      // 故登记成功即本阶段该做的事完成；登记失败 fail-closed（记 failure + 检查不过）。
+      let prototypeGateOk = prototypeOk
+      if (concluding && !prototypeOk) {
+        try {
+          await createDeferredStore(ctx.aliothEnv.dataRoot())
+            .register(prototypeGateItem({ appDir, namespace: args.namespace, app: args.code }))
+          prototypeGateOk = true
+        } catch (error) {
+          failures.push(`prototype gate register failed (${describe(error)})`)
+        }
+      }
+      checks.push({
+        id: 'prototype-gate',
+        passed: prototypeGateOk,
+        description: prototypeOk
+          ? '原型面已通过（无需登记人工门）'
+          : '原型缺失已登记 per-App 人工门（publish 前置按 App 可见，直至真实通过）',
+      })
 
       let snapshotDir = ''
       if (concluding) {
@@ -709,16 +792,21 @@ export function buildPrimitives(
             ),
       })
 
-      // 前置 3：quality 阶段 eval-report.json 存在且 passed。
+      // 前置 3：quality 阶段 eval-report.json 存在且**产物契约面**通过。
+      // 原型面不在本前置判定：它由 per-App 人工门承压（前置 2 可见），重复判只会让
+      // 失败原因重叠、指向同一条未决门。报告的 overall `passed` 仍如实落盘。
       const qualityStatus = await readQualityReport(appDir)
+      const qualityOk = qualityStatus.status !== 'missing' && qualityStatus.schemaValidity
       checks.push({
         name: 'publish-quality',
-        ok: qualityStatus === 'passed',
-        detail: qualityStatus === 'passed'
-          ? 'eval-report.json passed=true'
+        ok: qualityOk,
+        detail: qualityOk
+          ? `eval-report.json schema_validity=1（overall passed=${qualityStatus.status === 'passed'}，`
+            + `prototype_standalone=${qualityStatus.prototypeStandalone}）`
           : publishRepair(
-              qualityStatus === 'missing' ? PUBLISH_RULES.qualityMissing : PUBLISH_RULES.qualityNotPassed,
-              `${path.join(appDir, 'eval-report.json')} status=${qualityStatus}`,
+              qualityStatus.status === 'missing' ? PUBLISH_RULES.qualityMissing : PUBLISH_RULES.qualityNotPassed,
+              `${path.join(appDir, 'eval-report.json')} status=${qualityStatus.status}`
+                + ` schema_validity=${qualityStatus.schemaValidity}`,
             ),
       })
 
@@ -770,7 +858,8 @@ export function buildPrimitives(
       // `noOpenDeferred` 取本 app 未解除降级门（前置 2 的同一集合，已走过触发求值）。
       const shadow = evaluatePublishShadow({
         artifactsComplete: missing.length === 0,
-        qualityPassed: qualityStatus === 'passed',
+        // 影子镜像真实前置：quality 的判据是产物契约面（原型面由人工门承压）
+        qualityPassed: qualityStatus.status !== 'missing' && qualityStatus.schemaValidity,
         extensionStatus: extensionEvidence.status === 'passed' && extensionBound ? 'passed' : 'degraded',
         closureApproved: approved,
         noOpenDeferred: openGates.length === 0,
@@ -785,7 +874,12 @@ export function buildPrimitives(
       }).catch(() => {})
 
       const published = checks.every(check => check.ok)
-      const failedChecks = checks.filter(check => !check.ok).map(check => check.name)
+      const failing = checks.filter(check => !check.ok)
+      const failedChecks = failing.map(check => check.name)
+      // 首个失败前置的**取证**也进 evidence：只报检查名（如 publish-no-open-degraded-gates）
+      // 等于让调用方自己去猜是哪个门/哪条规则，而 detail 里已经有门 id、原因与修复方向。
+      const firstFailure = failing[0]?.detail ?? ''
+      const firstFailureShown = firstFailure.length > 400 ? `${firstFailure.slice(0, 400)}…` : firstFailure
       const result: BuildResult = {
         appName: args.name,
         outputPath: `Pre-Proc/${args.namespace}/Apps/${args.code}/app.json`,
@@ -799,7 +893,7 @@ export function buildPrimitives(
       }
       const output: StageOutput = {
         evidence: `publishing attempt ${attempt}: verified=${missing.length === 0}, workflow=${workflowGate}`
-          + (published ? '' : `; failed preconditions: ${failedChecks.join(', ')}`)
+          + (published ? '' : `; failed preconditions: ${failedChecks.join(', ')}${firstFailureShown === '' ? '' : ` — ${firstFailureShown}`}`)
           + `; shadow willAutoApprove=${shadow.willAutoApprove}`,
         artifacts: [result.outputPath],
       }
@@ -821,6 +915,11 @@ export function buildPrimitives(
         namespace: args.namespace,
         app: args.code,
         modules: args.modules.map(module => module.id),
+        // 声明的 block 集：本 run 没声明 block 时该 stage 无可判对象（见 stage-gates 文档）。
+        blocks: args.blocks ?? [],
+        // service 目前无声明入口（CreateArgs 无该字段）⇒ 未声明 = 无可判对象；
+        // 引入 service 声明时，这里改传声明集，门即恢复逐项 fail-closed。
+        services: [],
       })
       return outcome.ok
         ? { evidence: `gate ${stage} passed: ${outcome.evidence}`, artifacts: [...outcome.artifacts] }

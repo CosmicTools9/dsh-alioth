@@ -9,7 +9,7 @@
  * @module @dsh-alioth/verify-alioth/eval-report
  */
 
-import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 export const EVAL_REPORT_SCHEMA_VERSION = '1.0'
@@ -71,12 +71,38 @@ async function probeJson(file: string): Promise<JsonProbe> {
   }
 }
 
-/** 定位 `prototype.html`：app 目录内优先，其次上游 Composing 布局 `Pre-Proc/{ns}/Prototypes/Apps/{app}/`。 */
+/** 目录内按名匹配的候选里 mtime 最新的一个（与门禁内容谓词的「最新命中文件」同口径）。 */
+async function newestMatching(dir: string, pattern: RegExp): Promise<string | null> {
+  const entries = await readdir(dir).catch(() => [] as string[])
+  let best: { file: string; mtimeMs: number } | null = null
+  for (const entry of entries) {
+    if (!pattern.test(entry)) continue
+    const file = path.join(dir, entry)
+    const info = await stat(file).catch(() => null)
+    if (info === null || !info.isFile()) continue
+    if (best === null || info.mtimeMs > best.mtimeMs) best = { file, mtimeMs: info.mtimeMs }
+  }
+  return best === null ? null : best.file
+}
+
+/**
+ * 定位原型产物（standalone 面的判定对象）。三种布局都认，顺序即优先级：
+ * 1. app 目录内 `prototype.html`（AppCreator 布局）；
+ * 2. `Prototypes/Apps/{app}/prototype.html`（上游 Composing 布局的规范名）；
+ * 3. `Prototypes/Apps/{app}/a-v*.html` —— **上游 prototype 步骤的真实产物**：适配器
+ *    (`alioth-app.yaml` / `alioth-compose.yaml`) 跑
+ *    `prototype-tool.js build …/Prototypes/Apps/{app}/llm-tsx/app.tsx`，其
+ *    `output_glob` 就是 `a-v*.html`，全链无人写 `prototype.html`。只看规范名会让该维度
+ *    对上游合规项目**永不可达**（缺失记 0 分 → quality 恒不过），故兼容构建产物，
+ *    多份时取 mtime 最新。
+ */
 async function resolvePrototypeHtml(appDir: string, app: string): Promise<string | null> {
-  const preProcRoot = path.dirname(path.dirname(path.resolve(appDir)))
+  const resolvedAppDir = path.resolve(appDir)
+  const preProcRoot = path.dirname(path.dirname(resolvedAppDir))
+  const prototypeDir = path.join(preProcRoot, 'Prototypes', 'Apps', app)
   const candidates = [
-    path.join(path.resolve(appDir), 'prototype.html'),
-    path.join(preProcRoot, 'Prototypes', 'Apps', app, 'prototype.html'),
+    path.join(resolvedAppDir, 'prototype.html'),
+    path.join(prototypeDir, 'prototype.html'),
   ]
   for (const candidate of candidates) {
     const present = await access(candidate).then(
@@ -85,7 +111,8 @@ async function resolvePrototypeHtml(appDir: string, app: string): Promise<string
     )
     if (present) return candidate
   }
-  return null
+  return await newestMatching(prototypeDir, /^a-v.*\.html$/)
+    ?? await newestMatching(resolvedAppDir, /^a-v.*\.html$/)
 }
 
 /**
@@ -218,7 +245,7 @@ export async function buildEvalReport(input: {
       rule: 'prototype_standalone',
       severity: 'error',
       message:
-        'prototype.html 缺失（查过 app 目录与 Prototypes/Apps/{app}/）：standalone 面无从判定（缺失记 0 分）',
+        '原型缺失（查过 app 目录与 Prototypes/Apps/{app}/ 的 prototype.html 及上游构建产物 a-v*.html）：standalone 面无从判定（缺失记 0 分）',
       target: path.join(appDir, 'prototype.html'),
     })
   } else {
