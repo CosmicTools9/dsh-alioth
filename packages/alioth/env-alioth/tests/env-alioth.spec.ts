@@ -161,6 +161,8 @@ interface FakeState {
   executedDdl: string[]
   /** Whether the existing registry looks like this plugin's (has `meta_collections`). Defaults true. */
   registryTable?: boolean
+  /** Regular tables the catalog counts in `isahl_meta` — a foreign registry's occupancy. Defaults 0. */
+  schemaTables?: number
 }
 
 /**
@@ -173,11 +175,21 @@ function fakeQuery(state: FakeState): QueryFn {
     sql: string,
     values?: readonly unknown[],
   ): Promise<{ rows: Record<string, unknown>[]; rowCount: number | null }> => {
-    if (sql.includes('information_schema.schemata')) {
+    if (sql.includes('CREATE SCHEMA IF NOT EXISTS isahl_meta')) {
+      // The repair + baseline run: one round trip, one implicit transaction.
+      state.executedDdl.push(sql)
+      return { rows: [], rowCount: 0 }
+    }
+    if (sql.includes('FROM pg_namespace')) {
       return { rows: [{ exists: state.isahlSchema }], rowCount: 1 }
     }
-    if (sql.includes('information_schema.tables')) {
-      return { rows: state.registryTable === false ? [] : [{ '?column?': 1 }], rowCount: state.registryTable === false ? 0 : 1 }
+    if (sql.includes('count(*)')) {
+      return { rows: [{ n: String(state.schemaTables ?? 0) }], rowCount: 1 }
+    }
+    if (sql.includes('FROM pg_class')) {
+      // A registry table cannot exist without its schema — the probe the code makes first.
+      const present = state.isahlSchema && state.registryTable !== false
+      return { rows: present ? [{ '?column?': 1 }] : [], rowCount: present ? 1 : 0 }
     }
     if (sql.includes('current_database()')) {
       return { rows: [{ name: 'fake_db' }], rowCount: 1 }
@@ -234,8 +246,12 @@ describe('env-alioth bootstrapDatabase', () => {
     const state: FakeState = { isahlSchema: false, stamp: null, stampTable: false, executedDdl: [] }
     const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: true, stamped: true })
-    // Schema creation precedes the baseline, which ran in filename order.
-    expect(state.executedDdl).toEqual(['CREATE SCHEMA IF NOT EXISTS isahl_meta', SCHEMA_DDL, SEED_COLLECTIONS_DDL, SEED_FIELDS_DDL])
+    // Schema creation precedes the baseline, which ran in filename order — all in one round trip.
+    expect(state.executedDdl).toHaveLength(1)
+    const repair = state.executedDdl[0] ?? ''
+    expect(repair.indexOf('CREATE SCHEMA IF NOT EXISTS isahl_meta')).toBeLessThan(repair.indexOf(SCHEMA_DDL))
+    expect(repair.indexOf(SCHEMA_DDL)).toBeLessThan(repair.indexOf(SEED_COLLECTIONS_DDL))
+    expect(repair.indexOf(SEED_COLLECTIONS_DDL)).toBeLessThan(repair.indexOf(SEED_FIELDS_DDL))
     expect(state.stamp?.sourceRef).toBe('sha-1')
   })
 
@@ -259,17 +275,36 @@ describe('env-alioth bootstrapDatabase', () => {
     expect(state.executedDdl).toEqual([])
   })
 
-  it('refuses a same-named schema that is not this registry (no meta_collections)', async () => {
-    // The DDL baseline is load-once, so an existing `isahl_meta` is adopted. If it was
-    // not created by the baseline, adopting it fails much later as a missing relation —
-    // refuse up front with the actionable message instead.
-    const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: false }
+  it('refuses an isahl_meta holding someone else\'s tables', async () => {
+    // The DDL baseline is load-once, so an existing `isahl_meta` is adopted. If it holds
+    // another product's tables, adopting it fails much later as a missing relation — and
+    // re-running the baseline over those tables is worse. Refuse up front instead.
+    const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: false, schemaTables: 3 }
     const err = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
       .then(() => null, error => error)
     expect(err).toBeInstanceOf(Error)
     expect(err?.message).toContain('fake_db')
     expect(err?.message).toContain('meta_collections')
     expect(state.executedDdl).toEqual([])
+  })
+
+  it('bootstraps the baseline into an existing isahl_meta that holds no tables of its own', async () => {
+    // A model-sample `isahl_meta` (its `devv_*` views only) and a half-created schema both
+    // leave this shape behind: the schema exists, the registry does not. Creating the
+    // baseline into it restores service without dropping anything the sample owns.
+    const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: false, schemaTables: 0 }
+    const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
+    expect(result).toEqual({ created: true, stamped: true })
+    // The baseline's own non-idempotent objects are cleared first, in the same round trip.
+    expect(state.executedDdl).toEqual([
+      'CREATE SCHEMA IF NOT EXISTS isahl_meta;\n'
+      + 'DROP VIEW IF EXISTS isahl_meta.devv_inherits_union;\n'
+      + 'DROP VIEW IF EXISTS isahl_meta.devv_inherits_view;\n'
+      + 'DROP TYPE IF EXISTS isahl_meta.collection_type;\n'
+      + 'DROP TYPE IF EXISTS isahl_meta.field_category;\n'
+      + 'DROP TYPE IF EXISTS isahl_meta.field_data_type;\n'
+      + `${SCHEMA_DDL}\n${SEED_COLLECTIONS_DDL}\n${SEED_FIELDS_DDL}`,
+    ])
   })
 
   it('reports drift instead of migrating a mismatched stamp', async () => {
@@ -541,20 +576,126 @@ describe('env-alioth PgHandle resilience', () => {
   })
 })
 
-describe('env-alioth half-made registry', () => {
-  it('fails loud when the target database has an isahl_meta schema this plugin did not create', async () => {
-    // The baseline is load-once by contract, so a same-named schema is adopted. A
-    // half-made one (here: a bare schema, as left behind by an experiment) would
-    // otherwise surface much later as a missing-relation error inside a tool call.
+describe('env-alioth isahl_meta occupancy', () => {
+  let ddlFiles: readonly string[]
+  let root: string
+
+  beforeAll(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-occupancy-'))
+    await makeModelFixture(root, '10.0.0')
+    ddlFiles = (await inspectModelArtifacts(root)).ddlFiles
+  })
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('creates the registry inside an existing schema that holds no tables of its own', async () => {
+    // m2/dev shape: the deployment database carries an `isahl_meta` from the model sample
+    // (views only), the registry tables gone. Service must come back without dropping the
+    // sample's objects — the baseline is created into the existing schema.
+    const db = await createTestDatabase('emptyschema')
+    const handle = await acquirePostgres({ url: db.url })
+    try {
+      await handle.query('CREATE SCHEMA isahl_meta')
+      await handle.query('CREATE SCHEMA probe_sample')
+      await handle.query('CREATE TABLE probe_sample.thing (id integer)')
+      await handle.query('CREATE VIEW isahl_meta.devv_probe AS SELECT id FROM probe_sample.thing')
+      const result = await bootstrapDatabase(handle.query, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'local' })
+      expect(result).toEqual({ created: true, stamped: true })
+      const tables = await handle.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'isahl_meta' AND c.relkind IN ('r', 'p')`,
+      )
+      expect(Number(tables.rows[0]?.n)).toBeGreaterThan(0)
+      // The sample's view survived (nothing was dropped to make room).
+      await expect(handle.query('SELECT 1 FROM isahl_meta.devv_probe')).resolves.toBeDefined()
+    } finally {
+      await handle.close()
+      await db.dispose()
+    }
+  })
+
+  it('repairs a registry whose tables were dropped, keeping foreign objects', async () => {
+    // The m2/dev shape: the schema survives with the baseline's non-idempotent objects
+    // (`CREATE TYPE` has no IF NOT EXISTS) but the registry tables are gone — plus objects
+    // from another lineage living in the same schema. The repair clears what the baseline
+    // is about to recreate and leaves everything else alone.
+    const db = await createTestDatabase('partialregistry')
+    const handle = await acquirePostgres({ url: db.url })
+    try {
+      await handle.query('CREATE SCHEMA isahl_meta')
+      await handle.query("CREATE TYPE isahl_meta.collection_type AS ENUM ('stale')")
+      await handle.query('CREATE VIEW isahl_meta.devv_inherits_view AS SELECT 1 AS one')
+      await handle.query("CREATE TYPE isahl_meta.sample_leftover_type AS ENUM ('sample')")
+
+      const result = await bootstrapDatabase(handle.query, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'local' })
+      expect(result).toEqual({ created: true, stamped: true })
+
+      // The registry is the baseline's: table present, enum recreated with the baseline's labels.
+      const labels = await handle.query<{ labels: string }>(
+        'SELECT enum_range(NULL::isahl_meta.collection_type)::text AS labels',
+      )
+      expect(labels.rows[0]?.labels).toBe('{table,view}')
+      expect((await handle.query('SELECT count(*)::int AS n FROM isahl_meta.meta_collections')).rows[0]?.n).toBe(2)
+      // The stale view is gone (the baseline's version, if any, is what the file defines).
+      expect(await handle.query("SELECT to_regclass('isahl_meta.devv_inherits_view')::text AS r")).toMatchObject({
+        rows: [{ r: null }],
+      })
+      // Another lineage's object in the same schema is untouched (`to_regclass` only knows
+      // relations, so the type is probed through `pg_type`).
+      expect((await handle.query(
+        `SELECT count(*)::int AS n FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = 'isahl_meta' AND t.typname = 'sample_leftover_type'`,
+      )).rows[0]?.n).toBe(1)
+    } finally {
+      await handle.close()
+      await db.dispose()
+    }
+  })
+
+  it('rolls back the whole repair when one of the baseline\'s objects is depended on', async () => {
+    // Drops are RESTRICT: a dependent object must abort the repair instead of being destroyed
+    // with it, and the round trip is one transaction — so the database is left exactly as it was.
+    const db = await createTestDatabase('dependentleftover')
+    const handle = await acquirePostgres({ url: db.url })
+    try {
+      await handle.query('CREATE SCHEMA isahl_meta')
+      await handle.query("CREATE TYPE isahl_meta.collection_type AS ENUM ('stale')")
+      await handle.query('CREATE SCHEMA elsewhere')
+      await handle.query('CREATE TABLE elsewhere.uses_it (kind isahl_meta.collection_type)')
+
+      const err = await bootstrapDatabase(handle.query, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'local' })
+        .then(() => null, error => error)
+      expect(err).toBeInstanceOf(Error)
+      expect(String(err?.message)).toContain('collection_type')
+
+      // Nothing moved: the enum, its dependent table, and the absent registry all stand.
+      expect((await handle.query("SELECT to_regclass('elsewhere.uses_it') IS NOT NULL AS kept")).rows[0]?.kept).toBe(true)
+      expect((await handle.query("SELECT enum_range(NULL::isahl_meta.collection_type)::text AS labels")).rows[0]?.labels)
+        .toBe('{stale}')
+      expect(await handle.query("SELECT to_regclass('isahl_meta.meta_collections')::text AS r")).toMatchObject({
+        rows: [{ r: null }],
+      })
+    } finally {
+      await handle.close()
+      await db.dispose()
+    }
+  })
+
+  it('fails loud when isahl_meta holds another product\'s tables', async () => {
+    // The baseline is load-once by contract: it is never re-applied over existing tables,
+    // and an adopted foreign registry would surface much later as a missing relation.
     const db = await createTestDatabase('foreignregistry')
     const handle = await acquirePostgres({ url: db.url })
     try {
       await handle.query('CREATE SCHEMA isahl_meta')
+      await handle.query('CREATE TABLE isahl_meta.their_registry (id integer)')
       const err = await bootstrapDatabase(handle.query, [], { modelVersion: '10.0.0', sourceRef: 'local' })
         .then(() => null, error => error)
       expect(err).toBeInstanceOf(Error)
       expect(err?.message).toContain('meta_collections')
-      expect(err?.message).toContain('load-once')
+      expect(err?.message).toContain('1 table(s)')
       expect(err?.message).toContain('ALIOTH_DATABASE_URL')
     } finally {
       await handle.close()

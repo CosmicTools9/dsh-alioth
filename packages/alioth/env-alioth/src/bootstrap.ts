@@ -51,20 +51,48 @@ export interface BootstrapResult {
   readonly drift?: { readonly stamped: BootstrapStamp; readonly current: ModelProvenance }
 }
 
+/**
+ * Existence probes read the CATALOG, not `information_schema`: the latter is filtered by the
+ * current role's privileges, so an under-privileged deployment role can see a registry's views
+ * but not its tables (observed on m2) and would re-run the load-once baseline over a live
+ * registry.
+ */
 async function tableExists(query: QueryFn, schema: string, table: string): Promise<boolean> {
   const result = await query(
-    'SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2 LIMIT 1',
+    `SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p') LIMIT 1`,
     [schema, table],
   )
   return (result.rowCount ?? 0) > 0
 }
 
-async function schemaExists(query: QueryFn, schema: string): Promise<boolean> {
-  const res = await query<{ exists: boolean }>(
-    'SELECT exists(SELECT 1 FROM information_schema.schemata WHERE schema_name = $1) AS exists',
+/**
+ * Objects the baseline itself creates that PostgreSQL cannot create idempotently — `CREATE TYPE`
+ * has no `IF NOT EXISTS`, and the two views are plain `CREATE VIEW`. When the registry is absent
+ * but the schema survives holding these leftovers (a registry whose tables were dropped, or a
+ * partially applied baseline), they must be removed before the baseline runs again.
+ *
+ * Deliberately RESTRICT, never CASCADE: a dependent object aborts the whole repair and the
+ * transaction rolls back, instead of being destroyed along with what it depends on. Keep in sync
+ * with `vendor/backend/ddl/002_isahl_meta_schema.sql`; a newly added baseline type/view surfaces
+ * as a loud `duplicate_object` rather than passing silently.
+ */
+const BASELINE_OWNED_REMNANTS = [
+  'DROP VIEW IF EXISTS isahl_meta.devv_inherits_union;',
+  'DROP VIEW IF EXISTS isahl_meta.devv_inherits_view;',
+  'DROP TYPE IF EXISTS isahl_meta.collection_type;',
+  'DROP TYPE IF EXISTS isahl_meta.field_category;',
+  'DROP TYPE IF EXISTS isahl_meta.field_data_type;',
+]
+
+/** Regular tables occupying a schema (views/sequences do not count). 0 when the schema is absent. */
+async function countTables(query: QueryFn, schema: string): Promise<number> {
+  const result = await query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')`,
     [schema],
   )
-  return res.rows[0]?.exists === true
+  return Number.parseInt(result.rows[0]?.n ?? '0', 10)
 }
 
 /** Read the stamp row; `null` when the table or row is absent. */
@@ -88,10 +116,12 @@ export async function readStamp(query: QueryFn): Promise<BootstrapStamp | null> 
 
 /**
  * Bring the database to a bootstrapped state for the given snapshot:
- * 1. `isahl_meta` absent → create the schema, then execute the DDL baseline
- *    files in filename order (schema first — the baseline assumes it exists).
- * 2. Ensure the `dsh_alioth` stamp exists, writing it on first adoption
- *    (including adoption of a registry bootstrapped by something else).
+ * 1. Registry tables absent (schema missing, or an `isahl_meta` holding no tables of its own —
+ *    e.g. a model-sample one carrying only its `devv_*` views) → create the schema if needed,
+ *    then execute the DDL baseline files in filename order (schema first — the baseline assumes
+ *    it exists). An `isahl_meta` holding SOMEONE ELSE'S tables is refused instead.
+ * 2. Ensure the `dsh_alioth` stamp exists, writing it on first adoption (including adoption of a
+ *    registry bootstrapped by something else).
  * 3. Never re-run DDL over an existing registry; report provenance drift.
  */
 export async function bootstrapDatabase(
@@ -100,26 +130,33 @@ export async function bootstrapDatabase(
   current: ModelProvenance,
 ): Promise<BootstrapResult> {
   let created = false
-  if (!await schemaExists(query, REGISTRY_SCHEMA)) {
-    await query(`CREATE SCHEMA IF NOT EXISTS ${REGISTRY_SCHEMA}`)
-    for (const file of ddlFiles) {
-      // Simple-query protocol: multi-statement DDL (enums, tables, seeds) in one round trip.
-      await query(await readFile(file, 'utf8'))
+  if (!await tableExists(query, REGISTRY_SCHEMA, 'meta_collections')) {
+    // The baseline is load-once BY CONTRACT, so it is never re-applied over a registry — but an
+    // `isahl_meta` WITHOUT registry tables is not a registry. Two cases:
+    //  * regular tables that are not ours — a foreign registry this plugin must not silently
+    //    adopt: adopting it surfaces much later as a mystery missing-relation error in a tool.
+    //  * no tables of its own — an absent registry. The schema may still exist holding objects
+    //    the baseline itself creates (a deployment whose registry tables were dropped, or a
+    //    partially applied baseline): recreate them, then run the baseline.
+    const occupied = await countTables(query, REGISTRY_SCHEMA)
+    if (occupied > 0) {
+      const database = await query<{ name: string }>('SELECT current_database() AS name')
+      throw new Error(
+        `env-alioth: database "${database.rows[0]?.name ?? '?'}" already has an \`${REGISTRY_SCHEMA}\` schema `
+        + `holding ${occupied} table(s) but no \`meta_collections\` — it is not this plugin's registry, and the `
+        + 'load-once baseline is never re-applied over someone else\'s tables. Point ALIOTH_DATABASE_URL at a '
+        + 'database whose `isahl_meta` is empty or this plugin\'s, or drop the foreign schema first.',
+      )
     }
+    const baseline = (await Promise.all(ddlFiles.map(file => readFile(file, 'utf8')))).join('\n')
+    // ONE round trip = one implicit transaction (simple-query protocol): consumers never observe
+    // the schema without its views, and any conflict rolls back to the state before the repair.
+    await query([
+      `CREATE SCHEMA IF NOT EXISTS ${REGISTRY_SCHEMA};`,
+      ...BASELINE_OWNED_REMNANTS,
+      baseline,
+    ].join('\n'))
     created = true
-  } else if (!await tableExists(query, REGISTRY_SCHEMA, 'meta_collections')) {
-    // The baseline is load-once BY CONTRACT, so a same-named schema is adopted, never
-    // re-created. Now that the database belongs to the deployment (one server, many
-    // databases — see pg.ts) a half-made or foreign `isahl_meta` is reachable, and
-    // adopting it would fail much later as a missing-relation error inside a tool call.
-    const database = await query<{ name: string }>('SELECT current_database() AS name')
-    throw new Error(
-      `env-alioth: database "${database.rows[0]?.name ?? '?'}" already has an \`${REGISTRY_SCHEMA}\` schema `
-      + `without \`meta_collections\` — it is not this plugin's registry (the DDL baseline is load-once and is `
-      + 'never re-applied over an existing schema). Point ALIOTH_DATABASE_URL at a clean database, or drop the '
-      + 'partial schema first (`DROP SCHEMA isahl_meta CASCADE`; `mise run alioth:doctor --reset` does that and '
-      + 're-bootstraps).',
-    )
   }
   await query(STAMP_DDL)
   const stamped = await readStamp(query)
