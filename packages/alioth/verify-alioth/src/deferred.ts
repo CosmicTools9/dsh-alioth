@@ -30,6 +30,14 @@ export type DeferredTrigger =
     readonly pointer: string
     readonly equals: unknown
   }
+  /**
+   * 产物 JSON **声明**谓词：文件存在、JSON 可解析、且 `pointers` 中**任一** pointer
+   * 解析出非空值即满足。用于「人工/模型决定尚未落地」类门——例如 block 的交互形态
+   * （`flows` / `workbenchPosts`，二者其一即声明，BLOCK_SCHEMA §1.2 皆 OPTIONAL）。
+   * 与 `artifact-json-pointer` 的差别：那条判「等于某个值」，这条判「已声明」；
+   * 空串/空数组/空对象/null 一律不算声明（缺失 ≠ 声明）。
+   */
+  | { readonly kind: 'artifact-json-pointer-exists'; readonly path: string; readonly pointers: readonly string[] }
 
 /** 挂起项（`adjudication` = 为何挂起合法）。 */
 export interface DeferredItem {
@@ -142,6 +150,19 @@ async function triggerSatisfied(root: string, trigger: DeferredTrigger): Promise
     // 解析失败 = 未满足：判据是「产物内容说通过」，不是「文件在那儿」。
     return false
   }
+  if (trigger.kind === 'artifact-json-pointer-exists') {
+    // 任一命名 pointer 存在且非空 ⇒ 已声明（空值不算：声明必须有内容）
+    return trigger.pointers.some((pointer) => {
+      const found = resolveJsonPointer(document, pointer)
+      if (!found.found) return false
+      const value = found.value
+      if (value === null || value === undefined) return false
+      if (typeof value === 'string') return value.trim() !== ''
+      if (Array.isArray(value)) return value.length > 0
+      if (typeof value === 'object') return Object.keys(value as object).length > 0
+      return true
+    })
+  }
   const resolved = resolveJsonPointer(document, trigger.pointer)
   return resolved.found && jsonEquals(resolved.value, trigger.equals)
 }
@@ -199,6 +220,15 @@ export function createDeferredStore(root: string): DeferredStore {
       }
       if (item.trigger.kind === 'artifact-json-pointer' && item.trigger.pointer !== '' && !item.trigger.pointer.startsWith('/')) {
         throw new Error(`trigger.pointer 非法：${item.id} 的 RFC 6901 pointer 必须为空串或以 / 开头`)
+      }
+      if (item.trigger.kind === 'artifact-json-pointer-exists') {
+        if (item.trigger.pointers.length === 0) {
+          throw new Error(`trigger.pointers 必填：${item.id} 的「已声明」判据至少要指名一个 pointer`)
+        }
+        const bad = item.trigger.pointers.find(pointer => !pointer.startsWith('/'))
+        if (bad !== undefined) {
+          throw new Error(`trigger.pointers 非法：${item.id} 的 RFC 6901 pointer 必须以 / 开头（收到 ${JSON.stringify(bad)}）`)
+        }
       }
       const existing = await readSession(item.sessionId)
       const next = existing.filter(entry => entry.id !== item.id)

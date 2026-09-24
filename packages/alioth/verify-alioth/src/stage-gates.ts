@@ -35,6 +35,20 @@ export interface StageGateOutcome {
   readonly ok: boolean
   readonly evidence: string
   readonly artifacts: readonly string[]
+  /**
+   * 本阶段**不判失败、但义务未落地**的事项：调用方须为其登记 per-App 人工门
+   * （解锁条件由门自带）。缺省 = 无待决项。存在 pending 时 `ok` 仍可为 true——
+   * 待决不是通过，义务在门上（publish 前置按 App 扫描即阻断）。
+   */
+  readonly pending?: readonly StageGatePending[]
+}
+
+/** 待决项：模型/人的决定尚未落地的可判定形态。 */
+export interface StageGatePending {
+  readonly kind: 'block-interaction-form'
+  readonly block: string
+  /** 判据文件（真实路径，非 relToRoot）。 */
+  readonly path: string
 }
 
 /**
@@ -79,11 +93,13 @@ function relToRoot(base: string, file: string): string {
 }
 
 /** block.json 的交互形态声明（流程流 `flows` / 工作台 `workbenchPosts` / 显式 `interactionMode`）。 */
-function interactionDeclaration(value: unknown): string | null {
+/** 读 block.json 的交互形态声明（canonical 键）；`null` = 未声明。单一判据来源。 */
+export function interactionDeclaration(value: unknown): string | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
-  const mode = record['interactionMode']
-  if (typeof mode === 'string' && mode.trim() !== '') return `interactionMode=${mode}`
+  // 只认 canonical 键：`interactionMode` **不在** check-block-json 的 CANONICAL_KEYS
+  // （R1 unknown-key 会直接判违规），认它等于让模型按我们的门写一个必违真门禁的字段。
+  // BLOCK_SCHEMA §1.2：`flows` / `workbenchPosts` 皆 OPTIONAL，二者其一即声明。
   const flows = record['flows']
   if (Array.isArray(flows) && flows.length > 0) return `flows=${flows.length} 条`
   const workbenchPosts = record['workbenchPosts']
@@ -211,23 +227,51 @@ export async function evaluateStageGate(
       const declaredArtifacts: string[] = []
       const declaredNotes: string[] = []
       const undeclared: string[] = []
+      const undeclaredFiles: string[] = []
+      const missingDeclared: string[] = []
       for (const file of found) {
         const probe = await probeJson(file)
         if (!probe.ok) {
           undeclared.push(`${relToRoot(preProcRoot, file)}：${probe.reason}`)
+          // 已声明却没有产物 = 失败（与 block-extract 同规）；与「文件在、形态待决」不同。
+          if (declaredBlocks.length > 0) missingDeclared.push(`${relToRoot(preProcRoot, file)}：${probe.reason}`)
           continue
         }
         const declaration = interactionDeclaration(probe.value)
         if (declaration === null) {
           undeclared.push(`${relToRoot(preProcRoot, file)}：未声明交互形态`)
+          undeclaredFiles.push(file)
           continue
         }
         declaredArtifacts.push(relToRoot(preProcRoot, file))
         declaredNotes.push(`${relToRoot(preProcRoot, file)}（${declaration}）`)
       }
-      return declaredArtifacts.length > 0
-        ? outcome(true, `${declaredArtifacts.length} 个 block 已声明交互形态：${declaredNotes.join('；')}`, declaredArtifacts)
-        : outcome(false, `block-refinement 未就绪：无 block 声明交互形态（${undeclared.join('；')}）`, [])
+      if (missingDeclared.length > 0) {
+        return outcome(false, `block-refinement 未就绪：${missingDeclared.join('；')}`, declaredArtifacts)
+      }
+      if (declaredArtifacts.length > 0) {
+        return outcome(true, `${declaredArtifacts.length} 个 block 已声明交互形态：${declaredNotes.join('；')}`, declaredArtifacts)
+      }
+      // 未声明 = **人/模型的待决**，不是管线失败：上游 stage_config 把 block_refinement
+      // 标为 `has_human_gate: true`（问「流程流还是工作台」），而管线只产出骨架、不替人
+      // 做决定。按与原型面同一策略：义务转成 per-App 人工门（解锁 = 任一 canonical 声明
+      // 出现），由调用方登记；本门如实记 pending，而不 fail 整个管线。
+      if (undeclared.length === 0) {
+        return outcome(false, `block-refinement 未就绪：${BLOCK_ROOTS.join('|')} 下无 block.json`, [])
+      }
+      return {
+        ...outcome(
+          true,
+          `待人工/模型决策：${undeclared.length} 个 block 尚未声明交互形态（${undeclared.join('；')}）`
+            + '——上游该 stage 为 human gate，义务由 per-App 人工门承压',
+          [],
+        ),
+        pending: undeclaredFiles.map(file => ({
+          kind: 'block-interaction-form' as const,
+          block: path.basename(path.dirname(file)),
+          path: file,
+        })),
+      }
     }
 
     case 'ontology-mapping': {

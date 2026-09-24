@@ -269,6 +269,8 @@ describe('阶段判据 — 缺失/未通过一律 fail-closed', () => {
     expect((await evaluateStageGate('block-extract', input)).ok).toBe(true)
     expect((await evaluateStageGate('block-refinement', input)).ok).toBe(true)
 
+    // 未声明交互形态 = 人/模型的待决（上游该 stage 是 human gate），**不是**管线失败：
+    // 本门如实记 pending，义务由调用方登记 per-App 人工门承压。
     const undeclared = await app()
     await undeclared.writePreProc('Sources/Apps/Blocks/order-list/block.json', '{"block":"ORD"}\n')
     const undeclaredOutcome = await evaluateStageGate('block-refinement', {
@@ -277,7 +279,54 @@ describe('阶段判据 — 缺失/未通过一律 fail-closed', () => {
       namespace: 'TestNS',
       app: 'tm-app',
     })
-    expect(undeclaredOutcome.ok).toBe(false)
+    expect(undeclaredOutcome.ok).toBe(true)
+    expect(undeclaredOutcome.pending).toEqual([
+      expect.objectContaining({ kind: 'block-interaction-form', block: 'order-list' }),
+    ])
+    expect(undeclaredOutcome.pending?.[0]?.path.endsWith('Blocks/order-list/block.json')).toBe(true)
+
+    // 既未声明 block、盘上也无产物 ⇒ 本 stage 无可判对象（上游 {block} 模板实例化为空），
+    // 这与「有产物但形态未决」是两回事：前者无义务，后者有义务（pending）。
+    const empty = await app()
+    const emptyOutcome = await evaluateStageGate('block-refinement', {
+      appDir: empty.appDir,
+      preProcRoot: empty.preProcRoot,
+      namespace: 'TestNS',
+      app: 'tm-app',
+    })
+    expect(emptyOutcome.ok).toBe(true)
+    expect(emptyOutcome.evidence).toContain('无可判对象')
+    expect(emptyOutcome.pending).toBeUndefined()
+
+    // interactionMode **不是** canonical 键（check-block-json R1 判违规）⇒ 不算声明
+    const nonCanonical = await app()
+    await nonCanonical.writePreProc(
+      'Sources/Apps/Blocks/order-list/block.json',
+      '{"block":"ORD","interactionMode":"workbench"}\n',
+    )
+    const nonCanonicalOutcome = await evaluateStageGate('block-refinement', {
+      appDir: nonCanonical.appDir,
+      preProcRoot: nonCanonical.preProcRoot,
+      namespace: 'TestNS',
+      app: 'tm-app',
+    })
+    expect(nonCanonicalOutcome.pending).toHaveLength(1)
+    expect(nonCanonicalOutcome.evidence).toContain('待人工/模型决策')
+
+    // workbenchPosts（另一 canonical 形态）同样算声明
+    const posts = await app()
+    await posts.writePreProc(
+      'Sources/Apps/Blocks/order-list/block.json',
+      '{"block":"ORD","workbenchPosts":[{"id":"p1"}]}\n',
+    )
+    const postsOutcome = await evaluateStageGate('block-refinement', {
+      appDir: posts.appDir,
+      preProcRoot: posts.preProcRoot,
+      namespace: 'TestNS',
+      app: 'tm-app',
+    })
+    expect(postsOutcome.ok).toBe(true)
+    expect(postsOutcome.pending).toBeUndefined()
   })
 
   it('module-design：声明 modules 时逐个须齐，缺一即 false', async () => {

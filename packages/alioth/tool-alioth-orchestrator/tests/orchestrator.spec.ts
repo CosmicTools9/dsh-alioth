@@ -14,6 +14,7 @@ import * as toolMeta from '@dsh-alioth/tool-alioth-meta'
 import * as orchestrator from '../src/index.ts'
 import * as workflowTool from '@dsh-alioth/tool-alioth-workflow'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { createDeferredStore } from '@dsh-alioth/verify-alioth'
 import { buildPlan, buildPrimitives } from '../src/primitives.ts'
 
 const signal = new AbortController().signal
@@ -343,26 +344,26 @@ tracks:
 // file cannot land, and the E2E-root fallback chain.
 
 describe('alioth_app_create terminal states', () => {
-  it('scaffolds a declared block and then fails the refinement gate the model owns', async () => {
-    // 声明一个 block ⇒ 管线**写出骨架**（对齐上游 create_block_scaffold），故
-    // 「已声明但无产物」不再可达；剩下的真实缺口是模型在 workflow 步骤里声明的
-    // 交互形态（block-refinement 门）——门禁照旧 fail-closed，不因骨架存在而放行。
+  it('scaffolds a declared block, blocks publish on the undecided form, and self-unlocks', async () => {
+    // 声明 block ⇒ 管线写出骨架（对齐上游 create_block_scaffold）；交互形态是
+    // **人/模型的待决**（上游该 stage 为 human gate），故不 fail 管线，而是登记
+    // per-App 人工门把 publish 挡住——声明一落地即自解锁（「已声明」触发语汇）。
     await seedNamespaceArtifacts(preProcRoot, 'Gate', 'ptc-gate-fail')
-    const result = await callCreate({
+    const args = {
       namespace: 'Gate',
       code: 'ptc-gate-fail',
       name: '门禁失败应用',
       modules: [{ id: 'gate', name: '门禁' }],
       blocks: ['block-scaffolded'],
-    })
+    }
+    const result = await callCreate(args)
     if (!result.isError) throw new Error('expected alioth_app_create failure')
-    expect(result.error.message).toContain('pipeline failed at')
-    expect(result.error.message).toContain('block-refinement')
+    expect(result.error.message).toContain('publishing')
+    expect(result.error.message).toContain('publish-no-open-degraded-gates')
 
     // 骨架落点与形状对齐上游：block 空串、coordinates null（待精化/本体映射回填）。
-    const scaffold: unknown = JSON.parse(
-      await readFile(path.join(preProcRoot, 'Gate', 'Sources', 'Apps', 'Blocks', 'block-scaffolded', 'block.json'), 'utf8'),
-    )
+    const blockJsonPath = path.join(preProcRoot, 'Gate', 'Sources', 'Apps', 'Blocks', 'block-scaffolded', 'block.json')
+    const scaffold: unknown = JSON.parse(await readFile(blockJsonPath, 'utf8'))
     expect(scaffold).toMatchObject({
       id: 'block-scaffolded',
       namespace: 'Gate',
@@ -372,16 +373,23 @@ describe('alioth_app_create terminal states', () => {
       sharing: { mode: 'single', consumers: [] },
     })
 
-    // block-extract 门本身已满足（骨架即产物）——缺的是模型侧的交互形态声明。
-    const gateArgs = {
-      namespace: 'Gate',
-      code: 'ptc-gate-fail',
-      name: '门禁失败应用',
-      modules: [{ id: 'gate', name: '门禁' }],
-      blocks: ['block-scaffolded'],
-    }
-    const primitives = buildPrimitives(ctx, stageExec('ptc-gate-fail-gates'), gateArgs, undefined, preProcRoot)
-    const extract = await primitives.pipelineAdvance('block-extract', buildPlan(gateArgs))
+    const store = createDeferredStore(await ctx.aliothEnv.dataRoot())
+    const gateId = 'block-interaction-form:Gate/ptc-gate-fail:block-scaffolded'
+    expect((await store.all()).map(item => item.id)).toContain(gateId)
+
+    // 未决门在声明出现前不动（sweep 只解除触发条件成立者）
+    await store.sweep()
+    expect((await store.all()).map(item => item.id)).toContain(gateId)
+
+    // 声明 canonical 形态（flows）后 sweep 自动解除——不需要人工介入。
+    await writeFile(blockJsonPath, `${JSON.stringify({ ...(scaffold as object), flows: [{ id: 'browse' }] }, null, 2)}\n`)
+    const released = await store.sweep()
+    expect(released.map(item => item.id)).toContain(gateId)
+    expect((await store.all()).map(item => item.id)).not.toContain(gateId)
+
+    // block-extract 门本身已满足（骨架即产物）
+    const primitives = buildPrimitives(ctx, stageExec('ptc-gate-fail-gates'), args, undefined, preProcRoot)
+    const extract = await primitives.pipelineAdvance('block-extract', buildPlan(args))
     expect(extract.evidence).toContain('gate block-extract passed')
 
     // The artifacts stay on disk: the repair loop fixes them and re-runs.

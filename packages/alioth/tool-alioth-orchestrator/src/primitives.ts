@@ -41,6 +41,7 @@ import {
   buildEvalReport,
   createDeferredStore,
   EXTENSION_FORMS,
+  interactionDeclaration,
   evaluatePublishShadow,
   evaluateStageGate,
   latestMatchingVerdict,
@@ -232,6 +233,46 @@ async function readQualityReport(appDir: string): Promise<QualityReportView> {
     status: report !== null && report['passed'] === true ? 'passed' : 'failed',
     schemaValidity: dimension('schema_validity'),
     prototypeStandalone: dimension('prototype_standalone'),
+  }
+}
+
+/** block 交互形态人工门的作用域前缀（`alioth_deferred list` 依此识别）。 */
+const BLOCK_FORM_GATE_PREFIX = 'app-block-form-'
+
+/**
+ * block 交互形态的 per-App 人工门。上游 `stage_config.yaml` 把 `block_refinement`
+ * 标为 `has_human_gate: true`（问「流程流还是工作台」）——该决定属人与模型，管线只
+ * 产出骨架，替不了这个决定，故不得因此 fail 整条管线；义务落在本门上。
+ *
+ * 解锁条件 = block.json 里 `flows`/`workbenchPosts` **任一**已声明（非空）。用关键词
+ * 「已声明」（`artifact-json-pointer-exists`）而非「等于某值」：BLOCK_SCHEMA §1.2 里两者
+ * 皆 OPTIONAL、内容由模型决定，无法预知取值。`interactionMode` **不在** check-block-json
+ * 的 CANONICAL_KEYS（R1 会判违规），故不作判据。
+ */
+function blockInteractionGateItem(input: {
+  readonly namespace: string
+  readonly app: string
+  readonly block: string
+  readonly path: string
+}): DeferredItem {
+  return {
+    id: `block-interaction-form:${input.namespace}/${input.app}:${input.block}`,
+    sessionId: `${BLOCK_FORM_GATE_PREFIX}${input.namespace}-${input.app}`,
+    app: input.app,
+    namespace: input.namespace,
+    reason: `block ${input.block} 尚未声明交互形态（flows / workbenchPosts）——上游 block_refinement 为 human gate`,
+    adjudication: '流程流（固定顺序）还是工作台（自由导航）是业务决定，只能由人/模型给；'
+      + '未决定前该 block 的导航与前端绑定不可判，publish 必须被阻断',
+    trigger: {
+      kind: 'artifact-json-pointer-exists',
+      path: input.path,
+      pointers: ['/flows', '/workbenchPosts'],
+    },
+    successors: [
+      `在 ${input.block}/block.json 声明 flows 或 workbenchPosts（canonical 键，禁止 interactionMode——R1 会判违规）`,
+      '重跑 alioth_app_create 或直接 sweep：声明出现即自动解除本门',
+    ],
+    createdTs: new Date().toISOString(),
   }
 }
 
@@ -545,29 +586,51 @@ export function buildPrimitives(
       const created: string[] = []
       const kept: string[] = []
       const artifacts: string[] = []
+      const pendingForms: string[] = []
       for (const id of declared) {
         const file = path.join(namespaceRoot, 'Sources', 'Apps', 'Blocks', id, 'block.json')
         if (await readFile(file, 'utf8').then(() => true, () => false)) {
           kept.push(id)
           artifacts.push(file)
-          continue
+        } else {
+          try {
+            await mkdir(path.dirname(file), { recursive: true })
+            const scaffold = generateBlock({ id, namespace: args.namespace, name: id, aliothVersion: modelVersion })
+            await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, 'utf8')
+            created.push(id)
+            artifacts.push(file)
+          } catch (error) {
+            return {
+              evidence: `GATE-FAIL block creation: ${id} 骨架写出失败（${describe(error)})`,
+              artifacts,
+            }
+          }
         }
-        try {
-          await mkdir(path.dirname(file), { recursive: true })
-          const scaffold = generateBlock({ id, namespace: args.namespace, name: id, aliothVersion: modelVersion })
-          await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, 'utf8')
-          created.push(id)
-          artifacts.push(file)
-        } catch (error) {
-          return {
-            evidence: `GATE-FAIL block creation: ${id} 骨架写出失败（${describe(error)}）`,
-            artifacts,
+        // 交互形态是上游的 human gate（流程流 vs 工作台）：骨架期必然未决，故**此刻**登记
+        // per-App 人工门——7 阶段门扫描发生在 publishing 之后，若留到那时登记，本次发布
+        // 就已经放过去了（首次发布漏过 = fail-closed 失效）。声明落地后 sweep 自动解除。
+        const declaration = interactionDeclaration(await readFile(file, 'utf8').then(
+          text => jsonObjectOf(text) as unknown,
+          () => null,
+        ))
+        if (declaration === null) {
+          try {
+            await createDeferredStore(ctx.aliothEnv.dataRoot()).register(
+              blockInteractionGateItem({ namespace: args.namespace, app: args.code, block: id, path: file }),
+            )
+            pendingForms.push(id)
+          } catch (error) {
+            return {
+              evidence: `GATE-FAIL block creation: ${id} 待决人工门登记失败（${describe(error)}）`,
+              artifacts,
+            }
           }
         }
       }
       return {
         evidence: `block creation: ${declared.length} declared, ${created.length} scaffold written`
-          + ` (${created.join(', ') || 'none'}), ${kept.length} kept as-is (never overwritten)`,
+          + ` (${created.join(', ') || 'none'}), ${kept.length} kept as-is (never overwritten)`
+          + (pendingForms.length === 0 ? '' : `；${pendingForms.length} 个 block 交互形态待决已登记人工门（publish 前须声明）`),
         artifacts,
       }
     },
@@ -1008,9 +1071,33 @@ export function buildPrimitives(
         // 声明的 service 集：未声明时该 stage 按「盘上有无 service.json」实例化。
         services: args.services ?? [],
       })
+      // 待决项（模型/人的决定未落地）→ 登记 per-App 人工门：本阶段不判失败，但义务只能
+      // 落在门上（publish 前置 2 按 App 扫描即 fail-closed）；登记失败则 fail-closed 到底。
+      const gateErrors: string[] = []
+      for (const pending of outcome.pending ?? []) {
+        try {
+          // 幂等（store 按 id 去重）：blockCreation 已登记的不再重复，此处兜住
+          // 「由别处产出 block.json」的路径。
+          await createDeferredStore(ctx.aliothEnv.dataRoot()).register(
+            blockInteractionGateItem({
+              namespace: args.namespace,
+              app: args.code,
+              block: pending.block,
+              path: pending.path,
+            }),
+          )
+        } catch (error) {
+          gateErrors.push(`${pending.block}: ${describe(error)}`)
+        }
+      }
+      if (gateErrors.length > 0) {
+        return { evidence: `GATE-FAIL ${stage}: 待决人工门登记失败（${gateErrors.join('; ')}）`, artifacts: [] }
+      }
+      const pendingCount = outcome.pending?.length ?? 0
+      const pendingNote = pendingCount === 0 ? '' : `；待决 ${pendingCount} 项已登记 per-App 人工门`
       return outcome.ok
-        ? { evidence: `gate ${stage} passed: ${outcome.evidence}`, artifacts: [...outcome.artifacts] }
-        : { evidence: `GATE-FAIL ${stage}: ${outcome.evidence}` }
+        ? { evidence: `gate ${stage} passed: ${outcome.evidence}${pendingNote}`, artifacts: [...outcome.artifacts] }
+        : { evidence: `GATE-FAIL ${stage}: ${outcome.evidence}${pendingNote}` }
     },
 
     async resolveGate(_gateId, _prompt) {

@@ -72,5 +72,5 @@ export {
   type DeferredTrigger,
 } from './deferred.ts'
 export { aggregateUsage, estimateCost, type PriceTable, type UsageEvent, type UsageSummary } from './usage.ts'
-export { evaluateStageGate, type StageGateOutcome, type StageId } from './stage-gates.ts'
+export { evaluateStageGate, interactionDeclaration, type StageGateOutcome, type StageGatePending, type StageId } from './stage-gates.ts'
 export { evaluatePublishShadow, PUBLISH_SHADOW_PREDICATES, type PublishShadow } from './auto-gate.ts'
