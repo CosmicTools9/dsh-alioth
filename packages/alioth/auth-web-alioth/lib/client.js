@@ -369,18 +369,24 @@ window.__ModuleLoader__.load({
       }],
     }
 
-    // ── Settings seat: the operator's own surface, loopback only ──────────
-    // The harness Settings panel (模型 / 内置插件 / Agent 预设) is the machine
-    // owner's surface: it reads and writes the Host's own configuration and
-    // its rich actions are themselves gated on `connection.isLoopback` — off
-    // loopback it degrades into a half-broken page (the provider directory
-    // fails to load). This delivery is a multi-tenant B/S console whose
-    // browsers may sit behind a domain, a reverse proxy or a tunnel: the seat
-    // exists for the operator at localhost / 127.0.0.1 and nowhere else. The
-    // predicate is the harness's own loopback rule — the one behind the /api
-    // Host fence and `connection.isLoopback` (localhost, IPv6 loopback, or any
-    // 127/8 literal).
+    // ── The operator's console surfaces: loopback only ────────────────────
+    // Two harness surfaces belong to the person at the machine, not to a
+    // multi-tenant browser:
+    //   * 设置 (模型 / 内置插件 / Agent 预设) reads and writes the Host's own
+    //     configuration, and its rich actions are themselves gated on
+    //     `connection.isLoopback` — off loopback it degrades into a
+    //     half-broken page (the provider directory fails to load).
+    //   * 插件 installs, enables, disables and removes the Host's plugin rows
+    //     through the `pluginManager` Remote — a serving-host mutation.
+    // This console is reached through domains, reverse proxies and tunnels, so
+    // both exist for the operator at localhost / 127.0.0.1 and nowhere else.
+    // The predicate is the harness's own loopback rule — the one behind the
+    // /api Host fence and `connection.isLoopback` (localhost, IPv6 loopback, or
+    // any 127/8 literal).
     const SETTINGS_SEAT = 'sidebar.settings'
+    /** `ui-plugin-manager`'s `PANEL_ID`: the sidebar entry and the page it opens. */
+    const PLUGIN_PANEL_ID = 'plugins'
+    const REGISTRANT = '@dsh-alioth/auth-web-alioth'
 
     /** Loopback page authority — mirrors the harness's `isLoopbackHostname`. */
     function isLoopbackAuthority(hostname) {
@@ -392,15 +398,15 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Whether the settings seat belongs on this page. `connection.isLoopback`
+     * Whether the operator's surfaces belong on this page. `connection.isLoopback`
      * is the harness's own answer (a shell that owns its Host reports true);
      * the page authority is the fallback while that service is not yet mounted
-     * at apply time. No authority at all means no loopback evidence — the seat
-     * stays hidden (fail-closed: an unprovable authority is not the operator's
-     * machine).
+     * at apply time. No authority at all means no loopback evidence — the
+     * surfaces stay hidden (fail-closed: an unprovable authority is not the
+     * operator's machine).
      * @param ctx - client root context (cordis ClientContext).
      */
-    function settingsSeatVisible(ctx) {
+    function operatorSurfacesVisible(ctx) {
       const connection = ctx && typeof ctx.get === 'function' ? ctx.get('connection') : undefined
       if (connection && typeof connection.isLoopback === 'boolean') return connection.isLoopback
       const location = globalThis.location
@@ -409,6 +415,28 @@ window.__ModuleLoader__.load({
 
     /** Empty occupant: shadowing the shipped settings shell renders nothing. */
     function NoSettingsSeat() { return null }
+
+    /**
+     * Off loopback the 插件 (plugins) panel row is shadowed by this occupant.
+     * The sidebar draws a panel row's chrome (button, label, tooltip) from the
+     * ledger metadata and only the glyph from the `sidebar.panellist` cell, so
+     * a cell cannot drop its row by rendering nothing: the occupant hides the
+     * row it is rendered into instead. Fail-open by construction — if the row
+     * is no longer an ancestor button, the row simply stays visible (the
+     * browser E2E pins the hidden state).
+     */
+    function HiddenPluginPanel() {
+      const ref = React.useRef(null)
+      React.useEffect(function () {
+        const node = ref.current
+        const row = node && typeof node.closest === 'function' ? node.closest('button') : null
+        if (row) row.style.display = 'none'
+      })
+      return e('span', { ref: ref, style: { display: 'none' } })
+    }
+
+    /** The panel page behind that row: unreachable even from a stale selection. */
+    function NoPanelPage() { return null }
 
     /** The tab type's guide glyph (the guide capsule renders `icon` at its size). */
     function AliothTabGlyph(props) {
@@ -445,18 +473,31 @@ window.__ModuleLoader__.load({
     function apply(ctx) {
       ctx.effect(() => ctx.slots.inject('shell.overlay', () =>
         ctx.slots.register({ name: 'shell.overlay', id: 'alioth-user-chip' }, UserChip)))
-      // Off loopback an empty occupant shadows the shipped settings shell at
-      // priority -1 (a single slot renders its lowest live entry): neither the
-      // 设置 trigger nor the panel mounts, and the shipped registrant keeps
-      // owning its child declarations, so registrants waiting on `settings.*`
+      // Off loopback the operator surfaces are shadowed at priority -1: a
+      // single slot renders its lowest live entry, and a list/keyed cell
+      // renders the first live entry per id/key in priority order — our
+      // occupant wins either way while the shipped registrants keep owning
+      // their child declarations, so registrants waiting on `settings.*`
       // seats are left undisturbed. On loopback nothing is registered and the
-      // harness shell stands as shipped.
-      if (!settingsSeatVisible(ctx)) {
+      // harness surfaces stand as shipped.
+      if (!operatorSurfacesVisible(ctx)) {
         ctx.effect(() => ctx.slots.inject(SETTINGS_SEAT, () => ctx.slots.register({
           name: SETTINGS_SEAT,
           priority: -1,
-          registrant: '@dsh-alioth/auth-web-alioth',
+          registrant: REGISTRANT,
         }, NoSettingsSeat)))
+        ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist',
+          id: PLUGIN_PANEL_ID,
+          priority: -1,
+          registrant: REGISTRANT,
+        }, HiddenPluginPanel)))
+        ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
+          name: 'main',
+          key: PLUGIN_PANEL_ID,
+          priority: -1,
+          registrant: REGISTRANT,
+        }, NoPanelPage)))
       }
       // The right-Sidebar tab registers only where that registry exists (web
       // profiles); a tree without it keeps the chip and gains nothing else.
