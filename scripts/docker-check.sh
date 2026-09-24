@@ -11,5 +11,8 @@ echo "== dsh-alioth container self-check =="
 echo "--- composition smoke (group mount, tools, round-trip) ---"
 node --import tsx /app/scripts/smoke-composition.ts
 echo "--- doctor (builtin model, environment PostgreSQL) ---"
-ALIOTH_DATA_ROOT="${ALIOTH_DATA_ROOT:-/tmp/alioth-check}" node --import tsx /app/scripts/alioth-doctor.ts
+# A freshly created /data has no semantic index: it rebuilds on the first semantic_search,
+# so its absence must not fail the container check. Every other check still gates.
+ALIOTH_DATA_ROOT="${ALIOTH_DATA_ROOT:-/tmp/alioth-check}" \
+  node --import tsx /app/scripts/alioth-doctor.ts --allow-unbuilt-semantic-index
 echo "== self-check OK =="

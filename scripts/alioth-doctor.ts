@@ -8,6 +8,10 @@
  *   ALIOTH_DATABASE_URL   the environment's PostgreSQL (required — fails loud when unset)
  *   ALIOTH_DATA_ROOT      state root for model snapshots
  * Flag: --reset           drop isahl_meta + stamp, then re-bootstrap from the snapshot (destructive)
+ *       --allow-unbuilt-semantic-index
+ *                        exit 0 when the ONLY failing check is the semantic index not being built
+ *                        yet — the expected state of a fresh data root (a container's first boot).
+ *                        Any other red still fails.
  */
 import { Context } from '@deepseek-ai/cordis'
 import * as envAlioth from '@dsh-alioth/env-alioth'
@@ -16,6 +20,7 @@ import { maskUrl } from '@dsh-alioth/env-alioth'
 const databaseUrl = process.env.ALIOTH_DATABASE_URL
 const dataRoot = process.env.ALIOTH_DATA_ROOT
 const reset = process.argv.includes('--reset')
+const allowUnbuiltSemanticIndex = process.argv.includes('--allow-unbuilt-semantic-index')
 const config: envAlioth.Config = {
   modelSource: process.env.ALIOTH_MODEL_SOURCE ?? 'builtin',
   ...(databaseUrl === undefined ? {} : { databaseUrl }),
@@ -42,4 +47,9 @@ for (const check of report.checks) {
 console.log(`status   ${report.status}`)
 
 await fiber.dispose()
-process.exitCode = report.status === 'green' ? 0 : 1
+const blocking = report.checks.filter(check => !check.ok
+  && !(allowUnbuiltSemanticIndex && check.name === 'semantic-index'))
+if (allowUnbuiltSemanticIndex && report.status !== 'green' && blocking.length === 0) {
+  console.log('note     semantic index is not built yet — expected for a fresh data root (rebuilds on first search)')
+}
+process.exitCode = report.status === 'green' || (allowUnbuiltSemanticIndex && blocking.length === 0) ? 0 : 1

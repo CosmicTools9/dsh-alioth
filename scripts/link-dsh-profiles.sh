@@ -23,9 +23,14 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 PROFILES="${DSH_HOME:-$HOME/.dsh}/profiles"
 HARNESS="${DSH_HARNESS_ROOT:-$REPO/../deepseek-harness}"
 
+# A fresh machine (CI runners, new laptops) has no profile root yet: dsh creates
+# `<profiles>/<name>` on the first run of that profile, and the loader resolves bare
+# entry names from the profile directory — so the links below need a home before any
+# `dsh` invocation has happened. Create the roots the shipped compositions use; a
+# later `dsh` run finds them and heals only its own closure (the script stays idempotent).
 if [ ! -d "$PROFILES" ]; then
-  echo "MISSING profile root $PROFILES: run dsh once so it creates the profiles" >&2
-  exit 1
+  mkdir -p "$PROFILES/web" "$PROFILES/headless"
+  echo "created $PROFILES (web + headless): dsh had not run yet on this machine"
 fi
 
 # <scope>/<name>=<target dir>，先收集完整集合，缺包即整个组合无法启动，直接失败。

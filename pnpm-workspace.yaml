@@ -298,3 +298,10 @@ auditConfig:
     # frozen install 直接拉死。真修在 harness 线（libreoffice-kit 升 fflate 或
     # 改 workspace 链接）；两侧修好前在此显式忽略并留痕。
     - GHSA-px8p-9vwx-vf98
+    # uuid 8.3.2（< 11.1.1，moderate）唯一消费路径同样是 harness 侧的客户端 bundle：
+    # ui-sidebar-documentpreview → @fortune-sheet/react → @fortune-sheet/core → uuid。
+    # 修补只存在于 11.1.1+ / 12.0.1 / 13.0.1——跨大版本的 floor，而这个 pin 归 harness 线所有，
+    # 本仓既不能改它、也没有 harness 前端的测试可以验证抬高后的运行时行为（会赌上已上线的 Web GUI）。
+    # 触发条件也窄：仅 v3/v5/v6 且显式传入 buf 时缺边界检查。
+    # 真修在 harness 线（@fortune-sheet 升级或换 uuid 调用面）；那边修好前在此显式忽略并留痕。
+    - GHSA-w5hq-g745-h8pq
