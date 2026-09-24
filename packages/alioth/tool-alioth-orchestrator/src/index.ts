@@ -98,6 +98,10 @@ export function apply(ctx: Context, config: Config): void {
         type: 'array',
         items: { type: 'string' },
       },
+      services: {
+        type: 'array',
+        items: { type: 'string' },
+      },
       entities: {
         type: 'array',
         items: {

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dsh-alioth/env-alioth": "workspace:*",
+    "@dsh-alioth/gen-alioth": "workspace:*",
     "@dsh-alioth/skill-alioth": "workspace:*",
     "@dsh-alioth/verify-alioth": "workspace:*"
   },

@@ -343,21 +343,46 @@ tracks:
 // file cannot land, and the E2E-root fallback chain.
 
 describe('alioth_app_create terminal states', () => {
-  it('fails the metadata gate when a declared block has no artifact', async () => {
-    // A dedicated namespace: prototype + service exist (the model-authored
-    // steps ran), the block declaration has no artifact — the stage gate must
-    // fail closed on it (no placeholder pass).
+  it('scaffolds a declared block and then fails the refinement gate the model owns', async () => {
+    // 声明一个 block ⇒ 管线**写出骨架**（对齐上游 create_block_scaffold），故
+    // 「已声明但无产物」不再可达；剩下的真实缺口是模型在 workflow 步骤里声明的
+    // 交互形态（block-refinement 门）——门禁照旧 fail-closed，不因骨架存在而放行。
     await seedNamespaceArtifacts(preProcRoot, 'Gate', 'ptc-gate-fail')
     const result = await callCreate({
       namespace: 'Gate',
       code: 'ptc-gate-fail',
       name: '门禁失败应用',
       modules: [{ id: 'gate', name: '门禁' }],
-      blocks: ['block-not-written'],
+      blocks: ['block-scaffolded'],
     })
     if (!result.isError) throw new Error('expected alioth_app_create failure')
     expect(result.error.message).toContain('pipeline failed at')
-    expect(result.error.message).toContain('gate block-extract failed')
+    expect(result.error.message).toContain('block-refinement')
+
+    // 骨架落点与形状对齐上游：block 空串、coordinates null（待精化/本体映射回填）。
+    const scaffold: unknown = JSON.parse(
+      await readFile(path.join(preProcRoot, 'Gate', 'Sources', 'Apps', 'Blocks', 'block-scaffolded', 'block.json'), 'utf8'),
+    )
+    expect(scaffold).toMatchObject({
+      id: 'block-scaffolded',
+      namespace: 'Gate',
+      block: '',
+      coordinates: null,
+      services: [],
+      sharing: { mode: 'single', consumers: [] },
+    })
+
+    // block-extract 门本身已满足（骨架即产物）——缺的是模型侧的交互形态声明。
+    const gateArgs = {
+      namespace: 'Gate',
+      code: 'ptc-gate-fail',
+      name: '门禁失败应用',
+      modules: [{ id: 'gate', name: '门禁' }],
+      blocks: ['block-scaffolded'],
+    }
+    const primitives = buildPrimitives(ctx, stageExec('ptc-gate-fail-gates'), gateArgs, undefined, preProcRoot)
+    const extract = await primitives.pipelineAdvance('block-extract', buildPlan(gateArgs))
+    expect(extract.evidence).toContain('gate block-extract passed')
 
     // The artifacts stay on disk: the repair loop fixes them and re-runs.
     const appJson = await readFile(path.join(preProcRoot, 'Gate', 'Apps', 'ptc-gate-fail', 'app.json'), 'utf8')

@@ -169,6 +169,12 @@
             "type": "string"
           }
         },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "entities": {
           "type": "array",
           "description": "New entities to register (alioth_entity_write semantics). Existing entities: reference them implicitly via field targetTable.",

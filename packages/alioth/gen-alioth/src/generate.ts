@@ -109,6 +109,53 @@ export function generateModule(
   }
 }
 
+export interface BlockSpec {
+  readonly id: string
+  readonly namespace: string
+  readonly name?: string
+  readonly version?: string
+  readonly aliothVersion?: string
+  /** 归属模块 `{ns}/{moduleId}`；骨架期缺省不写——自指即悬空引用（R6 判失败）。 */
+  readonly ownerModule?: string
+  readonly sharingMode?: 'single' | 'shared'
+  readonly consumers?: readonly string[]
+  readonly services?: readonly string[]
+}
+
+/**
+ * Build a block.json **scaffold**, mirroring upstream `create_block_scaffold`
+ * (`Meta/backend/app-agent/src/tools.rs`): the skeleton carries the empty fields the
+ * later stages own — `block: ""` (业务编码由精化阶段回填) and `coordinates: null`
+ * (坐标由本体映射阶段回填；`check-block-json.ts` 的 R5 对 null 跳过校验)。
+ *
+ * One deliberate addition over upstream: `aliothVersion` is filled in here, because
+ * this generator knows the target model version while upstream leaves the field to
+ * `auto-fix-versions.ts`. Our own contract (and R2) requires the key, so emitting a
+ * scaffold that is guaranteed to violate it would be a self-inflicted gate failure.
+ */
+export function generateBlock(spec: BlockSpec): Record<string, unknown> {
+  const sharing: Record<string, unknown> = {
+    mode: spec.sharingMode ?? 'single',
+    consumers: [...(spec.consumers ?? [])],
+  }
+  if (spec.ownerModule !== undefined) {
+    sharing['ownerModule'] = spec.ownerModule
+  }
+  return {
+    id: spec.id,
+    namespace: spec.namespace,
+    name: spec.name ?? spec.id,
+    version: spec.version ?? DEFAULT_VERSION,
+    // 骨架期尚未构建原型：按 §4.1 的仓内约定（仅含 llm-tsx 的块均声明 v1）取 v1。
+    prototypeVersion: 'v1',
+    block: '',
+    services: [...(spec.services ?? [])],
+    sharing,
+    coordinates: null,
+    aliothVersion: spec.aliothVersion ?? DEFAULT_MIN_ALIOTH_VERSION,
+  }
+}
+
 /** Build the app.json object plus one module.json per module. */
 export function generateApp(spec: AppSpec): GeneratedApp {
   const version = spec.version ?? DEFAULT_VERSION

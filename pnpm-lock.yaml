@@ -13961,6 +13961,9 @@ importers:
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
+      '@dsh-alioth/gen-alioth':
+        specifier: workspace:*
+        version: link:../gen-alioth
       '@dsh-alioth/skill-alioth':
         specifier: workspace:*
         version: link:../skill-alioth

@@ -52,6 +52,7 @@ import {
   type ClosureVerdict,
   type DeferredItem,
 } from '@dsh-alioth/verify-alioth'
+import { generateBlock, generateService } from '@dsh-alioth/gen-alioth'
 import { PIPELINE_SHARED_SURFACES, runControlledParallel } from './parallel.ts'
 
 export interface CreateArgs {
@@ -60,6 +61,11 @@ export interface CreateArgs {
   readonly name: string
   readonly modules: ReadonlyArray<{ readonly id: string; readonly name: string }>
   readonly blocks?: readonly string[]
+  /**
+   * 本 run 声明的 service 集合（id）。缺省 = 未声明：`factor-dev` 阶段门按「盘上
+   * 有无 service.json」实例化，不会因此凭空要求产物（见 stage-gates 文档）。
+   */
+  readonly services?: readonly string[]
   readonly entities?: ReadonlyArray<{
     readonly table: string
     readonly name: string
@@ -522,10 +528,47 @@ export function buildPrimitives(
 
     // 5. Block creation — write-once preserved; verify the block artifacts.
     async blockCreation() {
-      const blockFiles = writtenFiles.filter(f => f.endsWith('block.json'))
+      // 骨架落盘（对齐上游 `create_block_scaffold`：`block: ""` / `coordinates: null`
+      // 留待精化与本体映射阶段回填）。**已存在不覆写**（上游 Y4：workflow 技能步骤
+      // 可能已更新过该 block.json，覆写会丢掉模型的工作）。落点与上游一致：
+      // `Pre-Proc/{ns}/Sources/Apps/Blocks/{id}/block.json`——block-extract 阶段门禁读它。
+      const namespaceRoot = path.join(preProcRootOf(preProcRoot), args.namespace)
+      const declared = args.blocks ?? []
+      if (declared.length === 0) {
+        const existing = writtenFiles.filter(file => file.endsWith('block.json'))
+        return {
+          evidence: 'block creation: 本 run 未声明 block（无骨架可写；block 产物由 block 轨道产出）',
+          artifacts: existing,
+        }
+      }
+      const { modelVersion } = await ctx.aliothEnv.ready()
+      const created: string[] = []
+      const kept: string[] = []
+      const artifacts: string[] = []
+      for (const id of declared) {
+        const file = path.join(namespaceRoot, 'Sources', 'Apps', 'Blocks', id, 'block.json')
+        if (await readFile(file, 'utf8').then(() => true, () => false)) {
+          kept.push(id)
+          artifacts.push(file)
+          continue
+        }
+        try {
+          await mkdir(path.dirname(file), { recursive: true })
+          const scaffold = generateBlock({ id, namespace: args.namespace, name: id, aliothVersion: modelVersion })
+          await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, 'utf8')
+          created.push(id)
+          artifacts.push(file)
+        } catch (error) {
+          return {
+            evidence: `GATE-FAIL block creation: ${id} 骨架写出失败（${describe(error)}）`,
+            artifacts,
+          }
+        }
+      }
       return {
-        evidence: `block creation: ${blockFiles.length} block artifacts verified`,
-        artifacts: blockFiles,
+        evidence: `block creation: ${declared.length} declared, ${created.length} scaffold written`
+          + ` (${created.join(', ') || 'none'}), ${kept.length} kept as-is (never overwritten)`,
+        artifacts,
       }
     },
 
@@ -562,10 +605,55 @@ export function buildPrimitives(
 
     // 7. Service API — contract validation already gated by app_write; verify.
     async serviceApi() {
-      const serviceFiles = writtenFiles.filter(f => f.includes('service'))
+      // 骨架落盘（对齐上游 `<ns>/Sources/Apps/Services/{service}/service.json` 布局）。
+      // 取值都有实例依据（AliothStudio Pre-Proc 的真实 service.json：`layer` 5/5 为 1、
+      // `backendCrate` = `<ns小写>-service-<id>`），未据之处如实置为「未产出」：
+      // `hasBackend:false`（后端 crate 由 service 轨道编写，本管线不写）、
+      // `ontology.entities:[]`（实体映射由本体阶段回填）、`domain` 缺省取 id（精化阶段替换）。
+      const namespaceRoot = path.join(preProcRootOf(preProcRoot), args.namespace)
+      const declared = args.services ?? []
+      const created: string[] = []
+      const kept: string[] = []
+      const artifacts: string[] = []
+      for (const id of declared) {
+        const file = path.join(namespaceRoot, 'Sources', 'Apps', 'Services', id, 'service.json')
+        if (await readFile(file, 'utf8').then(() => true, () => false)) {
+          kept.push(id)
+          artifacts.push(file)
+          continue
+        }
+        try {
+          await mkdir(path.dirname(file), { recursive: true })
+          const scaffold = generateService({
+            id,
+            namespace: args.namespace,
+            domain: id,
+            services: [],
+            // layer 1 = 实例侧的既有取值（5/5 真实 service.json 皆 1）
+            layer: 1,
+            dtoDependencies: [],
+            backendCrate: `${args.namespace.toLowerCase()}-service-${id}`,
+            hasBackend: false,
+            hasFrontend: false,
+            ontology: { entities: [] },
+          })
+          await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, 'utf8')
+          created.push(id)
+          artifacts.push(file)
+        } catch (error) {
+          return {
+            evidence: `GATE-FAIL service API: ${id} 骨架写出失败（${describe(error)}）`,
+            artifacts,
+          }
+        }
+      }
+      const existing = writtenFiles.filter(f => f.includes('service'))
       return {
-        evidence: `service API: ${serviceFiles.length} service artifacts contract-validated`,
-        artifacts: serviceFiles,
+        evidence: declared.length === 0
+          ? `service API: 本 run 未声明 service；${existing.length} service artifacts contract-validated`
+          : `service API: ${declared.length} declared, ${created.length} scaffold written`
+            + ` (${created.join(', ') || 'none'}), ${kept.length} kept as-is (never overwritten)`,
+        artifacts: [...new Set([...artifacts, ...existing])],
       }
     },
 
@@ -917,9 +1005,8 @@ export function buildPrimitives(
         modules: args.modules.map(module => module.id),
         // 声明的 block 集：本 run 没声明 block 时该 stage 无可判对象（见 stage-gates 文档）。
         blocks: args.blocks ?? [],
-        // service 目前无声明入口（CreateArgs 无该字段）⇒ 未声明 = 无可判对象；
-        // 引入 service 声明时，这里改传声明集，门即恢复逐项 fail-closed。
-        services: [],
+        // 声明的 service 集：未声明时该 stage 按「盘上有无 service.json」实例化。
+        services: args.services ?? [],
       })
       return outcome.ok
         ? { evidence: `gate ${stage} passed: ${outcome.evidence}`, artifacts: [...outcome.artifacts] }

@@ -1,15 +1,68 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://dsh-alioth.local/schemas/block.json",
-  "title": "Alioth block.json",
-  "description": "Alioth block artifact. Minimal contract; the model distribution publishes no block example yet — apps reference blocks by id only (e.g. block-list-inventory).",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "block.json",
+  "description": "Block artifact contract. Required set = check-block-json.ts R2 (BLOCK_SCHEMA §1.1): id/name/version/services/coordinates/aliothVersion/sharing. `block` and `prototypeVersion` stay optional here because the skeleton stage owns them (§5 骨架容忍: block 为空串、coordinates 为 null，由精化/本体映射阶段回填)。",
   "type": "object",
-  "additionalProperties": true,
-  "required": ["id", "name"],
+  "required": [
+    "id",
+    "name",
+    "version",
+    "services",
+    "coordinates",
+    "aliothVersion",
+    "sharing"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
-    "name": { "type": "string", "minLength": 1 },
-    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-    "module": { "type": "string", "minLength": 1 }
-  }
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "namespace": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+    },
+    "block": {
+      "type": "string"
+    },
+    "prototypeVersion": {
+      "type": "string"
+    },
+    "services": {
+      "type": "array"
+    },
+    "sharing": {
+      "type": "object",
+      "required": [
+        "mode"
+      ],
+      "properties": {
+        "mode": {
+          "enum": [
+            "single",
+            "shared"
+          ]
+        },
+        "ownerModule": {
+          "type": "string"
+        },
+        "consumers": {
+          "type": "array"
+        }
+      }
+    },
+    "coordinates": {},
+    "aliothVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+"
+    }
+  },
+  "additionalProperties": true
 }

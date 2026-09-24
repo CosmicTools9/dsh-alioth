@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { EXTENSION_FILES, generateApp, generateExtensions, generateModule, generateService, generateNamespaceWorkspace, generateServiceCrate, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
+import { EXTENSION_FILES, generateApp, generateBlock, generateExtensions, generateModule, generateService, generateNamespaceWorkspace, generateServiceCrate, sourceModuleDirs, sourceServiceDirs, validateArtifact, validateArtifactWith, type ArtifactSchemas } from '../src/index.ts'
 
 /** Self-contained valid app artifact (hand-written test data). */
 const VALID_APP = {
@@ -118,9 +118,42 @@ describe('gen-alioth service contract', () => {
 })
 
 describe('gen-alioth block contract', () => {
-  it('accepts a minimal block and rejects a nameless one', () => {
-    expect(validateArtifact('block', { id: 'block-list-inventory', name: '库存列表' })).toEqual({ valid: true, errors: [] })
+  it('requires the check-block-json R2 key set, not just id and name', () => {
+    // 契约 = check-block-json.ts 的 REQUIRED_KEYS（BLOCK_SCHEMA §1.1）；只写 id/name
+    // 的「最小块」是真实门禁下的违规产物，契约不得放行。
+    expect(validateArtifact('block', { id: 'block-list-inventory', name: '库存列表' }).valid).toBe(false)
     expect(validateArtifact('block', { id: 'x' }).valid).toBe(false)
+    // 缺坐标/版本/共享声明同样不过
+    const partial = {
+      id: 'block-list-inventory',
+      name: '库存列表',
+      version: '0.1.0',
+      services: [],
+      aliothVersion: '10.0.0',
+      sharing: { mode: 'single' },
+    }
+    expect(validateArtifact('block', partial).valid).toBe(false)
+    expect(validateArtifact('block', { ...partial, coordinates: null })).toEqual({ valid: true, errors: [] })
+    // sharing.mode 是闭集
+    expect(validateArtifact('block', { ...partial, coordinates: null, sharing: { mode: 'chatty' } }).valid).toBe(false)
+  })
+
+  it('emits a scaffold that satisfies its own contract and the upstream skeleton tolerance', () => {
+    const scaffold = generateBlock({ id: 'orders-board', namespace: 'Demo', name: '订单看板', aliothVersion: '10.0.0' })
+    // 骨架面（BLOCK_SCHEMA §5）：业务编码空串、坐标为 null，待精化/本体映射阶段回填
+    expect(scaffold).toMatchObject({
+      id: 'orders-board',
+      namespace: 'Demo',
+      name: '订单看板',
+      block: '',
+      coordinates: null,
+      services: [],
+      sharing: { mode: 'single', consumers: [] },
+      prototypeVersion: 'v1',
+    })
+    expect(validateArtifact('block', scaffold)).toEqual({ valid: true, errors: [] })
+    // 归属模块缺省不写（自指会成悬空引用，R6 判失败）
+    expect('ownerModule' in (scaffold['sharing'] as object)).toBe(false)
   })
 })
 
