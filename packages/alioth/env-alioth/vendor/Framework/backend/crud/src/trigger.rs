@@ -16,6 +16,8 @@ use sqlx::{AssertSqlSafe, PgConnection, PgPool, Row};
 use std::collections::HashMap;
 use trigger_registry::{TriggerContext, TriggerOperation};
 
+use crate::column_types::{placeholder, ColumnMeta};
+
 /// 错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum TriggerCrudError {
@@ -352,8 +354,13 @@ where
         .iter()
         .map(|c| quote_identifier(c))
         .collect::<Result<Vec<_>, _>>()?;
-    let placeholders: Vec<String> = (1..=columns.len()).map(|i| format!("${}", i)).collect();
     let table = qualified_table_name(table_name)?;
+    let col_types = crate::column_types::resolve(pool, table_name).await;
+    let placeholders: Vec<String> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, col)| placeholder(i + 1, col_types.get(col)))
+        .collect();
 
     let sql = format!(
         "INSERT INTO {} AS e ({}) VALUES ({}) RETURNING to_jsonb(e) AS record",
@@ -362,11 +369,10 @@ where
         placeholders.join(", ")
     );
 
-    let col_types = crate::column_types::resolve(pool, table_name).await;
     let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
     for col in &columns {
         let value = record.get(col).unwrap_or(&Value::Null);
-        query = bind_json_value(query, value, col_types.get(col).map(String::as_str));
+        query = bind_json_value(query, value, col_types.get(col).map(ColumnMeta::data_type));
     }
 
     let row = query.fetch_one(executor).await?;
@@ -459,7 +465,11 @@ where
     let mut binds: Vec<(&str, &Value)> = Vec::new();
     for (key, value) in record.iter() {
         if key != "id" {
-            set_clauses.push(format!("{} = ${}", quote_identifier(key)?, binds.len() + 1));
+            set_clauses.push(format!(
+                "{} = {}",
+                quote_identifier(key)?,
+                placeholder(binds.len() + 1, col_types.get(key))
+            ));
             binds.push((key.as_str(), value));
         }
     }
@@ -472,10 +482,9 @@ where
         binds.len() + 1
     );
 
-    let col_types = crate::column_types::resolve(pool, table_name).await;
     let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
     for (key, value) in &binds {
-        query = bind_json_value(query, value, col_types.get(*key).map(String::as_str));
+        query = bind_json_value(query, value, col_types.get(*key).map(ColumnMeta::data_type));
     }
     query = query.bind(id);
 

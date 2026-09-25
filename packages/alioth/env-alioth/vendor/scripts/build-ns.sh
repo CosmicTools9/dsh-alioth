@@ -16,7 +16,7 @@
 # Framework/backend/   ← 根 workspace：共享基础设施 + SSO + Gateway
 # Pre-Proc/{ns}/       ← 独立 workspace，各自有独立的 Cargo.lock + target 目录
 # 构建 gateway binary：build-ns.sh 在 Gateway/backend 下执行
-#   cargo build -p alioth-gateway --no-default-features --features {ns},sso --target-dir Deploy/{ns}/target
+#   cargo build --manifest-path Gateway/host/Cargo.toml -p gateway-host --no-default-features --features {ns},sso --target-dir Deploy/{ns}/target
 # Service crates 跨 workspace 通过 path deps 引用，Cargo 自动解析。
 # 日常开发：cd Pre-Proc/{ns} && cargo check -p {ns}-service-xxx
 
@@ -68,18 +68,18 @@ if [ "$PROFILE" = "release" ]; then
   TARGET_DIR_SUFFIX="release"
   # release: 关闭 incremental（只缓存全量编译产物）
   export CARGO_PROFILE_RELEASE_INCREMENTAL=false
-  # sccache 接线状态**如实报告**（MUST NOT 冒称已启用）：仅当 RUSTC_WRAPPER 指向可用可执行时
-  # 才算启用。仓库 `.cargo/config.toml` 被 gitignore、不随仓库分发，故不能作为启用前提。
-  # 启用方式：export RUSTC_WRAPPER=sccache（或本地不入库的 .cargo/config.toml 声明 rustc-wrapper）。
-  if [ -n "${RUSTC_WRAPPER:-}" ] && command -v "${RUSTC_WRAPPER}" >/dev/null 2>&1; then
-    echo "  sccache: 已启用（RUSTC_WRAPPER=${RUSTC_WRAPPER}）"
-  else
-    echo "  sccache: 未接线（RUSTC_WRAPPER 未设置）——如需启用: export RUSTC_WRAPPER=sccache"
-  fi
 else
   CARGO_FLAGS=""
   TARGET_DIR_SUFFIX="debug"
 fi
+
+# ── sccache 编译缓存接线（唯一实现 = scripts/lib/sccache.sh）────────────────────
+# 状态文案只能由该实现产生（MUST NOT 在本脚本或别处硬编码「已启用」）；未接线/已停用时
+# 由其打印原因与启用方式。接线面覆盖 debug 与 release 两种 profile（跨 ns / 跨 target
+# 目录复用依赖编译），门禁见 scripts/check/check-sccache-wiring.ts。
+# shellcheck source=scripts/lib/sccache.sh
+source "${PROJECT_ROOT}/scripts/lib/sccache.sh"
+sccache_enable_if_available "build-ns ${NS} ${PROFILE}"
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "  Building standalone binary for namespace: $NS"
@@ -120,18 +120,26 @@ if [ "$CLEAN" = true ]; then
   echo ""
 fi
 
+# ── SSO 形态（单一事实源 = Deploy/sso-mode.conf；读取器 = scripts/lib/ns-sso-mode.sh）──
+# embedded → 内嵌 SSO（feature `sso`）；remote → 只反代（feature `sso-remote`）且独立 SSO
+# 与 Gateway 同发布单元（Deploy/{ns}/bin/gateway-sso）。读取器对未登记 ns 非零退出（不做
+# 隐默默认）。契约: openspec/specs/sso-remote-auth-proxy :: per-namespace-sso-mode-contract。
+# shellcheck source=scripts/lib/ns-sso-mode.sh
+source "$PROJECT_ROOT/scripts/lib/ns-sso-mode.sh"
+SSO_FEATURE="$(ns_sso_feature "$NS")"
+
 # ── 构建 ────────────────────────────────────────────────────────────────
 case "$NS" in
   Alioth|WZ|AVIC-CAASEC|SE|Cosmic-Tools)
     TARGET_DIR="$PROJECT_ROOT/Deploy/$NS/bin"
     BINARY_NAME="${NS_LOWER}-server"
-    echo "→ Building Gateway (features=$NS, target=Deploy/$NS/target/)..."
+    echo "→ Building Gateway (namespace=$NS, features=${NS_LOWER},${SSO_FEATURE}, target=Deploy/$NS/target/)..."
     cd "$PROJECT_ROOT/Gateway/backend"
     BINARY_SRC="$PROJECT_ROOT/Deploy/$NS/target/$TARGET_DIR_SUFFIX/alioth-gateway"
     # 生产构建刻意不含 preproc-proxy feature（dev 形态专用）→ 产物无 /preproc/* 与
     # /api/pre_proc/* 未认证反代路由（404）。dev 任务（Gateway/backend/.mise.toml dev）
     # 显式追加 preproc-proxy 保持开发可用。见 openspec change fix-gateway-proxy-standalone-auth。
-    cargo build $CARGO_FLAGS -p alioth-gateway --no-default-features --features "$NS_LOWER,sso" --target-dir "$PROJECT_ROOT/Deploy/$NS/target"
+    cargo build $CARGO_FLAGS --manifest-path "$PROJECT_ROOT/Gateway/host/Cargo.toml" -p gateway-host --no-default-features --features "${NS_LOWER},${SSO_FEATURE}" --target-dir "$PROJECT_ROOT/Deploy/$NS/target"
     ;;
 esac
 
@@ -153,6 +161,24 @@ trim_release_binary "$TARGET_DIR/$BINARY_NAME"
 echo "✅ Binary written: $TARGET_DIR/$BINARY_NAME"
 echo "   Size: $(du -h "$TARGET_DIR/$BINARY_NAME" | cut -f1)"
 echo ""
+
+# ── 独立 SSO 产物（仅 SSO 形态 = remote）──────────────────────────────────
+# remote 形态下 Gateway 不内嵌 SSO，认证 / PDP / JWKS 全走独立进程 ⇒ 独立 SSO MUST 与
+# Gateway 同发布单元（Deploy/{ns}/bin/gateway-sso），否则发布包无法启动该 ns（启动器的
+# SSO 前置进程无可执行）。与 Gateway 共用同一 target 目录 ⇒ 依赖编译缓存复用。
+if [ "$SSO_FEATURE" = "sso-remote" ]; then
+  echo "→ Building standalone SSO (形态=remote, target=Deploy/$NS/target/)..."
+  cd "$PROJECT_ROOT"
+  SSO_BINARY_SRC="$PROJECT_ROOT/Deploy/$NS/target/$TARGET_DIR_SUFFIX/gateway-sso"
+  cargo build $CARGO_FLAGS -p gateway-sso --target-dir "$PROJECT_ROOT/Deploy/$NS/target"
+  mkdir -p "$TARGET_DIR"
+  check_binary_size_threshold "$SSO_BINARY_SRC"
+  install_executable_atomic "$SSO_BINARY_SRC" "$TARGET_DIR/gateway-sso"
+  trim_release_binary "$TARGET_DIR/gateway-sso"
+  echo "✅ Standalone SSO written: $TARGET_DIR/gateway-sso"
+  echo "   Size: $(du -h "$TARGET_DIR/gateway-sso" | cut -f1)"
+  echo ""
+fi
 
 # ── OpenActivity（按需启用，Gateway 构建等位；refactor-openactivity-gateway-parity D15）──
 # 启用判据 = Pre-Proc/{ns}/Open/Apps/*/app.json 存在（组合契约声明外部协同门户）；
@@ -202,16 +228,16 @@ else
 fi
 
 # apps.json 聚合（APP_EXTENSION §4.5）：生产模式 App 发现数据源，随包生成
+# 聚合器 = `scripts/gen-apps-json.ts`（Bun）——**不用 jq**：本机 jq 可能是 jaq，对多输入文件
+# 逐个输出 ⇒ ≥2 个 app 时写出多个顶层文档，Gateway `parse_apps_json` 解析失败、App 发现为空
+# （2026-09-23 实测 Alioth 2 app）
 DEPLOY_ROOT="$PROJECT_ROOT/Deploy/$NS"
-if command -v jq >/dev/null 2>&1 && compgen -G "$PROJECT_ROOT/Pre-Proc/$NS/Apps/*/app.json" >/dev/null; then
-    if jq -n '{appInstances: [inputs]}' "$PROJECT_ROOT"/Pre-Proc/"$NS"/Apps/*/app.json > "$DEPLOY_ROOT/apps.json" 2>/dev/null; then
-        echo "✅ apps.json written: $DEPLOY_ROOT/apps.json ($(jq '.appInstances | length' "$DEPLOY_ROOT/apps.json") apps)"
+if [ -d "$PROJECT_ROOT/Pre-Proc/$NS/Apps" ]; then
+    if bun "$PROJECT_ROOT/scripts/gen-apps-json.ts" "$PROJECT_ROOT/Pre-Proc/$NS/Apps" "$DEPLOY_ROOT/apps.json"; then
+        :
     else
         echo "⚠️  apps.json 生成失败"
     fi
-elif [ -d "$PROJECT_ROOT/Pre-Proc/$NS/Apps" ]; then
-    echo '{"appInstances":[]}' > "$DEPLOY_ROOT/apps.json"
-    echo "⚠️  无 Apps/*/app.json 或 jq 缺失 — apps.json 空聚合"
 fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

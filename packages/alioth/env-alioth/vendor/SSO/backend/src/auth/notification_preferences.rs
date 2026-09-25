@@ -145,7 +145,7 @@ pub async fn put_preferences(
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/auth/me/notification-preferences")
+        web::scope("/me/notification-preferences")
             .route("", web::get().to(get_preferences))
             .route("", web::put().to(put_preferences)),
     );

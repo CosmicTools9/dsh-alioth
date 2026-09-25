@@ -4,6 +4,7 @@ pub mod check_access;
 pub mod client_secret;
 pub mod crypto;
 pub mod email;
+pub mod identifier;
 pub mod identity;
 pub mod introspect;
 pub mod jwt;
@@ -30,6 +31,7 @@ pub mod sms;
 pub mod social;
 pub mod token;
 pub mod webauthn;
+pub mod wechat_miniapp;
 pub mod zchat;
 
 /// 复用 login 流程的 refresh token DB 校验（zchat refresh grant 使用，

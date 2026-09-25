@@ -19,8 +19,8 @@
 use actix_web::{test, web, App};
 use common::error::AliothError;
 use crud::{
-    crud_ref_routes, crud_routes, crud_routes_with_extensions, crud_routes_with_refs,
-    AliothDbEntity, GenericRepository, HasReferenceJoins, Identifiable,
+    crud_ref_routes, crud_routes, crud_routes_with_refs, AliothDbEntity, GenericRepository,
+    HasReferenceJoins, Identifiable,
 };
 use sqlx::PgPool;
 
@@ -202,7 +202,7 @@ async fn numeric_id_route_still_works() {
     );
 }
 
-/// 另两个工厂（with_refs / with_extensions）的 `/{id}` 同样约束、同样注册顺序约定。
+/// 另两个工厂（with_refs / 标准 crud_routes）的 `/{id}` 同样约束、同样注册顺序约定。
 #[actix_web::test]
 async fn other_factories_also_constrained() {
     let app_refs = test::init_service(
@@ -231,13 +231,9 @@ async fn other_factories_also_constrained() {
         App::new()
             .app_data(web::Data::new(lazy_pool()))
             .configure(crud_ref_routes::<ProbeEntity, AliothError>("/probe3"))
-            .configure(crud_routes_with_extensions::<
-                ProbeEntity,
-                Dto,
-                Dto,
-                Repo,
-                AliothError,
-            >("/probe3")),
+            .configure(crud_routes::<ProbeEntity, Dto, Dto, Repo, AliothError>(
+                "/probe3",
+            )),
     )
     .await;
     let resp = test::TestRequest::get()
@@ -246,14 +242,8 @@ async fn other_factories_also_constrained() {
         .await;
     let status = resp.status().as_u16();
     let text = body_text(resp).await;
-    assert_ne!(
-        status, 400,
-        "with_extensions: /refs 被吞（回归）：body={text}"
-    );
-    assert_ne!(
-        status, 404,
-        "with_extensions: refs 路由不应 404：body={text}"
-    );
+    assert_ne!(status, 400, "crud_routes: /refs 被吞（回归）：body={text}");
+    assert_ne!(status, 404, "crud_routes: refs 路由不应 404：body={text}");
 }
 
 /// 反向回归：refs 后注册（旧调用形态）时 refs 不可达——固化「错误形态会失败」的判定面，

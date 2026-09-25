@@ -80,14 +80,17 @@ pub async fn list_users(
     let offset = query.offset.unwrap_or(0).max(0);
     let q = search.q.as_deref().unwrap_or("").trim();
     // 非法筛选值归一为空串（不过滤）——SQL 侧以 $='' 短路，避免整表被排除
-    let status = match search.status.as_deref() {
-        Some(s @ ("active" | "disabled")) => s,
-        _ => "",
-    };
-    let user_type = match search.user_type.as_deref() {
-        Some(t @ ("local" | "ldap")) => t,
-        _ => "",
-    };
+    // （等价于原 `match … { Some(s @ ("active" | "disabled")) => s, _ => "" }`）
+    let status = search
+        .status
+        .as_deref()
+        .filter(|s| matches!(*s, "active" | "disabled"))
+        .unwrap_or("");
+    let user_type = search
+        .user_type
+        .as_deref()
+        .filter(|t| matches!(*t, "local" | "ldap"))
+        .unwrap_or("");
     let dir = match search.order.as_deref() {
         Some("desc") => "DESC",
         _ => "ASC",

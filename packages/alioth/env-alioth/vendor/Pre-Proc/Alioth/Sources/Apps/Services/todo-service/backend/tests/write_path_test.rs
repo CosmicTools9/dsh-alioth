@@ -55,10 +55,28 @@ async fn create_and_update_go_through_trigger_channel() {
 
     // ── ① create：经通道（裸表名），系统管理列注入 ────────────────────────────
     let created = repo
-        .create(CreateTodoRequest {}, 7)
+        .create(
+            CreateTodoRequest {
+                notice: Some("待办状态-通道".to_string()),
+                code: None,
+                flag: "start".to_string(),
+                enable: Some(true),
+                comments: None,
+            },
+            7,
+        )
         .await
         .expect("create 经触发器通道（已带引号声明形态 MUST 归一为裸表名）");
     assert!(created.id > 0, "行 MUST 落库并回读 id");
+    // 枚举列（`status_flag`，NOT NULL）：写径 MUST 给占位符补 `::"udt"` 强转，
+    // 否则文本参数写枚举列直接违约（`column "flag" is of type status_flag but expression is of type text`）。
+    assert_eq!(
+        created.flag.as_deref(),
+        Some("start"),
+        "`flag` 枚举列 MUST 经强转写入并按 `flag::text` 回读"
+    );
+    assert_eq!(created.notice.as_deref(), Some("待办状态-通道"));
+    assert_eq!(created.enable, Some(true));
     let (created_by, updated_by): (Option<i64>, Option<i64>) = sqlx::query_as(SYSCOLS_SQL)
         .bind(created.id)
         .fetch_one(&pool)
@@ -81,10 +99,30 @@ async fn create_and_update_go_through_trigger_channel() {
 
     // ── ② update：经通道；不存在的行返回 None ────────────────────────────────
     let updated = repo
-        .update(created.id, UpdateTodoRequest {}, 8)
+        .update(
+            created.id,
+            UpdateTodoRequest {
+                notice: None,
+                code: None,
+                flag: Some("doing".to_string()),
+                enable: None,
+                comments: None,
+            },
+            8,
+        )
         .await
         .expect("update 经触发器通道");
-    assert!(updated.is_some(), "已存在行 update MUST 返回 Some");
+    let updated = updated.expect("已存在行 update MUST 返回 Some");
+    assert_eq!(
+        updated.flag.as_deref(),
+        Some("doing"),
+        "UPDATE 的枚举列 MUST 同样经 `::\"udt\"` 强转改写"
+    );
+    assert_eq!(
+        updated.notice.as_deref(),
+        Some("待办状态-通道"),
+        "未提供的字段 MUST 保持原值（部分更新语义）"
+    );
     let (_, updated_by_after): (Option<i64>, Option<i64>) = sqlx::query_as(SYSCOLS_SQL)
         .bind(created.id)
         .fetch_one(&pool)
@@ -96,7 +134,17 @@ async fn create_and_update_go_through_trigger_channel() {
         "updated_by_id MUST 被本次调用者改写"
     );
     let missing = repo
-        .update(i64::MAX, UpdateTodoRequest {}, 8)
+        .update(
+            i64::MAX,
+            UpdateTodoRequest {
+                notice: None,
+                code: None,
+                flag: None,
+                enable: None,
+                comments: None,
+            },
+            8,
+        )
         .await
         .expect("update 缺失行不报错");
     assert!(missing.is_none(), "缺失行 update MUST 返回 None");

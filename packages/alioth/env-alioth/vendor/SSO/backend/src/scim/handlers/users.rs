@@ -205,13 +205,32 @@ pub async fn create_user(
     };
 
     // 幂等：已存在（按 email）则更新，否则插入。
-    let existing: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = $1 AND is_active = true",
+    // allow-duplicate-email-accounts：email 可属多个账号 ⇒ 仅在**唯一**匹配时更新；
+    // 多匹配无法判定目标 ⇒ 409（要求调用方以 externalId / userName 显式定位，MUST NOT 任取一行）。
+    let mut candidates = crate::auth::identifier::resolve_candidate_ids(
+        pool.get_ref(),
+        crate::auth::identifier::IdentifierColumn::Email,
+        &email,
     )
-    .bind(&email)
-    .fetch_optional(pool.get_ref())
     .await
-    .unwrap_or(None);
+    .unwrap_or_default();
+    if !candidates.is_empty() {
+        candidates = sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM isahl_auth.auth_users \
+             WHERE id = ANY($1) AND is_active = true ORDER BY id",
+        )
+        .bind(&candidates)
+        .fetch_all(pool.get_ref())
+        .await
+        .unwrap_or_default();
+    }
+    if candidates.len() > 1 {
+        return error_response(
+            actix_web::http::StatusCode::CONFLICT,
+            "email matches multiple accounts; locate the target by externalId or userName",
+        );
+    }
+    let existing: Option<(i64,)> = candidates.first().map(|id| (*id,));
 
     let user_id = if let Some((id,)) = existing {
         let _ = sqlx::query(

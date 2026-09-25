@@ -45,6 +45,7 @@ pub mod column_types;
 pub mod document_ingester;
 pub mod entity;
 pub mod error;
+pub mod ext_hooks;
 pub mod filter;
 pub mod fk_index;
 pub mod generic_repository;
@@ -80,12 +81,10 @@ pub use document_ingester::{ingest_document, DocumentIngester};
 pub use error::CrudError;
 pub use generic_repository::GenericRepository;
 pub use handler::{
-    crud_batch_delete, crud_create, crud_create_with_extensions, crud_create_with_refs,
-    crud_delete, crud_delete_with_extensions, crud_get, crud_get_refs, crud_get_with_refs,
-    crud_list, crud_list_refs, crud_ref_routes, crud_routes, crud_routes_with_extensions,
-    crud_routes_with_refs, crud_update, crud_update_with_extensions, crud_update_with_refs,
-    extract_user_id, parse_authorized_columns, parse_visible_ids, register_created_resource_ngac,
-    resolve_dk_ctx,
+    crud_batch_delete, crud_create, crud_create_with_refs, crud_delete, crud_get, crud_get_refs,
+    crud_get_with_refs, crud_list, crud_list_refs, crud_ref_routes, crud_routes,
+    crud_routes_with_refs, crud_update, crud_update_with_refs, extract_user_id,
+    parse_authorized_columns, parse_visible_ids, register_created_resource_ngac, resolve_dk_ctx,
 };
 pub use ontology_handler::{
     ontology_routes, ontology_routes_with_reference, reference_routes, LeafListResponse,

@@ -24,19 +24,30 @@ if [ -z "$action" ] || [ -z "$db_name" ]; then
   exit 1
 fi
 
-# ── 仅允许在 dev/test 库上执行 mutation ────────────────────────────
+# ── 目标库合法性：namespace 库由 ns 集合派生（lib/ns-db-name.sh 单一实现）──
+# 为什么不是静态 case 名单：名单会随 ns 集合扩展漂移（曾只有 wz|avic_caasec，导致
+# cosmic_tools/se 等库落 `Unknown database` 被误拒——执行面阻塞）。派生面不可得即中止，
+# MUST NOT 回退静态名单。
+if [[ ! -f "${SCRIPT_DIR}/../db/lib/ns-db-name.sh" ]]; then
+    echo "❌ REFUSED: ns↔库名映射库缺失（scripts/db/lib/ns-db-name.sh）——无法判定目标库合法性（fail-closed）" >&2
+    exit 1
+fi
+# shellcheck source=../db/lib/ns-db-name.sh
+source "${SCRIPT_DIR}/../db/lib/ns-db-name.sh"
+
 case "$db_name" in
-  aliothstudio_dev|aliothstudio_test|wz|avic_caasec)
-    ;;
   aliothstudio|aliothstudio_pre)
     echo "❌ REFUSED: Cannot mutate $db_name — production/pre-release DB (AGENTS.md §DB_TIER_ISOLATION)" >&2
     exit 1
     ;;
-  *)
-    echo "❌ REFUSED: Unknown database '$db_name'" >&2
-    exit 1
-    ;;
 esac
+
+if [[ "$db_name" != "aliothstudio_dev" && "$db_name" != "aliothstudio_test" ]]; then
+    if ! ns_db_is_known "$db_name"; then
+        echo "❌ REFUSED: Unknown database '$db_name'（非 dev/test，亦不属 ns 集合）" >&2
+        exit 1
+    fi
+fi
 
 BACKUP_DIR="${PROJECT_ROOT}/Backup/ad-hoc"
 

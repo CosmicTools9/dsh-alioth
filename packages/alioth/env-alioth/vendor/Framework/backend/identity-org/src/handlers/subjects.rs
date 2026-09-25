@@ -1101,9 +1101,9 @@ pub async fn ensure_subject_view_pairs(
     user_id: i64,
 ) -> Result<Vec<i64>, ApiError> {
     if let Some(post_id) = position_id {
-        let exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM \"isahl\".\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
-    )
+        let exists: bool = sqlx::query_scalar(concat!(
+        "SELECT COUNT(*) > 0 FROM \"isahl\".\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL AND ", common::real_position_row!()
+    ))
     .bind(post_id)
     .fetch_one(&mut **tx)
     .await
@@ -1238,12 +1238,15 @@ pub async fn sync_view_tags(
 
 /// 主体证照写入单元（`POST /subjects` identities 分支与集成测试共用的唯一实现）。
 ///
-/// 幂等契约（change: fix-subject-identity-write-idempotency）：
-/// - `code` = `identity` = 证件号（口径同 `Pre-Proc/WZ/seed/*.sql` 种子判重键）：同一证件号
-///   在同库内至多一行活动证照——已存在则**复用其 id**（不新建）；复用边界 = 同一统一社会
-///   信用代码属同一法人（同一主体同一证照），非跨主体共享证照。
+/// 幂等契约（change: fix-subject-identity-write-idempotency；判重域口径见
+/// change `align-storage-issuer-and-holding` §D3）：
+/// - 证件号 = 外部机构核发的标识 ⇒ 在 `zc_id_identity` 中**同值同分类一行**：写径按
+///   `upper(identity)` + 分类 find-or-create（命中**复用其 id**，不新建）；软删（失效）行
+///   不参与 ⇒ 保留「身份失效后重新关联」通道。
+/// - **跨主体重复注册拒绝**：命中的身份行已挂**其他实体**（存在 `ref_left <> 本主体` 的活动
+///   桥行）⇒ 409（`Conflict`）——同证件号 MUST NOT 静默挂到第二个主体（判重域 = 全局）。
 /// - 桥行 `zc_id_entity_rr_identity` 按 `(ref_left=主体, ref_right=证照)` 活动对唯一
-///   （NOT EXISTS 守卫）：重复建档 / 种子重放不叠桥。
+///   （NOT EXISTS 守卫）：同主体重复建档 / 种子重放不叠桥（幂等）。
 #[allow(clippy::too_many_arguments)] // 证照建档字段集（实体+证件+分类+操作者）——参数即领域，无聚合对象可复用
 pub async fn write_subject_identity(
     tx: &mut sqlx::Transaction<'_, Postgres>,
@@ -1256,16 +1259,36 @@ pub async fn write_subject_identity(
     user_id: i64,
 ) -> Result<i64, ApiError> {
     let existing: Option<i64> = sqlx::query_scalar(
-        r#"SELECT id FROM "isahl"."zc_id_identity" WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
+        r#"SELECT id FROM "isahl"."zc_id_identity"
+           WHERE upper(identity) = upper($1) AND ck_category = $2 AND deleted_at IS NULL
+           ORDER BY id LIMIT 1"#,
     )
     .bind(cert_no)
+    .bind(category_id)
     .fetch_optional(&mut **tx)
     .await
     .map_err(ApiError::from_sqlx)?;
 
     let identity_id: i64 = match existing {
-        // 复用既有活动行（同 code = 同证件号 = 同一法人同一证照）
-        Some(id) => id,
+        Some(id) => {
+            // 跨主体判重（§D3：判重域全局）：该证件号已挂其他实体 ⇒ 拒绝，MUST NOT 共享
+            let hung_elsewhere: bool = sqlx::query_scalar(
+                r#"SELECT COUNT(*) > 0 FROM "isahl"."zc_id_entity_rr_identity"
+                   WHERE ref_right = $1 AND ref_left <> $2 AND deleted_at IS NULL"#,
+            )
+            .bind(id)
+            .bind(subject_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(ApiError::from_sqlx)?;
+            if hung_elsewhere {
+                return Err(ApiError::Conflict(format!(
+                    "证件号已挂其他主体: {cert_no}（外部核发标识同值同分类全局唯一；如需改绑请先解除原主体证照）"
+                )));
+            }
+            // 复用既有活动行（同主体重复建档 / 种子重放 = 幂等）
+            id
+        }
         None => {
             // 坐标三元组（§6.12 声明即必须）：Identity = JE/FJA/↑_DA（identity-org
             // repository/ontology_binding.rs coords_for_entity("Identity") 静态绑定），
@@ -1707,7 +1730,8 @@ async fn soft_delete_subject_relations(
 /// - **级联白名单**：只软删「该主体自身的关系行」——证照桥 / 联系人链 / 账户与储位归属桥 /
 ///   视角关联行及其标签 / 任职-成员桥 / 合作评价行；MUST NOT 触碰业务单据面（合同、账单、委托、
 ///   运单、审批、审计等引用主体的行 = 业务历史，读路径按主体 `deleted_at` 过滤即可）与可共享
-///   本体行（`zc_id_identity` 证照本体按 `code` 复用、`zc_id_stor-acc-cash`/`zc_id_stor-plc-asset`
+///   本体行（`zc_id_identity` 证照本体按「值 + 分类」全局复用——同值同分类活动行唯一，
+///   只删桥；见 `align-storage-issuer-and-holding` §D3）、`zc_id_stor-acc-cash`/`zc_id_stor-plc-asset`
 ///   储元本体可被其他归属桥引用——只删桥，同 `delete_subject_account` 先例）；
 /// - **共享守卫**：联系人链仅在无其他活动引用（其他实体桥 / 任职桥 `ref_right`）时软删；
 ///   `POST-AUTO-<主体id>` 自动岗位仅在无其他主体活动关联行时软删（显式/共享岗位不碰）。

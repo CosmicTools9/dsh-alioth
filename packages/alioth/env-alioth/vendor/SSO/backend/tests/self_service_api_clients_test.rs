@@ -43,7 +43,7 @@ async fn ensure_user(pool: &PgPool, name: &str, email: &str) -> i64 {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), $1, $2, 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .bind(name)
     .bind(email)

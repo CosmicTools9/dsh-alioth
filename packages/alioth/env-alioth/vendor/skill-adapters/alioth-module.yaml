@@ -1,6 +1,6 @@
 name: alioth-module
 description: "Module 级高保真原型设计 — 能力发现 → Block 分发 → 组装构建 → 视觉验证"
-version: "2.2"
+version: "2.3"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
@@ -48,7 +48,6 @@ tracks:
         inputs:
           - "Pre-Proc/{ns}/Prototypes/Modules/{module}/block-briefs.json"
           - "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/module.json"
-          - "Pre-Proc/Alioth/Prototypes/Modules/system-settings/llm-tsx/module.tsx"
         gates:
           - program: "bun"
             args: ["scripts/check/check-module-contract.mjs", "Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx"]
@@ -96,4 +95,4 @@ tracks:
         gates:
           - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/m-v*.html"
 source:
-  content_sha256: 7d457932946d48898eef12515b77cc29f518f9c8962e3c05fbfc62ccec62804c
+  content_sha256: e6dc16ee60efe7f206be3b9f78200108d9f801f8c9baa88503f816d9d5802c14

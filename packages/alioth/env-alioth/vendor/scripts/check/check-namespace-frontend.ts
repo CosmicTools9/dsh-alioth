@@ -17,6 +17,8 @@ import { existsSync, readFileSync, statSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative, resolve } from 'path';
 import { js } from '../lib/parsers.ts';
+// @ts-ignore — 框架 vite 预设为 JS 模块（无 .d.ts），按其运行时契约使用
+import { defineModuleViteConfig } from '../../Framework/frontend/config/vite/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = resolve(__filename, '..');
@@ -241,6 +243,36 @@ function walkAst(node: unknown, visit: (n: Record<string, unknown>) => void): vo
   }
 }
 
+/**
+ * 读取框架 vite 预设（`@alioth/config/vite`）的**真实**构建配置。
+ *
+ * external / lib.formats 的单一事实源在预设里：使用预设的模块不内联声明它们，
+ * 因此门禁不能再只读内联 AST（否则收敛到预设的模块被误判 MUST 失败——2026-09-23
+ * 实测：预设 external 覆盖全部声明共享依赖，内联读取却得到 "none"）。
+ * 这里调用预获取其真值参与判定：预设若漏覆盖某依赖，门禁仍会如实报 FAIL。
+ */
+function presetBuildConfig(modulePath: string): Record<string, unknown> | undefined {
+  try {
+    const moduleName = modulePath.split('/').slice(-2)[0];
+    const produced: unknown = defineModuleViteConfig({ rootDir: modulePath, moduleName });
+    const resolved =
+      typeof produced === 'function'
+        ? (produced as (env: { mode: string; command: string }) => unknown)({
+            mode: 'production',
+            command: 'build',
+          })
+        : produced;
+    return (resolved as { build?: Record<string, unknown> } | undefined)?.build;
+  } catch (err) {
+    // 静默失败会让「用了预设」的模块被误判缺失 external —— 必须可见。
+    console.error(
+      `[check-namespace-frontend] 读取框架预设失败（${modulePath}）:`,
+      err instanceof Error ? err.message : err,
+    );
+    return undefined;
+  }
+}
+
 function parseViteConfig(modulePath: string): {
   ast?: unknown;
   defaultExport?: Record<string, unknown>;
@@ -326,18 +358,32 @@ function checkModule(modulePath: string, baseline: BaselineEntry[]): ModuleRepor
         configObject = args?.[0];
       }
 
+      const usesPreset = hasDefineModuleViteConfigImport(ast);
+      // 预设使用时：lib.formats / rollupOptions.external 的事实源在预设里，读其**真值**参与
+      // 判定（预设漏覆盖仍会 FAIL），而不是仅凭「用了预设」放行。
+      const presetBuild = usesPreset ? presetBuildConfig(modulePath) : undefined;
+      const presetLib = presetBuild?.lib as { formats?: unknown } | undefined;
+      const presetRollup = presetBuild?.rollupOptions as { external?: unknown } | undefined;
       const buildNode = configObject ? getPropertyValue(configObject, 'build') : undefined;
       const libNode = buildNode ? getPropertyValue(buildNode, 'lib') : undefined;
       const formatsNode = libNode ? getPropertyValue(libNode, 'formats') : undefined;
-      const formats = getStringValues(formatsNode);
+      const formats = usesPreset
+        ? Array.isArray(presetLib?.formats)
+          ? (presetLib.formats as string[])
+          : []
+        : getStringValues(formatsNode);
       if (!formats.includes('es')) {
         add(
           'vite.lib.formats',
           'fail',
-          `build.lib.formats MUST include "es" (got: ${formats.join(', ') || 'none'})`,
+          `build.lib.formats MUST include "es" (got: ${formats.join(', ') || 'none'}${usesPreset ? ' [来自框架预设]' : ''})`,
         );
       } else {
-        add('vite.lib.formats', 'pass', 'build.lib.formats includes "es"');
+        add(
+          'vite.lib.formats',
+          'pass',
+          usesPreset ? 'build.lib.formats includes "es"（来自框架预设）' : 'build.lib.formats includes "es"',
+        );
       }
 
       const pkg = parseJsonFile(packageJsonPath);
@@ -359,10 +405,22 @@ function checkModule(modulePath: string, baseline: BaselineEntry[]): ModuleRepor
 
       const rollupOptions = buildNode ? getPropertyValue(buildNode, 'rollupOptions') : undefined;
       const externalNode = rollupOptions ? getPropertyValue(rollupOptions, 'external') : undefined;
-      const externals = getStringValues(externalNode);
-      // Rollup 允许 external 使用正则字面量（如 /^@alioth(\/.*)?$/），
-      // 此处同时提取正则的 source 以便识别可证明覆盖的前缀。
-      const regexExternals: string[] = getRegexLiteralSources(externalNode);
+      // Rollup 允许 external 使用正则字面量（如 /^@alioth(\/.*)?$/），此处同时提取正则
+      // 的 source 以便识别可证明覆盖的前缀。使用框架预设时 external 的事实源在预设里
+      // （真值 string | RegExp），一并纳入覆盖判定。
+      const presetExternalValues =
+        usesPreset && Array.isArray(presetRollup?.external) ? (presetRollup.external as unknown[]) : [];
+      const externals = [
+        ...getStringValues(externalNode),
+        ...presetExternalValues.filter((v): v is string => typeof v === 'string'),
+      ];
+      const regexExternals: string[] = [
+        ...getRegexLiteralSources(externalNode),
+        // 真实 RegExp → 还原为 regexCoversDep 期望的源码形态（/pattern/flags）
+        ...presetExternalValues
+          .filter((v): v is RegExp => v instanceof RegExp)
+          .map((re) => `/${re.source}/${re.flags}`),
+      ];
       const externalSet = new Set(externals);
       const missingExternals: string[] = [];
       for (const dep of declaredSharedDeps) {

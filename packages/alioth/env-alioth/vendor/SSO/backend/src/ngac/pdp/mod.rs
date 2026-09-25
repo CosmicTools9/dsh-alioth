@@ -507,6 +507,64 @@ impl Pdp {
     }
 }
 
+/// 逐对合并明细（供 explain 完备 steps 与影响预览 before/after 记录）。
+#[derive(Debug)]
+pub struct PairOutcome {
+    pub ua_id: i64,
+    pub oa_id: i64,
+    pub decision: Decision,
+    pub rules: Vec<MatchedRule>,
+}
+
+impl Pdp {
+    /// deny-overrides 全局合并 + admin 遍历后兜底（NGAC_SPEC §2.5）——**唯一实现**。
+    ///
+    /// 在给定图快照上遍历 (UA 闭包 × OA 闭包) 全部对：任一对 Deny → 终态 Deny；否则
+    /// 任一 Permit → Permit；全不适用 → `is_admin` 时 Permit（admin 治理豁免 = 遍历后
+    /// 兜底——仅在无匹配时生效，显式 prohibition 对 admin 同样生效），否则 NotApplicable。
+    /// 遍历顺序不影响结果；明细记录全部参与求值的 (UA, OA) 对（不早停）。
+    ///
+    /// 消费方 MUST 调本方法，MUST NOT 自带第二份合并循环：`decide_access` /
+    /// `explain_access` / 访问审查（review）/ 删除影响预览（impact）。策略矩阵的 cell 级
+    /// 索引路径为规则投影面的性能特化（无「用户决策」语境，admin 兜底不适用），其语义
+    /// 由等价性测试守门。
+    pub fn evaluate_merge_in(
+        &self,
+        pg: &PolicyGraph,
+        ua_closure_ids: &[i64],
+        oa_closure_ids: &[i64],
+        operation: &str,
+        ctx: &ConditionContext,
+        is_admin: bool,
+    ) -> (Decision, Vec<PairOutcome>) {
+        let mut outcomes: Vec<PairOutcome> = Vec::new();
+        let mut saw_permit = false;
+        for &ua in ua_closure_ids {
+            for &oa in oa_closure_ids {
+                let (decision, rules) = self.evaluate_pair_in(pg, ua, oa, operation, ctx);
+                if decision == Decision::Permit {
+                    saw_permit = true;
+                }
+                outcomes.push(PairOutcome {
+                    ua_id: ua,
+                    oa_id: oa,
+                    decision,
+                    rules,
+                });
+            }
+        }
+        let saw_deny = outcomes.iter().any(|o| o.decision == Decision::Deny);
+        let decision = if saw_deny {
+            Decision::Deny
+        } else if saw_permit || is_admin {
+            Decision::Permit
+        } else {
+            Decision::NotApplicable
+        };
+        (decision, outcomes)
+    }
+}
+
 impl Default for Pdp {
     fn default() -> Self {
         Self::new()
@@ -1131,5 +1189,144 @@ mod tests {
             .execute(&pool)
             .await
             .ok();
+    }
+
+    // ── evaluate_merge_in（deny-overrides + admin 遍历后兜底，唯一合并实现）────────
+
+    fn mk_right(pg: &PolicyGraph, id: i64, name: &str) {
+        pg.add_access_right(NgacAccessRight {
+            id,
+            o_name: name.to_string(),
+            applicable_types: Vec::new(),
+            is_system: false,
+        });
+    }
+
+    fn mk_assoc(pg: &PolicyGraph, id: i64, ua: i64, oa: i64, rights: &[i64]) {
+        pg.add_association(NgacAssociation {
+            id,
+            fk_user_attribute: ua,
+            fk_object_attribute: oa,
+            ak_access_rights: rights.to_vec(),
+            fk_policy_class: 1,
+            conditions: None,
+        });
+    }
+
+    fn mk_prohibition(pg: &PolicyGraph, id: i64, ua: i64, oa: i64, rights: &[i64], active: bool) {
+        pg.add_prohibition(NgacProhibition {
+            id,
+            o_name: format!("proh-{id}"),
+            fk_user_attribute: ua,
+            fk_object_attribute: oa,
+            ak_access_rights: rights.to_vec(),
+            is_active: active,
+            conditions: None,
+        });
+    }
+
+    fn ctx_now() -> ConditionContext {
+        ConditionContext {
+            now: Utc::now(),
+            user_ua_names: Vec::new(),
+            oa_closure_names: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn merge_deny_overrides_across_pairs() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+        mk_assoc(&pg, 10, 100, 200, &[1]); // ua=100 × oa=200 → Permit
+        mk_prohibition(&pg, 20, 101, 201, &[1], true); // ua=101 × oa=201 → Deny
+
+        let (d, _) =
+            pdp.evaluate_merge_in(&pg, &[100, 101], &[200, 201], "read", &ctx_now(), false);
+        assert_eq!(d, Decision::Deny);
+        // 遍历顺序不影响结果
+        let (d2, _) =
+            pdp.evaluate_merge_in(&pg, &[101, 100], &[201, 200], "read", &ctx_now(), false);
+        assert_eq!(d2, Decision::Deny);
+    }
+
+    #[test]
+    fn merge_permit_when_only_allow() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+        mk_assoc(&pg, 10, 100, 200, &[1]);
+
+        let (d, _) = pdp.evaluate_merge_in(&pg, &[100], &[200], "read", &ctx_now(), false);
+        assert_eq!(d, Decision::Permit);
+    }
+
+    #[test]
+    fn merge_not_applicable_without_matches() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+
+        let (d, _) = pdp.evaluate_merge_in(&pg, &[100], &[200], "read", &ctx_now(), false);
+        assert_eq!(d, Decision::NotApplicable);
+    }
+
+    #[test]
+    fn merge_admin_fallback_permits_when_all_not_applicable() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+        mk_assoc(&pg, 10, 100, 200, &[1]); // 存在 association，但不在本闭包对上
+
+        let (d, _) = pdp.evaluate_merge_in(&pg, &[999], &[888], "read", &ctx_now(), true);
+        assert_eq!(d, Decision::Permit, "admin 遍历后兜底：全不适用 → Permit");
+    }
+
+    #[test]
+    fn merge_admin_still_denied_by_prohibition() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+        mk_prohibition(&pg, 20, 999, 888, &[1], true);
+
+        let (d, _) = pdp.evaluate_merge_in(&pg, &[999], &[888], "read", &ctx_now(), true);
+        assert_eq!(
+            d,
+            Decision::Deny,
+            "deny-overrides 无例外：prohibition 约束 admin"
+        );
+    }
+
+    #[test]
+    fn merge_conditions_fail_closed() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+        // 时间窗未到的 prohibition → 不满足 → 不扣减
+        pg.add_prohibition(NgacProhibition {
+            id: 20,
+            o_name: "proh-future".to_string(),
+            fk_user_attribute: 100,
+            fk_object_attribute: 200,
+            ak_access_rights: vec![1],
+            is_active: true,
+            conditions: Some(serde_json::json!({ "not_before": "2999-01-01T00:00:00Z" })),
+        });
+        mk_assoc(&pg, 10, 100, 200, &[1]);
+
+        let (d, _) = pdp.evaluate_merge_in(&pg, &[100], &[200], "read", &ctx_now(), false);
+        assert_eq!(d, Decision::Permit);
+    }
+
+    #[test]
+    fn merge_inactive_prohibition_not_denying() {
+        let pdp = Pdp::new();
+        let pg = PolicyGraph::new();
+        mk_right(&pg, 1, "read");
+        mk_assoc(&pg, 10, 100, 200, &[1]);
+        mk_prohibition(&pg, 20, 100, 200, &[1], false); // is_active=false
+
+        let (d, _) = pdp.evaluate_merge_in(&pg, &[100], &[200], "read", &ctx_now(), false);
+        assert_eq!(d, Decision::Permit);
     }
 }

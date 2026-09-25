@@ -85,6 +85,20 @@ pub trait SessionStorePort: Send + Sync {
     async fn delete_session(&self, session_id: i64, user_id: i64) -> Result<(), String>;
 }
 
+/// 消息级 meta 写径字段（写端一束；8 参 → 结构体，clippy::too_many_arguments）。
+///
+/// 全 `None` 字段 = 不覆盖既有值（与 upsert 的 `COALESCE` 同语义）；`agent_code`
+/// 空串 = 用户消息（与表 DEFAULT 同语义）。
+#[derive(Clone, Copy, Default)]
+pub struct MessageMetaFields<'a> {
+    pub agent_code: &'a str,
+    pub structured: Option<&'a Value>,
+    pub usage: Option<&'a Value>,
+    pub attachments: Option<&'a Value>,
+    pub knowledge_refs: Option<&'a Value>,
+    pub tool_calls: Option<&'a Value>,
+}
+
 #[async_trait]
 pub trait MessageStorePort: Send + Sync {
     /// `recipients` = 参与方联系方式 id（`zc_id_message_rr_recipients.ref_right`），
@@ -118,7 +132,7 @@ pub trait MessageStorePort: Send + Sync {
         session_id: i64,
     ) -> Result<Option<MessageRow>, String>;
     /// 写消息级 meta（isahl_auth.chat_message_meta，upsert by msg_id）。
-    /// 全部字段 Option：None 字段不覆盖既有值（attachments 语义同）。
+    /// 字段语义见 [`MessageMetaFields`]（None 不覆盖既有值；attachments 语义同）。
     /// `tool_calls` = 本轮工具调用记录（E7；含截断输出）。读取侧经
     /// `META_SELECT` 回读后，由历史重建渲染**有界注记**（单调用 ≤300 / 单条 ≤600
     /// 字符，批 ④ `tool-trace-cross-turn`）——非原始输出整体回灌。详见
@@ -127,12 +141,7 @@ pub trait MessageStorePort: Send + Sync {
         &self,
         msg_id: i64,
         session_id: i64,
-        agent_code: &str,
-        structured: Option<&Value>,
-        usage: Option<&Value>,
-        attachments: Option<&Value>,
-        knowledge_refs: Option<&Value>,
-        tool_calls: Option<&Value>,
+        fields: MessageMetaFields<'_>,
     ) -> Result<(), String>;
     /// 用户消息反馈（isahl_auth.chat_message_feedback，toggle upsert）：
     /// 同 (msg_id, user_id) 同 rating 再点 → 删除（返回 None）；不同 rating/新增 → upsert。

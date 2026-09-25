@@ -52,7 +52,7 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
            VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (email) DO NOTHING"#,
+           ON CONFLICT (name) DO NOTHING"#,
     )
     .bind(email)
     .bind(&username)
@@ -539,7 +539,7 @@ async fn test_explain_rejects_non_admin() {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
            VALUES (isahl.gen_next_zuid(), 'ngac_regular', 'ngac_regular', 'ngac-regular@test.local', 'active', true, NOW(), NOW())
-           ON CONFLICT (email) DO NOTHING"#,
+           ON CONFLICT (name) DO NOTHING"#,
     )
     .execute(&pool)
     .await

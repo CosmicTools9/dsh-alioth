@@ -14,6 +14,7 @@
 #   ns_ports_align_env WZ Deploy/WZ/.env        # 5 键对齐槽位
 #   ns_registry_write WZ <be_pid> <fe_pid> <sso_pid>
 #   ns_registry_status WZ / ns_registry_prune WZ
+#   ns_registry_health WZ      # 严格逐服务健康判定（--status 汇总用）；0=全活
 #   ns_pid_belongs WZ <pid>
 #   ns_port_preempt WZ 41719 Gateway-FE
 #   ns_lock_acquire WZ / ns_lock_release WZ
@@ -25,6 +26,33 @@
 if [ -z "${PROJECT_ROOT:-}" ]; then
   PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
 fi
+
+# SSO 形态读取器（同目录同一真相源；embedded 下影响 `SSO_SERVICE_URL` 的取值规则）
+_NS_PORTS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${_NS_PORTS_LIB_DIR}/ns-sso-mode.sh" ]; then
+  # shellcheck source=ns-sso-mode.sh
+  source "${_NS_PORTS_LIB_DIR}/ns-sso-mode.sh"
+fi
+
+# ns_sso_service_port <ns> <be_slot> <sso_slot> —— 该形态下 `SSO_SERVICE_URL` 应取的有效端口。
+#
+# embedded：SSO（含 `/api/ngac/pdp/*`）由 Gateway 进程内挂载，而 Gateway 的 NGAC 客户端以
+#   `SSO_SERVICE_URL` 作 PDP 基址（`Gateway/backend/src/apps.rs` 与 `pep/middleware.rs`：`{base}/api/ngac/pdp/*`）
+#   ⇒ 该键 MUST 指向 **Gateway 自身**端口。若照槽位表写 SSO 槽位（= BE+1，embedded 下无进程监听），
+#   PDP 不可达 ⇒ 全部 NGAC 校验 **fail-close 403**（2026-09-22 实证：ns:avic 启动后
+#   `/api/apps` 返回「Policy decision service unavailable」，前端因此加载不到任何应用）。
+# remote：SSO 由独立进程承载 ⇒ SSO 槽位。
+# 未登记形态（`ns_sso_mode` 非零）⇒ 保持槽位表值（既有行为，不静默改判）。
+ns_sso_service_port() {
+  local ns="$1" be="$2" sso="$3" mode=""
+  if declare -F ns_sso_mode >/dev/null 2>&1; then
+    mode="$(ns_sso_mode "$ns" 2>/dev/null || true)"
+  fi
+  case "$mode" in
+    embedded) echo "$be" ;;
+    *) echo "$sso" ;;
+  esac
+}
 
 ns_ports_file() {
   echo "${NS_PORTS_CONF:-${PROJECT_ROOT:-.}/Deploy/ports.conf}"
@@ -63,6 +91,22 @@ ns_ports_list() {
   done < "$(ns_ports_file)"
 }
 
+# ns_absolutize_path <base_dir> <value> —— 相对路径按基准目录绝对化（已绝对 / 空值原样返回）。
+#
+# 用途：`Deploy/{ns}/.env` 的密钥路径**按设计写相对名**（`release-to-namespace.sh` 生成——
+# 发布包自包含，启动器在 Deploy 目录内运行），而消费进程 CWD ≠ `Deploy/{ns}`（Gateway 二进制
+# CWD = `Gateway/backend`）⇒ 消费侧 MUST 收口绝对化。
+#
+# 唯一实现：启动器（dev-gateway 等）MUST 经本函数，不得各自内联拼路径。
+ns_absolutize_path() {
+  local base="$1" val="${2:-}"
+  [ -z "$val" ] && return 0
+  case "$val" in
+    /*) printf '%s' "$val" ;;
+    *) printf '%s/%s' "${base%/}" "$val" ;;
+  esac
+}
+
 # ns_ports_check <ns> <be_port> <fe_port> <sso_port> —— 0=与槽位一致;1=漂移(逐项输出)
 # 未登记 ns: 输出提示并返回 0（调用方按其既有策略继续，如 dev-gateway 跳过校验）。
 ns_ports_check() {
@@ -75,9 +119,11 @@ ns_ports_check() {
   eb="$(ns_port "$ns" be)"
   ef="$(ns_port "$ns" fe)"
   es="$(ns_port "$ns" sso)"
+  # SSO_SERVICE_URL 的期望值随形态（embedded ⇒ Gateway 自身端口；见 ns_sso_service_port）
+  es="$(ns_sso_service_port "$ns" "$eb" "$es")"
   [ "$be_actual" != "$eb" ] && { echo "[ports] ${ns} SERVER_ADDR 端口 ${be_actual} ≠ 槽位 ${eb}"; ok=0; }
   [ "$fe_actual" != "$ef" ] && { echo "[ports] ${ns} VITE_PORT ${fe_actual} ≠ 槽位 ${ef}"; ok=0; }
-  [ "$sso_actual" != "$es" ] && { echo "[ports] ${ns} SSO_SERVICE_URL 端口 ${sso_actual} ≠ 槽位 ${es}"; ok=0; }
+  [ "$sso_actual" != "$es" ] && { echo "[ports] ${ns} SSO_SERVICE_URL 端口 ${sso_actual} ≠ ${es}"; ok=0; }
   [ "$ok" = 0 ] && return 1
   return 0
 }
@@ -230,6 +276,50 @@ ns_registry_status() {
   done <<<"$kv"
   [ "$found" = 0 ] && echo "   registry: 无 PID 记录"
   return "$live"
+}
+
+# ns_registry_health <ns> —— **严格**健康判定（供 --status 汇总行使用）。
+#
+# 与 ns_registry_status 的区别：后者 rc=0 只表示「**至少一个**记录进程存活」（用于
+# ns_registry_prune 的"是否有活进程"语义），故 BE 已死而 FE/SSO 尚存时它也 rc=0——
+# 直接拿它当汇总判据会打印 `✅ All services running` 而实际后端已死（2026-09-23 502
+# 事故现场即如此）。本函数按**逐服务**判定：任一必需服务不达标即 rc=1。
+#
+# 0 = 全部必需服务「存活 ∧ 身份确属本项目」；1 = 存在 stale / 未运行 / PID 复用。
+# stdout: 每条不达标服务一行 `<label>: <原因>`（全活时无输出）——调用方据此打印明细。
+# 必需集合：GATEWAY_BE_PID / GATEWAY_FE_PID 恒必需；SSO_PID 仅 remote 形态必需
+#（embedded 下 SSO 由 Gateway 进程内承载，注册表按设计写空，不得判为异常）。
+ns_registry_health() {
+  local ns="$1" kv mode="" bad=0 spec key label pid line
+  if declare -F ns_sso_mode >/dev/null 2>&1; then
+    mode="$(ns_sso_mode "$ns" 2>/dev/null || true)"
+  fi
+  if ! kv="$(ns_registry_read "$ns" 2>/dev/null)"; then
+    echo "registry: 无记录（$(ns_registry_file "$ns")）"
+    return 1
+  fi
+  for spec in "GATEWAY_BE_PID|Gateway BE" "GATEWAY_FE_PID|Gateway FE" "SSO_PID|SSO"; do
+    key="${spec%%|*}"; label="${spec#*|}"
+    pid=""
+    while IFS= read -r line; do
+      case "$line" in "${key}="*) pid="${line#*=}"; break ;; esac
+    done <<<"$kv"
+    # embedded 形态下 SSO 无独立进程：注册表空值是设计值，不算异常
+    if [ "$key" = "SSO_PID" ] && [ "$mode" != "remote" ] && [ -z "$pid" ]; then
+      continue
+    fi
+    if [ -z "$pid" ]; then
+      echo "${label}: 未记录（服务未启动）"
+      bad=1
+    elif ! ns_alive "$pid"; then
+      echo "${label}: PID ${pid} 已死（stale）"
+      bad=1
+    elif ! ns_pid_looks_first_party "$ns" "$pid"; then
+      echo "${label}: PID ${pid} 存活但非本项目进程（疑似 PID 复用）"
+      bad=1
+    fi
+  done
+  return "$bad"
 }
 
 # ns_registry_prune <ns> —— 无活进程 → 删除注册表文件；0=已删，1=保留
@@ -393,6 +483,8 @@ ns_ports_align_env() {
   be="$(ns_port "$ns" be)"
   fe="$(ns_port "$ns" fe)"
   sso="$(ns_port "$ns" sso)"
+  # SSO_SERVICE_URL 的有效端口随形态（embedded ⇒ Gateway 自身端口，见 ns_sso_service_port）
+  sso="$(ns_sso_service_port "$ns" "$be" "$sso")"
 
   tmp="${env_file}.tmp.$$"
   : > "$tmp" || return 1
@@ -524,12 +616,51 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   printf 'NAMESPACE=WZ\nGATEWAY_FE_PID=7777\n' > "$tmp/runtime/WZ.pid"
   assert "死 PID 不构成归属" 1 ns_pid_belongs WZ 7777
   # 非本项目进程（无仓库路径、非 vite、非 *-server）→ 身份拒绝
-  ( cd /tmp && sleep 30 ) &
+  #
+  # decoy 形态 MUST 是**绝对路径系统二进制直接 exec**（2026-09-23 实测根因，勿改回子壳形态）：
+  # `( cd /tmp && sleep 30 ) &` 里 bash 对子壳**不做 exec**（子壳体是 `cd &&` 列表），
+  # 该子壳 argv 继承父 shell ⇒ `ps -p <pid> -o command=` 打印 `bash <本脚本路径>`。
+  # 单独跑时调用形如 `bash scripts/lib/ns-ports.sh`（相对）⇒ argv 不含绝对路径，恰好通过；
+  # 而 pre-commit 门禁用**绝对路径**调用（scripts/pre/gates.ts `ports-lib-selftest`：
+  # `bash ${ROOT}/scripts/lib/ns-ports.sh`）⇒ argv 含 PROJECT_ROOT ⇒ 命中身份判据①
+  # 「cmdline 含本仓库绝对路径」⇒ decoy 被误判一方进程（三条 FAIL 均为 期望 1 实际 0）。
+  # `/bin/sleep 30 &` 由 bash 直接 exec ⇒ cmdline 恒为 `/bin/sleep 30`，与调用方式无关。
+  # ⚠ 只修 fixture 形态，MUST NOT 放宽 ns_pid_looks_first_party 判据（安全生产判据）。
+  /bin/sleep 30 &
   UNRELATED_PID=$!
   sleep 0.3
+  decoy_cmd="$(ps -p "$UNRELATED_PID" -o command= 2>/dev/null)"
+  case "$decoy_cmd" in
+    *"${PROJECT_ROOT:-/nonexistent}"*)
+      echo "  FAIL: decoy 命令行含仓库路径（fixture 失效——见上方注释，须用绝对路径直接 exec）"; local_fail=1 ;;
+  esac
   assert "非本项目进程：身份判据拒绝" 1 ns_pid_looks_first_party WZ "$UNRELATED_PID"
   printf 'NAMESPACE=WZ\nGATEWAY_BE_PID=%s\n' "$UNRELATED_PID" > "$tmp/runtime/WZ.pid"
   assert "已登记但非本项目进程：不构成归属（不杀）" 1 ns_pid_belongs WZ "$UNRELATED_PID"
+  # ── 严格健康判定（fix-status-summary-lies）──
+  # 汇总行不得在「部分服务 stale」时报 ✅：旧口径（ns_registry_status 的 "≥1 存活"）会，
+  # 新口径（ns_registry_health 逐服务）不会——本组断言即该事故的回归门。
+  health_has() { ns_registry_health WZ 2>/dev/null | grep -qF "$1"; }
+  printf 'NAMESPACE=WZ\nGATEWAY_BE_PID=111\nGATEWAY_FE_PID=%s\nSSO_PID=%s\n' "$PARTY_PID" "$PARTY_PID" > "$tmp/runtime/WZ.pid"
+  assert "BE 已死 + FE/SSO 存活 → status rc=0（事故现场假 ✅ 的来源）" 0 ns_registry_status WZ
+  assert "同状态 → health rc=1（汇总必须报异常）" 1 ns_registry_health WZ
+  assert "health 明细点名 stale 服务（BE）" 0 health_has "Gateway BE: PID 111 已死（stale）"
+  printf 'NAMESPACE=WZ\nGATEWAY_BE_PID=%s\nGATEWAY_FE_PID=%s\nSSO_PID=%s\n' "$PARTY_PID" "$PARTY_PID" "$PARTY_PID" > "$tmp/runtime/WZ.pid"
+  assert "三方全活 → health rc=0（保持 ✅ 与 rc=0）" 0 ns_registry_health WZ
+  printf 'NAMESPACE=WZ\nGATEWAY_BE_PID=%s\nGATEWAY_FE_PID=%s\nSSO_PID=%s\n' "$PARTY_PID" "$UNRELATED_PID" "$PARTY_PID" > "$tmp/runtime/WZ.pid"
+  assert "PID 复用（存活但非本项目）→ health rc=1" 1 ns_registry_health WZ
+  printf 'NAMESPACE=WZ\nGATEWAY_BE_PID=%s\nGATEWAY_FE_PID=%s\n' "$PARTY_PID" "$PARTY_PID" > "$tmp/runtime/WZ.pid"
+  if [ "$(ns_sso_mode WZ 2>/dev/null)" = "remote" ]; then
+    assert "remote 形态（WZ）未记录 SSO → health rc=1（必需服务缺失）" 1 ns_registry_health WZ
+  else
+    assert "embedded 形态（WZ）空 SSO = 设计值 → 不判异常" 0 ns_registry_health WZ
+  fi
+  if [ "$(ns_sso_mode Alioth 2>/dev/null)" = "embedded" ]; then
+    printf 'NAMESPACE=Alioth\nGATEWAY_BE_PID=111\nGATEWAY_FE_PID=111\nSSO_PID=\n' > "$tmp/runtime/Alioth.pid"
+    no_sso() { ! ns_registry_health Alioth 2>/dev/null | grep -q 'SSO'; }
+    assert "embedded（Alioth）空 SSO 明细无异常行" 0 no_sso
+    rm -f "$tmp/runtime/Alioth.pid"
+  fi
   kill "$PARTY_PID" "$UNRELATED_PID" 2>/dev/null || true
   rm -f "$tmp/runtime/WZ.pid"
 
@@ -578,6 +709,16 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   fi
   kill "$DUMMY_PID" 2>/dev/null || true
   assert "空闲端口抢占 rc=0 无副作用" 0 ns_port_preempt WZ "$DUMMY_PORT" TEST
+
+  # 路径绝对化：.env 相对密钥名 → Deploy 目录（收口判据；dev-gateway 启动链回归）
+  assert_eq() { # $1 描述 $2 期望 $3 实际
+    if [ "$2" = "$3" ]; then echo "  ok: $1"; else echo "  FAIL: $1 (期望 '$2' 实际 '$3')"; local_fail=1; fi
+  }
+  echo "路径绝对化："
+  assert_eq "相对名 → 基准/名" "/d/Alioth/sso_jwt_public.pem" "$(ns_absolutize_path /d/Alioth sso_jwt_public.pem)"
+  assert_eq "基准带尾斜杠 → 单斜杠拼接" "/d/Alioth/sso_jwt_public.pem" "$(ns_absolutize_path /d/Alioth/ sso_jwt_public.pem)"
+  assert_eq "已绝对 → 原样不动" "/x/y.pem" "$(ns_absolutize_path /d/Alioth /x/y.pem)"
+  assert_eq "空值 → 空（不产出基准斜杠）" "" "$(ns_absolutize_path /d/Alioth '')"
 
   # 下一槽位 + 登记：临时表（含 Alioth 行 → 下一槽 Cosmic-Tools 41718/9003/9004）
   printf '# 注释\nAlioth 41717 9001 9002\n' > "$tmp/ports.conf"

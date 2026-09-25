@@ -495,13 +495,15 @@ impl ApproverRepository {
             Some(ids) => {
                 let page_size = query.page_size.clamp(1, 500);
                 let offset = (query.page.max(1) - 1) * page_size;
-                let rows = sqlx::query_as::<_, Approver>(
+                let rows = sqlx::query_as::<_, Approver>(concat!(
                     "SELECT id, notice AS name, fk_user, ck_category, comments AS description, \
                      created_at, updated_at, deleted_at \
                      FROM isahl.\"zc_id_subj-position\" \
-                     WHERE deleted_at IS NULL AND _f_ IS NULL AND id = ANY($1::BIGINT[]) \
-                     ORDER BY id DESC LIMIT $2 OFFSET $3",
-                )
+                     WHERE deleted_at IS NULL AND ",
+                    common::real_position_row!(),
+                    " AND id = ANY($1::BIGINT[]) \
+                     ORDER BY id DESC LIMIT $2 OFFSET $3"
+                ))
                 .bind(ids.to_vec())
                 .bind(page_size)
                 .bind(offset)
@@ -524,19 +526,20 @@ impl AliothRepository<Approver, CreateApproverRequest, UpdateApproverRequest, Al
     for ApproverRepository
 {
     async fn list(&self, query: &ListQuery) -> Result<PaginatedResponse<Approver>, AliothError> {
-        // D-2a：_f_ IS NULL 排除编制范例行（真实岗位视图，同 identity-org 岗位读径）
+        // 真实岗位视图：排除编制范例行（判据与 identity-org 同源 = common::real_position_row!）
         QueryBuilder::<Approver>::from_list_query(&self.pool, query)
-            .raw_filter("_f_ IS NULL".into())
+            .raw_filter(common::real_position_row!().into())
             .fetch(query.page, query.page_size)
             .await
     }
 
     async fn get(&self, id: i64) -> Result<Option<Approver>, AliothError> {
-        sqlx::query_as::<_, Approver>(
+        sqlx::query_as::<_, Approver>(concat!(
             "SELECT id, notice AS name, fk_user, ck_category, comments AS description, \
              created_at, updated_at, deleted_at \
-             FROM isahl.\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
-        )
+             FROM isahl.\"zc_id_subj-position\" WHERE id = $1 AND deleted_at IS NULL AND ",
+            common::real_position_row!()
+        ))
         .bind(id)
         .fetch_optional(&self.pool)
         .await
@@ -608,4 +611,47 @@ impl From<PgPool> for ApproverRepository {
     fn from(pool: PgPool) -> Self {
         Self { pool }
     }
+}
+
+// ── 审批岗位候选（/positions 数据源） ──────────────────────────
+
+/// 岗位选项行（审批 UI 的岗位候选：流程设计器节点级联 / 转办抄送）。
+///
+/// **行粒度 = (真实岗位, 活跃任职账号) 对**：同一岗位有 N 个任职账号即 N 行（`fk_user` 各异）。
+/// 前端 `ApproverSelPair` 按岗位名（notice）去重后即成「岗位选项 + 该岗位任职账号集合」，
+/// 扁平消费方（转办/抄送岗位下拉）按 `id` 去重（`ApproverPicker`）。
+/// `id`/`fk_user` 为 auth user / 岗位 id，zuid 串化输出（ID_JSON_PRECISION 禁数值化）。
+/// 任职账号判据单一实现 = `common::position_incumbent_accounts_sql!`
+/// （标量 `fk_user` ∪ 任职桥派生账号，去重、仅活跃；无任职账号的岗位不出现）。
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct PositionOption {
+    #[serde(with = "common::serde_zuid")]
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    #[serde(with = "common::serde_zuid::opt")]
+    pub fk_user: Option<i64>,
+}
+
+/// 全部真实岗位（未软删、非编制范例行）的**任职账号**行（每账号一行）。
+///
+/// MUST NOT 只按岗位标量 `fk_user` 出行：组织管理挂人只写任职桥，只认标量会让
+/// 「有任职人却无标量」的岗位整条缺失（2026-09-23 AVIC 实证：13 真实岗位仅 4 个有标量）。
+pub async fn list_position_options(pool: &PgPool) -> Result<Vec<PositionOption>, AliothError> {
+    // 任职账号集合：唯一实现 = common::position_incumbent_accounts_sql!()
+    // （`concat!` 编译期拼接：片段与真实岗位判据均为静态字面量，无运行期插值）
+    let sql = concat!(
+        r#"SELECT p.id, p.notice::text AS name, inc.uid AS fk_user
+           FROM isahl."zc_id_subj-position" p
+           JOIN ("#,
+        common::position_incumbent_accounts_sql!(),
+        r#") inc ON inc.pos_id = p.id
+           WHERE p.deleted_at IS NULL AND "#,
+        common::real_position_row!(p),
+        " ORDER BY p.notice, p.id, inc.uid"
+    );
+    sqlx::query_as::<_, PositionOption>(sqlx::AssertSqlSafe(sql))
+        .fetch_all(pool)
+        .await
+        .map_err(AliothError::from)
 }

@@ -297,7 +297,7 @@ async fn me_returns_permission_matrix_from_associations() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'perm_user', 'perm_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await
@@ -400,7 +400,7 @@ async fn me_permissions_empty_for_user_without_relations() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'perm_none', 'perm_none@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await
@@ -461,7 +461,7 @@ async fn me_matrix_subtracts_prohibition() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'perm_proh', 'perm_proh@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await

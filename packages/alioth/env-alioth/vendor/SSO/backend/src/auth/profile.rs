@@ -55,32 +55,35 @@ pub async fn update_profile(
         }
     };
 
-    // 构建动态 UPDATE — 仅更新提供的字段
+    // 构建动态 UPDATE — 仅更新提供的字段；占位符按实际绑定序顺排
+    // （修复：原固定 $1/$2/$3 与条件绑定错位——单字段提交必 500，
+    // 路由双前缀修复前该路径不可达故从未暴露）
     let mut set_clauses: Vec<String> = Vec::new();
     if body.name.is_some() {
-        set_clauses.push("name = $1".to_string());
+        set_clauses.push(format!("name = ${}", set_clauses.len() + 1));
     }
     if body.display_name.is_some() {
-        set_clauses.push("display_name = $2".to_string());
+        set_clauses.push(format!("display_name = ${}", set_clauses.len() + 1));
     }
-    set_clauses.push("updated_at = NOW()".to_string());
 
     if set_clauses.is_empty() {
         return HttpResponse::BadRequest().json(AuthError {
             error: "No fields to update".to_string(),
         });
     }
+    set_clauses.push("updated_at = NOW()".to_string());
 
     let sql = format!(
-        "UPDATE isahl_auth.auth_users SET {} WHERE id = $3",
-        set_clauses.join(", ")
+        "UPDATE isahl_auth.auth_users SET {} WHERE id = ${}",
+        set_clauses.join(", "),
+        set_clauses.len()
     );
 
     let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
-    if let Some(ref name) = body.name {
+    if let Some(name) = &body.name {
         query = query.bind(name);
     }
-    if let Some(ref display_name) = body.display_name {
+    if let Some(display_name) = &body.display_name {
         query = query.bind(display_name);
     }
     query = query.bind(user_id);
@@ -100,5 +103,5 @@ pub async fn update_profile(
 }
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/auth/me").route("/profile", web::patch().to(update_profile)));
+    cfg.service(web::scope("/me").route("/profile", web::patch().to(update_profile)));
 }

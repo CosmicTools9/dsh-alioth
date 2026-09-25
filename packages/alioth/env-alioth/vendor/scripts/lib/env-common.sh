@@ -71,10 +71,18 @@ parse_vite_port() {
 # 目标目录一律经映射（scripts/lib/cargo-target-dirs.sh）：Framework/SSO 是 root workspace
 # 成员 ⇒ 用途 check；Meta 独立 workspace ⇒ 用途 meta。MUST NOT 依赖 cwd 默认推导。
 build_all_backends() {
+    # sccache 编译缓存接线（唯一实现 = scripts/lib/sccache.sh；幂等、fail-soft，未安装不阻断构建）
+    # shellcheck source=scripts/lib/sccache.sh
+    source "${LIB_DIR}/sccache.sh"
+    sccache_enable_if_available "env-common build_all_backends"
     log "构建所有后端服务（release 模式）..."
-    log "Framework/backend..."
+    # 本步 cd 落点 = Framework/backend，但该目录**没有** Cargo.toml/workspace 根 ⇒ cargo 上溯到
+    # 仓库根 workspace ⇒ 实际编译**平台面全量**（Framework + Ext-adapter + SSO + Gateway lib +
+    # OpenActivity），产物落用途 check。命名如实反映实际编译集：ns 二进制与组合根 gateway-host
+    # 均不在此步（见下方 build-ns.sh）。
+    log "root workspace（Framework + Ext-adapter + SSO + Gateway lib + OpenActivity）..."
     (cd "${PROJECT_ROOT}/Framework/backend" && env CARGO_TARGET_DIR="$(bash "${PROJECT_ROOT}/scripts/cargo-target.sh" check)" cargo build --workspace --release) || {
-        err "Framework/backend 构建失败"
+        err "root workspace 构建失败（包含 Framework / SSO / Gateway lib / OpenActivity）"
         exit 1
     }
     log "Meta/backend..."

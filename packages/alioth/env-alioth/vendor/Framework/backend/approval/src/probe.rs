@@ -12,9 +12,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use runtime_contract::expression::{
-    parse_constraint_expression, BinaryOp, ConstraintExpr, ConstraintLiteral,
-};
+use runtime_engine::{and_atoms, CmpOp};
 
 // ───────────────────────────── 抽象值域 ─────────────────────────────
 
@@ -50,12 +48,11 @@ impl Atom {
     }
 }
 
-fn atom_of(lit: &ConstraintLiteral) -> Option<Atom> {
-    match lit {
-        ConstraintLiteral::Integer(i) => Some(Atom::Num(*i as f64)),
-        ConstraintLiteral::Decimal(d) => Some(Atom::Num(*d)),
-        ConstraintLiteral::String(s) => Some(Atom::Str(s.clone())),
-        ConstraintLiteral::Boolean(b) => Some(Atom::Bool(*b)),
+fn atom_of(v: &serde_json::Value) -> Option<Atom> {
+    match v {
+        serde_json::Value::Number(n) => n.as_f64().map(Atom::Num),
+        serde_json::Value::String(s) => Some(Atom::Str(s.clone())),
+        serde_json::Value::Bool(b) => Some(Atom::Bool(*b)),
         _ => None,
     }
 }
@@ -69,149 +66,106 @@ struct FieldC {
     exclude: Vec<Atom>,
 }
 
-/// 原子约束：field op literal（含 in 列表的展开由调用方完成）
+/// 原子约束：field op literal（`in [..]` 的列表展开由 `and_atoms` 完成）
 #[derive(Debug, Clone)]
 struct AtomC {
     field: String,
-    op: BinaryOp,
-    lit: ConstraintLiteral,
+    op: CmpOp,
+    lit: serde_json::Value,
 }
 
 /// 应用原子到存储；Err = 矛盾
-fn apply_atom(fc: &mut FieldC, op: BinaryOp, lit: &ConstraintLiteral) -> Result<(), ()> {
-    // in 列表：先展开为单元素路径
-    if matches!(op, BinaryOp::In) {
-        if let ConstraintLiteral::List(items) = lit {
-            if items.is_empty() {
-                return Err(());
-            }
-            // 同构列表：逐元素 equal-检查其一即可（x in [a,b] ⇔ x=a ∨ x=b；
-            // 符号下视为 x ∈ {a,b} 集合——用任一命中表示可满足）
-            let atoms: Option<Vec<Atom>> = items.iter().map(atom_of).collect();
-            let Some(atoms) = atoms else { return Err(()) };
-            if atoms.is_empty() {
-                return Err(());
-            }
-            // 集合内只要有一个与当前 eq/区间相容即可满足；不相容则需全部？
-            // x∈S 与 x=e 相容 ⇔ e∈S；与区间相容 ⇔ ∃a∈S a.num_ok。
-            let any_compat = atoms.iter().any(|a| {
-                a.num_ok(fc.lo, fc.hi)
-                    && match &fc.eq {
-                        Some(e) => e == a,
-                        None => true,
-                    }
-            });
-            if !any_compat {
-                return Err(());
-            }
-            // 记录集合：后续 Eq 与区间检查时使用 in 语义需保留——以首元素代表 +
-            // 记号字段 inSet 略去（保守：此后 Eq 单点按 eq 处理，不回溯集合）。
-            return Ok(());
-        }
-        return Err(());
-    }
+fn apply_atom(fc: &mut FieldC, op: CmpOp, lit: &serde_json::Value) -> Result<(), ()> {
     let Some(a) = atom_of(lit) else {
         return Err(());
     };
-    match a {
-        Atom::Num(v) => {
-            match op {
-                BinaryOp::Lt => {
-                    if fc
-                        .lo
-                        .is_some_and(|l| if l.strict { l.v >= v } else { l.v > v })
-                    {
-                        return Err(());
-                    }
-                    fc.hi = Some(match fc.hi {
-                        Some(h) if h.v <= v && !(h.v == v && h.strict) => h,
-                        Some(h) if h.v <= v => h,
-                        _ => Bound { v, strict: true },
-                    });
+    match op {
+        // 数值区间（非数值字面量的区间比较 → 不支持，视为矛盾）
+        CmpOp::Lt => {
+            let Atom::Num(v) = a else { return Err(()) };
+            if fc
+                .lo
+                .is_some_and(|l| if l.strict { l.v >= v } else { l.v > v })
+            {
+                return Err(());
+            }
+            fc.hi = Some(match fc.hi {
+                Some(h) if h.v <= v && !(h.v == v && h.strict) => h,
+                Some(h) if h.v <= v => h,
+                _ => Bound { v, strict: true },
+            });
+            Ok(())
+        }
+        CmpOp::Le => {
+            let Atom::Num(v) = a else { return Err(()) };
+            if fc
+                .lo
+                .is_some_and(|l| if l.strict { l.v > v } else { l.v >= v })
+            {
+                return Err(());
+            }
+            fc.hi = Some(match fc.hi {
+                Some(h) if h.v < v || (h.v == v && h.strict) => h,
+                _ => Bound { v, strict: false },
+            });
+            Ok(())
+        }
+        CmpOp::Gt => {
+            let Atom::Num(v) = a else { return Err(()) };
+            if fc
+                .hi
+                .is_some_and(|h| if h.strict { h.v <= v } else { h.v < v })
+            {
+                return Err(());
+            }
+            fc.lo = Some(match fc.lo {
+                Some(l) if l.v >= v => l,
+                _ => Bound { v, strict: true },
+            });
+            Ok(())
+        }
+        CmpOp::Ge => {
+            let Atom::Num(v) = a else { return Err(()) };
+            if fc
+                .hi
+                .is_some_and(|h| if h.strict { h.v < v } else { h.v <= v })
+            {
+                return Err(());
+            }
+            fc.lo = Some(match fc.lo {
+                Some(l) if l.v > v || (l.v == v && l.strict) => l,
+                _ => Bound { v, strict: false },
+            });
+            Ok(())
+        }
+        CmpOp::Eq => {
+            if let Atom::Num(v) = a {
+                if !Atom::Num(v).num_ok(fc.lo, fc.hi) {
+                    return Err(());
                 }
-                BinaryOp::Le => {
-                    if fc
-                        .lo
-                        .is_some_and(|l| if l.strict { l.v > v } else { l.v >= v })
-                    {
-                        return Err(());
-                    }
-                    fc.hi = Some(match fc.hi {
-                        Some(h) if h.v < v || (h.v == v && h.strict) => h,
-                        _ => Bound { v, strict: false },
-                    });
+            }
+            if let Some(e) = &fc.eq {
+                if *e != a {
+                    return Err(());
                 }
-                BinaryOp::Gt => {
-                    if fc
-                        .hi
-                        .is_some_and(|h| if h.strict { h.v <= v } else { h.v < v })
-                    {
-                        return Err(());
-                    }
-                    fc.lo = Some(match fc.lo {
-                        Some(l) if l.v >= v => l,
-                        _ => Bound { v, strict: true },
-                    });
-                }
-                BinaryOp::Ge => {
-                    if fc
-                        .hi
-                        .is_some_and(|h| if h.strict { h.v < v } else { h.v <= v })
-                    {
-                        return Err(());
-                    }
-                    fc.lo = Some(match fc.lo {
-                        Some(l) if l.v > v || (l.v == v && l.strict) => l,
-                        _ => Bound { v, strict: false },
-                    });
-                }
-                BinaryOp::Eq => {
-                    if !Atom::Num(v).num_ok(fc.lo, fc.hi) {
-                        return Err(());
-                    }
-                    if let Some(e) = &fc.eq {
-                        if *e != Atom::Num(v) {
-                            return Err(());
-                        }
-                    }
-                    fc.eq = Some(Atom::Num(v));
-                    fc.lo = None;
-                    fc.hi = None;
-                }
-                BinaryOp::Ne => {
-                    if fc.eq.as_ref() == Some(&Atom::Num(v)) {
-                        return Err(());
-                    }
-                    if fc.exclude.contains(&Atom::Num(v)) {
-                        return Ok(());
-                    }
-                    fc.exclude.push(Atom::Num(v));
-                }
-                _ => return Err(()), // 算数/contains 等 → 不支持
+            }
+            if fc.exclude.contains(&a) {
+                return Err(());
+            }
+            fc.eq = Some(a);
+            fc.lo = None;
+            fc.hi = None;
+            Ok(())
+        }
+        CmpOp::Ne => {
+            if fc.eq.as_ref() == Some(&a) {
+                return Err(());
+            }
+            if !fc.exclude.contains(&a) {
+                fc.exclude.push(a);
             }
             Ok(())
         }
-        other => match op {
-            BinaryOp::Eq => {
-                if let Some(e) = &fc.eq {
-                    if *e != other {
-                        return Err(());
-                    }
-                }
-                fc.eq = Some(other);
-                Ok(())
-            }
-            BinaryOp::Ne => {
-                if fc.eq.as_ref() == Some(&other) {
-                    return Err(());
-                }
-                if !fc.exclude.contains(&other) {
-                    fc.exclude.push(other);
-                }
-                Ok(())
-            }
-            _ => Err(()), // 字符串区间比较不支持
-        },
     }
 }
 
@@ -230,96 +184,36 @@ impl Store {
 
 // ─────────────────────────── 表达式归一化 ───────────────────────────
 
-/// 归一化：NOT 下沉（仅比较/AND），OR 视为不支持。
-/// 产出原子列表（AND 拆解）；不支持形态返回 None（保守可满足）。
+/// 归一化：唯一引擎的 AST 静态分析（`runtime_engine::and_atoms`）——
+/// `&&` 链拆解为字段比较原子；不支持形态返回 None（保守可满足，零假阳性）。
 fn normalize(expr: &str) -> Option<Vec<AtomC>> {
-    let ast = parse_constraint_expression(expr).ok()?;
-    let mut out = Vec::new();
-    fn push_atoms(e: &ConstraintExpr, out: &mut Vec<AtomC>) -> Option<()> {
-        match e {
-            ConstraintExpr::And(a, b) => {
-                push_atoms(a, out)?;
-                push_atoms(b, out)
-            }
-            ConstraintExpr::Binary(l, op, r) => {
-                let (f, lit) = match (l.as_ref(), r.as_ref()) {
-                    (ConstraintExpr::FieldRef(f), lit) if is_lit(lit) => (f.clone(), lit.clone()),
-                    // 镜像（literal op field）：保守跳过（可满足），不产出原子
-                    (lit, ConstraintExpr::FieldRef(f)) if is_lit(lit) => {
-                        let _ = (lit, op, f);
-                        return None;
-                    }
-                    _ => return None,
-                };
-                match lit {
-                    ConstraintExpr::Literal(lit) => {
-                        out.push(AtomC {
-                            field: f,
-                            op: *op,
-                            lit,
-                        });
-                        Some(())
-                    }
-                    _ => None,
-                }
-            }
-            ConstraintExpr::Not(inner) => match inner.as_ref() {
-                ConstraintExpr::Binary(l, op, r) => {
-                    let neg = match op {
-                        BinaryOp::Eq => BinaryOp::Ne,
-                        BinaryOp::Ne => BinaryOp::Eq,
-                        BinaryOp::Lt => BinaryOp::Ge,
-                        BinaryOp::Le => BinaryOp::Gt,
-                        BinaryOp::Gt => BinaryOp::Le,
-                        BinaryOp::Ge => BinaryOp::Lt,
-                        _ => return None,
-                    };
-                    push_atoms(&ConstraintExpr::Binary(l.clone(), neg, r.clone()), out)
-                }
-                _ => None,
-            },
-            ConstraintExpr::Literal(ConstraintLiteral::Boolean(true)) => Some(()),
-            ConstraintExpr::Literal(ConstraintLiteral::Boolean(false)) => None, // 恒假
-            _ => None,
-        }
-    }
-    // 区分"恒假表达式"与"不支持"：恒假也应驱动不可达证明。is_lit-false 由调用方
-    // 先经 constant_bool 处理；此处 parse 失败/不支持返回 None（保守可满足）。
-    push_atoms(&ast, &mut out)?;
-    Some(out)
-}
-
-fn is_lit(e: &ConstraintExpr) -> bool {
-    matches!(
-        e,
-        ConstraintExpr::Literal(
-            ConstraintLiteral::Integer(_)
-                | ConstraintLiteral::Decimal(_)
-                | ConstraintLiteral::String(_)
-                | ConstraintLiteral::Boolean(_)
-                | ConstraintLiteral::List(_)
-        )
+    let atoms = and_atoms(expr).ok()??;
+    Some(
+        atoms
+            .into_iter()
+            .map(|a| AtomC {
+                field: a.field,
+                op: a.op,
+                lit: a.literal,
+            })
+            .collect(),
     )
 }
 
 /// 无字段引用常量表达式：静态真/假；含引用/解析失败 → None
 fn constant_bool(expr: &str) -> Option<bool> {
-    let ast = parse_constraint_expression(expr).ok()?;
-    fn has_ref(e: &ConstraintExpr) -> bool {
-        match e {
-            ConstraintExpr::FieldRef(_) => true,
-            ConstraintExpr::Binary(a, _, b) => has_ref(a) || has_ref(b),
-            ConstraintExpr::Unary(_, a) => has_ref(a),
-            ConstraintExpr::Call(_, args) => args.iter().any(has_ref),
-            ConstraintExpr::And(a, b) | ConstraintExpr::Or(a, b) => has_ref(a) || has_ref(b),
-            ConstraintExpr::Not(a) => has_ref(a),
-            ConstraintExpr::Literal(_) => false,
-        }
-    }
-    if has_ref(&ast) {
+    let script = expr.trim();
+    if script.is_empty() {
         return None;
     }
-    crate::advance::eval_flow_condition(expr, &serde_json::Map::new()).ok()
+    let eng = runtime_engine::RhaiExpressionEngine::new();
+    // 空已知键集下严格校验通过 ⇒ 无任何上下文标识符引用（`ctx[...]` 恒可见，
+    // 故显式排除：含 ctx 者保守放弃）；`validate_all` 在标识符层之上并拦未登记自由函数
+    // （常量表达式里的 `median(...)` 运行期必失败 ⇒ 不应被当作可静态求值的常量）。
+    if script.contains("ctx") || eng.validate_all(script, &[]).is_err() {
+        return None;
+    }
+    eng.evaluate_bool(script, &HashMap::new()).ok()
 }
 
 // ─────────────────────────── 探测主流程 ───────────────────────────
@@ -742,7 +636,7 @@ mod tests {
         let edges = vec![
             json!({ "source": "s", "target": "a" }),
             json!({ "source": "a", "target": "e", "cond": "2 > 3" }),
-            json!({ "source": "a", "target": "e2", "cond": "amount > 9999 AND amount < 1" }),
+            json!({ "source": "a", "target": "e2", "cond": "amount > 9999 && amount < 1" }),
         ];
         let fs = probe_graph(&nodes, Some(&edges), None);
         let fe = fs.iter().find(|f| f.code == "FANOUT_EMPTY_PROVEN");
@@ -792,7 +686,7 @@ mod tests {
             "outputs": [{ "name": "route" }],
             "rules": [
                 { "match": ["amount > 1000", "amount <= 500"], "output": "approve-route" },
-                { "match": ["amount > 1000", "region = 'NW'"], "output": "review-route" }
+                { "match": ["amount > 1000", "region == \"NW\""], "output": "review-route" }
             ]
         });
         let nodes = vec![start(), d, end("e")];
@@ -816,7 +710,7 @@ mod tests {
             "inputs": [{ "name": "region" }],
             "outputs": [{ "name": "route" }],
             "rules": [
-                { "match": ["region = 'NW'"], "output": "nw-route" },
+                { "match": ["region == \"NW\""], "output": "nw-route" },
                 { "match": [], "output": "default-route" }
             ]
         });

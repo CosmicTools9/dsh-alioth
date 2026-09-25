@@ -14,6 +14,44 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
+/// loop 公式严格校验的已知键集（ctx 键）：可解析出的流程绑定实体叶表的上下文字段、
+/// 引擎注入键（`entityId` / `_refs` / `cursor` / `maxIter`）与节点 `loopVars` 名；
+/// 叶表全不可解析时返回空集（调用方退化为仅语法校验）。
+fn loop_ctx_known_keys(nodes: &[Value], node: &Value) -> Vec<String> {
+    let mut known: Vec<String> = vec![
+        "entityId".to_string(),
+        "_refs".to_string(),
+        "cursor".to_string(),
+        "maxIter".to_string(),
+    ];
+    // 流程绑定叶表（三域真叶：statement / event / task）→ 上下文字段名
+    for n in nodes {
+        for key in ["statementLeaf", "eventLeaf", "taskLeaf"] {
+            if let Some(leaf) = n.get(key).and_then(|v| v.as_str()) {
+                if let Some(fields) = context_meta::context_fields_of(leaf.trim()) {
+                    known.extend(fields.iter().map(|f| f.name.to_string()));
+                }
+            }
+        }
+    }
+    // 节点局部变量（`loopVars[].name`）
+    if let Some(vars) = node.get("loopVars").and_then(|v| v.as_array()) {
+        for item in vars {
+            if let Some(name) = item.get("name").and_then(|v| v.as_str()) {
+                known.push(name.trim().to_string());
+            }
+        }
+    }
+    known.sort();
+    known.dedup();
+    // 仅当解析到真实叶表字段时才做严格校验（否则空集 → 语法校验）
+    if known.len() <= 4 {
+        Vec::new()
+    } else {
+        known
+    }
+}
+
 /// 审批流程发布 Handler
 ///
 /// 从 ApprovalFlow.meta JSON 反序列化流程图节点和边，创建模板实例。
@@ -1418,11 +1456,20 @@ pub(crate) async fn materialize_graph(
             // 新契约：新图必须有 loopFormula（fail-closed）；旧图（loopExpr 存量）
             // 兼容放行（运行时走旧 cond 路径），formula 链不建。
             if let Some(f) = formula {
-                // Rhai 语法预检（compile-only）
+                // 统一校验入口（fail-closed，三档）：可解析出流程绑定叶表 ⇒ `validate_all`
+                // （语法 + 标识符 ⊆ ctx 键集 + 自由函数白名单）；否则 ⇒ `validate_functions`
+                // （语法 + 白名单——发布期无法确定运行时实体行，故不断言标识符；但 MUST 仍拦未注册
+                // 函数：Rhai 对未注册函数**编译期不报错**，退回仅语法层会放行 R8 盲区）。
+                let known = loop_ctx_known_keys(nodes, node);
                 let rhai = runtime_engine::RhaiExpressionEngine::new();
-                rhai.validate(f).map_err(|e| ApiError::Validation {
+                let verdict = if known.is_empty() {
+                    rhai.validate_functions(f)
+                } else {
+                    rhai.validate_all(f, &known)
+                };
+                verdict.map_err(|e| ApiError::Validation {
                     field: "nodes".into(),
-                    message: format!("node[{}] '{}' (loop) 公式语法错误: {}", idx, label, e),
+                    message: format!("node[{}] '{}' (loop) 公式校验失败: {}", idx, label, e),
                 })?;
                 // 局部变量归一化：loopVars → {name: init}；保留键 cursor 禁定义；
                 // maxIter 未定义时注入 10 兜底。
@@ -1816,6 +1863,9 @@ pub(crate) async fn materialize_graph(
                         })?;
                         pending.extend(bs.into_iter().map(|p| (p, backup_cate)));
                     }
+                    // 注：审批人解析为空**不**在此处拒绝发布——空审批人节点按
+                    // `approval-node-model#approval-node-degrade`（空集合 + admin 可见）运行期回退；
+                    // 「可证明空扇出」由图可达性门禁（probe FANOUT_EMPTY_PROVEN）负责。
                     for (pid, cate) in pending {
                         sqlx::query(bridge_sql)
                             .bind(op_id)
@@ -1833,6 +1883,7 @@ pub(crate) async fn materialize_graph(
                     let pos_ids = resolve_approver_sel(&mut tx, &direct).await.map_err(|e| {
                         ApiError::Database(format!("resolve role positions: {}", e))
                     })?;
+                    // 解析为空不拒发布（同上：degrade 语义 + FANOUT_EMPTY_PROVEN 门禁另担）
                     for pid in pos_ids {
                         sqlx::query(bridge_sql)
                             .bind(op_id)
@@ -1872,17 +1923,19 @@ pub(crate) async fn materialize_graph(
                             common::ngac_org::resolve_member_user_ids(&mut tx, id, 200).await
                         };
                         for uid in users {
-                            let pos_ids: Vec<i64> = sqlx::query_scalar(
-                                r#"SELECT pos.id FROM isahl."zc_id_subj-position" pos
-                                   WHERE pos.fk_user = $1 AND pos.deleted_at IS NULL
-                                   ORDER BY pos.id LIMIT 20"#,
-                            )
-                            .bind(uid)
-                            .fetch_all(&mut *tx)
-                            .await
-                            .map_err(|e| {
-                                ApiError::Database(format!("vote src pos[{}]: {}", idx, e))
-                            })?;
+                            // 该账号的任职岗位（任职账号集合口径；唯一实现 = common 片段）
+                            let sql = concat!(
+                                "SELECT DISTINCT inc.pos_id FROM (",
+                                common::position_incumbent_accounts_sql!(),
+                                ") inc WHERE inc.uid = $1 ORDER BY inc.pos_id LIMIT 20"
+                            );
+                            let pos_ids: Vec<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+                                .bind(uid)
+                                .fetch_all(&mut *tx)
+                                .await
+                                .map_err(|e| {
+                                    ApiError::Database(format!("vote src pos[{}]: {}", idx, e))
+                                })?;
                             for pid in pos_ids {
                                 sqlx::query(
                                     r#"INSERT INTO isahl."zc_id_operation_rr_approve"
@@ -2010,38 +2063,54 @@ pub(crate) async fn materialize_graph(
 /// 发布级图校验（fix-flow-designer-runtime-chain D8）：
 /// nodes 提取 + 节点类型白名单 + edges 提取。发布（materialize_graph）与
 /// `POST /approval-flows/validate` 共用——保存前预检与发布同判据。
-/// 审批岗位成员解析（2026-09-03 语义接线）：
-/// - employee/engineer：员工标识宽容匹配（员工 id/notice/code/username/name）→ 活跃用户挂岗；
-/// - role/岗位：zc_id_subj-position 按 position id 或岗位名直配（过滤活跃用户）。
-///   NGAC 用户属性域不再承担岗位解析——岗位实体权威 = zc_id_subj-position（identity-org 维护）。
+/// 审批岗位成员解析（2026-09-03 语义接线 + fix-approver-incumbent-source 口径统一）：
+/// - employee/engineer：员工标识宽容匹配（员工 id/notice/code/username/name）→ 活跃用户 → 该用户经
+///   **任职账号集合**持有的岗位；
+/// - role/岗位：`zc_id_subj-position` 按 position id 或岗位名直配 → **任职账号集合非空**即命中。
+///   任职账号集合 = 岗位标量 `fk_user` ∪ 任职桥 `post_rr_employee` 派生账号（去重、仅活跃；
+///   唯一实现 = `common::position_incumbent_accounts_sql!()`）——
+///   MUST NOT 只认标量（组织管理挂人只写桥，只认标量会让节点发布后无人可审）。
+///   NGAC 用户属性域不再承担岗位解析——岗位实体权威 = `zc_id_subj-position`（identity-org 维护）。
 async fn resolve_approver_positions(
     tx: &mut sqlx::PgConnection,
     val: &str,
     is_employee: bool,
 ) -> Result<Vec<i64>, sqlx::Error> {
     if is_employee {
-        sqlx::query_scalar(
-            r#"SELECT pos.id FROM isahl_auth.auth_users u
-               JOIN isahl."zc_id_subj-position" pos
-                 ON pos.fk_user = u.id AND pos.deleted_at IS NULL
-               WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.name = $1)
-               ORDER BY pos.id"#,
-        )
-        .bind(val)
-        .fetch_all(&mut *tx)
-        .await
+        // 员工标识 → 活跃账号 → 这些账号的任职岗位（岗位侧限真实岗位，见片段内判据）
+        let sql = concat!(
+            r#"WITH acc AS (
+                   SELECT u.id AS uid FROM isahl_auth.auth_users u
+                   WHERE u.is_active = TRUE
+                     AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e
+                                   WHERE e.deleted_at IS NULL
+                                     AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1))
+                          OR u.username = $1 OR u.name = $1)
+               )
+               SELECT DISTINCT inc.pos_id FROM acc JOIN ("#,
+            common::position_incumbent_accounts_sql!(),
+            r#") inc ON inc.uid = acc.uid
+               ORDER BY inc.pos_id"#
+        );
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind(val)
+            .fetch_all(&mut *tx)
+            .await
     } else {
-        sqlx::query_scalar(
-            r#"SELECT pos.id
-               FROM isahl."zc_id_subj-position" pos
-               JOIN isahl_auth.auth_users u ON u.id = pos.fk_user AND u.is_active = TRUE
-               WHERE pos.deleted_at IS NULL AND pos.fk_user IS NOT NULL
-                 AND (pos.id::text = $1 OR pos.notice = $1)
-               ORDER BY pos.id"#,
-        )
-        .bind(val)
-        .fetch_all(&mut *tx)
-        .await
+        // 岗位 id / 岗位名 → 岗位行（真实岗位）→ 任职账号集合非空即命中
+        let sql = concat!(
+            r#"SELECT DISTINCT inc.pos_id
+               FROM ("#,
+            common::position_incumbent_accounts_sql!(),
+            r#") inc
+               JOIN isahl."zc_id_subj-position" p ON p.id = inc.pos_id
+               WHERE p.deleted_at IS NULL AND (p.id::text = $1 OR p.notice = $1)
+               ORDER BY inc.pos_id"#
+        );
+        sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+            .bind(val)
+            .fetch_all(&mut *tx)
+            .await
     }
 }
 
@@ -2153,6 +2222,140 @@ fn reject_back_reachable(nodes: &[Value], from: usize, to: usize) -> bool {
     false
 }
 
+/// 边条件表达式的**写径校验**（publish 与 `POST /approval-flows/validate` 共用 `validate_graph`
+/// 的唯一入口，DSL 缺口 #3）。
+///
+/// 判据 = **上下文无关档** `validate_functions`（语法 + 受控函数白名单）：边的求值上下文
+/// （实体字段 + 流程变量）由运行时注入、发布时不可得，故不用 `validate_all`。
+/// 覆盖 `edges[].cond`（边数组形态）与 `nodes[].next[].cond`（节点内嵌形态）——
+/// 未校验的拼错 cond 会在路由期被静默跳边（`advance.rs::select_targets`：cond 求值错误
+/// → fail-closed 跳边 + warn，业务改走兜底边而无错）。
+fn validate_edge_conditions(parsed: &Value) -> Result<(), ApiError> {
+    let engine = runtime_engine::RhaiExpressionEngine::new();
+    let mut bad: Vec<String> = Vec::new();
+    let mut check = |label: String, cond: Option<&str>| {
+        let Some(cond) = cond.map(str::trim).filter(|c| !c.is_empty()) else {
+            return;
+        };
+        if let Err(e) = engine.validate_functions(cond) {
+            bad.push(format!("{label} = {cond} → {e}"));
+        }
+    };
+    if let Some(edges) = parsed.get("edges").and_then(|v| v.as_array()) {
+        for (i, edge) in edges.iter().enumerate() {
+            check(
+                format!("edges[{i}].cond"),
+                edge.get("cond").and_then(|v| v.as_str()),
+            );
+        }
+    }
+    let nodes = match parsed {
+        Value::Object(map) => map.get("nodes").and_then(|v| v.as_array()),
+        Value::Array(arr) => Some(arr),
+        _ => None,
+    };
+    if let Some(nodes) = nodes {
+        for (i, node) in nodes.iter().enumerate() {
+            if let Some(nexts) = node.get("next").and_then(|v| v.as_array()) {
+                for (j, nxt) in nexts.iter().enumerate() {
+                    check(
+                        format!("nodes[{i}].next[{j}].cond"),
+                        nxt.get("cond").and_then(|v| v.as_str()),
+                    );
+                }
+            }
+        }
+    }
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::Validation {
+            field: "edges".into(),
+            message: format!(
+                "边条件表达式非法（Rhai 语法/受控函数白名单）：{}",
+                bad.join("；")
+            ),
+        })
+    }
+}
+
+/// 节点内嵌表达式承载面的**写径校验**（与 `validate_edge_conditions` 并列、同一档位）。
+///
+/// 覆盖两处**运行期会执行、发布期原本零校验**的承载面（2026-09-23 Rhai 集成缺口复核）：
+/// - `nodes[].expr`（condition 节点）：运行期求值（`advance.rs`），false/错误 ⇒ fail-closed 阻断流程；
+/// - `nodes[].dmn.rules[].match[]` 非空单元格：运行期求值（`dmn.rs`），非法 ⇒ `DmnDecision::Violation` 阻断。
+///
+/// 判据 = **上下文无关档** `validate_functions`（语法 + 受控函数白名单），理由与边条件逐字一致：
+/// 运行期上下文（实体字段 + 流程变量）由运行时注入、发布时不可得。
+/// **新增图内表达式承载面 MUST 在本函数内登记**（单一枚举点，防「能执行却无人校验」回潮）。
+/// 空串/`null` 单元格 = DMN 通配语义，MUST NOT 入校验面。
+fn validate_node_expressions(parsed: &Value) -> Result<(), ApiError> {
+    let engine = runtime_engine::RhaiExpressionEngine::new();
+    let mut bad: Vec<String> = Vec::new();
+    let mut check = |label: String, expr: Option<&str>| {
+        let Some(expr) = expr.map(str::trim).filter(|e| !e.is_empty()) else {
+            return;
+        };
+        if let Err(e) = engine.validate_functions(expr) {
+            bad.push(format!("{label} = {expr} → {e}"));
+        }
+    };
+    let nodes = match parsed {
+        Value::Object(map) => map.get("nodes").and_then(|v| v.as_array()),
+        Value::Array(arr) => Some(arr),
+        _ => None,
+    };
+    let Some(nodes) = nodes else {
+        return Ok(());
+    };
+    for (i, node) in nodes.iter().enumerate() {
+        let node_type = node.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        let label = node.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        // condition 节点 expr（运行期 `advance.rs` 求值 → fail-closed 阻断流程）
+        if node_type == "condition" {
+            check(
+                format!("node[{i}] '{label}' (condition).expr"),
+                node.get("expr").and_then(|v| v.as_str()),
+            );
+        }
+        // DMN 决策表单元格（运行期 `dmn.rs` 求值 → 违例即阻断）
+        if node_type == "decision" {
+            if let Some(rules) = node
+                .get("dmn")
+                .and_then(|d| d.get("rules"))
+                .and_then(|v| v.as_array())
+            {
+                for (ri, rule) in rules.iter().enumerate() {
+                    let Some(cells) = rule.get("match").and_then(|v| v.as_array()) else {
+                        continue;
+                    };
+                    for (ci, cell) in cells.iter().enumerate() {
+                        check(
+                            format!(
+                                "node[{i}] '{label}' (decision) 规则 {} 单元格 {}",
+                                ri + 1,
+                                ci + 1
+                            ),
+                            cell.as_str(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    if bad.is_empty() {
+        Ok(())
+    } else {
+        Err(ApiError::Validation {
+            field: "nodes".into(),
+            message: format!(
+                "节点表达式非法（Rhai 语法/受控函数白名单）：{}",
+                bad.join("；")
+            ),
+        })
+    }
+}
+
 pub(crate) fn validate_graph(parsed: &Value) -> Result<(&[Value], Option<&[Value]>), ApiError> {
     let nodes = match parsed {
         Value::Object(map) => map.get("nodes").and_then(|v| v.as_array()),
@@ -2170,6 +2373,10 @@ pub(crate) fn validate_graph(parsed: &Value) -> Result<(&[Value], Option<&[Value
             message: "flow graph has zero nodes".into(),
         });
     }
+    // 边条件表达式校验（edges[].cond 与 nodes[].next[].cond；publish 与 /validate 共用本路径）
+    validate_edge_conditions(parsed)?;
+    // 节点内嵌表达式校验（condition `expr` 与 DMN 单元格；同路径同档位）
+    validate_node_expressions(parsed)?;
 
     // 节点类型白名单（fix-approval-action-chain P2-6，fail-closed）：
     // 设计器调色板（FlowDesigner utils.ts NODE_TYPES）+ 引擎词汇兼容集
@@ -2784,5 +2991,171 @@ mod approver_sel_tests {
             }
         }
         assert_eq!(sel.pos, "质量经理");
+    }
+
+    // ── 边条件表达式写径校验（DSL 缺口 #3）────────────────────────────────────
+    // publish 与 /approval-flows/validate 共用 validate_graph ⇒ 对共享函数直接单测即覆盖两端点
+
+    #[test]
+    fn edge_cond_valid_passes() {
+        let graph = json!({
+            "nodes": [
+                {"id": "a", "type": "start", "label": "s", "next": [{"to": 1, "cond": "amount > 0 && approved"}]},
+                {"id": "b", "type": "end", "label": "e"}
+            ]
+        });
+        assert!(validate_edge_conditions(&graph).is_ok());
+    }
+
+    #[test]
+    fn edge_cond_bad_syntax_fail_closed() {
+        let graph = json!({
+            "nodes": [
+                {"id": "a", "type": "start", "label": "s", "next": [{"to": 1, "cond": "amount > (("}]},
+                {"id": "b", "type": "end", "label": "e"}
+            ]
+        });
+        let err = validate_edge_conditions(&graph).expect_err("非法 cond MUST fail-closed");
+        let msg = err.to_string();
+        assert!(msg.contains("nodes[0].next[0].cond"), "{msg}");
+    }
+    #[test]
+    fn edge_cond_unregistered_function_fail_closed() {
+        // 负例夹具：未登记自由函数（check-expression-dialect R8 扫描「键+字面量同行」形态，
+        // 故字面量与 `cond:` 键须不同行——此处提升为变量，判据意图不变）
+        let unregistered = "md5(x) == \"y\"";
+        let graph = json!({
+            "nodes": [
+                {"id": "a", "type": "start", "label": "s", "next": [{"to": 1, "cond": unregistered}]},
+                {"id": "b", "type": "end", "label": "e"}
+            ]
+        });
+        let err = validate_edge_conditions(&graph).expect_err("未登记函数 MUST fail-closed");
+        let msg = err.to_string();
+        assert!(msg.contains("未登记"), "{msg}");
+    }
+
+    #[test]
+    fn edge_cond_edges_array_form_checked() {
+        let graph = json!({
+            "nodes": [
+                {"id": "a", "type": "start", "label": "s"},
+                {"id": "b", "type": "end", "label": "e"}
+            ],
+            "edges": [{"source": "a", "target": "b", "cond": "(()"}]
+        });
+        let err = validate_edge_conditions(&graph).expect_err("edges[] 形态同样校验");
+        assert!(err.to_string().contains("edges[0].cond"), "{err}");
+    }
+
+    // ── 节点内嵌表达式承载面（condition `expr` / DMN 单元格）──
+    // 注：含未登记自由函数的字面量 MUST 与表达式键**不同行**（`check-expression-dialect` R8
+    // 扫描「键 + 同行引号字面量」形态），故一律提升为变量，判据意图不变。
+
+    #[test]
+    fn node_expr_valid_passes() {
+        let graph = json!({
+            "nodes": [
+                {"id": "a", "type": "start", "label": "s", "next": [{"to": 1}]},
+                {"id": "b", "type": "condition", "label": "分支"},
+                {"id": "c", "type": "end", "label": "e"}
+            ]
+        });
+        // 合法 expr 单独注入（避免与键同行被门禁当源字面量扫描）
+        let mut graph = graph;
+        graph["nodes"][1]["expr"] = json!("amount > 0 && approved");
+        assert!(validate_node_expressions(&graph).is_ok());
+    }
+
+    #[test]
+    fn node_expr_bad_syntax_fail_closed() {
+        let mut graph = json!({
+            "nodes": [{"id": "b", "type": "condition", "label": "分支"}]
+        });
+        graph["nodes"][0]["expr"] = json!("amount > ((");
+        let err = validate_node_expressions(&graph).expect_err("非法 expr MUST fail-closed");
+        let msg = err.to_string();
+        assert!(msg.contains("(condition).expr"), "{msg}");
+        assert!(msg.contains("分支"), "错误消息 MUST 含节点 label：{msg}");
+    }
+
+    #[test]
+    fn node_expr_unregistered_function_fail_closed() {
+        let unregistered = "md5(x) == \"y\"";
+        let mut graph = json!({
+            "nodes": [{"id": "b", "type": "condition", "label": "分支"}]
+        });
+        graph["nodes"][0]["expr"] = json!(unregistered);
+        let err = validate_node_expressions(&graph).expect_err("未登记函数 MUST fail-closed");
+        assert!(err.to_string().contains("未登记"), "{err}");
+    }
+
+    #[test]
+    fn node_expr_other_node_types_ignored() {
+        // 非 condition 节点的 expr 不属运行期承载面（`advance.rs` 只读 condition.expr）
+        let mut graph = json!({
+            "nodes": [{"id": "a", "type": "approve", "label": "审批"}]
+        });
+        graph["nodes"][0]["expr"] = json!("amount > ((");
+        assert!(validate_node_expressions(&graph).is_ok());
+    }
+
+    #[test]
+    fn dmn_wildcard_cells_not_rejected() {
+        let graph = json!({
+            "nodes": [{
+                "id": "d", "type": "decision", "label": "决策",
+                "dmn": {
+                    "hitPolicy": "FIRST",
+                    "inputs": [{"name": "amount"}, {"name": "region"}],
+                    "rules": [{"match": [null, "  "], "output": "A"}]
+                }
+            }]
+        });
+        assert!(
+            validate_node_expressions(&graph).is_ok(),
+            "通配单元格（null/空串）MUST NOT 入校验面"
+        );
+    }
+
+    #[test]
+    fn dmn_cell_bad_syntax_fail_closed_with_position() {
+        let bad_cell = "amount > ((";
+        let graph = json!({
+            "nodes": [{
+                "id": "d", "type": "decision", "label": "决策",
+                "dmn": {
+                    "hitPolicy": "FIRST",
+                    "inputs": [{"name": "amount"}],
+                    "rules": [
+                        {"match": ["amount >= 0"], "output": "A"},
+                        {"match": [bad_cell], "output": "B"}
+                    ]
+                }
+            }]
+        });
+        let err = validate_node_expressions(&graph).expect_err("非法单元格 MUST fail-closed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("规则 2 单元格 1"),
+            "错误消息 MUST 定位规则/单元格：{msg}"
+        );
+    }
+
+    #[test]
+    fn dmn_cell_unregistered_function_fail_closed() {
+        let unregistered = "md5(code) == \"x\"";
+        let graph = json!({
+            "nodes": [{
+                "id": "d", "type": "decision", "label": "决策",
+                "dmn": {
+                    "hitPolicy": "FIRST",
+                    "inputs": [{"name": "code"}],
+                    "rules": [{"match": [unregistered], "output": "A"}]
+                }
+            }]
+        });
+        let err = validate_node_expressions(&graph).expect_err("未登记函数 MUST fail-closed");
+        assert!(err.to_string().contains("未登记"), "{err}");
     }
 }

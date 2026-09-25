@@ -93,6 +93,20 @@ impl ExtensionSurface {
             .on_transition(&self.app_code, entity, from_state, to_state, variables)
     }
 
+    /// 删除前执行（约束 → `onDelete` 规则）
+    ///
+    /// `variables` MUST 携带**存量行**字段（约束是行状态谓词）：只给 `id` 时，引用其他字段的
+    /// Error 级约束会因变量缺失而求值失败，而求值失败按 `level` 处理（Error ⇒ 阻断）
+    /// ⇒ 该实体的删除被恒阻断。调用方（写径）负责装配行上下文。
+    pub fn delete(
+        &self,
+        entity: &str,
+        variables: &mut HashMap<String, Value>,
+    ) -> Result<ExtensionResult, ExtensionRuntimeError> {
+        self.registry
+            .before_delete(&self.app_code, entity, variables)
+    }
+
     /// 实体 / 字段引用合法性（复用 `ExtensionLoader::validate_entities`，禁第二份）
     ///
     /// `known_entities`: entity_name → 该实体已知字段集合。
@@ -189,6 +203,7 @@ impl ExtensionSurface {
                         from: t.from.clone(),
                         to: t.to.clone(),
                         has_guard: t.guard.is_some(),
+                        has_action: t.action.is_some(),
                     })
                     .collect(),
             })
@@ -293,6 +308,10 @@ pub struct TransitionDecl {
     pub from: Vec<String>,
     pub to: String,
     pub has_guard: bool,
+    /// 是否声明了 transition action（`字段 = 表达式` 契约）。声明面可见性：action 的执行归属
+    /// 见 `APP_EXTENSION.md`（App 级 `on_transition` 唯一求值路径；生产 update 路径只跑 guard）
+    /// —— 覆盖判定据此把「声明但不执行」显式计为 uncovered，MUST NOT 静默当通过。
+    pub has_action: bool,
 }
 
 /// 工作流声明（覆盖单元 = 其 trigger）

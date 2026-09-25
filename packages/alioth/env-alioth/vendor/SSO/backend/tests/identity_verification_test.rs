@@ -94,7 +94,7 @@ async fn setup_user(pool: &PgPool) -> i64 {
         r#"
         INSERT INTO isahl_auth.auth_users (id, name, username, email, status, created_at, updated_at)
         VALUES (isahl.gen_next_zuid(), 'identity_test', 'identity_test', 'identity@test.local', 'pending', NOW(), NOW())
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT (name) DO NOTHING
         "#,
     )
     .execute(pool)

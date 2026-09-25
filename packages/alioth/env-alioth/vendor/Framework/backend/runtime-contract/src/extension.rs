@@ -27,7 +27,6 @@ use std::collections::HashMap;
 
 use crate::behavior::{LifecycleEvent, State, Transition};
 use crate::model_registry::AppModelConfig;
-use crate::swrl::SwrlRule;
 
 // ===================================================================
 // AppContext — 应用上下文标识
@@ -68,12 +67,12 @@ pub struct AppLogicExtension {
     /// 工作流定义
     #[serde(default)]
     pub workflows: Vec<WorkflowDefinition>,
-    /// SWRL 语义规则
-    #[serde(default)]
-    pub swrl_rules: Vec<SwrlRule>,
     /// 领域模型配置单：profile_name -> AppModelConfig
     #[serde(default)]
     pub model_profiles: HashMap<String, AppModelConfig>,
+    /// 规则集求解语义（`extensions/rule_execution.yaml`；缺省 ⇒ 单轮顺序执行）
+    #[serde(default)]
+    pub rule_execution: RuleExecutionConfig,
 }
 
 fn default_version() -> String {
@@ -90,8 +89,8 @@ impl AppLogicExtension {
             business_rules: Vec::new(),
             state_machines: Vec::new(),
             workflows: Vec::new(),
-            swrl_rules: Vec::new(),
             model_profiles: HashMap::new(),
+            rule_execution: RuleExecutionConfig::default(),
         }
     }
 
@@ -105,7 +104,6 @@ impl AppLogicExtension {
             && self.business_rules.is_empty()
             && self.state_machines.is_empty()
             && self.workflows.is_empty()
-            && self.swrl_rules.is_empty()
             && self.model_profiles.is_empty()
     }
 
@@ -194,6 +192,68 @@ pub struct RuleExtension {
 
 fn default_true() -> bool {
     true
+}
+
+// ─────────────────────────────────────────────────────────────
+// RuleExecutionConfig — 规则集求解语义（应用级）
+// ─────────────────────────────────────────────────────────────
+
+/// 同字段多写的裁决策略（确定性；缺省先写者胜）
+///
+/// 归本 crate（而非 runtime-engine）：求解语义属扩展配置面
+/// （`extensions/rule_execution.yaml` 声明），engine 侧 `re-export` 复用同一枚举
+/// （单一真身；engine 不得另立一份）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictPolicy {
+    /// 先写者胜（规则序：priority 升序 → 规则名稳定序）
+    #[default]
+    FirstWins,
+    /// 后写者胜
+    LastWins,
+    /// 冲突即错误（记录并阻断，保留先写值）
+    Error,
+}
+
+/// 规则集求解语义（应用级，`extensions/rule_execution.yaml`）
+///
+/// 缺省（文件不存在或字段全缺省）⇒ **单轮顺序执行**（`RuleEngine::execute`），语义与历史逐字一致；
+/// `saturate: true` ⇒ 依赖驱动**不动点求解**（`RuleEngine::saturate`）：写集合→读集合依赖图驱动，
+/// 跨规则链式传播，达上限留痕（`MUST NOT` 静默截断）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct RuleExecutionConfig {
+    /// 是否按依赖驱动不动点求解（`false` = 单轮顺序执行）
+    #[serde(default)]
+    pub saturate: bool,
+    /// 轮数上限（仅 `saturate` 生效；缺省 ⇒ 引擎默认 8）
+    #[serde(default)]
+    pub max_rounds: Option<u32>,
+    /// 同字段多写裁决策略（仅 `saturate` 生效；缺省 ⇒ `first_wins`）
+    #[serde(default)]
+    pub on_conflict: Option<ConflictPolicy>,
+}
+
+impl RuleExecutionConfig {
+    /// 组装引擎求解配置；未声明饱和 ⇒ `None`（单轮语义，调用方走 `RuleEngine::execute`）。
+    pub fn to_saturation(&self) -> Option<SaturationConfigView> {
+        if !self.saturate {
+            return None;
+        }
+        Some(SaturationConfigView {
+            max_rounds: self.max_rounds,
+            on_conflict: self.on_conflict.unwrap_or_default(),
+        })
+    }
+}
+
+/// 求解配置的**无依赖视图**（engine 侧据此构造自身 `SaturationConfig`，
+/// 避免 contract → engine 的反向依赖）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaturationConfigView {
+    /// 轮数上限（`None` ⇒ 引擎默认）
+    pub max_rounds: Option<u32>,
+    /// 冲突策略
+    pub on_conflict: ConflictPolicy,
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -389,7 +449,6 @@ pub enum ExtensionType {
     BusinessRule,
     StateMachine,
     Workflow,
-    SwrlRule,
 }
 
 /// 批量扩展执行结果
@@ -405,9 +464,6 @@ pub struct ExtensionResult {
     /// 阻塞性错误
     #[serde(default)]
     pub blocking_errors: Vec<String>,
-    /// 警告信息
-    #[serde(default)]
-    pub warnings: Vec<String>,
 }
 
 impl ExtensionResult {
@@ -417,7 +473,6 @@ impl ExtensionResult {
             all_passed: true,
             mutations: HashMap::new(),
             blocking_errors: Vec::new(),
-            warnings: Vec::new(),
         }
     }
 

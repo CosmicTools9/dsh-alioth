@@ -193,3 +193,15 @@ cargo_run_guarded() {
     fi
     return "${rc}"
 }
+
+# ── sccache 接线（唯一实现 = scripts/lib/sccache.sh；source 期即启用，幂等）────────
+# 覆盖全部 source 本文件的入口（cargo-check / cargo-test / test-all / check-rust-tests-compile /
+# build-ns / alioth-build / namespace-db / sync-db / coverage / dev-meta）：编译单元经
+# RUSTC_WRAPPER 走二级缓存，跨 target 目录 / 跨 namespace / 跨 worktree 复用同一缓存项
+# （SCCACHE_BASEDIR = 仓库根；判据见 scripts/check/check-sccache-wiring.ts）。
+# fail-soft：sccache 缺失或显式停用时只报告，不阻断构建。
+if [ -f "${_CARGO_RUN_LIB_DIR}/sccache.sh" ]; then
+    # shellcheck source=scripts/lib/sccache.sh
+    source "${_CARGO_RUN_LIB_DIR}/sccache.sh"
+    sccache_enable_if_available "cargo-run"
+fi

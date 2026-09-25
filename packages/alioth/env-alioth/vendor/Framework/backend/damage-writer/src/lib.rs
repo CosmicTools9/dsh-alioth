@@ -1,10 +1,25 @@
 //! # damage-writer — 损管/异常事件写链共享事务
 //!
 //! 单一事实源：`zc_id_even-accident`（损管/异常事件）主行 + `zc_id_event_rr_container`
-//! （事件↔车辆容器桥）两张表的写事务抽取，供两类调用方共用（REUSE_FIRST，禁止第二套实现）：
+//! （事件↔车辆容器桥）+ `zc_id_event_rr_matter`（事件↔交付事项桥）三张表的写事务抽取，
+//! 供两类调用方共用（REUSE_FIRST，禁止第二套实现）：
 //!
 //! - **Gateway WZ**（logi-consignment `FjaRepository::create_damage`）：平台调度员创建损管；
 //! - **OpenActivity 门户**（portal_write `insert_even_accident`）：承运异常上报 / 客户申报。
+//!
+//! ## 事件↔订单链（`wire-damage-event-order-chain`）
+//!
+//! 报损表单选定订单后，事件与订单 MUST 经**交付事项**相遇（禁借 `lk_risk`——模型声明 `lk_*` = 等级引用）：
+//!
+//! ```text
+//! even-accident a ──(ref_left)──▶ zc_id_event_rr_matter ──(ref_right)──▶ zc_id_production 交付事项
+//!                                                                              ▲
+//!                                    zc_id_deta-trade_order d.fk_delivery ──────┘
+//!                                    d.fk_list ──▶ 运单（zc_id_stat-trade_order 族）──▶ 委托
+//! ```
+//!
+//! `resolve_delivery_matter_tx` 由订单 code 解析交付事项，`link_event_matter_tx` 落桥；
+//! 解析不到（未受理 / 无主运输明细）⇒ 调用方 MUST 不落桥并如实降级（不阻断建单）。
 //!
 //! 两应用禁止 HTTP 互调（平台端点鉴权为 JWT + `require_resource_access`，服务身份化需
 //! Gateway noauth 白名单 + 密钥补偿），故写事务以共享 crate 单份实现。
@@ -97,9 +112,18 @@ pub async fn insert_event_accident_tx(
     inserted.try_get("id")
 }
 
-/// 事件↔车辆桥（`zc_id_event_rr_container`）：车牌 → `zc_id_identity`（`ck_category='plate'`）
-/// 反查车辆实体 → INSERT 桥（`gen_next_uid(473)`、code `EVT-CNT-{id}-{vid}`）。
-/// 车牌为空（或反查无车）→ no-op（与迁移前一致）。`notice` 语义由调用方给定。
+/// 事件↔车辆桥（`zc_id_event_rr_container`）：车牌 → 车辆实体反查 → INSERT 桥
+/// （`gen_next_uid(473)`、code `EVT-CNT-{id}-{vid}`）。
+///
+/// 反查口径（change `align-vehicle-plate-identity`，2026-09-23 模型裁定）：
+/// 车牌号存于 `zc_id_identity.identity`（分类字典 `zc_id_cate-identity.code = 'plate'`），
+/// 经实体↔身份桥 `zc_id_entity_rr_identity` 关联车辆（`ref_left` = 车辆）。
+/// 车辆 `notice`（描述信息）/`code`（序列号）**不承载号牌** ⇒ 无桥行即无车（不臆造关联）。
+///
+/// 历史沿革：早期实现按 `stor-ctn-vehicle.notice = 车牌` 反查（当年车辆建档把车牌写 notice），
+/// 另有一级「身份桥」兜底；本次模型对齐后**只保留身份桥这一级**（旧 notice 口径作废）。
+///
+/// 车牌为空（或无桥行命中）→ no-op（不臆造关联）。`notice` 语义由调用方给定。
 pub async fn link_event_container_tx(
     conn: &mut PgConnection,
     ctx: &DamageWriteContext,
@@ -111,19 +135,24 @@ pub async fn link_event_container_tx(
     if plate.is_empty() {
         return Ok(());
     }
+    // 车牌 → 车辆：**唯一口径** = 实体↔身份桥（`zc_id_identity.identity` 命中且分类为 `plate`）。
+    // 车辆 `notice`/`code` MAY NOT 承载号牌（change align-vehicle-plate-identity，2026-09-23 模型裁定；
+    // 车辆 ⊂ `zc_id_carrier` ⊂ `zc_id_entity` ⇒ 桥为模型声明正用，见 model-center-requests.md §R12）。
     let vehicle_id: Option<i64> = sqlx::query_scalar(
-        r#"SELECT er.ref_left FROM "isahl"."zc_id_identity" i
+        r#"SELECT v.id FROM "isahl"."zc_id_stor-ctn-vehicle" v
            JOIN "isahl"."zc_id_entity_rr_identity" er
-             ON er.ref_right = i.id AND er.deleted_at IS NULL
-           WHERE i.identity = $1 AND i.deleted_at IS NULL
-             AND i.ck_category = (SELECT id FROM "isahl"."zc_id_cate-identity"
-                                  WHERE code = 'plate' AND deleted_at IS NULL LIMIT 1)
-           ORDER BY er.id DESC LIMIT 1"#,
+             ON er.ref_left = v.id AND er.deleted_at IS NULL
+           JOIN "isahl"."zc_id_identity" i
+             ON i.id = er.ref_right AND i.deleted_at IS NULL
+           JOIN "isahl"."zc_id_cate-identity" c
+             ON c.id = i.ck_category AND c.deleted_at IS NULL
+          WHERE v.deleted_at IS NULL AND c.code = 'plate'
+            AND upper(i.identity) = upper($1)
+          ORDER BY er.id DESC LIMIT 1"#,
     )
     .bind(plate)
     .fetch_optional(&mut *conn)
-    .await?
-    .flatten();
+    .await?;
     if let Some(vid) = vehicle_id {
         sqlx::query(
             r#"INSERT INTO "isahl"."zc_id_event_rr_container"
@@ -138,5 +167,75 @@ pub async fn link_event_container_tx(
         .execute(&mut *conn)
         .await?;
     }
+    Ok(())
+}
+
+/// 交付事项解析——事件↔订单链的**订单侧锚点**（`wire-damage-event-order-chain` D2）。
+///
+/// 入参二选一（调用方各持其一）：`order_code`（平台报损表单的运单号 `WB-*` / 委托号 `CNS-*`）
+/// 或 `order_id`（门户上报属权校验后的运单 id）。两者都是 `zc_id_stat-trade_order` 族行的定位键。
+///
+/// 口径：订单行 → 主运输明细（排除装载明细 `DTL-LDG-%`）→ `fk_delivery`（交付事项，`zc_id_production` 族行）。
+/// 用**统一父表** `zc_id_stat-trade_order` 而非具体叶（`zc_id_orde-land`/`orde-traffic`…）：
+/// 平台表单选自 `orde-land`、门户属权运单校验在 `orde-traffic`，父表两侧都覆盖。
+///
+/// 未受理（`fk_delivery IS NULL`——该列由 `dispatch_core::accept_consignment` 回填）/ 无主运输明细
+/// / 入参全空 ⇒ `None`：调用方 MUST 据此**不落桥**并如实降级（`D3`，不阻断建单、不臆造关联）。
+pub async fn resolve_delivery_matter_tx(
+    conn: &mut PgConnection,
+    order_code: Option<&str>,
+    order_id: Option<i64>,
+) -> Result<Option<i64>, sqlx::Error> {
+    let code = order_code.map(str::trim).filter(|s| !s.is_empty());
+    if code.is_none() && order_id.is_none() {
+        return Ok(None);
+    }
+    let matter: Option<i64> = sqlx::query_scalar(
+        r#"SELECT d.fk_delivery
+             FROM "isahl"."zc_id_deta-trade_order" d
+             JOIN "isahl"."zc_id_stat-trade_order" st
+               ON st.id = d.fk_list AND st.deleted_at IS NULL
+            WHERE d.deleted_at IS NULL
+              AND d.fk_delivery IS NOT NULL
+              AND d.code NOT LIKE 'DTL-LDG-%'
+              AND (($1::text IS NOT NULL AND st.code = $1)
+                OR ($2::bigint IS NOT NULL AND st.id = $2))
+            ORDER BY d.id LIMIT 1"#,
+    )
+    .bind(code)
+    .bind(order_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .flatten();
+    Ok(matter)
+}
+
+/// 事件↔交付事项桥（`zc_id_event_rr_matter`）：把事件挂到订单的**交付事项**上，读径据此再经
+/// `zc_id_deta-trade_order.fk_delivery` 回到订单/运单（链见 crate 文档）。`notice` 由调用方给定。
+///
+/// 幂等：同 `(ref_left, ref_right)` 存活的桥行已存在则零写入（`WHERE NOT EXISTS`，不依赖唯一约束——
+/// 该桥同时承载装载事项（`ref_right = prod-loading`），本函数只写交付事项面）。
+pub async fn link_event_matter_tx(
+    conn: &mut PgConnection,
+    ctx: &DamageWriteContext,
+    accident_id: i64,
+    matter_id: i64,
+    notice: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"INSERT INTO "isahl"."zc_id_event_rr_matter"
+           (id, code, notice, ref_left, ref_right, comments, created_by_id)
+           SELECT isahl.gen_next_uid(333), $1, $2, $3, $4, 'damage-event-order-chain', $5
+            WHERE NOT EXISTS (
+                SELECT 1 FROM "isahl"."zc_id_event_rr_matter"
+                 WHERE ref_left = $3 AND ref_right = $4 AND deleted_at IS NULL)"#,
+    )
+    .bind(format!("EVT-M-{accident_id}-{matter_id}"))
+    .bind(notice)
+    .bind(accident_id)
+    .bind(matter_id)
+    .bind(ctx.actor_user_id)
+    .execute(&mut *conn)
+    .await?;
     Ok(())
 }

@@ -88,7 +88,7 @@ async fn ensure_admin(pool: &PgPool) -> i64 {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'admin_gap', 'admin_gap', 'admin_gap@test.local', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(pool)
     .await
@@ -146,7 +146,7 @@ async fn notification_preferences_roundtrip() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'np_user', 'np_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await
@@ -233,7 +233,7 @@ async fn scim_requires_authentication() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'scim_user', 'scim_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await
@@ -521,7 +521,7 @@ async fn pep_enforces_admin_and_audit_resources() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
          VALUES (isahl.gen_next_zuid(), 'pep_admin', 'pep_admin', 'pep_admin@test.local', 'active', true, NOW(), NOW()) \
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await
@@ -552,7 +552,7 @@ async fn pep_enforces_admin_and_audit_resources() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
          VALUES (isahl.gen_next_zuid(), 'pep_regular', 'pep_regular', 'pep_regular@test.local', 'active', true, NOW(), NOW()) \
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await

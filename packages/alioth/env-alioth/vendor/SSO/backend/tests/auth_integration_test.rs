@@ -47,28 +47,7 @@ async fn test_register_and_login_lifecycle() {
     )
     .await;
 
-    // 1. 注册流程要求邮箱已验证——先发送并验证验证码
-    let send_code_req = test::TestRequest::post()
-        .uri("/auth/email/send-code")
-        .set_json(json!({"email": test_email, "purpose": "register"}))
-        .to_request();
-    test::call_service(&app, send_code_req).await;
-
-    let code: String = sqlx::query_scalar(
-        "SELECT code FROM isahl_auth.auth_email_verifications WHERE email = $1 AND purpose = 'register'",
-    )
-    .bind(test_email)
-    .fetch_one(&pool)
-    .await
-    .expect("verification code should be stored");
-
-    let verify_code_req = test::TestRequest::post()
-        .uri("/auth/email/verify-code")
-        .set_json(json!({"email": test_email, "code": code, "purpose": "register"}))
-        .to_request();
-    test::call_service(&app, verify_code_req).await;
-
-    // 2. 注册新用户
+    // 1. 注册新用户（email 为可选联系方式，注册路径无邮箱验证前置）
     let register_req = test::TestRequest::post()
         .uri("/auth/register")
         .set_json(json!({
@@ -378,7 +357,7 @@ async fn test_register_with_username_password_only() {
 }
 
 #[tokio::test]
-async fn test_register_with_unverified_email_rejected() {
+async fn test_register_with_unverified_email_succeeds() {
     let pool = setup_pool().await;
     common::setup_schema(&pool)
         .await
@@ -400,8 +379,8 @@ async fn test_register_with_unverified_email_rejected() {
     let test_email = format!("reg-verify-{}@alioth.test", uuid::Uuid::new_v4().simple());
     let test_username = format!("reg_verify_{}", uuid::Uuid::new_v4().simple());
 
-    // 未验证邮箱直接注册 → 400 EMAIL_NOT_VERIFIED（fix-sso-auth-gaps P1：
-    // 邮箱所有权验证恢复为注册门禁；验证记录经 send-code + verify-code 前置取得）
+    // 未验证邮箱直接注册 → 201（注册路径不消费邮箱验证记录；判据正本 =
+    // 活规约 register-username-anchor 的 email-optional-non-unique-channel）
     let register_req = test::TestRequest::post()
         .uri("/auth/register")
         .set_json(json!({
@@ -413,37 +392,30 @@ async fn test_register_with_unverified_email_rejected() {
     let register_resp = test::call_service(&app, register_req).await;
     assert_eq!(
         register_resp.status().as_u16(),
-        400,
-        "register with unverified email must be rejected with 400"
+        201,
+        "register with unverified email must succeed"
     );
     let body: serde_json::Value = test::read_body_json(register_resp).await;
     assert!(
-        body["error"]
+        !body["error"]
             .as_str()
             .unwrap_or("")
             .contains("EMAIL_NOT_VERIFIED"),
-        "expected EMAIL_NOT_VERIFIED, got {:?}",
+        "EMAIL_NOT_VERIFIED must not be returned, got {:?}",
         body
     );
 
-    // 无用户行写入
-    let leftover: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM isahl_auth.auth_users WHERE username = $1")
+    // 用户行落库且 email 落库
+    let row: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT id, email FROM isahl_auth.auth_users WHERE username = $1")
             .bind(&test_username)
-            .fetch_one(&pool)
+            .fetch_optional(&pool)
             .await
             .unwrap();
-    assert_eq!(
-        leftover, 0,
-        "no user row may be created for unverified email"
-    );
+    let (_, stored_email) = row.expect("user row must be created for unverified email");
+    assert_eq!(stored_email.as_deref(), Some(test_email.as_str()));
 
     // 清理
-    sqlx::query("DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1")
-        .bind(&test_email)
-        .execute(&pool)
-        .await
-        .ok();
     common::cleanup_user_by_email(&pool, &test_email).await.ok();
 }
 
@@ -567,4 +539,276 @@ async fn test_phone_send_code_invalid_format() {
         400,
         "Invalid phone should return 400"
     );
+}
+
+// ============================================================================
+// 邮箱验证码登录 + 密码重置（add-password-reset-and-auth-fixes）
+// ============================================================================
+
+/// 插入 active 测试用户，返回 user_id
+async fn insert_active_user(pool: &PgPool, username: &str, email: &str) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO isahl_auth.auth_users (id, username, name, email, status, password_hash, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), $1, $1, $2, 'active', 'unused-hash', NOW(), NOW())
+        RETURNING id"
+    )
+    .bind(username)
+    .bind(email)
+    .fetch_one(pool)
+    .await
+    .expect("Failed to insert test user")
+}
+
+async fn cleanup_email_code_users(pool: &PgPool, email: &str) {
+    sqlx::query("DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1")
+        .bind(email)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query(
+        "DELETE FROM isahl_auth.password_reset_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+    )
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    sqlx::query(
+        "DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+    )
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    sqlx::query(
+        "DELETE FROM isahl_auth.refresh_token_blocklist WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+    )
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
+        .bind(email)
+        .execute(pool)
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn test_email_code_login_flow() {
+    let pool = setup_pool().await;
+    common::setup_schema(&pool)
+        .await
+        .expect("Failed to setup schema");
+
+    let test_email = "emailcode-login@alioth.test";
+    cleanup_email_code_users(&pool, test_email).await;
+    insert_active_user(&pool, "emailcodetest", test_email).await;
+
+    let auth_state = common::test_auth_state();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(auth_state.clone()))
+            .app_data(web::Data::new(
+                Box::new(MockEmailService) as Box<dyn ::common::EmailService>
+            ))
+            .service(web::scope("/auth").configure(auth::login::configure)),
+    )
+    .await;
+
+    // 1. 请求登录验证码（purpose=login）
+    let send_req = test::TestRequest::post()
+        .uri("/auth/email/send-code")
+        .set_json(json!({"email": test_email, "purpose": "login"}))
+        .to_request();
+    let send_resp = test::call_service(&app, send_req).await;
+    assert_eq!(send_resp.status().as_u16(), 200, "Send code should succeed");
+
+    let code: String = sqlx::query_scalar(
+        "SELECT code FROM isahl_auth.auth_email_verifications WHERE email = $1 AND purpose = 'login'",
+    )
+    .bind(test_email)
+    .fetch_one(&pool)
+    .await
+    .expect("Code should be stored");
+
+    // 2. 错误验证码 → 401 且计入失败
+    let wrong_req = test::TestRequest::post()
+        .uri("/auth/login/email-code")
+        .set_json(json!({"email": test_email, "code": "000000"}))
+        .to_request();
+    let wrong_resp = test::call_service(&app, wrong_req).await;
+    assert_eq!(
+        wrong_resp.status().as_u16(),
+        401,
+        "Wrong code should be 401"
+    );
+    let attempts: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(failed_login_attempts, 0) FROM isahl_auth.auth_users WHERE email = $1",
+    )
+    .bind(test_email)
+    .fetch_one(&pool)
+    .await
+    .expect("Failed attempts should be readable");
+    assert_eq!(attempts, 1, "Wrong code must count as failed attempt");
+
+    // 3. 正确验证码 → 200 签发令牌
+    let ok_req = test::TestRequest::post()
+        .uri("/auth/login/email-code")
+        .set_json(json!({"email": test_email, "code": code}))
+        .to_request();
+    let ok_resp = test::call_service(&app, ok_req).await;
+    assert_eq!(ok_resp.status().as_u16(), 200, "Correct code should log in");
+    let body: serde_json::Value = test::read_body_json(ok_resp).await;
+    assert!(
+        body.get("access_token").and_then(|v| v.as_str()).is_some(),
+        "Login response must carry access_token"
+    );
+
+    // 4. 验证码一次性 — 重放 → 401
+    let replay_req = test::TestRequest::post()
+        .uri("/auth/login/email-code")
+        .set_json(json!({"email": test_email, "code": code}))
+        .to_request();
+    let replay_resp = test::call_service(&app, replay_req).await;
+    assert_eq!(
+        replay_resp.status().as_u16(),
+        401,
+        "Code replay must be 401"
+    );
+
+    cleanup_email_code_users(&pool, test_email).await;
+}
+
+#[tokio::test]
+async fn test_email_code_login_multi_account_rejected() {
+    let pool = setup_pool().await;
+    common::setup_schema(&pool)
+        .await
+        .expect("Failed to setup schema");
+
+    let test_email = "emailcode-multi@alioth.test";
+    cleanup_email_code_users(&pool, test_email).await;
+    insert_active_user(&pool, "emailcodemulti1", test_email).await;
+    insert_active_user(&pool, "emailcodemulti2", test_email).await;
+
+    let auth_state = common::test_auth_state();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(auth_state.clone()))
+            .app_data(web::Data::new(
+                Box::new(MockEmailService) as Box<dyn ::common::EmailService>
+            ))
+            .service(web::scope("/auth").configure(auth::login::configure)),
+    )
+    .await;
+
+    let req = test::TestRequest::post()
+        .uri("/auth/login/email-code")
+        .set_json(json!({"email": test_email, "code": "123456"}))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "Multi-account email must be rejected with 400"
+    );
+
+    cleanup_email_code_users(&pool, test_email).await;
+}
+
+#[tokio::test]
+async fn test_password_reset_flow() {
+    let pool = setup_pool().await;
+    common::setup_schema(&pool)
+        .await
+        .expect("Failed to setup schema");
+
+    let test_email = "reset-flow@alioth.test";
+    cleanup_email_code_users(&pool, test_email).await;
+    let user_id = insert_active_user(&pool, "resetflowtest", test_email).await;
+
+    let auth_state = common::test_auth_state();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(auth_state.clone()))
+            .app_data(web::Data::new(
+                Box::new(MockEmailService) as Box<dyn ::common::EmailService>
+            ))
+            .service(
+                web::scope("/auth")
+                    .configure(auth::login::configure)
+                    .configure(auth::reset_password::configure_routes),
+            ),
+    )
+    .await;
+
+    // 1. 请求重置 → 恒 200（防枚举），token 行落库
+    let req_req = test::TestRequest::post()
+        .uri("/auth/reset-password/request")
+        .set_json(json!({"email": test_email}))
+        .to_request();
+    let req_resp = test::call_service(&app, req_req).await;
+    assert_eq!(req_resp.status().as_u16(), 200, "Request should succeed");
+    let token_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM isahl_auth.password_reset_tokens WHERE user_id = $1 AND used_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_one(&pool)
+    .await
+    .expect("Token count should be readable");
+    assert_eq!(token_rows, 1, "Request must persist one active token");
+
+    // 2. 用自持 token 覆盖 hash（邮件通道只发链接，测试直写已知 token）
+    let known_token = "TestResetToken20260924";
+    let known_hash = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
+        known_token.as_bytes(),
+    ));
+    sqlx::query("UPDATE isahl_auth.password_reset_tokens SET token_hash = $1 WHERE user_id = $2")
+        .bind(&known_hash)
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("Token hash update should succeed");
+
+    // 3. confirm → 200，新密码可登录
+    let confirm_req = test::TestRequest::post()
+        .uri("/auth/reset-password/confirm")
+        .set_json(json!({"token": known_token, "new_password": "NewPass123!"}))
+        .to_request();
+    let confirm_resp = test::call_service(&app, confirm_req).await;
+    assert_eq!(
+        confirm_resp.status().as_u16(),
+        200,
+        "Confirm should succeed"
+    );
+
+    let login_req = test::TestRequest::post()
+        .uri("/auth/login")
+        .set_json(json!({"identifier": "resetflowtest", "password": "NewPass123!"}))
+        .to_request();
+    let login_resp = test::call_service(&app, login_req).await;
+    let login_status = login_resp.status().as_u16();
+    let login_body = test::read_body(login_resp).await;
+    assert_eq!(
+        login_status, 200,
+        "New password must log in after reset, got {}: {:?}",
+        login_status, login_body
+    );
+
+    // 4. token 一次性 — 重放 confirm → 400
+    let replay_req = test::TestRequest::post()
+        .uri("/auth/reset-password/confirm")
+        .set_json(json!({"token": known_token, "new_password": "OtherPass123!"}))
+        .to_request();
+    let replay_resp = test::call_service(&app, replay_req).await;
+    assert_eq!(
+        replay_resp.status().as_u16(),
+        400,
+        "Token replay must be 400"
+    );
+
+    cleanup_email_code_users(&pool, test_email).await;
 }

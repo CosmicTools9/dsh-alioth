@@ -5,12 +5,15 @@
 //! ① 同 `cert_no` 连续两次写件 → 恰 1 行活动 `zc_id_identity`（`code` == `cert_no` == `identity`）
 //!    + 恰 1 行活动桥 `zc_id_entity_rr_identity`；
 //! ② 种子形态（`code` = 统一社会信用代码，含种子形态桥）先存在 → API 写件复用既有 id，
-//!    活动证照行与桥行均不增。
+//!    活动证照行与桥行均不增；
+//! ③ 同证件号挂**其他主体** → 拒（`Conflict`，change `align-storage-issuer-and-holding` §D3
+//!    判重域全局），同主体重入仍幂等复用。
 //!
 //! 依赖：test 库主体叶表 `zc_id_orga-non-banking-legal` + 字典 `zc_id_cate-identity`
 //! BUSINESS_LICENSE + 维度行 JE/FJA/↑_DA。自清理：尾部硬删（桥 → 证照 → 主体）。
 
 use common::testing::connect_test_db;
+use common::AliothError;
 use identity_org::handlers::identities::category_id_by_code;
 use identity_org::handlers::subjects::write_subject_identity;
 use sqlx::PgPool;
@@ -246,4 +249,81 @@ async fn api_write_reuses_seed_shaped_identity() {
     assert_eq!(bridges, 1, "种子形态桥已存在 → API 不得再叠一条");
 
     cleanup(&pool, subject_id, seed_identity_id).await;
+}
+
+/// ③ 同证件号挂其他主体 ⇒ 拒（判重域全局）；同主体重入仍幂等复用
+#[tokio::test]
+async fn cross_subject_reregistration_rejected() {
+    let pool = connect_test_db().await;
+    let (subject_a, notice_a, _) = create_test_subject(&pool, "dup-a").await;
+    let (subject_b, notice_b, _) = create_test_subject(&pool, "dup-b").await;
+    let cert_no = unique_uscc();
+    let dname = format!("跨主体判重证照-{}", suffix());
+    let category_id = category_id_by_code(&pool, "BUSINESS_LICENSE")
+        .await
+        .expect("category BUSINESS_LICENSE");
+
+    let mut tx = pool.begin().await.expect("begin tx");
+    let identity_id = write_subject_identity(
+        &mut tx,
+        subject_a,
+        &notice_a,
+        0,
+        &cert_no,
+        &dname,
+        category_id,
+        1,
+    )
+    .await
+    .expect("主体 A 首写");
+
+    // 同主体重入 ⇒ 幂等复用既有 id（不新建、不叠桥）
+    let again = write_subject_identity(
+        &mut tx,
+        subject_a,
+        &notice_a,
+        1,
+        &cert_no,
+        &dname,
+        category_id,
+        1,
+    )
+    .await
+    .expect("同主体重入幂等");
+    assert_eq!(again, identity_id, "同主体重入必须复用既有证照 id");
+
+    // 同证件号挂主体 B ⇒ 拒（409 语义，MUST NOT 静默挂第二个主体）
+    let err = write_subject_identity(
+        &mut tx,
+        subject_b,
+        &notice_b,
+        0,
+        &cert_no,
+        &dname,
+        category_id,
+        1,
+    )
+    .await
+    .expect_err("跨主体重复注册必须被拒");
+    assert!(
+        matches!(err, AliothError::Conflict(_)),
+        "跨主体重复须 409 Conflict，实得 {err:?}"
+    );
+    tx.commit().await.expect("commit");
+
+    let rows = live_identities(&pool, &cert_no).await;
+    assert_eq!(rows.len(), 1, "同证件号活动证照仍恰 1 行，实得 {rows:?}");
+    assert_eq!(rows[0].0, identity_id, "活动行 id 必须 = 主体 A 的证照 id");
+    assert_eq!(
+        live_bridges(&pool, subject_b, identity_id).await,
+        0,
+        "主体 B 不得获得桥行"
+    );
+
+    cleanup(&pool, subject_a, identity_id).await;
+    sqlx::query(r#"DELETE FROM isahl."zc_id_orga-non-banking-legal" WHERE id = $1"#)
+        .bind(subject_b)
+        .execute(&pool)
+        .await
+        .expect("delete second subject");
 }

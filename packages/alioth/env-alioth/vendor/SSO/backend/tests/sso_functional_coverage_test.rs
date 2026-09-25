@@ -78,7 +78,7 @@ async fn ensure_admin(pool: &PgPool) -> i64 {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'admin_cov', 'admin_cov', 'admin_cov@test.local', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(pool)
     .await
@@ -219,7 +219,7 @@ async fn mfa_init_and_status() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'mfa_user', 'mfa_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await
@@ -334,7 +334,7 @@ async fn token_introspect_active_and_inactive() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
          VALUES (isahl.gen_next_zuid(), 'introspect_user', 'introspect_user', 'introspect@test.local', 'active', true, NOW(), NOW()) \
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .execute(&pool)
     .await

@@ -1,6 +1,8 @@
 
 name: mini-readonly
 description: 最小只读技能（测试）
+# 测试夹具标记（_ADAPTER_POLICY.md）：无 SKILL.md 对应物，不参与漂移契约判定
+test_fixture: true
 version: "1.0"
 tracks:
   - name: 唯一轨道

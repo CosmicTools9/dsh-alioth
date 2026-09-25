@@ -154,19 +154,6 @@ async fn folder_path_for(pool: &PgPool, config_id: i64) -> Option<String> {
     .flatten()
 }
 
-/// 解密 enc_fields 中的敏感凭证（`enc:` 前缀 AES-256-GCM 密文）。
-/// 明文直写（seed 未加密）时原样返回——兼容两种写入路径。
-fn decrypt_credential(value: &str) -> String {
-    if let Some(payload) = value.strip_prefix("enc:") {
-        system_config::crypto::decrypt(payload).unwrap_or_else(|e| {
-            common::telemetry::warn!("files: 凭证解密失败（按明文处理）: {e}");
-            value.to_string()
-        })
-    } else {
-        value.to_string()
-    }
-}
-
 /// provider 语义纯函数：scheme（info-url 下载路由键）/默认 region/path-style
 /// 默认/endpoint 模板（`{region}` 占位；None = endpoint 必填）。
 /// 全部经 S3 兼容协议适配（阿里云 OSS / 腾讯 COS / 华为 OBS / MinIO 均提供
@@ -286,8 +273,8 @@ async fn build_backend(
                 .ok_or("secret_key 缺失")?
                 .to_string();
             // 敏感凭证 AES-256-GCM 加密（enc: 前缀），解密后构造后端
-            let access_key = decrypt_credential(&access_key);
-            let secret_key = decrypt_credential(&secret_key);
+            let access_key = system_config::crypto::decrypt_prefixed(&access_key);
+            let secret_key = system_config::crypto::decrypt_prefixed(&secret_key);
             let region = settings
                 .get("region")
                 .and_then(|v| v.as_str())

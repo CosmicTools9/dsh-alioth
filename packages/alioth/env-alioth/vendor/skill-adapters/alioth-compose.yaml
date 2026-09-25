@@ -1,6 +1,6 @@
 name: alioth-compose
 description: "应用组装 — app.json(全字段对齐 app.schema.json) + extensions/*.yaml + ESM 原型构建与校验"
-version: "2.2"
+version: "2.3"
 default_tools: [todo]
 tracks:
   - name: 应用组装验证
@@ -42,4 +42,5 @@ tracks:
             args: ["scripts/check/check-nav-hrefs.ts", "--fail", "--ns", "{ns}"]
             timeout_sec: 120
 source:
-  content_sha256: a188efdc1120b795a7f0f4a9f48bd39aa7d9164910e3b554e1ed911df004f300
+  content_sha256: 67a2108d2585f973bf94b093f10e2940228e80b3fd7e47b7903ec2a068b3592f
+  # 2026-09-24 重记：SKILL.md 经 ee2bf5b72a 禁令文本指针化，typed Track/Step/gate 内容未变（join-loop 收尾核验）

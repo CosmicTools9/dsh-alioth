@@ -888,11 +888,10 @@ async fn sync_ldap_ngac_attributes(
     Ok(())
 }
 
-/// 获取客户端 IP
+/// 获取客户端 IP（转调共享实现 `auth::session::client_ip`——**可信跳才采信转发头**；
+/// 本文件曾有私有复制，2026-09-23 fix-auth-ratelimit-client-ip 统一口径）
 fn get_client_ip(req: &HttpRequest) -> Option<String> {
-    req.connection_info()
-        .realip_remote_addr()
-        .map(|s| s.to_string())
+    crate::auth::session::client_ip(req)
 }
 
 /// 获取 User Agent

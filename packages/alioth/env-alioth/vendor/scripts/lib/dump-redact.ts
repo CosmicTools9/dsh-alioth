@@ -5,11 +5,14 @@
  * `scripts/check/check-no-secrets-in-backup.ts`（门禁）。规则只有一份——脱敏与
  * 校验必须同源，否则门禁会与清洗漂移。
  *
- * 策略（`openspec/changes/remove-secrets-from-git-backup`）：
- *   1. `drop-data` 表（`isahl_meta.meta_llm_configs`）：凭据列 `api_key_enc` 为 NOT NULL，
- *      脱敏后行无意义 → 整段 `COPY` 数据删除（表结构仍在 `ddl/`）。
- *   2. `redact` 表（`isahl_meta.meta_data_source`）：行本身是数据源定义（恢复所需）→
- *      仅置空凭据列，并从 JSON 列删除凭据键。
+ * 策略（`openspec/changes/remove-secrets-from-git-backup` + `pack-credentials-into-encrypted-seed`）：
+ *   1. `drop-data` 表（`isahl_meta.meta_llm_configs` / `meta_llm_provider`）：凭据列为 NOT NULL
+ *      （行去 key 后无意义）→ 整段数据删除（表结构仍在 `ddl/`）；恢复由本地密文种子
+ *      （`seed/ns/_<db>/local-secrets.sql.enc` + `--apply-local-secrets`）承担。
+ *   2. `redact` 表（`isahl_meta.meta_data_source` / `meta_mise_env_vars` / `meta_mise_services`）：
+ *      **兜底判据**——新快照已按 `scripts/db/local-secret-tables.txt` 清单 `--exclude-table-data`
+ *      整表排除（凭据唯一载体 = 密文种子）；本规则覆盖历史产物与非排除路径（人工 pg_dump），
+ *      置空凭据列并从 JSON 列删除凭据键。
  *
  * 解析约定（`NO_REGEX_FOR_PARSING` §判定方法 判定记录）：
  * pg_dump 纯文本导出为「段标记 + `COPY <表> (<列...>) FROM stdin;` + 制表符分隔行 + `\.`」。
@@ -17,6 +20,9 @@
  * COPY 文本格式中字面制表符在值内被转义为 `\t`（同理换行 `\n`、反斜杠 `\\`），
  * 因此按字面制表符切分即是精确列切分。字段先反转义才能解析 JSON，再正向转义回写。
  */
+
+import { applySpanEdits, isNullLiteral, scanStatement } from './dump-statements.ts';
+import { splitStatements } from './sql-split.ts';
 
 export type TableRule =
   | { table: string; mode: 'drop-data' }
@@ -29,19 +35,35 @@ export const RULES: TableRule[] = [
   // provider API key **明文**（`api_key` NOT NULL，另一张 provider 定义表）——当前 0 行，
   // 一旦录入即随 dump 入库；与 meta_llm_configs 同款处理（行去 key 后无意义）
   { table: 'isahl_meta.meta_llm_provider', mode: 'drop-data' },
-  // 数据源定义：保留行（host/port/库名等恢复所需），清掉凭据列与 JSON 内凭据键
+  // 数据源定义：保留行（host/port/库名等恢复所需），清掉凭据列与 JSON 内凭据键。
+  // 兜底语义（2026-09-24）：本表行**不进新快照**——`backup-ddl` 按
+  // `local-secret-tables.txt` 清单 `--exclude-table-data`（凭据唯一载体 = 密文种子
+  // `seed/ns/_<db>/local-secrets.sql.enc`，恢复 = `--apply-local-secrets`）；本规则保留用于
+  // 历史产物与非排除路径（如人工 pg_dump）+ 门禁判据（凭据 MUST 置空），二者判据同源。
   {
     table: 'isahl_meta.meta_data_source',
     mode: 'redact',
     columns: ['password_encrypted', 'connection_string'],
     jsonColumns: { config: ['password_encrypted'] },
   },
-  // mise 环境变量（`is_secret` 标注行）与运行期令牌：保留行与键名，值一律清空
+  // mise 环境变量（`is_secret` 标注行）与运行期令牌：保留行与键名，值一律清空（同上兜底语义）
   { table: 'isahl_meta.meta_mise_env_vars', mode: 'redact', columns: ['var_value'], jsonColumns: {} },
   { table: 'isahl_meta.meta_mise_services', mode: 'redact', columns: ['run_token'], jsonColumns: {} },
 ];
 
 export const NULL_TOKEN = '\\N';
+
+/**
+ * 语句表名 → 规则表项。限定名优先（`isahl_meta.meta_data_source`）；未限定语句（无 `schema.`）
+ * 回退末段匹配（保持手工载荷的既有行为）。脱敏与零机密门禁共用本判据，禁止第二份。
+ */
+export function matchRule(qual: string, table: string, mode?: TableRule['mode']): TableRule | undefined {
+  return RULES.find(
+    (r) =>
+      (mode === undefined || r.mode === mode) &&
+      (r.table === qual || (!qual.includes('.') && r.table.split('.').pop() === table)),
+  );
+}
 
 /** 反引号/双引号包裹的标识符 → 裸名（比较用） */
 export function bareName(ident: string): string {
@@ -132,6 +154,13 @@ export function sliceCopyRows(
 /** 脱敏一份 pg_dump 纯文本导出（幂等：已脱敏内容二次运行无变化） */
 export function redactDump(sql: string, stats: RedactStats): string {
   const lines = sql.split('\n');
+  const hasCopy = lines.some((l) => l.startsWith('COPY '));
+  const hasInsert = lines.some((l) => l.startsWith('INSERT INTO '));
+  if (hasCopy && hasInsert) {
+    // 混用形态无法保证两条路径的判据覆盖（形态归一由种子载荷形态门禁负责）
+    throw new Error('redactDump: 同一 dump 混用 COPY 与 INSERT 形态——拒绝脱敏（须先归一形态）');
+  }
+  if (hasInsert) return redactInsertForm(sql, stats);
   const out: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
@@ -217,4 +246,104 @@ export function redactDump(sql: string, stats: RedactStats): string {
   }
 
   return out.join('\n');
+}
+
+/**
+ * 具名列 INSERT 形态脱敏（`pg_dump --column-inserts`）——与 COPY 路径**同规则**（`RULES` 单一源）。
+ * 规则表全为 `isahl_meta.*` ⇒ 按 table 末段名匹配（dump 语境下无同名异 schema 表）。
+ */
+function redactInsertForm(sql: string, stats: RedactStats): string {
+  const edits: { start: number; end: number; text: string }[] = [];
+  for (const stmt of splitStatements(sql)) {
+    const shape = scanStatement(stmt.text);
+    if (!shape || shape.kind !== 'insert') continue;
+    const rule = matchRule(shape.qual, shape.table);
+    if (!rule) continue;
+    if (rule.mode === 'drop-data') {
+      edits.push({ start: stmt.offset, end: stmt.offset + stmt.text.length, text: '' });
+      stats.droppedRows += 1;
+      if (!stats.droppedTables.includes(rule.table)) stats.droppedTables.push(rule.table);
+      continue;
+    }
+    if (!shape.cols) {
+      stats.warnings.push(`${rule.table}: 位置列 INSERT 无法按列名脱敏，保留原值（门禁将复查）`);
+      continue;
+    }
+    const tuple = shape.tuples[0];
+    if (!tuple) continue;
+    let touched = false;
+    for (const col of rule.columns) {
+      const idx = shape.cols.indexOf(col);
+      const item = idx >= 0 ? tuple[idx] : undefined;
+      if (!item) continue;
+      const value = stmt.text.slice(item.start, item.end);
+      if (isNullLiteral(value)) continue;
+      edits.push({ start: stmt.offset + item.start, end: stmt.offset + item.end, text: 'NULL' });
+      stats.redactedFields += 1;
+      touched = true;
+    }
+    for (const [col, keys] of Object.entries(rule.jsonColumns)) {
+      const idx = shape.cols.indexOf(col);
+      const item = idx >= 0 ? tuple[idx] : undefined;
+      if (!item) continue;
+      const value = stmt.text.slice(item.start, item.end);
+      const stripped = stripJsonKeys(value, keys);
+      if (stripped === null) {
+        stats.warnings.push(`${rule.table}.${col}: 非字符串字面量或 JSON 解析失败，保留原值（门禁将复查）`);
+        continue;
+      }
+      if (stripped !== value) {
+        edits.push({ start: stmt.offset + item.start, end: stmt.offset + item.end, text: stripped });
+        stats.redactedFields += 1;
+        touched = true;
+      }
+    }
+    if (touched) stats.redactedRows += 1;
+  }
+  return applySpanEdits(sql, edits);
+}
+
+/** 字符串字面量结束后第一个引号位（`''` 视为转义）；非引号起首 → -1 */
+function closingQuoteIndex(literal: string): number {
+  if (literal[0] !== "'") return -1;
+  for (let i = 1; i < literal.length; i++) {
+    if (literal[i] !== "'") continue;
+    if (literal[i + 1] === "'") {
+      i++;
+      continue;
+    }
+    return i;
+  }
+  return -1;
+}
+
+/** 字符串字面量 → `{ text, suffix }`（`''` 解码；尾缀 cast 原样保留在 suffix）；非字符串字面量 → null */
+export function decodeSqlStringLiteral(literal: string): { text: string; suffix: string } | null {
+  const t = literal.trim();
+  const endQuote = closingQuoteIndex(t);
+  if (endQuote < 0) return null;
+  return { text: t.slice(1, endQuote).split("''").join("'"), suffix: t.slice(endQuote + 1).trim() };
+}
+
+/** JSON 字面量去键：`'{"a":1}'::jsonb` → 去键重编码（保留尾缀 cast）；未变 / 非 JSON → 原串或 null */
+function stripJsonKeys(literal: string, keys: readonly string[]): string | null {
+  const decoded = decodeSqlStringLiteral(literal);
+  if (!decoded) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(decoded.text);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const obj = parsed as Record<string, unknown>;
+  let touched = false;
+  for (const key of keys) {
+    if (key in obj) {
+      delete obj[key];
+      touched = true;
+    }
+  }
+  if (!touched) return literal;
+  return `'${JSON.stringify(obj).split("'").join("''")}'${decoded.suffix}`;
 }

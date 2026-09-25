@@ -2,18 +2,18 @@
 //!
 //! 纯重建制投影（零 isahl 触发器）+ 对账：知识种子重放 / AVIC 服务 CRUD 后图滞后，
 //! 本钩子在 Gateway 启动（`ensure_gateway_seed_self_check` 链尾）检测三类缺口 → 幂等
-//! 重放 022 迁移（图引导 + label ensure + 全量 rebuild + 多跳读投影函数）。三态探测：
+//! 重放投影 SQL（图引导 + label ensure + 全量 rebuild + 多跳读投影函数）。三态探测：
 //! ① 图未注册（含 restore 后 `ag_graph` 注册丢失——ag_catalog 被 pg_dump 排除）；
 //! ② 对齐漂移（`age_knowledge_projection_diff()` 非零）；③ **投影函数缺失**
-//! （`isahl_knowledge.knowledge_multi_hop`——022 新增读面，已就绪库须靠本项补建）。
+//! （`isahl_knowledge.knowledge_multi_hop`——投影 SQL 新增读面，已就绪库须靠本项补建）。
+//! SQL 载体 = 代码内嵌资产 `seed/sql/`（随 crate 编译）。
 //!
 //! 失败仅告警（知识图属投影层，缺失 = 多跳读降级 SQL，检索端点永不因 AGE 故障失败）。
 
 use sqlx::PgPool;
 
-/// 022 迁移全文（幂等重放即自愈）。
-const KNOWLEDGE_MIGRATION: &str =
-    include_str!("../../migrations/022_knowledge_graph_projection.sql");
+/// 022 投影 SQL 全文（代码内嵌资产 `seed/sql/`，随 crate 编译；幂等重放即自愈）。
+const KNOWLEDGE_MIGRATION: &str = include_str!("sql/022_knowledge_graph_projection.sql");
 
 /// 自愈入口：drift 探测 → 重放迁移。
 pub async fn ensure_knowledge_graph_self_check(pool: &PgPool) {

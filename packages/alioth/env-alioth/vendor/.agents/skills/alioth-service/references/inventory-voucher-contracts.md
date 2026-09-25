@@ -68,7 +68,7 @@
 **契约细节**：
 - **零 DDL**：模型原生定价族（`zc_id_formula` → form-calculation/condition/mapping；production_r_pricing → lifecycle_r_tags；unit-price → zc_id_unit）。
 - `form-calculation.context` 为 jsonb：写 `jsonb_build_object('unit_id',…, 'currency_id',…)`（**禁 `::text`**——jsonb 列收 text 报类型错）；读 `(context::json->>'unit_id')::bigint`（json 提取返回 text，须 cast）。
-- `exe_type` 枚举 JIT|INLINE——当前实现固定 INLINE（表达式 JSON 自解释）；JIT 留给公式引擎升级。
+- `exe_type` 列**已删除**（模型中心执行，2026-09-23）：平台表达式引擎统一为 Rhai（唯一引擎）⇒ 执行策略轴无消费方；`context` 固定 `{"engine":"rhai"}`。
 - **NUMERIC 解码**：scal-* 的 mark 是 NUMERIC，sqlx `Option<f64>` 解码报 FLOAT8/NUMERIC 不兼容——必须 `Option<rust_decimal::Decimal>` + `ToPrimitive::to_f64()`。
 - 计价单位/币种字典 `zc_id_unit` 134 行种子（吨/千克/立方米/CNY/USD…），**测试库重置后须补种**（seed 脚本 Phase 0c）。
 

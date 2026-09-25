@@ -1,6 +1,6 @@
 name: alioth-app
 description: "App 级原型集成 — AppLayout 设计（llm-tsx/app.tsx）+ a-v{N}.html 构建与验证"
-version: "2.2"
+version: "2.3"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
@@ -40,4 +40,5 @@ tracks:
             args: ["scripts/check/check-prototype-render.ts", "--changed", "--fail"]
             timeout_sec: 300
 source:
-  content_sha256: 4946ab91019769fce4f1129529634cc7fc4026fa483ee1ea6baf684f054a8819
+  content_sha256: 6b93afa102dc851715133de58c2e18812921150640d76e5ce88b07a76260e2cb
+  # 2026-09-24 重记：SKILL.md 经 ee2bf5b72a 禁令文本指针化，typed Track/Step/gate 内容未变（join-loop 收尾核验）

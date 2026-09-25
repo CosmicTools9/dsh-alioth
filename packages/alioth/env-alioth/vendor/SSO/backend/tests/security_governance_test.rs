@@ -148,7 +148,7 @@ async fn create_user(pool: &PgPool, email: &str, password: &str) -> i64 {
         r#"
         INSERT INTO isahl_auth.auth_users (name, username, email, password_hash, status, is_active, created_at, updated_at)
         VALUES ($1, $1, $2, $3, 'active', true, NOW(), NOW())
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT (name) DO NOTHING
         "#,
     )
     .bind(email)

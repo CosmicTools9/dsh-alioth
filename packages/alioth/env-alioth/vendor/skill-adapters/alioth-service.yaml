@@ -1,6 +1,6 @@
 name: alioth-service
 description: "Service API 生成 — DTO → Service → Handler → TDD → 合规审计"
-version: "2.0"
+version: "2.1"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-service/references/inventory-voucher-contracts.md"
@@ -58,4 +58,4 @@ tracks:
             args: ["tsc", "--noEmit"]
             timeout_sec: 180
 source:
-  content_sha256: 877148d00cfed024c911ba69911041c4e9f842999d0f11a064e4bce57881a2c6
+  content_sha256: a49a9e79414ff5ce47ef03e917426aa2aa823ad34aaa3f789cd858970653782e

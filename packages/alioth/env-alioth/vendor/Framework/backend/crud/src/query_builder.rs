@@ -13,7 +13,7 @@ use std::marker::PhantomData;
 use sqlx::{AssertSqlSafe, PgPool, Postgres, Row};
 
 use crate::cascade::CascadeConfig;
-use crate::column_types;
+use crate::column_types::{self, ColumnMeta};
 use crate::entity::AliothDbEntity;
 use crate::filter::Filter;
 use crate::pagination::{ListQuery, ListQueryExt, PaginatedResponse};
@@ -155,7 +155,7 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
                     col_types
                         .as_ref()
                         .and_then(|m| m.get(&filter.field))
-                        .map(String::as_str),
+                        .map(ColumnMeta::data_type),
                 ) {
                     sql.push_str(" AND ");
                     sql.push_str(&condition);

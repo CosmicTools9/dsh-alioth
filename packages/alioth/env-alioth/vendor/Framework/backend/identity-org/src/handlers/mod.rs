@@ -13,3 +13,4 @@ pub mod subject_invoice_info;
 pub mod subjects;
 pub mod tracking;
 pub mod traffic_line_stops;
+pub mod vehicle_plates;

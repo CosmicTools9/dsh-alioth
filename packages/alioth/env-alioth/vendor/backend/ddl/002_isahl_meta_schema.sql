@@ -40,7 +40,12 @@ CREATE TYPE isahl_meta.field_data_type AS ENUM (
     'm2n',
     'combine',
     'transform',
-    'm2m'
+    'm2m',
+    'coordinate',
+    'path',
+    'area',
+    'circle',
+    'polygon'
 );
 
 -- ── Tables ──────────────────────────────────────────────────────────────

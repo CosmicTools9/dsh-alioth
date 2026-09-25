@@ -15,6 +15,7 @@
 # 用途表（覆写变量名同步）:
 #   check      /tmp/alioth-check          root workspace 唯一构建缓存（组件任务/测试/SSO release/e2e）
 #   gate       /tmp/alioth-check-gate     push 门禁（rust-tests-compile）
+#   host       /tmp/alioth-host           组合根独立 workspace（Gateway/host：gateway-host 与 ns service 图）
 #   meta       <root>/Meta/backend/target Meta 独立 workspace（构建/测试/lint/运行）
 #   meta-dev   /tmp/alioth-meta-dev       Meta `dev`/`tui` 热重载任务
 #   ontology   /tmp/alioth-ontology       ontology-mapping CLI
@@ -22,9 +23,13 @@
 #   ns-workspace <NAME>
 #              <root>/Pre-Proc/<NS>/target namespace service 独立 workspace（own Cargo.lock）
 #
-# 说明：`ns` 与 `ns-workspace` 是**两个不同 workspace**的槽位——前者是 Gateway/OpenActivity
-# 以 ns feature 从 root workspace 编译的部署/运行缓存，后者是 Pre-Proc/{ns} 自身 workspace
-# 的编译缓存（docs/specs/COMPILATION_GUIDE.md §从 namespace workspace 编译）。
+# 说明：`ns` / `host` / `ns-workspace` 是**三个不同 workspace**的槽位——
+#   · `ns`          = Gateway/OpenActivity 以 ns feature 编译的**部署/运行**缓存
+#                     （组合根 workspace `Gateway/host`，见 scripts/build-ns.sh）
+#   · `host`        = 组合根 workspace 的**组件检查/测试**缓存（`Gateway/host` 独立 workspace，
+#                     非 ns 定向：组件任务、push 编译门禁、test-all 阶段）
+#   · `ns-workspace`= `Pre-Proc/{ns}` 自身 workspace 的编译缓存
+#                     （docs/specs/COMPILATION_GUIDE.md §从 namespace workspace 编译）
 
 # shellcheck source=scripts/lib/ns-name.sh
 source "${BASH_SOURCE[0]%/*}/ns-name.sh"
@@ -47,6 +52,7 @@ cargo_target_dir() {
     case "${purpose}" in
         check)    printf '%s' "${CARGO_TARGET_DIR_CHECK:-/tmp/alioth-check}" ;;
         gate)     printf '%s' "${CARGO_TARGET_DIR_GATE:-/tmp/alioth-check-gate}" ;;
+        host)     printf '%s' "${CARGO_TARGET_DIR_HOST:-/tmp/alioth-host}" ;;
         meta)     printf '%s' "${CARGO_TARGET_DIR_META:-${root}/Meta/backend/target}" ;;
         meta-dev) printf '%s' "${CARGO_TARGET_DIR_META_DEV:-/tmp/alioth-meta-dev}" ;;
         ontology) printf '%s' "${CARGO_TARGET_DIR_ONTOLOGY:-/tmp/alioth-ontology}" ;;
@@ -65,7 +71,7 @@ cargo_target_dir() {
             printf '%s' "${root}/Pre-Proc/$(ns_canon "${ns}")/target"
             ;;
         *)
-            echo "cargo_target_dir: 未知用途 '${purpose}'（可用: check|gate|meta|meta-dev|ontology|ns|ns-workspace）" >&2
+            echo "cargo_target_dir: 未知用途 '${purpose}'（可用: check|gate|host|meta|meta-dev|ontology|ns|ns-workspace）" >&2
             return 2
             ;;
     esac

@@ -2153,54 +2153,6 @@
       "rule": "binding:field-cols"
     },
     {
-      "fp": "3140d00060f9aba6",
-      "ns": "Cosmic-Tools",
-      "entity": "ApprovalRole",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "7117aaf920bcba9a",
-      "ns": "Cosmic-Tools",
-      "entity": "Approver",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "711f999a2a50561b",
-      "ns": "Cosmic-Tools",
-      "entity": "Employee",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "5a252f5135dffc15",
-      "ns": "Cosmic-Tools",
-      "entity": "git_branch",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "634b0866946da103",
-      "ns": "Cosmic-Tools",
-      "entity": "git_tag",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "07e90855d1fd3b43",
-      "ns": "Cosmic-Tools",
-      "entity": "InventoryBalance",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "bfe151270fc747f7",
-      "ns": "Cosmic-Tools",
-      "entity": "SkillTag",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
-      "fp": "32eddf22b3426f66",
-      "ns": "Cosmic-Tools",
-      "entity": "VersionTag",
-      "rule": "coord:empty:scene_code/factor_code/function_code"
-    },
-    {
       "fp": "da30f9f8084a2e78",
       "ns": "WZ",
       "entity": "Inquiry",

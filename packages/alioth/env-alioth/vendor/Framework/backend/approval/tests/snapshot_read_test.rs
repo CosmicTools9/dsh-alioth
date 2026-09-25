@@ -141,8 +141,8 @@ async fn runtime_uses_published_snapshot_not_draft_meta() {
         "nodes": [
             {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-cond", "type": "condition", "label": "VIP 判断",
-             "expr": "code == 'VIP'",
-             "next": [{"to": 2, "cond": "code == 'VIP'"}, {"to": 3}]},
+             "expr": "code == \"VIP\"",
+             "next": [{"to": 2, "cond": "code == \"VIP\""}, {"to": 3}]},
             {"id": "n-vip", "type": "approve", "label": "VIP 审批", "next": [{"to": 4}]},
             {"id": "n-other", "type": "approve", "label": "普通审批", "next": [{"to": 4}]},
             {"id": "n-end", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}

@@ -4,22 +4,14 @@
 //! 由 `runtime-engine` 实现这些契约，`alioth-gen` 仅依赖本 crate 生成代码。
 
 pub mod behavior;
-pub mod expression;
 pub mod extension;
 pub mod model_registry;
-pub mod swrl;
 
 // Re-export behavior types
 pub use behavior::*;
-
-// Re-export expression types
-pub use expression::*;
 
 // Re-export extension types
 pub use extension::*;
 
 // Re-export model registry types
 pub use model_registry::*;
-
-// Re-export SWRL types
-pub use swrl::*;

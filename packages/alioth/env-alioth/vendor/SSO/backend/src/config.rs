@@ -33,6 +33,11 @@ pub struct Config {
 
     /// OAuth Google Client Secret
     pub oauth_google_client_secret: Option<String>,
+    /// 微信小程序「司机端」（fromType=driverWeChatApp）AppID；未配置 → 该 fromType 不可用
+    pub wechat_miniapp_driver_appid: Option<String>,
+
+    /// 微信小程序「司机端」AppSecret（敏感：env/enc 注入，禁落 git）
+    pub wechat_miniapp_driver_secret: Option<String>,
 
     /// OAuth GitHub Client ID
     pub oauth_github_client_id: Option<String>,
@@ -150,6 +155,12 @@ impl Config {
                 .parse()?,
             oauth_google_client_id: env::var("OAUTH_GOOGLE_CLIENT_ID").ok(),
             oauth_google_client_secret: env::var("OAUTH_GOOGLE_CLIENT_SECRET").ok(),
+            wechat_miniapp_driver_appid: env::var("WECHAT_MINIAPP_DRIVER_APPID")
+                .ok()
+                .filter(|s| !s.is_empty()),
+            wechat_miniapp_driver_secret: env::var("WECHAT_MINIAPP_DRIVER_SECRET")
+                .ok()
+                .filter(|s| !s.is_empty()),
             oauth_github_client_id: env::var("OAUTH_GITHUB_CLIENT_ID").ok(),
             oauth_github_client_secret: env::var("OAUTH_GITHUB_CLIENT_SECRET").ok(),
             oauth_microsoft_client_id: env::var("OAUTH_MICROSOFT_CLIENT_ID").ok(),

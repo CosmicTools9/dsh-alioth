@@ -39,6 +39,17 @@ const LIST_SQL: &str = r#"SELECT b.id, b.ref_right, p.notice, p.code,
    WHERE b.ref_left = $1 AND b.deleted_at IS NULL
    ORDER BY b."over-seq" ASC NULLS LAST, b.id"#;
 
+/// `LIST_SQL` 读出列（id / ref_right / place.notice / place.code / over-seq / ck_category / category_code）
+type StopRow = (
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<i32>,
+    Option<i64>,
+    Option<String>,
+);
+
 const INSERT_SQL: &str = r#"INSERT INTO "isahl"."zc_id_stor-traffic_line_rr_stop"
    (notice, ref_left, ref_right, ck_category, "over-seq", created_by_id, updated_by_id)
    VALUES ($1, $2, $3, $4, $5, $6, $6)"#;
@@ -144,15 +155,7 @@ async fn stops_insert_and_ordered_read() {
             .await
             .expect("insert bridge");
     }
-    let rows: Vec<(
-        i64,
-        i64,
-        Option<String>,
-        Option<String>,
-        Option<i32>,
-        Option<i64>,
-        Option<String>,
-    )> = sqlx::query_as(LIST_SQL)
+    let rows: Vec<StopRow> = sqlx::query_as(LIST_SQL)
         .bind(f.line)
         .fetch_all(&pool)
         .await
@@ -207,15 +210,7 @@ async fn stops_full_replace_soft_deletes_old() {
     }
     tx.commit().await.expect("commit");
 
-    let rows: Vec<(
-        i64,
-        i64,
-        Option<String>,
-        Option<String>,
-        Option<i32>,
-        Option<i64>,
-        Option<String>,
-    )> = sqlx::query_as(LIST_SQL)
+    let rows: Vec<StopRow> = sqlx::query_as(LIST_SQL)
         .bind(f.line)
         .fetch_all(&pool)
         .await

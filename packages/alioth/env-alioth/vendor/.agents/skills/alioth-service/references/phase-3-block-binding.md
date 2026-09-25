@@ -117,8 +117,8 @@ function ProductListPage() {
 Service API 开发完成后，**必须重启 Gateway 以确保新 API 被识别**：
 
 ```bash
-# 重启 Gateway 使新 Service API 生效
-bash scripts/gateway/restart-gateway.sh
+# 重启 Gateway 使新 Service API 生效（MUST 显式传 --namespace：未定向时脚本按默认 ns 告警并回落）
+bash scripts/gateway/restart-gateway.sh --namespace <ns>
 ```
 
 **验收标准**：`curl -f http://localhost:8088/api/service/{service-id}/health || curl -f http://localhost:8088/api/service/{service-id}/` 返回 200。

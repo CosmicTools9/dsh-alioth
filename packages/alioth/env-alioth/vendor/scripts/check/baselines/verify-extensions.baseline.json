@@ -1,11 +1,5 @@
 {
   "rule_reference": "openspec/specs/app-agent-verification-gates/spec.md :: verify-extensions-repo-hard-gate",
   "note": "存量 Failed app 归线（ratchet 只减不增）：修复 app 后 MUST 删除对应条目（stale 即阻断）；禁新增条目。enforce-semantic-verification-gates ②。",
-  "allowed_failed_apps": [
-    "Pre-Proc/Cosmic-Tools/Apps/ct-bv-local",
-    "Pre-Proc/Cosmic-Tools/Apps/ct-git",
-    "Pre-Proc/Cosmic-Tools/Apps/ct-wms",
-    "Pre-Proc/Cosmic-Tools/Apps/mall-erp",
-    "Pre-Proc/SE/Apps/se-budget"
-  ]
+  "allowed_failed_apps": []
 }

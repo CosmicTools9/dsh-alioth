@@ -23,6 +23,18 @@ async fn main() -> std::io::Result<()> {
     logger_builder.init();
     log::info!("SSO config loaded: server_addr={}", config.server_addr);
 
+    // 系统配置凭证解密密钥（与 Gateway `main.rs` 同契约）：邮箱口令等 DB 内 `enc:` 字段
+    // 依赖它解密。缺省时解密不可用（非 `enc:` 的明文凭据不受影响）。
+    match std::env::var("SYSTEM_CONFIG_ENC_KEY") {
+        Ok(enc_key) => match system_config::crypto::init_encryption(&enc_key) {
+            Ok(()) => log::info!("System-config encryption initialized"),
+            Err(e) => log::warn!("Failed to initialize system-config encryption: {e}"),
+        },
+        Err(_) => log::warn!(
+            "SYSTEM_CONFIG_ENC_KEY not set, system-config credentials will not be decrypted"
+        ),
+    }
+
     let server = gateway_sso::build_server(config).await?;
     server.await
 }

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "note": "表达式可用自由函数的唯一白名单。单一真相源：runtime-engine::expression::builtins（include_str! 解析并按 origin 注册）+ 门禁 check-expression-dialect R8 读取同一文件。冻结面：MUST NOT 登记 IO/进程/时间/随机/反射类；**MUST NOT 登记与 Rhai 原地变异方法同名者**（trim/make_lower 等——同名注册会改变方法解析，破坏 `let t = x; t.trim(); t` 规范形态并令常量契约失效，2026-09-22 实测回归）。字符串/数组方法（trim/len/contains/to_lowercase…）沿用 Rhai 方法形态，不入本表。",
+  "functions": [
+    { "name": "sum", "arity": 1, "origin": "platform", "doc": "数组求和（数值元素；空数组 → 0；全整数 → 整数，含小数 → 浮点）" },
+    { "name": "sum_by", "arity": 2, "origin": "platform", "doc": "行集合按字段求和：sum_by(rows, \"field\")（rows = 映射数组；字段缺失/非数值忽略）" },
+    { "name": "avg", "arity": 1, "origin": "platform", "doc": "数组均值（空数组 → 0）" },
+    { "name": "count", "arity": 1, "origin": "platform", "doc": "数组元素个数" },
+    { "name": "min", "arity": 1, "origin": "platform", "doc": "数组最小值（空数组 → ()）；与 Rhai 内建 min(a,b) 为不同签名重载" },
+    { "name": "max", "arity": 1, "origin": "platform", "doc": "数组最大值（空数组 → ()）；与 Rhai 内建 max(a,b) 为不同签名重载" },
+    { "name": "round", "arity": 1, "origin": "platform", "doc": "四舍五入（浮点）" },
+    { "name": "floor", "arity": 1, "origin": "platform", "doc": "向下取整（浮点）" },
+    { "name": "ceil", "arity": 1, "origin": "platform", "doc": "向上取整（浮点）" },
+    { "name": "contains", "arity": 2, "origin": "rhai", "doc": "包含判定：`x in [a,b]` 由 Rhai 降级为本调用（故 MUST 可枚举），亦为容器/字符串的自由函数形态" },
+    { "name": "abs", "arity": 1, "origin": "rhai", "doc": "绝对值（Rhai 内建自由函数；登记以保证白名单可枚举，不重复注册）" },
+    { "name": "type_of", "arity": 1, "origin": "rhai", "doc": "类型名（Rhai 内建自由函数；登记以保证白名单可枚举，不重复注册）" }
+  ]
+}

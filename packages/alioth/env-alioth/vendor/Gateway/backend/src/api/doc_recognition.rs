@@ -30,15 +30,20 @@ pub struct AnalyzeRequest {
 }
 
 /// 共享密钥校验（fail-closed，照 `transport-operations::carrier_portal` 同形）。
-fn verify_service_key(req: &HttpRequest) -> Result<(), HttpResponse> {
+///
+/// Err = boxed 响应：`HttpResponse` 直接作 `Err` 会撑大每个 `Result`（128B，
+/// `clippy::result_large_err`）；Box 后 8B，调用方解引用即原响应（语义不变）。
+fn verify_service_key(req: &HttpRequest) -> Result<(), Box<HttpResponse>> {
     let expected = std::env::var("PLATFORM_SERVICE_KEY")
         .ok()
         .filter(|k| !k.is_empty());
     let Some(expected) = expected else {
-        return Err(HttpResponse::Unauthorized().json(serde_json::json!({
-            "code": "SERVICE_KEY_UNCONFIGURED",
-            "message": "PLATFORM_SERVICE_KEY 未配置——识别服务拒绝（fail-closed）",
-        })));
+        return Err(Box::new(HttpResponse::Unauthorized().json(
+            serde_json::json!({
+                "code": "SERVICE_KEY_UNCONFIGURED",
+                "message": "PLATFORM_SERVICE_KEY 未配置——识别服务拒绝（fail-closed）",
+            }),
+        )));
     };
     let provided = req
         .headers()
@@ -46,9 +51,9 @@ fn verify_service_key(req: &HttpRequest) -> Result<(), HttpResponse> {
         .and_then(|v| v.to_str().ok());
     match provided {
         Some(k) if k == expected => Ok(()),
-        _ => Err(HttpResponse::Unauthorized().json(
+        _ => Err(Box::new(HttpResponse::Unauthorized().json(
             serde_json::json!({ "code": "INVALID_SERVICE_KEY", "message": "Invalid service key" }),
-        )),
+        ))),
     }
 }
 
@@ -59,7 +64,7 @@ async fn analyze(
     body: web::Json<AnalyzeRequest>,
 ) -> HttpResponse {
     if let Err(resp) = verify_service_key(&req) {
-        return resp;
+        return *resp;
     }
     if body.file_base64.len() > MAX_B64_BYTES {
         return HttpResponse::BadRequest()

@@ -547,7 +547,7 @@ async fn metering_007_openapi_oa_seed_idempotent() {
     let pool = connect_test_db().await;
     let sql = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../SSO/backend/migrations/029_seed_openapi_admin_analytics_oas.sql"
+        "/../../Framework/seed/seed-ngac-07-openapi-admin-analytics-oas.sql"
     ));
 
     // 重放两次（幂等契约）——test DB 若无前置 019 seed（admin UA/rights），
@@ -622,7 +622,7 @@ async fn metering_008_openapi_product_oa_seed_idempotent() {
     let pool = connect_test_db().await;
     let sql = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../SSO/backend/migrations/031_seed_openapi_product_oas.sql"
+        "/../../Framework/seed/seed-ngac-08-openapi-product-oas.sql"
     ));
 
     // 重放两次（幂等契约）——test DB 若无前置 019 seed（admin UA/rights），

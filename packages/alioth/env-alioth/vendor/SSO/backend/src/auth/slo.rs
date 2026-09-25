@@ -554,7 +554,7 @@ use sqlx::FromRow;
 /// Configure SLO routes
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/auth/slo")
+        web::scope("/slo")
             .route("/logout", web::get().to(slo_logout_page))
             .route("/initiate", web::post().to(initiate_slo_handler))
             .route(

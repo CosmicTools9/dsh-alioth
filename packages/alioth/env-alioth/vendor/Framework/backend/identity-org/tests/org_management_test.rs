@@ -790,8 +790,9 @@ async fn position_read_projection_exposes_bridge_employees() {
     .expect("attach employment bridge");
 
     let sql = format!(
-        "{} WHERE p.id = $1 AND p.deleted_at IS NULL AND p._f_ IS NULL",
-        POSITION_SELECT
+        "{} WHERE p.id = $1 AND p.deleted_at IS NULL AND {}",
+        POSITION_SELECT,
+        common::real_position_row!(p)
     );
     let row: PositionRow = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(pos)

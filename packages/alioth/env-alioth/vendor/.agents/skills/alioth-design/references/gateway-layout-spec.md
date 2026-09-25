@@ -111,6 +111,31 @@ h(
 );
 ```
 
+#### 窄屏布局不变量（TopBar 左簇与右簇）
+
+TopBar 左簇（`flex-1 min-w-0`）内的**品牌块 MUST 可压缩**：`gateway-shell.tsx` 的品牌链接用
+`min-w-0`（MUST NOT 用 `shrink-0`），块级 App 模式额外带 `w-60`（与 240px 侧栏同宽，仅作**基准宽度**）——
+空间不足时按 flex 收缩，品牌标签自身 `hidden sm:inline` + `truncate`，窄屏只剩图标即不再吃宽度。
+
+判据（`visual-verify` 的窄屏机械检查）：375px 档不得出现品牌链接盒 × 右簇动作按钮的 `overlap`。
+反例（2026-09-22 实测，修复前）：`shrink-0` + `w-60` 使品牌块在 375px 恒定占 240px，`Δoverlap=12`，
+并伴随品牌文字被挤至零宽——表现为「窄屏丢品牌信息」。
+
+右簇亦然：`ActionGroup` 的 workspace triggers 在 `<md` 隐藏（`hidden md:flex`）。触发项是 `w-9` 固定宽，
+其 min-content 之和使右簇在 375px 溢出——实测**右簇 390px > 375px** ⇒ 左簇被压为 0、移动端菜单按钮
+与外溢右簇几何重叠、尾部被 `header` 的 `overflow-hidden` 裁掉。移动端保留 搜索 / 主题 / 语言 / 用户。
+
+> **同款反例模式（已修 2026-09-22）**：`activity-shell.tsx` 的品牌链接原带 `shrink-0`，已改为
+> `min-w-0`（对齐本节不变量）；预览壳族（`shells/{block,module,app}-shell.tsx`）同期一并对齐，
+> 并把三个断点契约固化到壳源与 `prototype-base.css`：
+> ① 品牌链接 `min-w-0` + 品牌字 `hidden sm:inline`；
+> ② 顶栏搜索槽（`w-72`=288px，`previewTopBarRight`）`hidden lg:block`——`.lg\:block` 需在基座中定义，
+>    否则 `lg:block` 无定义 ⇒ 搜索框永不显示；
+> ③ 模块标签条 `hidden sm:flex`、标签 `min-w-0 max-w-[42vw]`、标题 `whitespace-nowrap truncate min-w-0`
+>    （截断链每一环 MUST `min-w-0`，缺一环即溢出并压覆右簇）。
+> 同类改动后 MUST 重建受影响原型（`bun scripts/prototype-tool.js build <llm-tsx/module.tsx>`，构建会级联
+> 重建所属 App 原型并同步 `Sources/`），再跑 `visual-verify`；每个原型目录保留最近 3 个版本。
+
 #### Navigation 结构
 
 Gateway 的 Navigation 组件渲染：

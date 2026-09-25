@@ -21,6 +21,8 @@ pub enum RefKind {
 ///
 /// - `id`：容量行 ID（mv_inventory.id）
 /// - `production_id` / `storage_id`：货与储元实体 ID
+///   （`storage_id` 可空：视图列出自 `zc_id_production_rr_storage.ref_right`（可空），
+///   实测存在储元为空的时空切片 ⇒ 非空 `i64` 会让无过滤分页整页解码失败）
 /// - `production_name` / `storage_name`：经 namespace 注入的 NameResolver 解析（可空）
 /// - `qty`：数量（时空切片时点在库数量，标量表解析）
 /// - `capacity`：容量
@@ -32,8 +34,9 @@ pub struct InventoryBalanceSummary {
     #[serde(with = "common::serde_zuid")]
     pub production_id: i64,
     pub production_name: Option<String>,
-    #[serde(with = "common::serde_zuid")]
-    pub storage_id: i64,
+    /// 储元为空的时空切片在视图中真实存在（`storage_id IS NULL`）⇒ 可空
+    #[serde(with = "common::serde_zuid::opt")]
+    pub storage_id: Option<i64>,
     pub storage_name: Option<String>,
     pub qty: Decimal,
     pub capacity: Decimal,

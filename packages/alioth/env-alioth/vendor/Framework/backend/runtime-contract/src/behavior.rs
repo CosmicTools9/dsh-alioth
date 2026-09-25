@@ -162,10 +162,14 @@ pub struct Transition {
     pub from: Vec<String>,
     /// Target state
     pub to: String,
-    /// Guard condition (optional function name or expression)
+    /// Guard condition —— **Rhai 表达式**（单一文法，唯一引擎）。
+    ///
+    /// MUST NOT 依赖「裸变量名短路」旧通道（已删，2026-09-22）：裸名仍按表达式求值，
+    /// 但语义归一到 Rhai（含受控函数白名单）。
     #[serde(default)]
     pub guard: Option<String>,
-    /// Action to execute during transition (optional function name)
+    /// Action to execute during transition —— `字段 = 表达式` 契约（顶层 `;` 可多段），
+    /// 求值走唯一引擎 Rhai；执行归属见 `docs/specs/APP_EXTENSION.md`（App 级 `on_transition`）。
     #[serde(default)]
     pub action: Option<String>,
     /// Whether this transition is the default for the source state(s)

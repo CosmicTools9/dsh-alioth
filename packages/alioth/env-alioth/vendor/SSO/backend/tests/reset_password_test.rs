@@ -16,15 +16,16 @@ use sqlx::PgPool;
 /// Create the password_reset_tokens table (Phase 0 addition)
 /// and ensure the auth_users table has password_hash.
 async fn create_test_tables(pool: &PgPool) {
-    // Drop first so the schema always matches this test's expectations regardless of any
-    // drifted table left in the shared test DB by prior runs / migrations.
-    sqlx::query("DROP TABLE IF EXISTS isahl_auth.password_reset_tokens")
-        .execute(pool)
-        .await
-        .ok();
-    sqlx::query(
+    // 禁 `DROP TABLE`：本文件多个 `#[tokio::test]` 并行执行且共享测试库——先 drop 会让
+    // 并行用例把对方正在用的表删掉（本文件历史抖动的根因）。表结构漂移由建表语句的
+    // 幂等形态兜底，真漂移则由后续断言的失败显式暴露，而不是靠删表掩盖。
+    // 幂等建表：本文件多个 `#[tokio::test]` 并行执行，裸 `CREATE TABLE` 会让后者报
+    // 「已存在」；而**并发** `CREATE TABLE IF NOT EXISTS` 在 PostgreSQL 上仍可能抛
+    // `pg_type_typname_nsp_index` 唯一冲突（23505）——两种竞态都容忍：忽略建表结果，
+    // 随后以 `to_regclass` 断言表确实可用（真正的判据）。
+    let _ = sqlx::query(
         r#"
-        CREATE TABLE isahl_auth.password_reset_tokens (
+        CREATE TABLE IF NOT EXISTS isahl_auth.password_reset_tokens (
             id BIGINT DEFAULT isahl.gen_next_zuid() NOT NULL,
             user_id BIGINT NOT NULL,
             token_hash VARCHAR NOT NULL,
@@ -39,8 +40,17 @@ async fn create_test_tables(pool: &PgPool) {
         "#,
     )
     .execute(pool)
-    .await
-    .expect("Failed to create password_reset_tokens table");
+    .await;
+
+    let table_ready: bool =
+        sqlx::query_scalar("SELECT to_regclass('isahl_auth.password_reset_tokens') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
+    assert!(
+        table_ready,
+        "password_reset_tokens 表 MUST 可用（并发建表竞态不应阻断测试）"
+    );
 
     // Index for looking up by token
     sqlx::query(
@@ -63,7 +73,7 @@ async fn setup_user(pool: &PgPool, email: &str) -> i64 {
         r#"
         INSERT INTO isahl_auth.auth_users (id, name, username, email, password_hash, status, created_at, updated_at)
         VALUES (isahl.gen_next_zuid(), $1, $1, $1, 'old_hash', 'active', NOW(), NOW())
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT (name) DO NOTHING
         "#,
     )
     .bind(email)

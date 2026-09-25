@@ -451,7 +451,6 @@ img, video { max-width: 100%; height: auto; }
 .hover\:bg-accent\/60:hover { background-color: hsl(var(--accent) / 0.60); }
 .hover\:text-foreground:hover { color: hsl(var(--foreground)); }
 .hover\:opacity-80:hover { opacity: 0.8; }
-.md\:flex { display: flex; }
 
 /* Pseudo-element before utilities (ModuleTabs active tab underline) */
 .before\:absolute::before { position: absolute; content: ""; }
@@ -542,3 +541,93 @@ img, video { max-width: 100%; height: auto; }
 }
 
 
+/* ── 任意值/布局前缀工具类补齐（2026-09-24，change: fix-prototype-utility-class-coverage）──
+   来源：`scripts/check/check-prototype-utility-coverage.ts` 判据缺口清单逐条推导（任意值 + 布局完整性前缀族）。
+   为何必须补齐：原型源码按生产 Tailwind 语义书写这类类名，本产物缺规则 ⇒ 类静默失效（实测 SE 里程碑
+   矩阵 `min-w-[1420px]` 失效 ⇒ 375px 下月份列被压到 12–17px、中文逐字竖排）。语义与生产 Tailwind 一致：
+   `_[…]` 空格化、`calc()` 算式插空格、`bg-primary/[α]` → `hsl(var(--primary) / α)`，变体（`lg:`/`xl:`/
+   `hover:`/`focus:`/`group-hover:`）与生产同形。新增缺口由该检查 fail-closed 拦截。── */
+  .accent-\[hsl\(var\(--primary\)\)\] { accent-color: hsl(var(--primary)); }
+  .bg-primary\/\[0\.02\] { background: hsl(var(--primary) / 0.02); }
+  .focus\:shadow-\[0_0_0_3px_hsl\(var\(--primary\)\/0\.08\)\]:focus { box-shadow: 0 0 0 3px hsl(var(--primary)/0.08); }
+  .grid-cols-\[208px_1fr\] { grid-template-columns: 208px 1fr; }
+  .grid-cols-\[280px_minmax\(0\,1fr\)\] { grid-template-columns: 280px minmax(0,1fr); }
+  .group:hover .group-hover\:bg-primary\/\[0\.04\] { background: hsl(var(--primary) / 0.04); }
+  .h-\[calc\(100vh-190px\)\] { height: calc(100vh - 190px); }
+  .hover\:bg-primary\/\[0\.03\]:hover { background: hsl(var(--primary) / 0.03); }
+  .left-\[11px\] { left: 11px; }
+  .left-\[13px\] { left: 13px; }
+  .left-\[5px\] { left: 5px; }
+  .max-h-\[88vh\] { max-height: 88vh; }
+  .max-h-\[calc\(100vh-240px\)\] { max-height: calc(100vh - 240px); }
+  .max-h-32 { max-height: 8rem; }
+  .max-h-56 { max-height: 14rem; }
+  .max-h-72 { max-height: 18rem; }
+  .max-w-\[10rem\] { max-width: 10rem; }
+  .max-w-\[140px\] { max-width: 140px; }
+  .max-w-\[160px\] { max-width: 160px; }
+  .max-w-\[180px\] { max-width: 180px; }
+  .max-w-\[200px\] { max-width: 200px; }
+  .max-w-\[220px\] { max-width: 220px; }
+  .max-w-\[240px\] { max-width: 240px; }
+  .max-w-\[260px\] { max-width: 260px; }
+  .max-w-\[280px\] { max-width: 280px; }
+  .max-w-\[300px\] { max-width: 300px; }
+  .max-w-\[420px\] { max-width: 420px; }
+  .max-w-\[80px\] { max-width: 80px; }
+  .max-w-\[92vw\] { max-width: 92vw; }
+  .max-w-2xl { max-width: 42rem; }
+  .max-w-3xl { max-width: 48rem; }
+  .max-w-4xl { max-width: 56rem; }
+  .max-w-5xl { max-width: 64rem; }
+  .max-w-64 { max-width: 16rem; }
+  .max-w-lg { max-width: 32rem; }
+  .max-w-md { max-width: 28rem; }
+  .max-w-xl { max-width: 36rem; }
+  .max-w-xs { max-width: 20rem; }
+  .mb-\[-1px\] { margin-bottom: -1px; }
+  .min-h-\[420px\] { min-height: 420px; }
+  .min-h-\[520px\] { min-height: 520px; }
+  .min-h-\[76px\] { min-height: 76px; }
+  .min-h-\[80px\] { min-height: 80px; }
+  .min-h-8 { min-height: 2rem; }
+  .min-h-full { min-height: 100%; }
+  .min-w-\[100px\] { min-width: 100px; }
+  .min-w-\[1060px\] { min-width: 1060px; }
+  .min-w-\[110px\] { min-width: 110px; }
+  .min-w-\[118px\] { min-width: 118px; }
+  .min-w-\[120px\] { min-width: 120px; }
+  .min-w-\[130px\] { min-width: 130px; }
+  .min-w-\[1360px\] { min-width: 1360px; }
+  .min-w-\[140px\] { min-width: 140px; }
+  .min-w-\[1420px\] { min-width: 1420px; }
+  .min-w-\[150px\] { min-width: 150px; }
+  .min-w-\[160px\] { min-width: 160px; }
+  .min-w-\[180px\] { min-width: 180px; }
+  .min-w-\[190px\] { min-width: 190px; }
+  .min-w-\[200px\] { min-width: 200px; }
+  .min-w-\[220px\] { min-width: 220px; }
+  .min-w-\[260px\] { min-width: 260px; }
+  .min-w-\[64px\] { min-width: 64px; }
+  .min-w-\[70px\] { min-width: 70px; }
+  .min-w-\[980px\] { min-width: 980px; }
+  .min-w-40 { min-width: 10rem; }
+  .min-w-52 { min-width: 13rem; }
+  .min-w-64 { min-width: 16rem; }
+  .min-w-max { min-width: max-content; }
+  .rounded-\[10px\] { border-radius: 10px; }
+  .text-\[10\.5px\] { font-size: 10.5px; }
+  .text-\[15px\] { font-size: 15px; }
+  .w-\[120px\] { width: 120px; }
+  .w-\[124px\] { width: 124px; }
+  .w-\[28rem\] { width: 28rem; }
+  .w-\[440px\] { width: 440px; }
+  .w-\[560px\] { width: 560px; }
+  .whitespace-pre-wrap { white-space: pre-wrap; }
+  .z-\[60\] { z-index: 60; }
+@media (min-width: 1024px) {
+  .lg\:grid-cols-\[1\.5fr_1fr\] { grid-template-columns: 1.5fr 1fr; }
+}
+@media (min-width: 1280px) {
+  .xl\:grid-cols-\[1fr_330px\] { grid-template-columns: 1fr 330px; }
+}

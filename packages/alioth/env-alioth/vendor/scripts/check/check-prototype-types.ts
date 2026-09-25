@@ -22,6 +22,7 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
+import { writeBaseline } from './lib/baseline-store';
 
 const REPO_ROOT = resolve(import.meta.dir, '../..');
 const NS_DIRS = ['Pre-Proc'];
@@ -204,7 +205,7 @@ if (UPDATE_BASELINE) {
     '# 形态: <rule>TAB<file>TAB<detail>',
     `# 生成时命中: ${rawFindings.length}`,
   ];
-  writeFileSync(BASELINE_PATH, [...header, ...[...new Set(rawFindings.map(keyOf))].sort()].join('\n') + '\n', 'utf8');
+  writeBaseline(REPO_ROOT, 'scripts/check/.prototype-types-baseline.txt', [...header, ...[...new Set(rawFindings.map(keyOf))].sort()].join('\n') + '\n');
   console.log(`[check-prototype-types] 已写入基线：${BASELINE_PATH}（${rawFindings.length} 项）`);
   process.exit(0);
 }

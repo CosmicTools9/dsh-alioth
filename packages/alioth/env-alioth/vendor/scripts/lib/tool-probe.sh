@@ -21,6 +21,27 @@
 #              的 --version/--help 均 rc=1 且打印 usage 报错）⇒ 判据退为「npm 全局包含该包」
 # =============================================================================
 
+# =============================================================================
+# 判据环境对齐（唯一实现 = scripts/env/mise-sync-path.sh）——**在做出任何判定之前**
+#
+# 为什么放在库里：非交互 shell（hook / 门禁 / agent / 裸 `bash script.sh`）默认拿不到 mise
+# 管理的工具（install dirs / shims 不在 PATH），于是 `tool_usable` 把**已装**判成**未装**
+# （2026-09-22 实证：`check-env-health.sh --ci` 在裸 shell 报 12 个「未安装」，其中
+# typescript-language-server / pyright / vscode-* 全在 mise 的 node 安装目录里）。
+# 每个消费方各自记得对齐 = 必然漏；故对齐点收敛到本库。
+# 只重算 PATH（不写文件、不装工具、不碰 DB）；幂等；CWD 原样恢复。
+# =============================================================================
+if command -v mise >/dev/null 2>&1; then
+    _tp_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+    if [ -f "${_tp_root}/scripts/env/mise-sync-path.sh" ]; then
+        _tp_pwd="${PWD}"
+        cd "${_tp_root}" 2>/dev/null && { . "${_tp_root}/scripts/env/mise-sync-path.sh" || true; }
+        cd "${_tp_pwd}" 2>/dev/null || true
+        unset _tp_pwd
+    fi
+    unset _tp_root
+fi
+
 # probe_version <cmd> [args...] → 0 = rc 0 且输出非空
 probe_version() {
     local out rc=0

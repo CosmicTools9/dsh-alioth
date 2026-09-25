@@ -79,6 +79,7 @@ pub async fn send_code(
     let subject = match body.purpose.as_str() {
         "register" => "您的注册验证码",
         "reset_password" => "您的密码重置验证码",
+        "login" => "您的登录验证码",
         _ => "您的验证码",
     };
     let body_text = format!("您的验证码是：{}，15 分钟内有效。请勿泄露给他人。", code);

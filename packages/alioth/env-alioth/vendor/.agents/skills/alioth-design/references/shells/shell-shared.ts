@@ -436,7 +436,7 @@ export function previewTopBarRight(opts?: {
       const badge = t.badge
         ? `<span class="absolute -top-0.5 -right-0.5 min-w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[8px] leading-none flex items-center justify-center font-bold px-1 border-2 border-card">${t.badge}</span>`
         : '';
-      return `<button type="button" class="relative w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent" title="${t.title}">
+      return `<button type="button" class="relative w-9 h-9 rounded-lg hidden sm:flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent" title="${t.title}">
         <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/></svg>
         ${badge}
       </button>`;
@@ -444,7 +444,7 @@ export function previewTopBarRight(opts?: {
     .join('\n      ');
   return `
     <div class="flex items-center gap-3">
-      <div class="relative w-72 hidden md:block">
+      <div class="relative w-72 hidden lg:block">
         <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
         <input type="search" placeholder="搜索…" class="pl-9 pr-3 w-full h-9 rounded-lg border bg-muted/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-background transition-colors" />
       </div>

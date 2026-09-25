@@ -119,7 +119,12 @@ async fn proxy_handler(
             actix_web::http::header::HeaderName::from_bytes(k.as_str().as_bytes()),
             actix_web::http::header::HeaderValue::from_bytes(v.as_bytes()),
         ) {
-            builder.insert_header((name, value));
+            // MUST append（非 insert）：actix `insert_header` 会**替换**同名头，而 SSO 登录
+            // 响应携带**两个 `Set-Cookie`**（access_token + refresh_token，见
+            // `SSO/backend/src/auth/jwt.rs::set_access_cookie/set_refresh_cookie`）——
+            // 用 insert 只留最后一个 ⇒ **access_token cookie 被吞** ⇒ PEP（读 `access_token`）
+            // 取不到令牌 ⇒ 全量 401（2026-09-22 实测：:9005 只回 refresh_token、:9006 直连两个都回）。
+            builder.append_header((name, value));
         }
     }
 

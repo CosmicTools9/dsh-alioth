@@ -27,4 +27,13 @@ if [ -f "${_cargo_target_env_dir}/cargo-target-dirs.sh" ]; then
         mkdir -p "${CARGO_TARGET_DIR}"
     fi
 fi
+
+# ── sccache 接线（唯一实现 = scripts/lib/sccache.sh；source 期即启用，幂等）────────
+# 覆盖组件 `.mise.toml` 的任务面（Framework / SSO / Gateway 的 setup/dev/test/lint …）：
+# 任务字符串里的 cargo 调用由此获得 RUSTC_WRAPPER + 缓存面环境。fail-soft，不阻断。
+if [ -f "${_cargo_target_env_dir}/sccache.sh" ]; then
+    # shellcheck source=scripts/lib/sccache.sh
+    source "${_cargo_target_env_dir}/sccache.sh"
+    sccache_enable_if_available "mise ${CARGO_TARGET_PURPOSE}"
+fi
 unset _cargo_target_env_dir

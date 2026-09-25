@@ -12,6 +12,7 @@ pub mod handlers;
 pub mod models;
 pub mod ngac_org_ensure;
 pub mod org_scheme;
+pub mod plates;
 pub mod repository;
 pub mod service;
 pub mod subject_status;

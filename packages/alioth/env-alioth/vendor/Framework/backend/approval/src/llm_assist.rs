@@ -188,56 +188,19 @@ pub async fn load_llm_service(pool: &PgPool) -> Result<LlmService, String> {
     )
 }
 
-/// DSL 表达式强校验（fail-closed）：语法 + 引用字段 ⊆ 变量清单（`_refs.` 成员豁免）。
+/// 表达式强校验（fail-closed，唯一引擎 Rhai）：严格变量模式 —— 语法错、引用
+/// 标识符不在已知键集、或调用**未登记自由函数**即失败（`validate_all`：语法 + 标识符 +
+/// 白名单三层；白名单单一真相源 = `runtime-engine/expression/builtins.json`）。
+/// 已知键 = 变量清单 ∪ 结构键（`_refs` 引用容器 / `entityId` / `ctx` 恒可见）；
+/// `ctx["k"]` 索引形态天然通过（ctx 为已知键）。
 pub fn validate_dsl_expression(expression: &str, context_fields: &[String]) -> (bool, Vec<String>) {
-    use runtime_engine::ConstraintExpr;
-    fn collect_field_refs(expr: &ConstraintExpr, out: &mut Vec<String>) {
-        match expr {
-            ConstraintExpr::FieldRef(name) => out.push(name.clone()),
-            ConstraintExpr::Binary(l, _, r) => {
-                collect_field_refs(l, out);
-                collect_field_refs(r, out);
-            }
-            ConstraintExpr::Unary(_, e) => collect_field_refs(e, out),
-            ConstraintExpr::And(l, r) | ConstraintExpr::Or(l, r) => {
-                collect_field_refs(l, out);
-                collect_field_refs(r, out);
-            }
-            ConstraintExpr::Not(e) => collect_field_refs(e, out),
-            ConstraintExpr::Call(_, args) => args.iter().for_each(|a| collect_field_refs(a, out)),
-            ConstraintExpr::Literal(_) => {}
-        }
-    }
-    match runtime_engine::parse_constraint_expression(expression) {
-        Ok(ast) => {
-            let mut used = Vec::new();
-            collect_field_refs(&ast, &mut used);
-            let unknown: Vec<String> = used
-                .iter()
-                .filter(|f| {
-                    !f.starts_with("_refs.")
-                        && !context_fields.iter().any(|c| c.as_str() == f.as_str())
-                })
-                .cloned()
-                .collect();
-            if unknown.is_empty() {
-                (true, Vec::new())
-            } else {
-                (
-                    false,
-                    vec![format!(
-                        "引用字段不在变量清单: {}（可用: {}）",
-                        unknown.join(", "),
-                        if context_fields.is_empty() {
-                            "无".to_string()
-                        } else {
-                            context_fields.join(", ")
-                        }
-                    )],
-                )
-            }
-        }
-        Err(e) => (false, vec![format!("DSL 语法错误: {e}")]),
+    let mut known: Vec<String> = context_fields.to_vec();
+    known.push("_refs".to_string());
+    known.push("entityId".to_string());
+    known.push("ctx".to_string());
+    match runtime_engine::RhaiExpressionEngine::new().validate_all(expression, &known) {
+        Ok(()) => (true, Vec::new()),
+        Err(e) => (false, vec![e]),
     }
 }
 
@@ -268,32 +231,53 @@ mod tests {
     }
 
     #[test]
-    fn dsl_valid_expression_passes() {
+    fn valid_expression_passes() {
         let (valid, errors) = validate_dsl_expression(
-            "amount > 5000 && code == 'VIP'",
+            "amount > 5000 && code == \"VIP\"",
             &fields(&["amount", "code"]),
         );
-        assert!(valid, "合法 DSL 应通过: {errors:?}");
+        assert!(valid, "合法表达式应通过: {errors:?}");
     }
 
     #[test]
-    fn dsl_unknown_field_fail_closed() {
+    fn unknown_field_fail_closed() {
         let (valid, errors) = validate_dsl_expression("amount > 100", &fields(&["total"]));
         assert!(!valid, "引用未知字段必须 fail-closed");
-        assert!(errors.iter().any(|e| e.contains("不在变量清单")));
+        assert!(!errors.is_empty(), "失败必须带可读错误");
     }
 
     #[test]
-    fn dsl_refs_member_path_exempt() {
+    fn unregistered_free_function_fail_closed() {
+        // LLM 产出的表达式若调用未登记函数，运行期必 `Function not found` ⇒ 写入前拦下
         let (valid, errors) =
-            validate_dsl_expression("_refs.ck_category.notice == '合同类'", &fields(&["amount"]));
-        assert!(valid, "_refs 成员路径应豁免: {errors:?}");
+            validate_dsl_expression("median([1, 2, 3]) > 0", &fields(&["amount"]));
+        assert!(!valid, "未登记自由函数必须 fail-closed");
+        assert!(
+            errors.iter().any(|e| e.contains("median")),
+            "错误须指名函数: {errors:?}"
+        );
+        // 受控白名单内函数放行（白名单单一真相源 = builtins.json）
+        let (ok, errs) = validate_dsl_expression("sum([1, 2, 3]) > 0", &fields(&["amount"]));
+        assert!(ok, "白名单内函数应通过: {errs:?}");
     }
 
     #[test]
-    fn dsl_dash_identifier_supported() {
-        let (valid, errors) = validate_dsl_expression("act-group == 1", &fields(&["act-group"]));
-        assert!(valid, "连字符标识符应通过: {errors:?}");
+    fn refs_member_path_accepted() {
+        // `_refs` 恒为已知键（引用容器）；子键以索引语法表达（D2 契约）
+        let (valid, errors) = validate_dsl_expression(
+            "_refs[\"ck_category\"][\"notice\"] == \"合同类\"",
+            &fields(&["amount"]),
+        );
+        assert!(valid, "_refs 成员路径应通过: {errors:?}");
+    }
+
+    #[test]
+    fn hyphen_key_via_ctx_index() {
+        // 含连字符的模型列 MUST 经 `ctx["…"]` 索引语法（裸名在 Rhai 中解析为减法）
+        let (valid, errors) = validate_dsl_expression("ctx[\"act-group\"] == 1", &fields(&[]));
+        assert!(valid, "ctx 索引语法应通过: {errors:?}");
+        let (bare, _) = validate_dsl_expression("act-group == 1", &fields(&["act-group"]));
+        assert!(!bare, "裸连字符标识符 MUST NOT 通过（D2 契约）");
     }
 
     #[test]

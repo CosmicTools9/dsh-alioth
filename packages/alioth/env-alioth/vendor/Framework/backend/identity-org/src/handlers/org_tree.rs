@@ -13,13 +13,16 @@
 //!
 //! D-2a 岗位 tpl 双态（设计/实现分层，tpl_id 同表关联铁律）：
 //! - 编制范例行（模板）= `POST /positions/templates` 建：tpl_id=NULL +
-//!   `_f_='设计' AND _t_='范例'`（类写入契约 §4.3.3 形态 2 显式字面量对）——
-//!   与既有真实岗位行（类列 NULL：legacy 直建 + 实例行）以 `_f_ IS NULL` 判别；
+//!   `_f_='设计' AND _t_='范例'`（类写入契约 §4.3.3 形态 2 显式字面量对）——**模板行**；
 //! - 实例行 = `instantiate_position_template` 建：tpl_id=范例 id、
 //!   ck_category 继承范例类别、notice=范例名(+序号)；实例即真实岗位。
+//! - **真实岗位判据 = `common::real_position_row!`（`_t_ IS DISTINCT FROM '范例'`）**：
+//!   MUST NOT 用类列 NULL（`_f_ IS NULL`）判别——类列由 `dk_function` 前缀派生
+//!   （§4.3.1；ns 种子链 `seed-zz-class-columns-normalize.sql` 归一后真实岗位为
+//!   `_f_='实现' / _t_='实例'`），NULL 判据会把全部真实岗位排除（2026-09-23 实证）。
 //! - 类别校验（B-1 align-cognition-ua-category 同源约束）：ck_category 必须指向
 //!   `zc_id_category` **基表行**（tableoid 过滤），子族字典（zc_id_cate-position 等）
-//!   不派生 `position:{类别code}` UA——岗位读径统一 `_f_ IS NULL` 排除范例行。
+//!   不派生 `position:{类别code}` UA——岗位读径统一走上述谓词排除范例行。
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::context::require_auth;
@@ -579,10 +582,11 @@ pub async fn list_positions(
     let page_size = query.page_size.unwrap_or(20).clamp(1, 100);
     let offset = (page - 1) * page_size;
 
-    // _f_ IS NULL：真实岗位视图排除编制范例行（_f_='设计' AND _t_='范例'，D-2a）
+    // 真实岗位视图：排除编制范例行（`_t_='范例'`；判据 = common::real_position_row!）
     let sql = format!(
-        "{} WHERE p.deleted_at IS NULL AND p._f_ IS NULL ORDER BY p.id LIMIT $1 OFFSET $2",
-        POSITION_SELECT
+        "{} WHERE p.deleted_at IS NULL AND {} ORDER BY p.id LIMIT $1 OFFSET $2",
+        POSITION_SELECT,
+        common::real_position_row!(p)
     );
     let items: Vec<PositionDto> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
         .bind(page_size)
@@ -594,9 +598,10 @@ pub async fn list_positions(
         .map(position_row_to_dto)
         .collect();
 
-    let total: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE deleted_at IS NULL AND _f_ IS NULL",
-    )
+    let total: (i64,) = sqlx::query_as(concat!(
+        "SELECT COUNT(*) FROM isahl.\"zc_id_subj-position\" WHERE deleted_at IS NULL AND ",
+        common::real_position_row!()
+    ))
     .fetch_one(pool.get_ref())
     .await
     .map_err(ApiError::from_sqlx)?;
@@ -633,10 +638,11 @@ pub async fn get_position(
     let id = path.into_inner();
     require_resource_access(pool.get_ref(), user_id, "positions", id, "read").await?;
 
-    // _f_ IS NULL：岗位详情为真实岗位视图（编制范例行不可经 /positions/{id} 读）
+    // 岗位详情 = 真实岗位视图（编制范例行不可经 /positions/{id} 读）
     let sql = format!(
-        "{} WHERE p.id = $1 AND p.deleted_at IS NULL AND p._f_ IS NULL",
-        POSITION_SELECT
+        "{} WHERE p.id = $1 AND p.deleted_at IS NULL AND {}",
+        POSITION_SELECT,
+        common::real_position_row!(p)
     );
     let row: Option<PositionRow> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
         .bind(id)
@@ -900,7 +906,7 @@ pub async fn instantiate_position_template(
 
     tx.commit().await.map_err(ApiError::from_sqlx)?;
 
-    // 读回完整实例 DTO（实例类列 NULL → _f_ IS NULL 视图可见）
+    // 读回完整实例 DTO（实例行按 id 直读，不经真实岗位谓词过滤）
     let sql = format!(
         "{} WHERE p.id = $1 AND p.deleted_at IS NULL",
         POSITION_SELECT

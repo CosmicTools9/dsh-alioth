@@ -3,7 +3,7 @@
 //! 覆盖：
 //! - G4 housekeeping 周期清理（超保留期会话/刷新令牌物理删除 + 子表级联 + 有效行保留）
 //! - G6c 签发订阅门禁（/auth/token client_credentials 无/有激活订阅）
-//! - P1 注册邮箱验证负路径（未验证 email → 400 EMAIL_NOT_VERIFIED）
+//! - P1 注册邮箱验证（原门禁已废）：未验证 email 直接注册 → 201（不再 400 EMAIL_NOT_VERIFIED）
 //! - P2 SCIM Groups PATCH（add/remove/replace/非法请求 400）
 //!
 //! 注：运行需共享测试库（aliothstudio_test）已含 isahl_auth 基础表与 isahl schema
@@ -320,10 +320,10 @@ async fn client_credentials_requires_active_subscription() {
     delete_user(&pool, user_id).await;
 }
 
-// ── P1：注册邮箱验证负路径 ─────────────────────────────────────────────────────
+// ── P1：注册不再要求邮箱验证（原门禁已废） ────────────────────────────────────
 
 #[tokio::test]
-async fn register_rejects_unverified_email() {
+async fn register_accepts_unverified_email() {
     let pool = setup_pool().await;
     common::setup_schema(&pool).await.ok();
 
@@ -348,33 +348,29 @@ async fn register_rejects_unverified_email() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(
         resp.status().as_u16(),
-        400,
-        "unverified email registration must be rejected"
+        201,
+        "unverified email registration must succeed"
     );
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(
-        body["error"]
+        !body["error"]
             .as_str()
             .unwrap_or("")
             .contains("EMAIL_NOT_VERIFIED"),
-        "expected EMAIL_NOT_VERIFIED, got {:?}",
+        "EMAIL_NOT_VERIFIED must not be returned, got {:?}",
         body
     );
-    // 无用户行残留
-    let leftover: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM isahl_auth.auth_users WHERE email = $1")
+    // 用户行已落库
+    let user_id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1")
             .bind(&email)
-            .fetch_one(&pool)
+            .fetch_optional(&pool)
             .await
             .unwrap();
-    assert_eq!(leftover, 0, "no user row may be created");
+    let user_id = user_id.expect("user row must be created for unverified email");
 
-    // 清理验证码残留（如成功路径并发写入）
-    sqlx::query("DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1")
-        .bind(&email)
-        .execute(&pool)
-        .await
-        .ok();
+    // 清理
+    delete_user(&pool, user_id).await;
 }
 
 // ── P2：SCIM Groups PATCH ─────────────────────────────────────────────────────

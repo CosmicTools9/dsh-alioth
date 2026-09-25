@@ -27,7 +27,7 @@ macro_rules! live_fields {
     };
 }
 
-/// 六族配置表 → 分类 + 编译期 SQL（表名与投影同源；新增族 = 加一行）
+/// 七族配置表 → 分类 + 编译期 SQL（表名与投影同源；新增族 = 加一行）
 ///
 /// 投影语义（见 [`live_fields`]）：`_f_` 由分类字面量派生（勿读物理列）；
 /// `_t_`（provider）读 `settings->>'provider'`；enc_fields → credentials；
@@ -95,9 +95,10 @@ const CONFIG_FAMILIES: &[ConfigFamilySql] = &[
     config_family!("webhook", "zc_id_prot-webhook_config"),
     config_family!("storage", "zc_id_prot-oss_config"),
     config_family!("sms", "zc_id_prot-sms_config"),
+    config_family!("approval", "zc_id_prot-env_config"),
 ];
 
-/// 六族全量 UNION 列表 SQL（编译期固化；族成员与投影同源）
+/// 七族全量 UNION 列表 SQL（编译期固化；族成员与投影同源）
 macro_rules! live_config_union_sql {
     ($first_c:literal, $first_t:literal $(, $c:literal, $t:literal)* $(,)?) => {
         concat!(
@@ -125,6 +126,8 @@ const CONFIG_LIST_SQL: &str = live_config_union_sql!(
     "zc_id_prot-oss_config",
     "sms",
     "zc_id_prot-sms_config",
+    "approval",
+    "zc_id_prot-env_config",
 );
 
 /// 分类 code → 族（`_f_` 值域）
@@ -229,7 +232,7 @@ impl SystemConfigRepository for SystemConfigRepo {
     }
 
     async fn list(&self, limit: i64, offset: i64) -> Result<Vec<SystemConfig>, Error> {
-        // 六族全量 UNION ALL（分类 = 编译期字面量；provider 读 settings->>'provider'）
+        // 七族全量 UNION ALL（分类 = 编译期字面量；provider 读 settings->>'provider'）
         sqlx::query_as::<_, SystemConfig>(CONFIG_LIST_SQL)
             .bind(limit)
             .bind(offset)

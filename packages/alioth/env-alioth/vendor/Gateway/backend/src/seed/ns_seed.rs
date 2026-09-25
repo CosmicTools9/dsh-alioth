@@ -7,9 +7,10 @@
 //! 1. 模型级：`Framework/seed/`（dev）或 `Deploy/{ns}/seed/model-seed` 软链
 //!    （release，DEPLOY_PATH）。按 `seed-dimensions.meta.json` 键先建
 //!    `uq_seed_id_*` 唯一索引（对齐 Deploy start.sh 4b），再字典序重放
-//!    `seed-*.sql`（剥除 pg_dump 的 `\restrict`/`\unrestrict`）。其中声明文件
-//!    `seed-model-contract.sql` 仅在目标库持有 `isahl_meta.meta_collections`
-//!    判定面时重放，namespace 库跳过（CONTAINER_BOUNDARY §2；探测失败照常重放）。
+//!    `seed-*.sql`（剥除 pg_dump 的 `\restrict`/`\unrestrict`）。其中**声明文件**只在目标库
+//!    持有 `isahl_meta.meta_collections` 判定面时重放，namespace 库跳过（CONTAINER_BOUNDARY §2；
+//!    探测失败照常重放）；名单来源 = 种子目录内 `seed-declaration-files.json` **单一来源**
+//!    （`load_declaration_files`——MUST NOT 在本文件内嵌名单）。
 //! 2. namespace 级：`Pre-Proc/{ns}/seed/`（dev）或 `Deploy/{ns}/seed/`
 //!    （release）。以 `seed-manifest.json` 为唯一契约：仅重放 `in_suite=true`
 //!    文件、按 `order` 升序、逐文件做目标表存在性门禁（缺失 WARN 跳过）。
@@ -23,7 +24,7 @@
 //! 语义：幂等，单文件失败 WARN 不阻断启动（与 Deploy start.sh 4b/4c 对齐）。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sqlx::{AssertSqlSafe, PgPool};
 
@@ -180,10 +181,11 @@ async fn replay_model_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSee
         }
     }
 
-    // 声明文件（seed-model-contract.sql）= isahl_meta.meta_collections 上的幂等 merge，
-    // 只对持有模型元数据面的库适用；namespace 库按 CONTAINER_BOUNDARY §2 无该面
-    // ⇒ 重放必报 relation does not exist（2026-09-13 AVIC-CAASEC 事故同源；判据见
+    // 声明文件 = isahl_meta.meta_collections 上的幂等 merge，只对持有模型元数据面的库适用；
+    // namespace 库按 CONTAINER_BOUNDARY §2 无该面 ⇒ 重放必报 relation does not exist
+    // （2026-09-13 AVIC-CAASEC 事故同源；判据见
     // openspec/changes/migrate-seed-contract-into-model/design.md §3c）。
+    // 名单来源 = `load_declaration_files`（种子目录内单一来源文件，本处不内嵌名字）。
     // 探测失败（DB 不可达）保持旧行为（照常重放并 WARN），不因探测失败而跳过。
     let has_model_face: bool = match sqlx::query_scalar::<_, bool>(
         "SELECT to_regclass('isahl_meta.meta_collections') IS NOT NULL",
@@ -215,13 +217,25 @@ async fn replay_model_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSee
         .unwrap_or_default();
     files.sort();
 
+    // 声明文件清单（只写 isahl_meta.meta_collections 的种子，仅对持有模型元数据面的库适用）
+    // =**单一来源**：种子目录内 `seed-declaration-files.json`（本文件不内嵌名单）。
+    // 清单不可读 ⇒ 照常重放全部并 WARN（与下方「判定面探测失败照常重放」同取向：
+    // 静默跳过会让模型库丢掉契约合并行，比一条 WARN 严重）。
+    let (declaration_files, declarations_loaded) = load_declaration_files(dir);
+    if !declarations_loaded {
+        common::telemetry::warn!(
+            "声明文件清单不可读/解析失败（照常重放全部模型级种子）: {}",
+            dir.join(DECLARATION_LIST_FILE).display()
+        );
+    }
+
     for path in &files {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("?")
             .to_string();
-        if !has_model_face && name == "seed-model-contract.sql" {
+        if !has_model_face && declaration_files.iter().any(|n| n == &name) {
             common::telemetry::info!(
                 "模型级种子跳过（目标库无 isahl_meta 判定面，声明文件不适用）: {}",
                 name
@@ -248,7 +262,7 @@ async fn replay_model_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSee
 
 /// namespace 级种子重放：seed-manifest.json 驱动（order 升序 / in_suite=true /
 /// 目标表存在性门禁）。
-async fn replay_ns_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSeedStats) {
+async fn replay_ns_seeds(pool: &PgPool, dir: &Path, stats: &mut StartupSeedStats) {
     if !dir.is_dir() {
         common::telemetry::warn!(
             "namespace 级种子目录缺失，跳过自动载入（{}）",
@@ -406,4 +420,91 @@ async fn missing_table(pool: &PgPool, tables: &HashMap<String, u64>) -> Option<S
 /// 标识符加双引号（表名含连字符；内嵌引号翻倍转义）。
 fn quote_ident(s: &str) -> String {
     s.replace('"', "\"\"")
+}
+
+/// 声明文件清单文件名（种子目录内；唯一事实源 = `Framework/seed/seed-declaration-files.json`）。
+const DECLARATION_LIST_FILE: &str = "seed-declaration-files.json";
+
+/// 读声明文件清单（种子目录内 `seed-declaration-files.json` 的 `declaration_files` 数组）。
+///
+/// 返回 `(名单, 是否成功读取)`。读取失败 ⇒ 空名单 + `false`：调用方 MUST 照常重放全部
+/// 模型级种子，MUST NOT 因读取失败而静默跳过声明文件——那会让模型库（dev/test/pre）
+/// 丢掉 `isahl_meta.meta_collections` 契约合并行，比一条 WARN 严重。
+/// 数组为空 ⇒ 本函数按合法读取（`true` + 空名单，退化行为 = 照常重放全部）；
+/// **契约侧**保证清单非空由门禁 `scripts/check/check-seed-declaration-source.ts` 承担。
+fn load_declaration_files(seed_dir: &Path) -> (Vec<String>, bool) {
+    let Some(raw) = std::fs::read_to_string(seed_dir.join(DECLARATION_LIST_FILE)).ok() else {
+        return (Vec::new(), false);
+    };
+    let Some(items) = serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|v| {
+            v.get("declaration_files")
+                .and_then(|d| d.as_array())
+                .cloned()
+        })
+    else {
+        return (Vec::new(), false);
+    };
+    let mut names = Vec::with_capacity(items.len());
+    for item in &items {
+        match item.as_str() {
+            Some(name) => names.push(name.to_string()),
+            None => return (Vec::new(), false),
+        }
+    }
+    (names, true)
+}
+
+#[cfg(test)]
+mod declaration_list_tests {
+    use super::*;
+
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ns-seed-decl-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_list(dir: &Path, body: &str) {
+        std::fs::write(dir.join(DECLARATION_LIST_FILE), body).unwrap();
+    }
+
+    /// 单一来源被读出（判定面 = 名单内容本身，非内嵌字面量）
+    #[test]
+    fn reads_declaration_list_from_single_source() {
+        let dir = tmp_dir("ok");
+        write_list(
+            &dir,
+            r#"{"declaration_files": ["seed-model-contract.sql", "seed-uid-codes.sql"]}"#,
+        );
+        let (names, loaded) = load_declaration_files(&dir);
+        assert!(loaded);
+        assert_eq!(names, vec!["seed-model-contract.sql", "seed-uid-codes.sql"]);
+    }
+
+    /// 清单缺失 ⇒ 报"未读取"，调用方据此照常重放全部（不静默跳过）
+    #[test]
+    fn missing_list_is_reported_as_unread() {
+        let dir = tmp_dir("missing");
+        let (names, loaded) = load_declaration_files(&dir);
+        assert!(!loaded);
+        assert!(names.is_empty());
+    }
+
+    /// 空名单 = 合法（`true`）；结构非法/非 JSON = 未读取（`false`）
+    #[test]
+    fn empty_list_is_valid_and_malformed_is_unread() {
+        let dir = tmp_dir("shape");
+        write_list(&dir, r#"{"declaration_files": []}"#);
+        let (names, loaded) = load_declaration_files(&dir);
+        assert!(loaded && names.is_empty());
+
+        write_list(&dir, r#"{"declaration_files": "seed-model-contract.sql"}"#);
+        assert!(!load_declaration_files(&dir).1);
+
+        write_list(&dir, "not json");
+        assert!(!load_declaration_files(&dir).1);
+    }
 }

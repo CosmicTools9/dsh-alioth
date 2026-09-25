@@ -5,23 +5,19 @@
 //! isahl_auth 配套工程 schema（019_chat_ai_meta.sql，fix-chat-ai-feature-gaps D2.5）。
 //! 本文件只含 SQL；端口实现见 db_message.rs 的 SqlxMessageAdapter 委托。
 
-use serde_json::Value;
 use sqlx::PgPool;
+
+use super::super::ports::MessageMetaFields;
 
 /// upsert 消息 meta（fix-chat-ai-feature-gaps D2.12）。
 ///
-/// `None` 字段不覆盖既有值（首次写入时缺省）；agent_code 空串表示用户消息
-/// （与表 DEFAULT 同语义）。
+/// 字段语义见 [`MessageMetaFields`]（None 字段不覆盖既有值；`agent_code`
+/// 空串表示用户消息，与表 DEFAULT 同语义）。
 pub async fn save_meta(
     pool: &PgPool,
     msg_id: i64,
     session_id: i64,
-    agent_code: &str,
-    structured: Option<&Value>,
-    usage: Option<&Value>,
-    attachments: Option<&Value>,
-    knowledge_refs: Option<&Value>,
-    tool_calls: Option<&Value>,
+    fields: MessageMetaFields<'_>,
 ) -> Result<(), String> {
     sqlx::query(
         r#"INSERT INTO isahl_auth.chat_message_meta
@@ -39,12 +35,12 @@ pub async fn save_meta(
     )
     .bind(msg_id)
     .bind(session_id)
-    .bind(agent_code)
-    .bind(structured)
-    .bind(usage)
-    .bind(attachments)
-    .bind(knowledge_refs)
-    .bind(tool_calls)
+    .bind(fields.agent_code)
+    .bind(fields.structured)
+    .bind(fields.usage)
+    .bind(fields.attachments)
+    .bind(fields.knowledge_refs)
+    .bind(fields.tool_calls)
     .execute(pool)
     .await
     .map_err(|e| format!("save message meta failed: {}", e))?;

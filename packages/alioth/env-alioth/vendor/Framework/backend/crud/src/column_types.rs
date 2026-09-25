@@ -9,8 +9,31 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use sqlx::{PgPool, Row};
 
-/// (schema, table) → (column → data_type) 进程级缓存
-pub type ColumnTypeMap = HashMap<String, String>;
+/// 列元数据：`information_schema.columns` 的 `data_type` + USER-DEFINED 列的 UDT 名。
+///
+/// `udt` 仅在 `data_type = 'USER-DEFINED'`（枚举 / geometry 等）时有值——写径据此
+/// 给占位符补 `::"udt"` 强转（文本参数直接写枚举列会报
+/// `column "x" is of type status_flag but expression is of type text`）。
+#[derive(Debug, Clone)]
+pub struct ColumnMeta {
+    pub data_type: String,
+    pub udt: Option<String>,
+}
+
+impl ColumnMeta {
+    /// 列类型的 SQL 拼写（供既有按类型分派的调用方使用）
+    pub fn data_type(&self) -> &str {
+        &self.data_type
+    }
+
+    /// USER-DEFINED 列的类型名（枚举/geometry）；其余列 `None`
+    pub fn udt(&self) -> Option<&str> {
+        self.udt.as_deref()
+    }
+}
+
+/// (schema, table) → (column → 列元数据) 进程级缓存
+pub type ColumnTypeMap = HashMap<String, ColumnMeta>;
 type ColumnTypeCache = HashMap<(String, String), Arc<ColumnTypeMap>>;
 
 static COLUMN_TYPE_CACHE: LazyLock<Mutex<ColumnTypeCache>> =
@@ -18,6 +41,15 @@ static COLUMN_TYPE_CACHE: LazyLock<Mutex<ColumnTypeCache>> =
 
 fn column_type_cache() -> &'static Mutex<ColumnTypeCache> {
     &COLUMN_TYPE_CACHE
+}
+
+/// SQL 绑定占位符。USER-DEFINED 列（枚举/geometry）附 `::"udt"` 强转——
+/// 文本参数直接写枚举列会报 `column "x" is of type status_flag but expression is of type text`。
+pub fn placeholder(idx: usize, meta: Option<&ColumnMeta>) -> String {
+    match meta.and_then(ColumnMeta::udt) {
+        Some(udt) => format!("${}::\"{}\"", idx, udt),
+        None => format!("${}", idx),
+    }
 }
 
 /// 解析 `AliothDbEntity::table_name()`（如 `"isahl"."zc_id_contract"` / `isahl.zc_id_process`）
@@ -48,7 +80,7 @@ pub async fn resolve(pool: &PgPool, table: &str) -> Arc<ColumnTypeMap> {
         }
     }
     let rows = sqlx::query(
-        "SELECT column_name, data_type FROM information_schema.columns \
+        "SELECT column_name, data_type, udt_name FROM information_schema.columns \
          WHERE table_schema = $1 AND table_name = $2",
     )
     .bind(&schema)
@@ -60,8 +92,10 @@ pub async fn resolve(pool: &PgPool, table: &str) -> Arc<ColumnTypeMap> {
         rows.iter()
             .map(|r| {
                 let name: String = r.get("column_name");
-                let ty: String = r.get("data_type");
-                (name, ty)
+                let data_type: String = r.get("data_type");
+                let udt_name: String = r.get("udt_name");
+                let udt = (data_type == "USER-DEFINED").then_some(udt_name);
+                (name, ColumnMeta { data_type, udt })
             })
             .collect(),
     );
@@ -70,4 +104,47 @@ pub async fn resolve(pool: &PgPool, table: &str) -> Arc<ColumnTypeMap> {
         .unwrap_or_else(|p| p.into_inner())
         .insert(key, Arc::clone(&map));
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn meta(data_type: &str, udt: Option<&str>) -> ColumnMeta {
+        ColumnMeta {
+            data_type: data_type.to_string(),
+            udt: udt.map(str::to_string),
+        }
+    }
+
+    /// USER-DEFINED 列（枚举/geometry）必须带 `::"udt"` 强转——否则文本参数写枚举列报
+    /// `column "x" is of type status_flag but expression is of type text`（2026-09-22 实测）。
+    #[test]
+    fn placeholder_casts_user_defined_columns() {
+        assert_eq!(
+            placeholder(3, Some(&meta("USER-DEFINED", Some("status_flag")))),
+            r#"$3::"status_flag""#
+        );
+        assert_eq!(
+            placeholder(1, Some(&meta("USER-DEFINED", Some("geometry")))),
+            r#"$1::"geometry""#
+        );
+    }
+
+    /// 普通列与未知列（未解析到元数据）保持裸占位符——不引入多余 cast
+    #[test]
+    fn placeholder_leaves_known_and_unknown_columns_bare() {
+        assert_eq!(placeholder(2, Some(&meta("bigint", None))), "$2");
+        assert_eq!(placeholder(7, Some(&meta("text", None))), "$7");
+        assert_eq!(placeholder(4, None), "$4");
+    }
+
+    /// `udt` 仅对 USER-DEFINED 生效（data_type 别的取值即使带 udt_name 也不 cast）
+    #[test]
+    fn udt_accessor_is_opt_in() {
+        let m = meta("USER-DEFINED", Some("status_flag"));
+        assert_eq!(m.udt(), Some("status_flag"));
+        assert_eq!(m.data_type(), "USER-DEFINED");
+        assert_eq!(meta("text", None).udt(), None);
+    }
 }

@@ -44,7 +44,6 @@ async fn tdd_reg_001_valid_registration_returns_201() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-001@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "ValidP@ss1";
 
     let auth_state = common::test_auth_state();
@@ -120,7 +119,6 @@ async fn tdd_reg_002_user_persists_in_database() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-002@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "PersistT3st!";
     let test_username = "tdd_reg_002_user";
 
@@ -185,7 +183,6 @@ async fn tdd_reg_003_username_derived_from_email() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "auto-user@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "AutoUser123!";
 
     let auth_state = common::test_auth_state();
@@ -232,19 +229,18 @@ async fn tdd_reg_003_username_derived_from_email() {
 // 测试组 2: 注册 - 参数验证（边界条件/异常输入）
 // ============================================================================
 
-/// TDD-REG-004: 重复邮箱注册返回 409 Conflict
+/// TDD-REG-004: 同一邮箱可被多个账号共享（email 非唯一身份基点）
 ///
-/// Given:  已经存在一个用户
-/// When:   用相同邮箱再次注册
-/// Then:   返回 409 Conflict，提示用户已存在
+/// Given:  已用某邮箱注册一个账号
+/// When:   另一 username 以**同一邮箱**注册
+/// Then:   返回 201（allow-duplicate-email-accounts：email 冲突 MUST NOT 阻断注册）
 #[tokio::test]
-async fn tdd_reg_004_duplicate_email_returns_409() {
+async fn tdd_reg_004_duplicate_email_shares_account() {
     let pool = setup_pool().await;
     common::setup_schema(&pool).await.expect("schema setup");
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-004@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "DupEmailT3st!";
 
     let auth_state = common::test_auth_state();
@@ -272,7 +268,7 @@ async fn tdd_reg_004_duplicate_email_returns_409() {
         "First registration should succeed"
     );
 
-    // Second registration with same email should fail with 409
+    // Second registration with same email (different username) MUST succeed
     let req2 = test::TestRequest::post()
         .uri("/auth/register")
         .set_json(json!({
@@ -283,22 +279,21 @@ async fn tdd_reg_004_duplicate_email_returns_409() {
         .to_request();
     let resp2 = test::call_service(&app, req2).await;
 
-    // ASSERT: 409 Conflict
     assert_eq!(
         resp2.status().as_u16(),
-        409,
-        "Duplicate email registration should return 409 Conflict"
+        201,
+        "Duplicate email registration MUST succeed (email is not a unique identity anchor)"
     );
 
-    let body: serde_json::Value = test::read_body_json(resp2).await;
-    assert!(
-        body["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("already exists"),
-        "Error message should indicate user already exists, got: {:?}",
-        body
-    );
+    // 两个账号共享同一 email
+    let shared: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM isahl_auth.auth_users WHERE email = $1 AND username IN ('dup_user_1', 'dup_user_2')",
+    )
+    .bind(test_email)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(shared, 2, "两个账号 MUST 同时存在且共享该 email");
 
     // CLEANUP
     common::cleanup_user_by_email(&pool, test_email).await.ok();
@@ -427,7 +422,6 @@ async fn tdd_reg_007_exactly_8_char_password_succeeds() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-007@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "Abcd1234"; // exactly 8 chars
 
     let auth_state = common::test_auth_state();
@@ -472,7 +466,6 @@ async fn tdd_reg_008_email_case_normalization() {
     common::cleanup_test_users(&pool).await.ok();
 
     let input_email = "Tdd-Reg-008-CASE@Alioth.Test";
-    common::pre_verify_email(&pool, input_email).await.ok();
     let expected_email = "tdd-reg-008-case@alioth.test";
     let test_password = "CaseNormT3st!";
 
@@ -543,7 +536,6 @@ async fn tdd_reg_009_register_then_login_succeeds() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-009@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "LoginAftReg1!";
 
     let auth_state = common::test_auth_state();
@@ -637,7 +629,6 @@ async fn tdd_reg_010_wrong_password_login_returns_401() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-010@alioth.test";
-    common::pre_verify_email(&pool, test_email).await.ok();
     let test_password = "CorrectP@ss1";
     let wrong_password = "WrongP@ssword99!";
 
@@ -963,8 +954,7 @@ async fn tdd_reg_ext_011_external_channel_registers() {
     common::cleanup_test_users(&pool).await.ok();
 
     let test_email = "tdd-reg-ext-011@alioth.test";
-    // P1 邮箱所有权门禁（fix-sso-auth-gaps）：外部通道提供 email 同样强制验证
-    common::pre_verify_email(&pool, test_email).await.ok();
+    // P1 邮箱所有权门禁已废：外部通道提供 email 亦无需前置验证
     let auth_state = common::test_auth_state();
     let app = test::init_service(
         App::new()
@@ -1043,8 +1033,7 @@ async fn tdd_reg_ext_012_me_returns_user_type() {
     .execute(&pool)
     .await;
     let test_email = "tdd-reg-ext-012@alioth.test";
-    // P1 邮箱所有权门禁（fix-sso-auth-gaps）：外部通道提供 email 同样强制验证
-    common::pre_verify_email(&pool, test_email).await.ok();
+    // P1 邮箱所有权门禁已废：外部通道提供 email 亦无需前置验证
     let auth_state = common::test_auth_state();
     let app = test::init_service(
         App::new()

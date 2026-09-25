@@ -357,7 +357,7 @@ pub async fn bind_system_subject(
                 _ => None,
             };
             let (dk_scene, dk_factor, dk_function) = match coords {
-                Some(c) => ontology_binding::resolve_conn(&mut *tx, c)
+                Some(c) => ontology_binding::resolve_conn(&mut tx, c)
                     .await
                     .map_err(actix_web::error::ErrorInternalServerError)?,
                 None => (None, None, None),
@@ -422,7 +422,7 @@ pub async fn bind_system_subject(
     // 4a. 系统管理员岗位（zc_id_subj-position，code 幂等）
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (pos_dk_scene, pos_dk_factor, pos_dk_function) =
-        ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG"))
+        ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG"))
             .await
             .map_err(actix_web::error::ErrorInternalServerError)?;
     let pos_id: Option<i64> = sqlx::query_scalar(
@@ -454,7 +454,7 @@ pub async fn bind_system_subject(
     // 4b. mgm-agent 智体（若 isahl 用户存在；fk_user=isahl，code 幂等）
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (agent_dk_scene, agent_dk_factor, agent_dk_function) =
-        ontology_binding::resolve_conn(&mut *tx, ("ZJ", "LNC", "↓_EH"))
+        ontology_binding::resolve_conn(&mut tx, ("ZJ", "LNC", "↓_EH"))
             .await
             .map_err(actix_web::error::ErrorInternalServerError)?;
     let agent_id: Option<i64> = sqlx::query_scalar(

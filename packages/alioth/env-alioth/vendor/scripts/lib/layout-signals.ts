@@ -23,7 +23,7 @@ export interface ViewportSignals {
   vw: number;
   /** 逐字竖排的叶子文本元素数 */
   vstack: number;
-  /** 非 SVG 元素的重叠对数（交面积 > 较小者 25%） */
+  /** 非 SVG 元素的重叠对数（**按裁剪祖先收敛后**可见部分的交面积 > 较小者 25%） */
   realOverlap: number;
   /** 文档级横向溢出像素（遥测：实测三页全 0，shell 隐藏溢出） */
   hOverflow: number;
@@ -69,6 +69,12 @@ export const OVERLAP_DELTA_THRESHOLD = 1;
 /** 评分参数（与 visual-verify.ts 的三信号模型对齐） */
 export const SCORE_BASE = 90;
 export const SCORE_MIN = 60;
+
+/** 布局判据/探针版本。**探针语义变更（阈值、裁剪感知、字段集）时 MUST 递增**：
+ * 报告记录的版本与该值不一致 ⇒ `check-visual-verify` 判 FAIL（提示重跑并重算基线），
+ * 因为信号灵敏度变了，跨版本比较的数字没有可比性（历史教训：探针升级把存量退化读成「新增」、
+ * 把重跑读成「修复」）。 */
+export const LAYOUT_PROBE_VERSION = 1;
 export const HARD_ERROR_DEDUCTION = 5;
 export const HARD_ERROR_CAP = 6;
 /** 每个命中窄屏劣化的视口扣分与封顶 */
@@ -80,6 +86,10 @@ export const NARROW_CAP = 4;
  *
  * 约束（均有实测依据）：
  * - **排除 `<svg>` 及其后代**：桌面档 2 对重叠全是 `path×path` / `path×circle`（图标内部图元）。
+ * - **裁剪感知**：重叠判定前先按 `overflow` 裁剪祖先（hidden/auto/scroll/clip）收敛 rect，
+ *   屏外部分不计入 —— 否则可滚动条带（TopBar `ModuleTabs` 的 `overflow-x-auto`）内**屏外**项
+ *   会与相邻区域几何相交成假阳（2026-09-22 实测：375px Δoverlap=12，实拍无可见压盖）。
+ *   收敛只可能**减少**重叠对数（对未裁剪页面无影响）。
  * - **只读**：不修改 DOM（采集前由调用方 `Emulation.setScrollbarsHidden` 处理滚动条侵蚀）。
  * - **有界**：元素采样上限与命中上限，避免 O(n²) 失控（不进 ready 轮询循环）。
  */
@@ -103,14 +113,51 @@ export const LAYOUT_PROBE = `(() => {
 
   const hOverflow = Math.max(0, de.scrollWidth - vw);
 
+  // 裁剪感知：元素若被最近的 overflow 裁剪祖先（hidden/auto/scroll/clip）截断，屏外部分不参与
+  // 重叠判定。缺此收敛时，可滚动条带（如 TopBar 的 ModuleTabs，overflow-x-auto）内**屏外**的
+  // 项仍以完整 rect 参与判定，与相邻区域几何相交 ⇒ 假阳（实测 2026-09-22：375px 下标签按钮 ×
+  // 右簇动作按钮 Δoverlap=12，而同档实拍无任何可见压盖/裁切）。
+  const clipRect = (el) => {
+    let r = el.getBoundingClientRect();
+    const elCs = getComputedStyle(el);
+    // 固定/绝对定位的元素可能逃出祖先裁剪（包含块在裁剪祖先之上）→ 不可用祖先 rect 收敛，
+    // 否则会掩盖真实互叠（如浮层/下拉）。保守取原始 rect。
+    if (elCs.position === 'fixed') return r;
+    let positioned = elCs.position !== 'static';
+    let p = el.parentElement;
+    while (p) {
+      const cs = getComputedStyle(p);
+      const pPositioned = cs.position !== 'static';
+      // 元素（或途中祖先）已建立定位包含块 → 其上方的裁剪祖先不再作用于本元素
+      if (positioned && pPositioned) break;
+      const cx = cs.overflowX !== 'visible';
+      const cy = cs.overflowY !== 'visible';
+      if (cx || cy) {
+        const pr = p.getBoundingClientRect();
+        const left = cx ? Math.max(r.left, pr.left) : r.left;
+        const right = cx ? Math.min(r.right, pr.right) : r.right;
+        const top = cy ? Math.max(r.top, pr.top) : r.top;
+        const bottom = cy ? Math.min(r.bottom, pr.bottom) : r.bottom;
+        r = { left, right, top, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+        if (r.width <= 0 || r.height <= 0) return r;
+      }
+      if (pPositioned) positioned = true;
+      p = p.parentElement;
+    }
+    return r;
+  };
+
   const sel = 'a,button,input,select,textarea,[role="button"],[data-testid],h1,h2,h3,td,th,header *,nav *';
   const nodes = Array.from(document.querySelectorAll(sel)).filter((el) => vis(el) && !inSvg(el)).slice(0, 300);
+  const rects = nodes.map(clipRect);
   const overlapSamples = [];
   for (let i = 0; i < nodes.length; i++) {
     for (let j = i + 1; j < nodes.length; j++) {
       const a = nodes[i], b = nodes[j];
       if (a.contains(b) || b.contains(a)) continue;
-      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      const ra = rects[i], rb = rects[j];
+      // 被裁剪到不可见（宽/高 ≤1px）的盒不参与判定
+      if (ra.width <= 1 || ra.height <= 1 || rb.width <= 1 || rb.height <= 1) continue;
       const ix = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
       const iy = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
       if (ix <= 1 || iy <= 1) continue;
@@ -131,8 +178,17 @@ export const LAYOUT_PROBE = `(() => {
     const t = (el.textContent || '').trim().replace(/\\s+/g, '');
     if (t.length >= 2) {
       const fs = parseFloat(cs.fontSize) || 14;
-      const lh = parseFloat(cs.lineHeight) || fs * 1.2;
-      const lines = Math.round(el.clientHeight / lh);
+      // 行数改用文本自身的行盒（Range.getClientRects）而非「盒高 ÷ 行高」：
+      // 后者把「高 22px + line-height:1（=11px）」的胶囊徽章读成 lines=2 的假竖排
+      // （实测 .badge 的 clientHeight/lineHeight 恒为 2，与是否换行无关）。
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      // 行数 = 文本行盒的**不同纵向位置**数。直接取 getClientRects().length 会把
+      // 「同一行内的多个 inline 盒」读成多行：图标 + 文字的胶囊徽章、被拆成多盒的
+      // 短文本（如 0%）都恒 ≥2 ⇒ 假竖排（2026-09-23 实测 .badge[0%] w=33 fs=11
+      // 的 lines=2 与是否换行无关）。按 top 去重后只数真实文本行。
+      const lines = new Set(Array.from(range.getClientRects()).map((r) => Math.round(r.top))).size;
+      range.detach();
       if (lines >= 2 && el.clientWidth > 0 && el.clientWidth < 4 * fs && lines >= Math.min(t.length, 4)) {
         if (vstackSamples.length < 12) vstackSamples.push(label(el) + '[' + t.slice(0, 6) + ' w=' + Math.round(el.clientWidth) + ' fs=' + Math.round(fs) + ' lines=' + lines + ']');
       }

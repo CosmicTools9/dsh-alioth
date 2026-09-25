@@ -14,11 +14,22 @@ use sqlx::PgPool;
 /// DTO 字段名（L2）→ 物理列名（L1）映射：record 构造与触发器读旧值的唯一来源。
 /// UPDATE/INSERT 的 record 键必须是物理列名——`crud::trigger` 的 core 直接取 `record.keys()`
 /// 当列名，不做列集校验；聚合请求的 `items` 等非列字段经此映射天然被剔除。
-const _WRITE_COLUMN_MAP: &[(&str, &str)] = &[];
+const _WRITE_COLUMN_MAP: &[(&str, &str)] = &[
+    ("notice", "notice"),
+    ("code", "code"),
+    ("flag", "flag"),
+    ("enable", "enable"),
+    ("comments", "comments"),
+];
 
 /// 回读映射：触发器通道 RETURNING（物理列名键）→ 实体 DTO 字段名键。
 const _READ_COLUMN_MAP: &[(&str, &str)] = &[
     ("id", "id"),
+    ("notice", "notice"),
+    ("code", "code"),
+    ("flag", "flag"),
+    ("enable", "enable"),
+    ("comments", "comments"),
     ("created_at", "created_at"),
     ("updated_at", "updated_at"),
     ("deleted_at", "deleted_at"),

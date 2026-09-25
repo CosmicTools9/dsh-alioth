@@ -12,14 +12,11 @@ pub mod engine;
 pub mod expression;
 pub mod extension;
 pub mod extension_surface;
-pub mod swrl;
 
 // 重新导出运行时契约类型（保持向后兼容）
 pub use runtime_contract::behavior::*;
-pub use runtime_contract::expression::*;
 pub use runtime_contract::extension::*;
 pub use runtime_contract::model_registry::*;
-pub use runtime_contract::swrl::*;
 
 // 重新导出上下文类型
 pub use context::{RuleContext, RuleEvaluation, RuleEvaluationResult, RuleOperation};
@@ -29,18 +26,25 @@ pub use engine::constraint::{
     ConstraintConfig, ConstraintEngine, ConstraintResult, ConstraintValidationResult,
 };
 pub use engine::expression::{ExpressionEngine, ExpressionError};
-pub use engine::rule::{BusinessRuleConfig, RuleEngine, RuleExecution, RuleExecutionResult};
+pub use engine::rule::{
+    rule_dependency_edges, BusinessRuleConfig, ConflictPolicy, RuleEngine, RuleExecution,
+    RuleExecutionResult, SaturationConfig,
+};
 
 // 重新导出扩展运行时类型
-pub use extension::{AppExtensionRegistry, ExtensionLoader, ExtensionRuntimeError};
+pub use extension::{
+    collect_expression_advisories, collect_expression_violations, solve_warnings,
+    AppExtensionRegistry, ExtensionLoader, ExtensionRuntimeError,
+};
+// 扩展执行结果（定义在 runtime-contract；此处转发，使 crud 等消费方无需直接依赖契约 crate）
 pub use extension_surface::{
     ConstraintDecl, DeclarationInventory, ExtensionSurface, RuleDecl, StateMachineDecl,
     TransitionDecl, WorkflowDecl,
 };
+pub use runtime_contract::extension::ExtensionResult;
 
-// 重新导出求值器和解析器
-pub use expression::evaluator::ExpressionEvaluator;
-pub use expression::parser::parse_constraint_expression;
-pub use expression::rhai::RhaiExpressionEngine;
-pub use swrl::evaluator::{SwrlEvaluation, SwrlEvaluationResult, SwrlRuleEngine};
-pub use swrl::parser::parse_swrl_rule;
+// 重新导出表达式引擎（平台唯一实现）与静态分析
+pub use expression::{
+    and_atoms, collect_variables, is_truthy, plan_face_expressions, plan_face_violations, CmpOp,
+    ComparisonAtom, RhaiExpressionEngine,
+};

@@ -51,6 +51,13 @@ use crud::crud_routes;
 
 /// 注册全部真实数据路由
 pub fn register_business_domain(cfg: &mut web::ServiceConfig) {
+    // 车辆号牌（实体↔身份桥；change align-vehicle-plate-identity）——**必须先于**本函数后续的
+    // `crud_routes::<Vehicle,_>("/vehicles")` 注册：actix `web::scope("/vehicles")` 对同前缀请求
+    // 命中即「截断」，晚注册的 `/vehicles/{id}/plates` 永远进不来（实测 404 空体；回归守卫 =
+    // `handlers::vehicle_plates::route_registration_tests`）。同款先例 =
+    // `traffic_line_stops::register`（shell 中先于 register_business_domain 注册）。
+    cfg.configure(crate::handlers::vehicle_plates::register);
+
     // Waybill CRUD (共享 zc_id_orde-land, type alias models.rs:341)
     cfg.configure(crud_routes::<
         Waybill,

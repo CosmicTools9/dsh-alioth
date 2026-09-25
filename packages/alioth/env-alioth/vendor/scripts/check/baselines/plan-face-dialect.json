@@ -1,0 +1,5 @@
+{
+  "rule_reference": "openspec/specs/expression-engine/spec.md :: 门禁覆盖表达式方言（plan 面）",
+  "note": "存量违规归线（ratchet 只减不增）：条目修复后 MUST 删除（stale 即失败）；禁新增条目。判据 = Framework/backend/runtime-engine/tests/extension_yaml_dialect.rs::plan_face_expressions_are_valid_rhai",
+  "allowed": []
+}

@@ -174,7 +174,7 @@ pub async fn ensure_cognition_uas(pool: &PgPool, fk_user: i64) {
 /// 上抛、返回本次实际复制行数——迁移中断不得静默，调用方须确认复制成功后方可
 /// 处置存量 UA。
 pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result<i64> {
-    sqlx::query_scalar(
+    sqlx::query_scalar(concat!(
         r#"
         WITH
         cat_names AS (
@@ -186,8 +186,9 @@ pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result
                 ON c.id = sp.ck_category
                AND c.tableoid = 'isahl.zc_id_category'::regclass
                AND c.deleted_at IS NULL
-            WHERE sp.deleted_at IS NULL AND sp._f_ IS NULL
-              AND c.code IS NOT NULL AND c.code <> ''
+            WHERE sp.deleted_at IS NULL AND "#,
+        crate::real_position_row!(sp),
+        r#" AND c.code IS NOT NULL AND c.code <> ''
         ),
         legacy_ua AS (
             -- 存量实例码 UA：position: 前缀且（B-1 前 ensure 物化标记 或 非类别派生名）
@@ -204,7 +205,9 @@ pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result
                    'position:' || c.code AS dst_o_name
             FROM legacy_ua lug
             JOIN isahl."zc_id_subj-position" sp
-                ON sp.code = lug.inst_code AND sp.deleted_at IS NULL AND sp._f_ IS NULL
+                ON sp.code = lug.inst_code AND sp.deleted_at IS NULL AND "#,
+        crate::real_position_row!(sp),
+        r#"
             JOIN isahl.zc_id_category c
                 ON c.id = sp.ck_category
                AND c.tableoid = 'isahl.zc_id_category'::regclass
@@ -240,7 +243,7 @@ pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result
         )
         SELECT COUNT(*) FROM ins
         "#,
-    )
+    ))
     .fetch_one(pool)
     .await
 }
@@ -420,52 +423,83 @@ async fn cognition_holders(conn: &mut PgConnection, o_name: &str) -> Result<Vec<
     .await
 }
 
-/// 岗位标识（id / code / notice）的成员：直管 fk_user ∪ 任职桥持有者。
+/// 「岗位**任职账号**」SQL 片段（自包含 `SELECT pos_id, uid`；可作 CTE 体、派生表或
+/// `EXISTS` 子查询体，无参数）。
+///
+/// 语义（唯一实现，`openspec/specs/approval-designer#审批人字段提供岗位/员工级联下拉` 与
+/// `approval-node-model#approval-node-model-tables` 的落地）：
+/// `uid ∈ { 岗位行标量 fk_user } ∪ { 桥 zc_id_subj-post_rr_employee(ref_left=岗位) 派生的
+/// zc_id_empl-agent/empl-natural.fk_user }`，去重且仅保留 `is_active` 账号；岗位侧限**真实岗位**
+/// （排除 `_t_='范例'` 编制范例行，判据 = [`real_position_row!`]）。
+///
+/// **为何不是「仅标量」**：任职关系的模型权威载体是任职桥（`POST /positions/{id}/employees`
+/// 只写桥、岗位读投影 `employees` 亦读桥），标量 `fk_user` 只是直配旧径（seed / 建岗表单可写）；
+/// 仅用标量会把「有桥任职人的岗位」在审批候选与待办解析中静默排除
+/// （2026-09-23 实证：AVIC 13 个真实岗位仅 4 个有标量，CCB 成员/系统管理员等有账号任职人却不可选）。
+///
+/// **为何只算账号**：待办与桥接均以 auth user 为单位（`zc_id_oper-approve.fk_operator`、
+/// `zc_id_operation_rr_approve` 落岗位再解析账号），无账号任职主体无法审批。
+///
+/// 消费方 MUST 引用本宏拼装、MUST NOT 复制等价 SQL（NGAC_SPEC §2.2.3 消费同源义务）：
+/// vote 源成员解析（[`position_members`]）、authority 岗位候选、approval 发布期解析 /
+/// 运行时待办（`node_meta::resolve_node_assign`）/ 实例可见性（`enriched_instance`）。
+///
+/// 以**宏**（而非 `const`）承载：`concat!` 只接受字面量，宏展开可让调用点沿用
+/// `concat!` 编译期拼接（零运行期插值 ⇒ 满足 `openspec/specs/proc-align` 的
+/// 「列位插值新增即失败」静态 SQL 要求）。
+#[macro_export]
+macro_rules! position_incumbent_accounts_sql {
+    () => {
+        concat!(
+            "SELECT ac.pos_id, ac.uid FROM (",
+            "SELECT p0.id AS pos_id, p0.fk_user AS uid FROM isahl.\"zc_id_subj-position\" p0 ",
+            "WHERE p0.deleted_at IS NULL AND p0.fk_user IS NOT NULL",
+            " UNION SELECT b.ref_left AS pos_id, ea.fk_user AS uid ",
+            "FROM isahl.\"zc_id_subj-post_rr_employee\" b ",
+            "JOIN isahl.\"zc_id_empl-agent\" ea ON ea.id = b.ref_right AND ea.deleted_at IS NULL ",
+            "WHERE b.deleted_at IS NULL AND ea.fk_user IS NOT NULL",
+            " UNION SELECT b.ref_left AS pos_id, en.fk_user AS uid ",
+            "FROM isahl.\"zc_id_subj-post_rr_employee\" b ",
+            "JOIN isahl.\"zc_id_empl-natural\" en ON en.id = b.ref_right AND en.deleted_at IS NULL ",
+            "WHERE b.deleted_at IS NULL AND en.fk_user IS NOT NULL",
+            ") ac JOIN isahl.\"zc_id_subj-position\" p ",
+            "ON p.id = ac.pos_id AND p.deleted_at IS NULL AND ",
+            $crate::real_position_row!(p),
+            " JOIN isahl_auth.auth_users u ON u.id = ac.uid AND u.is_active = TRUE"
+        )
+    };
+}
+
+/// 岗位标识（id / code / notice）的成员：直管 `fk_user` ∪ 任职桥持有者
+/// （实现 = [`position_incumbent_accounts_sql!`] 唯一片段）。
 async fn position_members(
     conn: &mut PgConnection,
     val: &str,
     limit: i64,
 ) -> Result<Vec<i64>, sqlx::Error> {
-    sqlx::query_scalar(
+    // 岗位标识（id/code/notice）→ 任职账号集合（唯一实现 = 上述宏；静态拼接无插值）
+    let sql = concat!(
         r#"
         WITH target AS (
-            SELECT id, fk_user FROM isahl."zc_id_subj-position"
+            SELECT id FROM isahl."zc_id_subj-position"
             WHERE deleted_at IS NULL
               AND (id::text = $1 OR code = $1 OR notice = $1)
             LIMIT 1
-        ),
-        employed AS (
-            SELECT ea.fk_user AS uid
-            FROM target t
-            JOIN isahl."zc_id_subj-post_rr_employee" spre
-                ON spre.ref_left = t.id AND spre.deleted_at IS NULL
-            JOIN isahl."zc_id_empl-agent" ea
-                ON ea.id = spre.ref_right AND ea.deleted_at IS NULL
-            UNION
-            SELECT en.fk_user AS uid
-            FROM target t
-            JOIN isahl."zc_id_subj-post_rr_employee" spre
-                ON spre.ref_left = t.id AND spre.deleted_at IS NULL
-            JOIN isahl."zc_id_empl-natural" en
-                ON en.id = spre.ref_right AND en.deleted_at IS NULL
-        ),
-        members AS (
-            SELECT fk_user AS uid FROM target WHERE fk_user IS NOT NULL
-            UNION
-            SELECT uid FROM employed WHERE uid IS NOT NULL
         )
-        SELECT DISTINCT u.id
-        FROM members m
-        JOIN isahl_auth.auth_users u ON u.id = m.uid
-        WHERE u.is_active = TRUE
-        ORDER BY u.id
+        SELECT DISTINCT inc.uid
+        FROM target t
+        JOIN ("#,
+        crate::position_incumbent_accounts_sql!(),
+        r#") inc ON inc.pos_id = t.id
+        ORDER BY inc.uid
         LIMIT $2
-        "#,
-    )
-    .bind(val)
-    .bind(limit)
-    .fetch_all(conn)
-    .await
+        "#
+    );
+    sqlx::query_scalar(AssertSqlSafe(sql))
+        .bind(val)
+        .bind(limit)
+        .fetch_all(conn)
+        .await
 }
 
 /// 指派型 UA 名（`ngac_user_rr_attribute` 物化成员）——legacy 角色路径。

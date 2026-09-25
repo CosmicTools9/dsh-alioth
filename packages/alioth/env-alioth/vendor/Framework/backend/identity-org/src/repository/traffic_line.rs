@@ -263,6 +263,11 @@ impl AliothRepository<TrafficLine, CreateTrafficLineRequest, UpdateTrafficLineRe
         req: CreateTrafficLineRequest,
         user_id: i64,
     ) -> Result<TrafficLine, ApiError> {
+        // `fk_trustee` = **发行方**（该储元的唯一性来源主体；模型对该列只声明
+        // ReferenceJoin → `isahl.zc_id_subjects`，无类型约束 ⇒ **任意主体**皆可，承运商只是
+        // 其中一种取值）——change `align-storage-issuer-and-holding` §D1/§D7。本仓储按入参原样
+        // 落列，MUST NOT 将其解释为承运商或归属（承运商来源见服务链 §D5；线路持有 =
+        // `zc_id_subjects_rr_place` 桥叶，非本列）。
         let coords = ontology_binding::coords_for_entity("TrafficLine")?;
         let (dk_scene, dk_factor, dk_function) =
             ontology_binding::resolve(&self.pool, "TrafficLine").await?;
@@ -309,6 +314,7 @@ impl AliothRepository<TrafficLine, CreateTrafficLineRequest, UpdateTrafficLineRe
         // `COALESCE($n, col)` 承担，故**单条语句**即可，无需读—改—写，且返回形态与旧实现
         // 一致（`RETURNING` 原始行列，不经 `get` 的 `_refs`/坐标节点回读）。
         // `_f_`/`_t_` 不接受写入（§4.3/§4.3.3）：生命周期轴随 dk_function 派生，改形态须走类转换原语。
+        // `fk_trustee`（发行方，任意主体，不限承运商——§D1/§D7）按 `COALESCE` 局部更新：缺省不动该列。
         if req.code.is_none()
             && req.notice.is_none()
             && req.comments.is_none()

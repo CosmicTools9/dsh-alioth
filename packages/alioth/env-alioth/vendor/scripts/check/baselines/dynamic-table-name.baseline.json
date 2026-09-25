@@ -236,7 +236,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 362,
+      "line": 370,
       "kind": "column",
       "placeholder": "{set}",
       "source": "api-param",
@@ -244,7 +244,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 560,
+      "line": 573,
       "kind": "column",
       "placeholder": "{cols}",
       "source": "api-param",
@@ -252,7 +252,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 189,
+      "line": 190,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -260,7 +260,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 212,
+      "line": 213,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -268,7 +268,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 239,
+      "line": 240,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -276,7 +276,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 277,
+      "line": 278,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -284,7 +284,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 294,
+      "line": 295,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -292,7 +292,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 310,
+      "line": 311,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -300,7 +300,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 362,
+      "line": 370,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -308,7 +308,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 426,
+      "line": 433,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -316,7 +316,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 451,
+      "line": 458,
       "kind": "table",
       "placeholder": "{source}",
       "source": "api-param",
@@ -324,7 +324,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 471,
+      "line": 478,
       "kind": "table",
       "placeholder": "{source}",
       "source": "api-param",
@@ -332,7 +332,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 492,
+      "line": 499,
       "kind": "table",
       "placeholder": "{source}",
       "source": "api-param",
@@ -340,7 +340,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 514,
+      "line": 521,
       "kind": "table",
       "placeholder": "{source}",
       "source": "api-param",
@@ -348,7 +348,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 560,
+      "line": 573,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -356,7 +356,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 601,
+      "line": 614,
       "kind": "table",
       "placeholder": "{target}",
       "source": "api-param",
@@ -364,7 +364,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 798,
+      "line": 811,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -372,7 +372,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 818,
+      "line": 831,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -380,7 +380,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 865,
+      "line": 878,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -388,7 +388,7 @@
     },
     {
       "file": "Framework/backend/crud/src/schema_repository.rs",
-      "line": 884,
+      "line": 897,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -428,7 +428,7 @@
     },
     {
       "file": "Framework/backend/crud/src/trigger.rs",
-      "line": 469,
+      "line": 479,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -436,7 +436,7 @@
     },
     {
       "file": "Framework/backend/crud/src/trigger.rs",
-      "line": 159,
+      "line": 161,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -444,7 +444,7 @@
     },
     {
       "file": "Framework/backend/crud/src/trigger.rs",
-      "line": 359,
+      "line": 366,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -452,7 +452,7 @@
     },
     {
       "file": "Framework/backend/crud/src/trigger.rs",
-      "line": 469,
+      "line": 479,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -460,7 +460,7 @@
     },
     {
       "file": "Framework/backend/crud/src/trigger.rs",
-      "line": 533,
+      "line": 542,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -468,7 +468,7 @@
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 464,
+      "line": 485,
       "kind": "column",
       "placeholder": "{cols}",
       "source": "api-param",
@@ -476,7 +476,7 @@
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 534,
+      "line": 560,
       "kind": "column",
       "placeholder": "{set}",
       "source": "api-param",
@@ -484,7 +484,7 @@
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 464,
+      "line": 485,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -492,7 +492,7 @@
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 534,
+      "line": 560,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
@@ -500,7 +500,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
-      "line": 79,
+      "line": 318,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -508,7 +508,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
-      "line": 147,
+      "line": 498,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -516,7 +516,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
-      "line": 164,
+      "line": 515,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -524,7 +524,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/org_tree.rs",
-      "line": 333,
+      "line": 336,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -532,7 +532,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/org_tree.rs",
-      "line": 344,
+      "line": 347,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -716,7 +716,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/repository/vehicle.rs",
-      "line": 375,
+      "line": 392,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -724,7 +724,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/service/org_write.rs",
-      "line": 865,
+      "line": 872,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -1204,15 +1204,15 @@
     },
     {
       "file": "Gateway/backend/src/namespace_schema.rs",
-      "line": 254,
+      "line": 186,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
-      "reason": "命名空间 schema 同步：`ALTER TABLE \"{}\".\"{}\" ADD COLUMN …` 由 pg_dump 结构差集生成（参考库 → ns 库），表名/schema 名随参考库结构变化。"
+      "reason": "namespace 结构同步按参考库 schema diff 生成 ALTER TABLE（开放集合：参考库表名/列名，无法静态枚举）"
     },
     {
       "file": "Gateway/backend/src/seed/ns_seed.rs",
-      "line": 158,
+      "line": 159,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1476,7 +1476,7 @@
     },
     {
       "file": "Meta/backend/alioth-gen/src/generator/repository/shared.rs",
-      "line": 233,
+      "line": 236,
       "kind": "table",
       "placeholder": "{entity_plural}",
       "source": "generator-template",
@@ -1724,7 +1724,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
-      "line": 886,
+      "line": 889,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1748,7 +1748,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/mod.rs",
-      "line": 654,
+      "line": 671,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2940,7 +2940,7 @@
     },
     {
       "file": "Pre-Proc/WZ/Sources/Apps/Services/contract/backend/src/repositories/contract_query.rs",
-      "line": 1128,
+      "line": 1162,
       "kind": "column",
       "placeholder": "{where_sql}",
       "source": "api-param",
@@ -2948,7 +2948,7 @@
     },
     {
       "file": "Pre-Proc/WZ/Sources/Apps/Services/contract/backend/src/repositories/contract_query.rs",
-      "line": 1140,
+      "line": 1174,
       "kind": "column",
       "placeholder": "{where_sql}",
       "source": "api-param",
@@ -2964,7 +2964,7 @@
     },
     {
       "file": "SSO/backend/src/admin/handlers/users.rs",
-      "line": 312,
+      "line": 315,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",

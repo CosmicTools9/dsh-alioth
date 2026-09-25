@@ -30,29 +30,52 @@ pub struct PortalContext {
     pub layout_mode: String,
 }
 
-/// 从 NGAC 属性名推导 portal-scope
-fn compute_portal_context(attrs: &[String]) -> PortalContext {
-    let has_workbench = attrs.iter().any(|a| a == "admin" || a == "operator");
-    let has_storefront = attrs
-        .iter()
-        .any(|a| a == "user" || a == "customer" || a == "storefront");
+/// 门户归属推导（GATEWAY_DESIGN_SPEC §3.3）——**唯一实现**。
+///
+/// 属性驱动：UA 名前缀 `portal-scope:` 的取值判定门户集合
+/// （`portal-scope:storefront` / `portal-scope:workbench`；空值/未知值忽略）。
+/// 不含合法前缀值 → 规约默认策略（§3.3.2 策略 3）：workbench。
+/// 扁平业务角色名（customer/carrier/supplier/…）是**业务域**表达，MUST NOT
+/// 参与门户判定——存量账号的 storefront 归属由种子显式补绑（D2/D6）。
+/// 消费方：`/api/auth/portal-context`、`/api/auth/me`（attributes）、`/auth/check-access`。
+pub fn derive_portal_scope(attrs: &[String]) -> Vec<String> {
+    let has = |value: &str| {
+        attrs
+            .iter()
+            .any(|a| a.strip_prefix("portal-scope:") == Some(value))
+    };
+    let mut scope: Vec<String> = Vec::new();
+    if has("workbench") {
+        scope.push("workbench".to_string());
+    }
+    if has("storefront") {
+        scope.push("storefront".to_string());
+    }
+    if scope.is_empty() {
+        scope.push("workbench".to_string());
+    }
+    scope
+}
 
-    let mut portal_scope: Vec<String> = Vec::new();
-    if has_workbench {
-        portal_scope.push("workbench".to_string());
-    }
-    if has_storefront {
-        portal_scope.push("storefront".to_string());
-    }
-    if portal_scope.is_empty() {
-        // 用户无 NGAC 属性时默认 workbench（开发/回退模式）
-        portal_scope.push("workbench".to_string());
-    }
+/// storefront-only 用户的落地路径：部署配置 `STOREFRONT_LANDING_PATH`，缺省 `/`。
+/// MUST NOT 硬编码应用/模块路径（发布面按 ns 自配）。/auth/check-access 同用。
+pub fn storefront_landing_path() -> String {
+    std::env::var("STOREFRONT_LANDING_PATH")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "/".to_string())
+}
 
-    let (portal_default, landing_path, layout_mode) = if has_storefront && !has_workbench {
+/// 从 NGAC 属性推导门户上下文（portal_default / landing_path / layout_mode）。
+pub fn compute_portal_context(attrs: &[String]) -> PortalContext {
+    let portal_scope = derive_portal_scope(attrs);
+    let storefront_only = portal_scope.iter().any(|s| s == "storefront")
+        && !portal_scope.iter().any(|s| s == "workbench");
+
+    let (portal_default, landing_path, layout_mode) = if storefront_only {
         (
             "storefront".to_string(),
-            "/modules/shop/store/products".to_string(),
+            storefront_landing_path(),
             "consumer".to_string(),
         )
     } else {
@@ -106,6 +129,91 @@ pub async fn get_portal_context(
     let ctx = compute_portal_context(&attrs);
 
     HttpResponse::Ok().json(ctx)
+}
+
+#[cfg(test)]
+mod portal_scope_tests {
+    use super::*;
+
+    fn attrs(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn storefront_only_scope() {
+        let scope = derive_portal_scope(&attrs(&["portal-scope:storefront"]));
+        assert_eq!(scope, vec!["storefront".to_string()]);
+    }
+
+    #[test]
+    fn workbench_only_scope() {
+        let scope = derive_portal_scope(&attrs(&["portal-scope:workbench"]));
+        assert_eq!(scope, vec!["workbench".to_string()]);
+    }
+
+    #[test]
+    fn dual_scope() {
+        let scope = derive_portal_scope(&attrs(&[
+            "portal-scope:storefront",
+            "portal-scope:workbench",
+        ]));
+        assert_eq!(
+            scope,
+            vec!["workbench".to_string(), "storefront".to_string()]
+        );
+    }
+
+    #[test]
+    fn no_portal_scope_attr_defaults_to_workbench() {
+        // 规约默认策略（§3.3.2 策略 3）：无 portal-scope 属性 → workbench
+        assert_eq!(
+            derive_portal_scope(&attrs(&[])),
+            vec!["workbench".to_string()]
+        );
+        assert_eq!(
+            derive_portal_scope(&attrs(&["admin"])),
+            vec!["workbench".to_string()]
+        );
+    }
+
+    #[test]
+    fn flat_business_role_names_do_not_map_to_portal_scope() {
+        // 扁平业务角色名是业务域表达，不参与门户判定（customer/carrier/supplier/…）
+        assert_eq!(
+            derive_portal_scope(&attrs(&["customer"])),
+            vec!["workbench".to_string()]
+        );
+        assert_eq!(
+            derive_portal_scope(&attrs(&["carrier", "supplier"])),
+            vec!["workbench".to_string()]
+        );
+    }
+
+    #[test]
+    fn unknown_or_empty_prefix_values_ignored() {
+        assert_eq!(
+            derive_portal_scope(&attrs(&["portal-scope:unknown", "portal-scope:"])),
+            vec!["workbench".to_string()]
+        );
+    }
+
+    #[test]
+    fn storefront_only_context_shape() {
+        // 删除进程级 env 干扰，确保缺省落地为 /
+        std::env::remove_var("STOREFRONT_LANDING_PATH");
+        let ctx = compute_portal_context(&attrs(&["portal-scope:storefront"]));
+        assert_eq!(ctx.portal_default, "storefront");
+        assert_eq!(ctx.layout_mode, "consumer");
+        assert_eq!(ctx.landing_path, "/");
+    }
+
+    #[test]
+    fn workbench_context_shape() {
+        let ctx = compute_portal_context(&attrs(&["portal-scope:workbench"]));
+        assert_eq!(ctx.portal_default, "workbench");
+        assert_eq!(ctx.layout_mode, "operator");
+        assert_eq!(ctx.landing_path, "/");
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

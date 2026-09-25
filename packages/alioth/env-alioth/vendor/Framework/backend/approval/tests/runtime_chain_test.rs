@@ -189,7 +189,7 @@ async fn initiate_creates_chain_with_entity_binding_and_condition() {
         "nodes": [
             {"id": "n-start", "type": "start", "label": "提交", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-cond", "type": "condition", "label": "VIP 判断",
-             "next": [{"to": 2, "cond": "code == 'VIP'"}, {"to": 3}]},
+             "next": [{"to": 2, "cond": "code == \"VIP\""}, {"to": 3}]},
             {"id": "n-a", "type": "approve", "label": "VIP 审批", "next": [{"to": 4}]},
             {"id": "n-b", "type": "approve", "label": "普通审批", "next": [{"to": 4}]},
             {"id": "n-end", "type": "end", "label": "结束", "statementLeaf": "zc_id_stat-inspection"}

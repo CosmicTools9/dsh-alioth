@@ -6,7 +6,7 @@
 #   1) 依赖/workspace 元数据：根 `Cargo.toml`/`Cargo.lock`、`Pre-Proc/{ns}/Cargo.{toml,lock}`
 #      （Pre-Proc 是独立 workspace，自带 lock）；
 #   2) `include_str!` 内嵌资源：`Gateway/backend/src/i18n/locales/*.json`、
-#      `SSO/backend/migrations/*.sql`、`Framework/backend/*/locales/*.json`；
+#      `Gateway/backend/src/seed/sql/*.sql`、`SSO/backend/src/ngac/sql/*.sql`、`Framework/backend/*/locales/*.json`；
 #   3) build.rs 读取的 `service.json`（不在 `backend/` 子树下，须单独纳入）。
 #
 # 用法（调用方 source 本文件后调用）：
@@ -133,7 +133,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ] && [ "${1:-}" = "--self-test" ]; then
         elif [ "$want" = "nonempty" ] && [ -n "$got" ]; then
             echo "  ✓ $name → ${got#$TMP/}"
         else
-            echo "  ✗ $name（期望 $want，实得 '${got:-<空>}'）"
+            echo "  ✗ ${name}（期望 ${want}，实得 '${got:-<空>}'）"
             fail=1
         fi
     }

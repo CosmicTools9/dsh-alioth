@@ -58,7 +58,7 @@ async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .bind(&email)
     .bind(format!("cog_derived_{}", suffix))
@@ -580,7 +580,7 @@ async fn assignment_expires_at_write_path() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .bind(&email_b)
     .bind(format!("cog_exp_{}", f.tag_code))

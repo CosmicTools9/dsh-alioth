@@ -6,7 +6,8 @@
 //!   连跑两次 → 首次 UA/OA/association 各 ≥1 新增，第二次全 0；
 //! - [`common::ngac_org::migrate_legacy_position_associations`] 幂等：存量实例码
 //!   UA（`position:{实例code}`，cognition 物化标记）+ 存活 association + 真实岗位行
-//!   （`_f_ IS NULL`，`ck_category` → 基表类别行）→ 连跑两次 → 首次复制 ≥1、
+//!   （类列按 `dk_function` 派生 `_f_='实现'/ _t_='实例'`＝`common::real_position_row!` 通过，
+//!   `ck_category` → 基表类别行）→ 连跑两次 → 首次复制 ≥1、
 //!   第二次 0，legacy association 原样保留。
 //!
 //! 运行（连共享测试库，须 `*_test` 库；common::testing 强制校验）：
@@ -261,7 +262,9 @@ async fn migrate_legacy_position_associations_is_idempotent() {
     .await
     .expect("insert base category row");
 
-    // 真实岗位实例行：_f_ IS NULL、ck_category → 基表类别行
+    // 真实岗位行：类列由 dk_function 前缀派生（`_f_='实现'/ _t_='实例'`，即
+    // `common::real_position_row!` 通过的行——类列 NULL **不是**真实岗位判据）、
+    // ck_category → 基表类别行
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
         ontology_binding::resolve(&pool, ("TX", "FJA", "↓_GG"))
@@ -269,8 +272,8 @@ async fn migrate_legacy_position_associations_is_idempotent() {
             .expect("resolve dk coords");
     let pos_id: i64 = sqlx::query_scalar(
         "INSERT INTO isahl.\"zc_id_subj-position\" \
-            (code, ck_category, _f_, notice, created_at, updated_at, dk_scene, dk_factor, dk_function) \
-         VALUES ($1, $2, NULL, $3, NOW(), NOW(), $4, $5, $6) RETURNING id",
+            (code, ck_category, _f_, _t_, notice, created_at, updated_at, dk_scene, dk_factor, dk_function) \
+         VALUES ($1, $2, '实现', '实例', $3, NOW(), NOW(), $4, $5, $6) RETURNING id",
     )
     .bind(&inst_code)
     .bind(cat_id)

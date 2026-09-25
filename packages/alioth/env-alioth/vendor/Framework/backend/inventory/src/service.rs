@@ -65,7 +65,7 @@ impl InventoryService {
             (
                 i64,
                 i64,
-                i64,
+                Option<i64>,
                 rust_decimal::Decimal,
                 rust_decimal::Decimal,
                 Option<i64>,
@@ -84,7 +84,8 @@ impl InventoryService {
 
         // 货/储元名称批量解析（namespace 注入）
         let production_ids: Vec<i64> = rows.iter().map(|r| r.1).collect();
-        let storage_ids: Vec<i64> = rows.iter().map(|r| r.2).collect();
+        // 储元可为空（NULL 切片）⇒ 名称解析只取非空 id
+        let storage_ids: Vec<i64> = rows.iter().filter_map(|r| r.2).collect();
         let names = self
             .resolver
             .resolve(&self.pool, RefKind::Material, &production_ids)
@@ -109,10 +110,12 @@ impl InventoryService {
                         .and_then(|m| m.get(&production_id))
                         .cloned(),
                     storage_id,
-                    storage_name: place_names
-                        .get(&RefKind::Place)
-                        .and_then(|m| m.get(&storage_id))
-                        .cloned(),
+                    storage_name: storage_id.and_then(|sid| {
+                        place_names
+                            .get(&RefKind::Place)
+                            .and_then(|m| m.get(&sid))
+                            .cloned()
+                    }),
                     qty,
                     capacity,
                     unit,

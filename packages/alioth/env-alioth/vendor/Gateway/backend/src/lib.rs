@@ -19,7 +19,6 @@ pub mod pep;
 pub mod schedule;
 /// 跨 namespace 通用种子自愈组件（add-gateway-seed-self-heal）
 pub mod seed;
-pub mod service_registry;
 pub mod system_config_repo;
 pub mod trigger_crud;
 

@@ -408,7 +408,9 @@ async fn get_provider_config(
                     userinfo_endpoint: row.get("userinfo_endpoint"),
                     _jwks_uri: row.get("jwks_uri"),
                     client_id: row.get("client_id"),
-                    client_secret: row.get("client_secret_encrypted"),
+                    client_secret: system_config::crypto::decrypt_prefixed(
+                        &row.get::<String, _>("client_secret_encrypted"),
+                    ),
                     scopes: row.get::<Vec<String>, _>("scopes").join(" "),
                     field_mapping: row.get("field_mapping"),
                 },
@@ -447,7 +449,9 @@ async fn get_provider_by_id(
             userinfo_endpoint: row.get("userinfo_endpoint"),
             _jwks_uri: row.get("jwks_uri"),
             client_id: row.get("client_id"),
-            client_secret: row.get("client_secret_encrypted"),
+            client_secret: system_config::crypto::decrypt_prefixed(
+                &row.get::<String, _>("client_secret_encrypted"),
+            ),
             scopes: row.get::<Vec<String>, _>("scopes").join(" "),
             field_mapping: row.get("field_mapping"),
         })),
@@ -628,27 +632,40 @@ async fn find_or_create_user(
         });
     }
 
-    // 尝试通过邮箱查找现有用户
-    if let Some(ref email) = user_info.email {
-        let existing_user = sqlx::query_as::<_, (i64, Option<String>, bool)>(
-            r#"
-            SELECT id, email, COALESCE(mfa_enabled, false)
-            FROM isahl_auth.auth_users
-            WHERE email = $1
-            "#,
+    // 尝试通过邮箱查找现有用户（allow-duplicate-email-accounts）：仅**唯一**匹配才自动绑定；
+    // 命中 ≥2 个账号 MUST NOT 绑定任意既有账号（email 预劫持面）⇒ 视为无匹配走建号分支。
+    if let Some(email) = &user_info.email {
+        let candidate_ids = crate::auth::identifier::resolve_candidate_ids(
+            pool,
+            crate::auth::identifier::IdentifierColumn::Email,
+            email,
         )
-        .bind(email)
-        .fetch_optional(pool)
         .await?;
 
-        if let Some((id, user_email, mfa_enabled)) = existing_user {
-            // 绑定 OAuth 账户到现有用户
-            bind_oauth_account(pool, id, provider, user_info, token_response).await?;
-            return Ok(UserInfo {
-                id: id.to_string(),
-                email: user_email,
-                _mfa_enabled: mfa_enabled,
-            });
+        if candidate_ids.len() > 1 {
+            log::warn!(
+                "OAuth 回调：email {} 命中 {} 个账号，MUST NOT 自动绑定（改走新建账号）",
+                email,
+                candidate_ids.len()
+            );
+        } else if let Some(id) = candidate_ids.first().copied() {
+            let existing_user = sqlx::query_as::<_, (i64, Option<String>, bool)>(
+                "SELECT id, email, COALESCE(mfa_enabled, false) \
+                 FROM isahl_auth.auth_users WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+
+            if let Some((id, user_email, mfa_enabled)) = existing_user {
+                // 绑定 OAuth 账户到现有用户
+                bind_oauth_account(pool, id, provider, user_info, token_response).await?;
+                return Ok(UserInfo {
+                    id: id.to_string(),
+                    email: user_email,
+                    _mfa_enabled: mfa_enabled,
+                });
+            }
         }
     }
 
@@ -764,7 +781,7 @@ async fn bind_oauth_account(
 /// 在开发环境中默认指向 Gateway 前端 Vite dev server (localhost:13000)。
 /// 在生产环境中应设置 `APP_BASE_URL` 环境变量指向实际 Gateway 前端 URL。
 /// 前端 URL 必须能通过 `GET /auth/oauth/callback` 路径访问 SSO callback 页面。
-fn get_base_url() -> String {
+pub(crate) fn get_base_url() -> String {
     std::env::var("APPCREATOR_FRONTEND_URL")
         .ok()
         .or_else(|| std::env::var("APP_BASE_URL").ok())

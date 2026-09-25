@@ -259,24 +259,18 @@ async fn build_expr_ctx(
     map
 }
 
-/// 流程条件求值（统一引擎：runtime-engine ExpressionEvaluator；
-/// fail-closed——未定义标识符（strict 模式）/类型不匹配 → Err，调用方阻断；
-/// 顶层非 bool 视同 false（对齐原 expr.rs 语义））
+/// 流程条件求值（唯一引擎：Rhai 沙箱；fail-closed——未知标识符/类型不匹配 →
+/// Err，调用方阻断；顶层非 bool 视同 false）
 pub(crate) fn eval_flow_condition(
     expr: &str,
     ctx: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<bool, String> {
     use std::collections::HashMap;
-    let ast = runtime_contract::expression::parse_constraint_expression(expr)
-        .map_err(|e| format!("parse: {e}"))?;
     let vars: HashMap<String, serde_json::Value> =
         ctx.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    let v = runtime_engine::ExpressionEvaluator::eval_expr_to_json_strict(&ast, &vars)
-        .map_err(|e| format!("eval: {e}"))?;
-    match v {
-        serde_json::Value::Bool(b) => Ok(b),
-        _ => Ok(false),
-    }
+    runtime_engine::RhaiExpressionEngine::new()
+        .evaluate_bool(expr, &vars)
+        .map_err(|e| format!("eval: {e}"))
 }
 
 /// 选边（2026-09-02 routing 模式，fix-flow-gateway-semantics A2）：

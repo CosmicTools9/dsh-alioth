@@ -40,7 +40,7 @@ async fn ensure_user(pool: &PgPool, email: &str) -> i64 {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
            VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (email) DO NOTHING"#,
+           ON CONFLICT (name) DO NOTHING"#,
     )
     .bind(email)
     .bind(&username)
@@ -351,6 +351,49 @@ async fn review_user_three_state_and_assignments() {
     cleanup(&pool).await;
 }
 
+/// unify-ngac-deny-overrides：admin 遍历后兜底在访问审查中与决策同口径——
+/// admin 用户对无匹配策略的资源集 MUST 计入 allowed（而非 omission）。
+#[tokio::test]
+async fn review_admin_user_includes_traversal_fallback() {
+    let pool = connect_test_db().await;
+    common::setup_schema(&pool).await.expect("setup schema");
+    cleanup(&pool).await;
+    let s = seed(&pool).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(test_auth_state()))
+            .configure(gateway_sso::admin::configure),
+    )
+    .await;
+    let token = admin_token(&pool, s.admin_user, &s.email).await;
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!("/api/admin/ngac/review/user/{}", s.admin_user))
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request(),
+    )
+    .await;
+    assert!(resp.status().is_success(), "status: {}", resp.status());
+    let body: Value = test::read_body_json(resp).await;
+    let perms = body["permissions"].as_array().expect("permissions");
+    let row = perms
+        .iter()
+        .find(|p| p["resource_type"] == "rvxmod")
+        .expect("rvxmod row for admin");
+    assert!(
+        row["allowed"]
+            .as_array()
+            .expect("allowed")
+            .contains(&json!("read")),
+        "admin 遍历后兜底：rvxmod 无针对 admin 的策略，审查仍计入 allowed（与 decide_access 同口径）"
+    );
+
+    cleanup(&pool).await;
+}
+
 #[tokio::test]
 async fn review_user_not_found_returns_404() {
     let pool = connect_test_db().await;
@@ -573,11 +616,18 @@ async fn review_resource_holders_sparse_with_users() {
             .any(|u| u["id"] == json!(s.rvx_user.to_string())),
         "rvx-user resolved via rvx-admin"
     );
-
-    // 稀疏性：真实 admin UA 对 rvxmod 无任何授权，不得出现在 holders
+    // admin 遍历后兜底（unify-ngac-deny-overrides，NGAC_SPEC §2.5）：admin UA 的判定
+    // 与运行时决策同口径——对 rvxmod 无匹配策略也 Permit ⇒ admin UA 出现在 holders
+    let admin_holder = holders
+        .iter()
+        .find(|h| h["o_name"] == "admin")
+        .expect("admin UA holder via traversal fallback (runtime-consistent)");
     assert!(
-        !holders.iter().any(|h| h["o_name"] == "admin"),
-        "sparse: UA without any rights must be absent"
+        admin_holder["allowed"]
+            .as_array()
+            .expect("allowed")
+            .contains(&json!("read")),
+        "admin fallback Permit visible in holders"
     );
 
     cleanup(&pool).await;

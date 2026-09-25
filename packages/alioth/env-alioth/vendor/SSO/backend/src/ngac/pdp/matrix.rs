@@ -8,6 +8,10 @@
 //!   `Pdp::evaluate_pair`（fix-ngac-decision-consistency：任一对 Deny → `denied`，
 //!   否则任一对 Permit → `effective`，遍历顺序不影响结果）；conditions 用
 //!   单元格级 `ConditionContext`（用户 UA 闭包名 + OA 闭包名）求值。
+//!   合并原语的唯一实现 = `pdp/mod.rs::evaluate_merge_in`（unify-ngac-deny-overrides）；
+//!   本模块的 cell 级索引路径属规则投影面的**性能特化**（cell 无「用户决策」语境，
+//!   admin 遍历后兜底不适用），语义等价性由测试 `matrix_consistent_with_explain`
+//!   （ngac_matrix_test.rs）守门。
 //! - 祖先闭包由 `ancestor_ids` 直接父边迭代求可达集（`ancestor_closure`），与
 //!   pip 的递归 CTE 同一可达集（集合内按 id 排序，与 `decide.rs` 的 `ORDER BY id` 一致）。
 //! - 缓存：`(policy_class, ngac_policy_version)` 键 + 60s TTL；策略版本 bump
@@ -21,6 +25,11 @@ use serde::Serialize;
 
 use super::*;
 use crate::ngac::pip::PostgresPip;
+
+/// (UA, OA) 精确对 → association 规则集（`ak_access_rights` + `conditions`）。
+type AssocIndex = HashMap<(i64, i64), Vec<(Vec<i64>, Option<serde_json::Value>)>>;
+/// (UA, OA) 精确对 → prohibition 规则集（`is_active` + `ak_access_rights` + `conditions`）。
+type ProhibIndex = HashMap<(i64, i64), Vec<(bool, Vec<i64>, Option<serde_json::Value>)>>;
 
 /// 矩阵端点错误：区分 404（PC 不存在）与 500（加载/DB 失败）。
 #[derive(Debug)]
@@ -417,8 +426,7 @@ async fn build_policy_matrix(
     // OA 成边，实测单 UA 6k+ 条）下，逐对全扫是 O(UA × OA × rights × 闭包² × 关联数)，
     // 实测 6k OA 时 >8 分钟；索引后每对为 O(匹配规则数)。
     // 克隆 `ak_access_rights` / `conditions` 最小字段——DashMap 守卫不跨迭持续持。
-    let mut assoc_index: HashMap<(i64, i64), Vec<(Vec<i64>, Option<serde_json::Value>)>> =
-        HashMap::new();
+    let mut assoc_index: AssocIndex = HashMap::new();
     for e in pg.associations.iter() {
         let a = e.value();
         assoc_index
@@ -426,8 +434,7 @@ async fn build_policy_matrix(
             .or_default()
             .push((a.ak_access_rights.clone(), a.conditions.clone()));
     }
-    let mut prohib_index: HashMap<(i64, i64), Vec<(bool, Vec<i64>, Option<serde_json::Value>)>> =
-        HashMap::new();
+    let mut prohib_index: ProhibIndex = HashMap::new();
     for e in pg.prohibitions.iter() {
         let p = e.value();
         prohib_index

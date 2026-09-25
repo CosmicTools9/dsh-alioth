@@ -110,7 +110,7 @@ async fn insert_employee(pool: &PgPool, name: &str) -> i64 {
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("ZJ", "LNC", "↓_EH"))
         .await
         .unwrap();
-    sqlx::query_scalar::<_, i64>(
+    let person: i64 = sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO isahl."zc_id_empl-natural"
            (notice, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function)
            VALUES ($1, 1, '实现', '范例', $2, $3, $4) RETURNING id"#,
@@ -121,7 +121,22 @@ async fn insert_employee(pool: &PgPool, name: &str) -> i64 {
     .bind(dk_function)
     .fetch_one(pool)
     .await
-    .unwrap()
+    .unwrap();
+    // 该雇员同时持有登录账号（同一 id）：岗位任职账号判据要求账号在册且活跃
+    // （fix-approver-incumbent-source：任职账号集合 = 标量 ∪ 桥派生，仅计 is_active 账号）
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_users
+           (id, name, username, email, user_type, is_active, created_at, updated_at,
+            failed_login_attempts, notification_preferences)
+           VALUES ($1, $2, $2, $2 || '@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           ON CONFLICT (id) DO NOTHING"#,
+    )
+    .bind(person)
+    .bind(format!("test-user-{person}"))
+    .execute(pool)
+    .await
+    .expect("insert employee account");
+    person
 }
 
 /// 生命周期主状态桥直插（D7 桥真值语义：derived_status 不再按意见派生）

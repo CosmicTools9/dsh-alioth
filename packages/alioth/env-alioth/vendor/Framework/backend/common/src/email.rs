@@ -71,6 +71,27 @@ struct ConfigCache {
     loaded_at: Option<DateTime<Utc>>,
 }
 
+/// SMTP 建链的 TLS 模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmtpTlsMode {
+    /// 465：**隐式 TLS**（SMTPS）——连接即开始 TLS 握手，无 STARTTLS 阶段。
+    Implicit,
+    /// 587/25 等：先明文连接再 `STARTTLS` 升级。
+    Starttls,
+}
+
+/// 按端口判定 TLS 模式：`465` 为 SMTPS 惯例端口，其余按 STARTTLS。
+///
+/// 两种模式**不可互换**：对 465 用 `starttls_relay`（或反之）会在 TLS 阶段失败
+/// （服务端行为与客户端预期不一致）。上游邮箱服务（如腾讯企业邮）文档常直接给 465/SSL。
+pub fn smtp_tls_mode(smtp_port: u16) -> SmtpTlsMode {
+    if smtp_port == 465 {
+        SmtpTlsMode::Implicit
+    } else {
+        SmtpTlsMode::Starttls
+    }
+}
+
 impl SmtpEmailService {
     pub fn new(pool: PgPool) -> Self {
         Self {
@@ -182,7 +203,17 @@ impl SmtpEmailService {
         let creds = Credentials::new(cfg.username.clone(), password.to_string());
 
         let mailer = if cfg.use_tls {
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.smtp_host)
+            // TLS 模式按端口选：465 = 隐式 TLS（连接即握手）；587/25 = STARTTLS。
+            // 二者不可互换——对 465 用 starttls_relay 会在 TLS 阶段失败（企业邮 465/SSL 即此情形）。
+            let builder = match smtp_tls_mode(cfg.smtp_port) {
+                SmtpTlsMode::Implicit => {
+                    AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.smtp_host)
+                }
+                SmtpTlsMode::Starttls => {
+                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.smtp_host)
+                }
+            };
+            builder
                 .map_err(|e| AliothError::External {
                     subsystem: "SMTP".to_string(),
                     message: format!("Invalid SMTP host: {}", e),
@@ -261,5 +292,36 @@ impl EmailService for SmtpEmailService {
             })?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 465 = SMTPS（隐式 TLS），其余端口 = STARTTLS；二者不可互换，故模式选择必须按端口判定。
+    #[test]
+    fn tls_mode_follows_port_convention() {
+        assert_eq!(smtp_tls_mode(465), SmtpTlsMode::Implicit);
+        for port in [25u16, 587, 2525, 1025] {
+            assert_eq!(
+                smtp_tls_mode(port),
+                SmtpTlsMode::Starttls,
+                "端口 {port} 应为 STARTTLS"
+            );
+        }
+    }
+
+    /// 缺省配置（未给 smtp_port）走 587 + STARTTLS——保证既有部署行为不变。
+    #[test]
+    fn default_config_uses_starttls_587() {
+        let cfg: EmailConfig = serde_json::from_value(serde_json::json!({
+            "smtp_host": "smtp.example.com",
+            "username": "noreply@example.com"
+        }))
+        .expect("最小 settings 必须可反序列化");
+        assert_eq!(cfg.smtp_port, 587);
+        assert!(cfg.use_tls);
+        assert_eq!(smtp_tls_mode(cfg.smtp_port), SmtpTlsMode::Starttls);
     }
 }

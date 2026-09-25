@@ -16,6 +16,7 @@ mod sessions;
 mod tokens;
 
 pub use handlers::{configure, login, login_mfa, logout, me, refresh};
+pub(crate) use handlers::{issue_login_response, status_gate_error};
 pub use sessions::{list_sessions, revoke_other_sessions, revoke_session};
 pub(crate) use tokens::is_valid_refresh_token;
 pub(crate) use tokens::purge_expired_tokens;
@@ -43,6 +44,13 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+/// 择账号候选（`username_selection_required = true` 时非空）
+#[derive(Debug, Serialize)]
+pub struct LoginCandidate {
+    pub username: String,
+    pub display_name: Option<String>,
+}
+
 /// Login response (before MFA)
 #[derive(Debug, Serialize)]
 pub struct LoginResponse {
@@ -51,6 +59,12 @@ pub struct LoginResponse {
     pub mfa_required: bool,
     pub message: Option<String>,
     pub session_id: Option<String>,
+    /// 多账号共享标识（email/phone）时的择账号挑战：true 表示本次响应**未**签发令牌、
+    /// **未**建立会话，客户端 MUST 让用户从 `candidates` 选 username 后以该 username 重新登录
+    /// （allow-duplicate-email-accounts）。
+    pub username_selection_required: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<LoginCandidate>,
 }
 
 /// MFA login request body
@@ -84,12 +98,10 @@ pub struct AuthError {
     pub error: String,
 }
 
-/// Application state for auth handlers
-/// Get client IP from request
+/// Get client IP from request（转调共享实现 `auth::session::client_ip`——**可信跳才采信转发头**；
+/// 本文件曾有私有复制，2026-09-23 fix-auth-ratelimit-client-ip 统一口径）
 fn get_client_ip(req: &HttpRequest) -> Option<String> {
-    req.connection_info()
-        .realip_remote_addr()
-        .map(|s| s.to_string())
+    crate::auth::session::client_ip(req)
 }
 
 /// Get user agent from request
@@ -104,74 +116,9 @@ fn get_user_agent(req: &HttpRequest) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// portal-scope 推导逻辑（与 me handler 内联逻辑一致）
-    fn derive_portal_scope_for_test(attrs: &[String]) -> (Vec<String>, String) {
-        let has_workbench = attrs.iter().any(|a| a == "admin" || a == "operator");
-        let has_storefront = attrs
-            .iter()
-            .any(|a| a == "user" || a == "customer" || a == "storefront");
-        let mut portal_scope: Vec<String> = Vec::new();
-        if has_workbench {
-            portal_scope.push("workbench".to_string());
-        }
-        if has_storefront {
-            portal_scope.push("storefront".to_string());
-        }
-        // 有 NGAC 属性但仍未推导出 scope 时默认 workbench
-        if portal_scope.is_empty() && !attrs.is_empty() {
-            portal_scope.push("workbench".to_string());
-        }
-        let portal_default = if has_storefront && !has_workbench {
-            "storefront"
-        } else {
-            "workbench"
-        };
-        (portal_scope, portal_default.to_string())
-    }
-
-    #[test]
-    fn test_empty_attrs_gets_empty_scope() {
-        // 无 NGAC 属性时 !ngac_attrs.is_empty() 门禁阻止默认 scope
-        let (scope, _) = derive_portal_scope_for_test(&[]);
-        assert!(
-            scope.is_empty(),
-            "empty attrs should get empty scope, got {:?}",
-            scope
-        );
-    }
-
-    #[test]
-    fn test_storefront_only() {
-        let (scope, default) = derive_portal_scope_for_test(&["user".into()]);
-        assert!(scope.contains(&"storefront".to_string()));
-        assert!(!scope.contains(&"workbench".to_string()));
-        assert_eq!(default, "storefront");
-    }
-
-    #[test]
-    fn test_admin_gets_workbench() {
-        let (scope, default) = derive_portal_scope_for_test(&["admin".into()]);
-        assert!(scope.contains(&"workbench".to_string()));
-        assert_eq!(default, "workbench");
-    }
-
-    #[test]
-    fn test_operator_gets_workbench() {
-        let (scope, default) = derive_portal_scope_for_test(&["operator".into()]);
-        assert!(scope.contains(&"workbench".to_string()));
-        assert_eq!(default, "workbench");
-    }
-
-    #[test]
-    fn test_unknown_attr_defaults_to_workbench() {
-        // viewer 等未知属性 — 有 NGAC 属性但无匹配 scope → 默认 workbench
-        let (scope, _) = derive_portal_scope_for_test(&["viewer".into()]);
-        assert!(
-            scope.contains(&"workbench".to_string()),
-            "unknown attrs should get workbench, got {:?}",
-            scope
-        );
-    }
+    // portal-scope 推导的分支覆盖统一在 `auth::portal::portal_scope_tests`（唯一实现处）
+    // ——本文件曾内嵌一份与生产逻辑已漂移的测试副本（空 attrs → 空 scope，而生产为
+    // workbench 默认），2026-09-24 删除。
 
     // ── 失败登录计数 / 锁定集成测试（需测试库） ──────────────────────────────────
     async fn test_pool() -> sqlx::PgPool {

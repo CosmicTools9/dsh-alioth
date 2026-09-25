@@ -44,6 +44,7 @@ pub mod ontology;
 pub mod operator_org;
 pub mod permissions;
 pub mod plan_execution;
+pub mod plate;
 pub mod platform_config;
 pub mod progress;
 pub mod scalar;

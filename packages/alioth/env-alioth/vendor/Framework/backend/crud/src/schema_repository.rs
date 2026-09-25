@@ -11,6 +11,7 @@
 //! - **更新支持**：只更新前端提供的字段（不发全量）
 //! - **created_by_id 自动注入**：create 时自动绑定 `created_by_id = user_id`
 
+use crate::column_types::{self, ColumnMeta};
 use crate::fk_index;
 use crate::id_json;
 use common::AliothError;
@@ -137,11 +138,11 @@ impl SchemaRepository {
         if use_cols.is_empty() {
             return Err(AliothError::BadRequest("no writable columns".into()));
         }
-        let sql = Self::build_insert_sql(table, &use_cols);
         let col_types = crate::column_types::resolve(&self.pool, table).await;
+        let sql = Self::build_insert_sql(table, &use_cols, &col_types);
         let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
         for (col, v) in use_cols.iter().zip(&use_vals) {
-            q = bind_json(q, v, col_types.get(col).map(String::as_str));
+            q = bind_json(q, v, col_types.get(col).map(ColumnMeta::data_type));
         }
         let row = q
             .fetch_one(&self.pool)
@@ -166,11 +167,11 @@ impl SchemaRepository {
         if use_cols.is_empty() {
             return Err(AliothError::BadRequest("no writable columns".into()));
         }
-        let sql = Self::build_insert_sql(table, &use_cols);
         let col_types = crate::column_types::resolve(&self.pool, table).await;
+        let sql = Self::build_insert_sql(table, &use_cols, &col_types);
         let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
         for (col, v) in use_cols.iter().zip(&use_vals) {
-            q = bind_json(q, v, col_types.get(col).map(String::as_str));
+            q = bind_json(q, v, col_types.get(col).map(ColumnMeta::data_type));
         }
         let row = q
             .fetch_one(&mut **tx)
@@ -352,10 +353,17 @@ impl SchemaRepository {
             return Err(AliothError::BadRequest("no writable columns".into()));
         }
         let n = use_cols.len();
+        let col_types = crate::column_types::resolve(&self.pool, table).await;
         let set_clause = use_cols
             .iter()
             .enumerate()
-            .map(|(i, c)| format!("\"{}\" = ${}", c, i + 1))
+            .map(|(i, c)| {
+                format!(
+                    "\"{}\" = {}",
+                    c,
+                    crate::column_types::placeholder(i + 1, col_types.get(c))
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(
@@ -366,10 +374,9 @@ impl SchemaRepository {
             uid = n + 1,
             id = n + 2,
         );
-        let col_types = crate::column_types::resolve(&self.pool, table).await;
         let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
         for (col, v) in use_cols.iter().zip(&use_vals) {
-            q = bind_json(q, v, col_types.get(col).map(String::as_str));
+            q = bind_json(q, v, col_types.get(col).map(ColumnMeta::data_type));
         }
         q = q.bind(user_id).bind(id);
         let _ = q
@@ -546,14 +553,20 @@ impl SchemaRepository {
         (use_cols, use_vals)
     }
 
-    fn build_insert_sql(table: &str, use_cols: &[String]) -> String {
+    fn build_insert_sql(
+        table: &str,
+        use_cols: &[String],
+        col_types: &column_types::ColumnTypeMap,
+    ) -> String {
         let col_list = use_cols
             .iter()
             .map(|c| format!("\"{}\"", c))
             .collect::<Vec<_>>()
             .join(", ");
-        let placeholders = (1..=use_cols.len())
-            .map(|i| format!("${}", i))
+        let placeholders = use_cols
+            .iter()
+            .enumerate()
+            .map(|(i, c)| column_types::placeholder(i + 1, col_types.get(c)))
             .collect::<Vec<_>>()
             .join(", ");
         format!(
@@ -706,10 +719,10 @@ impl SchemaRepository {
             use_cols.push("created_by_id".to_string());
             use_vals.push(serde_json::json!(user_id));
         }
-        let sql = Self::build_insert_sql(table, &use_cols);
+        let sql = Self::build_insert_sql(table, &use_cols, &all_cols);
         let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
         for (col, v) in use_cols.iter().zip(&use_vals) {
-            q = bind_json(q, v, all_cols.get(col).map(String::as_str));
+            q = bind_json(q, v, all_cols.get(col).map(ColumnMeta::data_type));
         }
         let row = q
             .fetch_one(&self.pool)
@@ -770,10 +783,10 @@ impl SchemaRepository {
             use_cols.push("created_by_id".to_string());
             use_vals.push(serde_json::json!(user_id));
         }
-        let sql = Self::build_insert_sql(table, &use_cols);
+        let sql = Self::build_insert_sql(table, &use_cols, &all_cols);
         let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
         for (col, v) in use_cols.iter().zip(&use_vals) {
-            q = bind_json(q, v, all_cols.get(col).map(String::as_str));
+            q = bind_json(q, v, all_cols.get(col).map(ColumnMeta::data_type));
         }
         let row = q
             .fetch_one(&mut **tx)

@@ -220,7 +220,7 @@ pub async fn knowledge_search(
         for terms in &term_sets {
             let rows =
                 sqlx::query_as::<_, (i64, Option<String>, Option<String>, Option<String>)>(*sql)
-                    .bind(&terms)
+                    .bind(terms)
                     .bind(max_results)
                     .fetch_all(pool.get_ref())
                     .await
@@ -308,7 +308,7 @@ pub async fn knowledge_relations(
     let mut hits: Vec<KnowledgeHit> = Vec::new();
     let mut rows = multi_hop_age(pool.get_ref(), route.start_origin, entity_id, depth)
         .await
-        .unwrap_or_else(|| Vec::new());
+        .unwrap_or_default();
     if rows.is_empty() {
         rows = multi_hop_sql(pool.get_ref(), entity_id, depth)
             .await

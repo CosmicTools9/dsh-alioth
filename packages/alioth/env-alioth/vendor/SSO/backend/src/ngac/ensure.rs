@@ -11,9 +11,9 @@
 //!    - `org_policy_class` / `org_policy_rule` / `org_policy_label`
 //!      （规范资产线，d1-org-policy-assets；state 链 CHECK + 审计列；
 //!      label 表 code 主键，label_code 仅存 code 字符串不 FK 冻结域）
-//! 2. **030 版本信号自愈**：`ngac_policy_version` 兜底 + 030 bump 触发器
-//!    （幂等迁移整文件 include_str 执行，同源零复制——无触发器时策略图永不
-//!    reload，决策与库内策略脱节）。
+//! 2. **030 版本信号自愈**：`ngac_policy_version` 兜底 + bump 触发器
+//!    （SQL 为代码内嵌资产 `ngac/sql/030_ngac_policy_version_signal.sql`，随 crate 编译；
+//!    无触发器时策略图永不 reload，决策与库内策略脱节）。
 //!    - **指派/委托 bump 触发器**（§2.5，fix-ngac-decision-consistency D5）：
 //!      `ngac_user_rr_attribute` / `ngac_delegation` 变更 bump 版本——PEP 版本探针
 //!      据此在 ≤2s 内失效全 worker 缓存（委托撤销「即时生效」兑现）。
@@ -202,7 +202,7 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
             id BIGINT PRIMARY KEY DEFAULT isahl.gen_next_zuid(),
             username TEXT UNIQUE,
             name TEXT,
-            email TEXT UNIQUE,
+            email TEXT,
             password_hash TEXT,
             phone TEXT,
             full_name TEXT,
@@ -221,11 +221,16 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
-        DELETE FROM isahl_auth.auth_users a
-        USING isahl_auth.auth_users b
-        WHERE a.id > b.id AND a.email IS NOT NULL AND a.email = b.email;
-        CREATE UNIQUE INDEX IF NOT EXISTS auth_users_email_key
-            ON isahl_auth.auth_users (email);
+        -- 邮箱 MUST NOT 全局唯一（allow-duplicate-email-accounts）：同一 email MAY 属于多个账号；
+        -- 唯一身份基点 = username（其去重 + 唯一索引保留，见下）。
+        -- 历史自愈副作用 MUST NOT 保留：跨账号 email 去重 DELETE 会真实销毁账号行，
+        -- email 唯一索引会让约束改动在下次启动被回滚。
+        -- 两种形态都要能去唯一：① 独立唯一索引（本 ensure 建的经典形态）→ DROP INDEX；
+        -- ② 建表期 inline UNIQUE 的约束持有索引（测试/重建库）→ DROP INDEX 会报
+        --    「cannot drop index ... because constraint ... requires it」并**中断整段
+        --    raw_sql**（连带跳过 id 默认自愈）⇒ MUST 先按约束名删，再兜底删索引。
+        ALTER TABLE isahl_auth.auth_users DROP CONSTRAINT IF EXISTS auth_users_email_key;
+        DROP INDEX IF EXISTS isahl_auth.auth_users_email_key;
         DELETE FROM isahl_auth.auth_users a
         USING isahl_auth.auth_users b
         WHERE a.id > b.id AND a.username IS NOT NULL AND a.username = b.username;
@@ -234,6 +239,24 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
         CREATE INDEX IF NOT EXISTS idx_auth_users_username ON isahl_auth.auth_users(username);
         CREATE INDEX IF NOT EXISTS idx_auth_users_email ON isahl_auth.auth_users(email);
         CREATE INDEX IF NOT EXISTS idx_auth_users_active ON isahl_auth.auth_users(is_active);
+        -- auth_user_emails：全局 email 唯一 → 账号内 (fk_user, email) 唯一。
+        -- to_regclass 守卫：该表由 SSO migrations 034 建立，未迁移库 MUST NOT 阻断本段。
+        DO $emails$
+        BEGIN
+            IF to_regclass('isahl_auth.auth_user_emails') IS NULL THEN
+                RETURN;
+            END IF;
+            DROP INDEX IF EXISTS isahl_auth.uq_auth_user_emails_email;
+            DELETE FROM isahl_auth.auth_user_emails a
+            USING isahl_auth.auth_user_emails b
+            WHERE a.id > b.id AND a.fk_user = b.fk_user AND a.email = b.email
+              AND a.deleted_at IS NULL AND b.deleted_at IS NULL;
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_user_emails_fk_user_email
+                ON isahl_auth.auth_user_emails (fk_user, email) WHERE deleted_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_auth_user_emails_email
+                ON isahl_auth.auth_user_emails (email);
+        END
+        $emails$;
         -- id 默认全量自愈（fix-sso-id-default-heal）：库被无约束重建后 CREATE IF
         -- NOT EXISTS 不补既有表的默认值 → INSERT...RETURNING 报 null id（23502）。
         -- 动态扫描 isahl_auth 全部含 id bigint 且无默认值的关系（relkind r/p，
@@ -275,9 +298,9 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
         log::warn!("ensure_ngac_extension_tables: auth_users 自愈失败: {}", e);
     }
 
-    // 2. 030 版本信号自愈（ngac_policy_version 兜底 + bump 触发器；幂等迁移
-    //    整文件执行——同源零复制）
-    const M030: &str = include_str!("../../migrations/030_ensure_ngac_policy_version_seed.sql");
+    // 2. 030 版本信号自愈（ngac_policy_version 兜底 + bump 触发器；SQL 为代码内嵌资产
+    //    `ngac/sql/`，随 crate 编译，无编号排序与记账语义）
+    const M030: &str = include_str!("sql/030_ngac_policy_version_signal.sql");
     if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(M030)).execute(pool).await {
         log::warn!("ensure_ngac_extension_tables: 030 版本信号自愈失败: {}", e);
         EXTENSION_TABLES_ENSURED.store(true, Ordering::Relaxed);
@@ -394,7 +417,7 @@ pub(crate) async fn ensure_ngac_core_constraints(pool: &PgPool) -> Result<(), sq
         CREATE UNIQUE INDEX IF NOT EXISTS ngac_policy_class_o_name_key
             ON isahl_auth.ngac_policy_class (o_name);
         -- (resource_type, fk_resource) 的唯一性由**约束** `uq_ngac_oa_resource`（全列、无谓词）承载：
-        --   · 该名在 DB 中为 UNIQUE CONSTRAINT（SSO/backend/migrations 与集成测试同源），
+        --   · 该名在 DB 中为 UNIQUE CONSTRAINT（参考库结构持有，与集成测试同源），
         --     其支撑索引占用同名关系 ⇒ 此前此处带 `WHERE deleted_at IS NULL` 的
         --     `CREATE UNIQUE INDEX IF NOT EXISTS uq_ngac_oa_resource` 恒为 no-op（部分索引从未建成），
         --     该无效语句已删除；约束缺失的库（只跑迁移子集）由下方 DO 块补建同定义索引。

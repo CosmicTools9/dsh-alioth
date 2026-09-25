@@ -3,8 +3,7 @@
 //! 核心原则：测试数据绝不残留。
 #![allow(dead_code)]
 use gateway_sso::auth::AuthState;
-use sqlx::{AssertSqlSafe, Executor, PgPool};
-use std::path::PathBuf;
+use sqlx::{Executor, PgPool};
 use tokio::sync::OnceCell;
 
 /// 测试用 EC P-256 私钥（PKCS#8 PEM）
@@ -93,16 +92,7 @@ async fn do_setup_schema(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>
         $$;
     "#).await?;
 
-    // 3. 加载 001_auth_tables.sql（不依赖其他表）
-    let migrations_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/db/migrations");
-
-    let auth_tables_path = migrations_dir.join("001_auth_tables.sql");
-    if auth_tables_path.exists() {
-        let sql = tokio::fs::read_to_string(&auth_tables_path).await?;
-        pool.execute(AssertSqlSafe(sql)).await?;
-    }
-
-    // 4. 预先创建 identity_providers 表（因为 002 中的 sso_sessions 依赖它）
+    // 3. 创建 identity_providers 表（sso_sessions 依赖它）
     pool.execute(
         r#"
         CREATE TABLE IF NOT EXISTS isahl_auth.identity_providers (
@@ -204,14 +194,7 @@ async fn do_setup_schema(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>
     )
     .await?;
 
-    // 5. 加载 002_auth_session_tables.sql
-    let session_tables_path = migrations_dir.join("002_auth_session_tables.sql");
-    if session_tables_path.exists() {
-        let sql = tokio::fs::read_to_string(&session_tables_path).await?;
-        pool.execute(AssertSqlSafe(sql)).await?;
-    }
-
-    // 6. 创建邮箱/手机验证码表
+    // 4. 创建邮箱/手机验证码表
     pool.execute(
         r#"
         CREATE TABLE IF NOT EXISTS isahl_auth.auth_email_verifications (
@@ -432,35 +415,5 @@ pub async fn cleanup_user_by_email(pool: &PgPool, email: &str) -> Result<(), sql
         .bind(email)
         .execute(pool)
         .await?;
-    Ok(())
-}
-
-/// 直接在数据库中写入一条"已验证"的邮箱验证码记录，绕过 send-code/verify-code 流程。
-///
-/// 适用于 register handler 要求 `email_verified = true` 的测试前置准备。
-/// 注意：register handler 内部会用 lower(email) 查询，写入时统一使用 lower() 避免大小写问题。
-pub async fn pre_verify_email(pool: &PgPool, email: &str) -> Result<(), sqlx::Error> {
-    let email_lower = email.to_lowercase();
-    sqlx::query(
-        r#"
-        INSERT INTO isahl_auth.auth_email_verifications
-            (email, code, purpose, expires_at, verified)
-        VALUES ($1, '000000', 'register', NOW() + INTERVAL '1 day', TRUE)
-        ON CONFLICT DO NOTHING
-        "#,
-    )
-    .bind(&email_lower)
-    .execute(pool)
-    .await?;
-    // 删除可能残留的过期未验证记录，避免冲突
-    sqlx::query(
-        r#"
-        DELETE FROM isahl_auth.auth_email_verifications
-        WHERE email = $1 AND purpose = 'register' AND verified = FALSE
-        "#,
-    )
-    .bind(&email_lower)
-    .execute(pool)
-    .await?;
     Ok(())
 }

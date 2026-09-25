@@ -514,6 +514,7 @@ async fn ensure_ua_collection_rights_multi(
 ///   的 PDP owner_cte 推导）；NOT EXISTS（resource_type）防重复；
 /// - 关联：operator → 三集合 read/create/update（INSERT..SELECT NOT EXISTS，
 ///   仿 ensure_ua_collection_rights_multi）——B-2「operator 建岗挂人放行」授权面。
+///
 /// UA 均来自 USER_ATTRIBUTES（ensure 步骤 2 先确保；此处兜底 ensure_user_attribute）。
 /// 返回本次新建行数（OA + 属权策略 + 关联合计）。
 async fn ensure_org_resources(pool: &PgPool) -> Result<i64, sqlx::Error> {

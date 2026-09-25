@@ -97,9 +97,9 @@ JSON.parse(responseText, (_key, value) => {
 
 #### 3. 前端义务（必须遵守）
 
-- **所有涉及 `id`、`zuid`、主键、外键的变量/属性，类型声明必须为 `string | number`，禁止窄化为 `number`**
+- **所有涉及 `id`、`zuid`、主键、外键的变量/属性，类型声明必须为 `string | number`**（门禁：`scripts/check/check-id-json-precision.ts`）
 - 行内编辑的 `editingRowId`、选中项 `selectedId`、路由参数中的 ID，全部按字符串处理
-- 比较 ID 相等时，统一使用 `String(a) === String(b)`，禁止 `a === b`
+- 比较 ID 相等时，统一使用 `String(a) === String(b)`（门禁：`scripts/check/check-id-json-precision.ts`）
 - API 请求中的路径参数直接传入字符串，禁止先转 `Number` 再传
 
 ### 正确模式
@@ -275,7 +275,7 @@ Alioht 的 lifecycle 子表（继承自 `zc_id_lifecycle` 的表）中，**本�
 | 服务端状态 | `@tanstack/react-query` | API 数据缓存、后台同步               |
 | 客户端状态 | Jotai v2                | 全局 UI 状态、用户偏好、表单本地状态 |
 
-**禁止**：Zustand、Redux、Recoil 等其他状态管理方案。
+状态管理唯一选型 = 上表两项（Zustand/Redux/Recoil 等由门禁拦截；门禁：`scripts/check/check-state-management-libs.ts`）。
 
 ---
 
@@ -465,7 +465,7 @@ Pre-Proc/{ns}/Sources/Apps/Modules/{name}/frontend/src/locales/
 | --------------------- | ---------------------------------------- | ---------------------------------------------------------------- |
 | **段名必须为英文**    | key 路径中所有段名使用英文               | `access.dashboard.权限总览`                                      |
 | **值使用当前语言**    | value 保留对应语言的自然语言文本         | `"access.dashboard.permissionOverview": "权限总览"`              |
-| **禁止硬编码字符串**  | JSX/TSX 中所有用户可见文本必须通过 `t()` | `<span>返回列表</span>` → `<span>{t("xxx.backToList")}</span>`   |
+| **硬编码字符串**  | JSX/TSX 中所有用户可见文本必须通过 `t()`（门禁：`scripts/check/check-i18n-coverage.ts`、`scripts/check/check-i18n-jsx-chinese.ts`） | `<span>返回列表</span>` → `<span>{t("xxx.backToList")}</span>`   |
 | **禁止硬编码 locale** | 日期/数字格式化从 i18n 配置读取 locale   | `.toLocaleDateString('zh-CN')`                                   |
 | **禁止嵌套 JSON**     | locales 文件使用 flat dot-separated 结构 | `{ "nav": { "title": "..." } }` → `"inventory.nav.title": "..."` |
 
@@ -695,7 +695,7 @@ const categorySelect = createAssociationSelect({
 ### 10.0 设计 Tokens 体系（唯一来源）
 
 AliothStudio 前端设计 Tokens 的**唯一来源**是 `Framework/frontend/components/tokens.json` 与 `Framework/frontend/components/src/theme-base.css`。
-下游应用（Gateway / Meta / 各 Module）通过 CSS 变量继承或覆盖，禁止反向从应用规约重新定义基础 token。
+下游应用（Gateway / Meta / 各 Module）通过 CSS 变量继承或覆盖（门禁：`scripts/check/check-design-token-parity.ts`）。
 
 | Token 类别                                        | 来源文件                                                         | 覆盖方式                                                                         |
 | ------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------- |
@@ -722,13 +722,13 @@ AliothStudio 前端设计 Tokens 的**唯一来源**是 `Framework/frontend/comp
 
 **硬性约束（MUST）**：
 
-1. **生产代码禁止引用任何境外字体 CDN**，包括但不限于：
+1. **生产代码字体一律本地自持**（不引用境外字体 CDN），已知大陆不可达的字体服务包括但不限于：
    - `fonts.googleapis.com` / `fonts.gstatic.com`（Google Fonts）
    - `use.typekit.net`（Adobe Fonts）
    - `fast.fonts.net`（Fonts.com）
    - 任何在大陆可达性不达标的字体服务
 2. **所有字体必须从同源（same-origin）加载**，即从当前应用自己的静态资源服务器提供，路径前缀 `/fonts/...`。
-3. **HTML 原型与生产代码统一**：HTML 原型（`Pre-Proc/*/Prototypes/*/v*.html`）亦不得引用 Google Fonts，必须使用本地 `Framework/frontend/public/fonts/` 下的 woff2 文件（详见 `HTML_DESIGN_SPEC.md §1.2`）。
+3. **HTML 原型与生产代码统一**：HTML 原型（`Pre-Proc/*/Prototypes/*/v*.html`）使用本地 `Framework/frontend/public/fonts/` 下的 woff2 文件（详见 `HTML_DESIGN_SPEC.md §1.2`）；原型产物引用 Google Fonts 等外链由门禁拒绝（门禁：`scripts/check/check-prototype-offline.ts`）。
 4. **Vendor 文件策略外推**：`HTML_DESIGN_SPEC.md §1.1` 已规定 React/Babel UMD 走本地 vendor；本条将同一原则外推至字体资源。
 
 **字体规范（2026-06-14 升级）**：
@@ -778,7 +778,7 @@ font-family:
 **违规检测**：
 
 - `alioth-app` 技能的 `audit-html-spec.ts`（`.agents/skills/alioth-app/scripts/audit-html-spec.ts`）会在原型审计中检测 `fonts.googleapis.com` 引用并报错（severity: warning → error）。
-- 任何原型遗留旧版 Google Fonts `<link>` 一经发现视为规约违规（与 `HTML_DESIGN_SPEC.md §1.1` 「禁止遗留」原则一致）。
+- 原型产物遗留旧版 Google Fonts `<link>` 属规约违规，由仓库级门禁检出（门禁：`scripts/check/check-prototype-offline.ts`；与 `HTML_DESIGN_SPEC.md §1.1` 一致）。
 
 ### 10.1 模块主题色 `moduleAccent`
 
@@ -902,7 +902,7 @@ import { tokens } from "@alioth/components";
 
 ### 10.6 FK 字段选择器 `ReferenceSelect`
 
-表单中的外键字段**禁止**使用 `type: "number"`（强制用户输入数值 ID）。必须使用 `type: "reference"` 配合已知 endpoint：
+表单中的外键字段 MUST 使用 `type: "reference"` 配合已知 endpoint（`type: "number"` 形态由门禁拦截；门禁：`scripts/check/check-block-json.ts`）：
 
 ```typescript
 fk_country: {
@@ -1096,8 +1096,8 @@ Pre-Proc/{ns}/Sources/Apps/Modules/{name}/frontend/
 
 #### 规范
 
-- 目录结构统一使用 `stores/` 管理状态，不得同时存在 `stores/` 和 `atoms/`
-- `src/` 根目录下不得新建 `utils/`、`lib/`、`types/`、`hooks/` 目录（见 §11.4 组件分层）
+- 目录结构统一使用 `stores/` 管理状态，不同时存在 `stores/` 和 `atoms/`（`atoms/` 与 `src/utils/`、`src/lib/`、`src/types/`、`src/hooks/` 目录由门禁拒绝：`scripts/check/check-frontend-layer-rules.ts`）
+- `src/` 根目录下只保留 §11.1 最小目录集（`types/`、`hooks/` 不在最小目录集内，见 §11.4 组件分层）
 - `@alioth/*` 的引用必须从顶层导出导入，不得使用深路径 import
 
 ### 11.2 必选框架依赖
@@ -1123,13 +1123,13 @@ Pre-Proc/{ns}/Sources/Apps/Modules/{name}/frontend/
 
 #### 安装原则
 
-- 全部通过 `workspace:*` 引用，禁止 pin 版本号
-- 禁止直接安装 `@radix-ui/*`、`@hookform/resolvers`、`recharts`、`sonner`、`vaul` 等框架已封装的底层依赖——这些由 `@alioth/components` 统一管理并提供
+- 全部通过 `workspace:*` 引用（门禁：`scripts/check/check-workspace-pin-consistency.ts`）
+- 框架已封装的底层依赖（`@radix-ui/*`、`@hookform/resolvers`、`recharts`、`sonner`、`vaul` 等）由 `@alioth/components` 统一管理并提供（门禁：`scripts/check/check-pnpm-circular-deps.ts`）
 - 第三方运行时依赖（`react-router`、`zod`、`lucide-react` 等）必须与 Framework peerDependencies 版本对齐
 
 #### 框架内部包分层约束（2026-06-13）
 
-`Framework/frontend/` 下 `@alioth/{api,hooks,components}` 三包的 workspace 依赖**必须保持单向分层，禁止形成闭环**。
+`Framework/frontend/` 下 `@alioth/{api,hooks,components}` 三包的 workspace 依赖**必须保持单向分层**（门禁：`scripts/check/check-workspace-deps.sh`）。
 
 **当前依赖结构**（源码已验证）：
 
@@ -1269,9 +1269,9 @@ src/pages/
 
 | 类别     | 禁用                                                                | 原因                                                                |
 | -------- | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| 包管理   | 自装 `@radix-ui/*`、`react-hook-form`、`recharts`、`sonner`、`vaul` | 框架已封装，应通过 `@alioth/components` 使用                        |
-| 状态管理 | Zustand、Redux、Recoil                                              | 已强制 Jotai v2 + React Query                                       |
-| 目录结构 | 在 `src/` 下创建 `hooks/`、`utils/`、`lib/`、`types/`               | 统一 `api/`（hooks）+ `components/`（私有组件）+ `stores/`（atoms） |
+| 包管理   | 自装 `@radix-ui/*`、`react-hook-form`、`recharts`、`sonner`、`vaul`（门禁：`scripts/check/check-pnpm-circular-deps.ts`） | 框架已封装，应通过 `@alioth/components` 使用                        |
+| 状态管理 | Zustand、Redux、Recoil（门禁：`scripts/check/check-state-management-libs.ts`） | 已强制 Jotai v2 + React Query                                       |
+| 目录结构 | 在 `src/` 下创建 `hooks/`、`utils/`、`lib/`、`types/`、`atoms/`（由门禁拒绝：`scripts/check/check-frontend-layer-rules.ts`） | 统一 `api/`（hooks）+ `components/`（私有组件）+ `stores/`（atoms） |
 | 入口     | App.tsx 之外再创建第二份路由定义                                    | 单一路由来源，禁止分散                                              |
 | 字典     | 裸 `import 'react-i18next'` 或自定义 i18n 实例                      | 必须使用 `@alioth/i18n` 的 `ModuleI18nShell`                        |
 | 组件命名 | 文件名与框架组件同名（如自建 `Button.tsx`）                         | 冲突风险，应基于框架组件封装并改名                                  |
@@ -1514,7 +1514,7 @@ interface BlockNavKeyMap {
 **约束：**
 
 1. 每个 `blockAssembly.blocks[].id` 应有对应 binding 条目（缺失不报错但运行时缺少 service 引用）
-2. binding-id 在同一 namespace 内解析方式一致，禁止混合使用 service id 和 factor code
+2. binding-id 在同一 namespace 内解析方式一致（不混合 service id 与 factor code；门禁：`scripts/check/check-ontology-coords.ts`）
 3. 跨 NS 不互通
 
 ##### 11.11.4.4 layer 语义
@@ -1528,7 +1528,20 @@ interface BlockNavKeyMap {
 | `2+` | 更高层级（按业务复杂度递增）       | 目前无实例                      |
 | 缺失 | 默认为 0                           | 兼容旧模块                      |
 
-**约束**：依赖目标模块的 `layer` 值 MUST NOT 高于调用方（`Meta/backend/src/module_topology.rs` 拒绝）。同层依赖 SHOULD NOT，建议通过事件解耦（`module_validator.rs` 返回 Warning，不阻断）。
+**约束**：依赖目标模块的 `layer` 值 MUST 不高于调用方（`Meta/backend/src/module_topology.rs` 拒绝；门禁：`scripts/check/check-module-contract.mjs`）。同层依赖 SHOULD NOT，建议通过事件解耦（`module_validator.rs` 返回 Warning，不阻断）。
+
+##### 11.11.4.5 块内子路由（splat 契约）
+
+`createBlockRoutes` 为每个块生成的路由 path MUST 带 splat（`{blockId}/*`）：
+
+| 项         | 规约                                                                              |
+| ---------- | --------------------------------------------------------------------------------- |
+| 生成形态   | 块路由 path 末尾恒追加 splat：`{href 去前导斜杠}/*`（落地路径空 splat 与深层路径同表） |
+| 原因       | 块入口组件常以内嵌 `<Routes>` 承载**块内子路由**（列表 → 详情/表单，如 `/pipeline-list/:id`）；父路由无 splat 时 React Router 不匹配深层路径，请求落到 `path="*"` 兜底并**静默退回块落地页**，子路由永不可达 |
+| 落地页     | `index` 仍由块入口的内嵌 `<Routes index>` 承载；`/{blockId}` 与 `/{blockId}/…` 均落在同一块条目下 |
+| 未知子路径 | 由块入口内嵌 `<Routes path="*">` 退回块落地页（不是外层兜底跳首块）              |
+
+实测判据（父 `path="x"`）：`/x/42` → 外层兜底；父 `path="x/*"`：`/x/42` → 子路由、`/x` → 落地 index。回归测试见 `Framework/frontend/composables/src/block/createBlockRoutes.test.ts`（`describe('createBlockRoutes 匹配语义')`）。
 
 #### 11.11.5 主题色（moduleAccent）
 
@@ -1597,8 +1610,8 @@ export const {Name}Layout = createModuleLayout({
 
 #### 11.11.8 规范
 
-- 模块布局必须使用 `createModuleLayout` 工厂，不得自定义 Layout 组件
-- 认证由 Gateway 统一处理，模块 Layout 不得定义 auth 中间件
+- 模块布局必须使用 `createModuleLayout` 工厂（门禁：`scripts/check/check-module-auth-middleware.ts`）
+- 认证由 Gateway 统一处理，模块 Layout 不定义 auth 中间件（门禁：`scripts/check/check-module-auth-middleware.ts`）
 - 模块导航使用 Sidebar，不得在 Layout 中使用 `react-router` 导航守卫
 - `shop` 模块使用独立双区域布局，不得使用 `ModuleLayout`
 - Gateway App 视角下 Sidebar 顶部品牌 block 已整体移除，不得渲染独立品牌 block
@@ -1613,7 +1626,7 @@ export const {Name}Layout = createModuleLayout({
 | 水平内边距 | **24px** 或 `px-6`                |                                                                              |
 | 子项间距   | **12px**                          | `gap-3`                                                                      |
 | 定位       | 普通文档流                        | 非 sticky/fixed，flex 约束                                                   |
-| 背景       | **纯色** `hsl(var(--background))` | **禁止毛玻璃**（`backdrop-blur-xl`），低透明度背景在模块内容区会导致层次混乱 |
+| 背景       | **纯色** `hsl(var(--background))` | 毛玻璃（`backdrop-blur-*`）由门禁拒绝（门禁：`scripts/check/check-frontend-layer-rules.ts`）；低透明度背景在模块内容区会导致层次混乱 |
 | 底部边框   | `border-b`                        | 1px solid border                                                             |
 
 ##### 11.11.9.2 区域划分
@@ -1690,7 +1703,7 @@ const { slots, pendingCount, unreadCount } = useWorkspaceSlots({
 
 - 不得在模块页面内自定义 TopBar 替换 `ModuleLayout` 内置 TopBar
 - TopBar 高度统一为 56px（`h-14`），不得使用 64px（`h-16`）
-- TopBar 使用纯色背景，不得使用毛玻璃效果（`backdrop-blur-xl`）
+- TopBar 使用纯色背景，毛玻璃效果（`backdrop-blur-*`）由门禁拒绝（门禁：`scripts/check/check-frontend-layer-rules.ts`）
 - embedded（Gateway 集成）模式下不得渲染模块级 TopBar
 
 ### 12.1 概述
@@ -1814,7 +1827,7 @@ const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
 
 ### 13.1 弹窗组件规范
 
-前端代码中**不得**使用原生浏览器弹窗 API，必须使用项目内置的 `AlertDialog` / `Dialog` 组件：
+前端代码 MUST 使用项目内置的 `AlertDialog` / `Dialog` 组件（原生浏览器弹窗 API 由门禁拦截；门禁：`scripts/check/check-no-native-dialog.ts`）：
 
 | 原生 API           | 替代组件           | 来自                 |
 | ------------------ | ------------------ | -------------------- |
@@ -1859,7 +1872,7 @@ const buttonVariants = cva(..., {
 
 ### 13.3 文本颜色必须用设计 tokens
 
-弹窗标题、描述文本颜色**必须**使用 Tailwind 主题色 token，**禁止** raw 颜色：
+弹窗标题、描述文本颜色**必须**使用 Tailwind 主题色 token（raw 颜色由门禁拦截；门禁：`scripts/check/audit-css-framework.mjs`）：
 
 | 元素                          | 推荐 token              | 用途                   |
 | ----------------------------- | ----------------------- | ---------------------- |
@@ -1908,7 +1921,7 @@ const buttonVariants = cva(..., {
 
 ### 13.5 错误提示弹窗
 
-后端 API 调用失败、用户输入校验失败等场景，使用专用错误弹窗（**禁止**用 `alert()`）：
+后端 API 调用失败、用户输入校验失败等场景，使用专用错误弹窗（`alert()` 由门禁拦截；门禁：`scripts/check/check-no-native-dialog.ts`）：
 
 ```tsx
 function SomeAction() {
@@ -1983,10 +1996,10 @@ function SomeAction() {
 > （修后 609 文件 / 12690 候选类），模块独有的 `w-3/5` / `w-2/5` / `md:grid-cols-5` 等类
 > 全部未生成，页面退回内容宽度（合同详情页右列仅 370px，行尾留 355px 空白）。
 
-**禁止**：
+**判据要求**：
 
 - 路径深度必须正确（如 Meta 的 `"../../Framework/frontend/components/src"` 需校对）
-- 路径必须指向存在的目录，不得指向已删除或重命名的目录
+- 路径必须指向存在的目录（不指向已删除或重命名的目录；门禁：`scripts/check/check-tailwind-source.sh`）
 - 引用共享组件时必须使用 `@source` 指令（依赖 Vite 自动扫描 → 共享组件的 Tailwind 类丢失）
 
 ### 14.2 全量审计（CI 强制检查）
@@ -2223,10 +2236,10 @@ if (r && r.data.status !== v.status) {
 - ✅ `notify.apiError(err)` — 自动从 Error 中提取友好消息
 - ✅ `notify.promise(fetchData(), { loading, success, error })` — 自动三态切换
 
-**禁止**：
+**门禁判定**（门禁：`scripts/check/check-no-native-dialog.ts`）：
 
-- 错误反馈使用统一的 Toast/通知系统，不得用单独的 `setErrorMessage` + `<AlertDialog open={!!errorMessage}>` 模式
-- 不得堆叠多个 `AlertDialog`
+- 错误反馈使用统一的 Toast/通知系统（`setErrorMessage` + `<AlertDialog open={!!errorMessage}>` 模式由门禁拦截）
+- 多个 `AlertDialog` 堆叠由门禁拦截
 
 **例外**（仍可使用 AlertDialog）：
 

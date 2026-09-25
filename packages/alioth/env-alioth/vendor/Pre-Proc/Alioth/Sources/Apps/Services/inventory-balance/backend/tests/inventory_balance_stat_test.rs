@@ -96,7 +96,7 @@ async fn list_with_qty_capacity() {
     let row = page
         .items
         .iter()
-        .find(|r| r.production_id == production && r.storage_id == storage)
+        .find(|r| r.production_id == production && r.storage_id == Some(storage))
         .expect("balance row exists");
     assert_eq!(
         row.qty,
@@ -131,7 +131,7 @@ async fn filter_by_production_and_storage() {
     assert!(
         page.items
             .iter()
-            .all(|r| r.production_id == production && r.storage_id == storage_a),
+            .all(|r| r.production_id == production && r.storage_id == Some(storage_a)),
         "过滤后仅命中目标货×储元"
     );
 }

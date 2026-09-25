@@ -12,15 +12,18 @@
 #
 # 用法（source 型）:
 #   source scripts/lib/db-url-resolve.sh
-#   url="$(db_url_resolve)"        # 解析出的 URL（无则空串）；DB_URL_SOURCE = 来源说明
-#   db_url_resolve_candidates      # 诊断用：输出声明了该键的组件目录（相对仓库根）
+#   url="$(db_url_resolve)"          # 解析出的 URL（无则空串）；直接调用时 DB_URL_SOURCE = 来源说明
+#   db_url_resolve_report            # 两值一次取回：stdout 两行 `url=<…>` / `source=<…>`
+#   db_url_resolve_candidates        # 诊断用：输出声明了该键的组件目录（相对仓库根）
 #
 # 只读契约：只读各组件 `.mise.toml`，并在组件目录内执行 `mise env`（解密/汇编 env，
 # 不写仓库、不写 DB、不建库）。
 # =============================================================================
 
 DB_URL_LIB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# 由调用方在 source 后读取（如 env-orchestrator 的 DATABASE_URL 探测行）——shellcheck 跨文件不可见
+# 由**直接调用** db_url_resolve 的消费方在 source 后读取；command substitution 中取值时
+# 本变量在子 shell 内被赋值、随子 shell 消亡 ⇒ 需要来源的消费方 MUST 改用 db_url_resolve_report
+# （shellcheck 跨文件不可见）
 # shellcheck disable=SC2034
 DB_URL_SOURCE=""
 
@@ -35,24 +38,37 @@ db_url_resolve_candidates() {
     done
 }
 
-# 解析：环境变量优先；否则按候选组件走 `mise env`（单趟 awk，ERE 可移植）
-db_url_resolve() {
-    DB_URL_SOURCE=""
+# 解析扫描（**唯一实现**）：stdout 两行 `url=<…>` 与 `source=<…>`。
+# 为什么两项一起输出：消费方以 `url="$(db_url_resolve)"` 取值时函数在**子 shell** 中执行，
+# 其中的全局赋值随子 shell 消亡 ⇒ 来源恒空（2026-09-22 实证：报告输出 `已解析（）但库不可达`）。
+# 两项只能由同一次调用的 stdout 一并带回，故扫描是唯一实现、两个门面共用。
+db_url_resolve_scan() {
+    local comp url
     if [ -n "${DATABASE_URL:-}" ]; then
-        DB_URL_SOURCE="环境变量"
-        printf '%s' "$DATABASE_URL"
+        printf 'url=%s\nsource=%s\n' "$DATABASE_URL" "环境变量"
         return 0
     fi
-    local comp url
     while IFS= read -r comp; do
         url="$(cd "${DB_URL_LIB_ROOT}/${comp}" && mise env 2>/dev/null \
             | awk '/^(export )?DATABASE_URL=/{sub(/^export /,""); sub(/^DATABASE_URL=/,""); print; exit}' \
             | sed -e "s/['\"]//g")"
         if [ -n "$url" ]; then
-            DB_URL_SOURCE="${comp}/.mise.toml [env]（mise 解析）"
-            printf '%s' "$url"
+            printf 'url=%s\nsource=%s\n' "$url" "${comp}/.mise.toml [env]（mise 解析）"
             return 0
         fi
     done < <(db_url_resolve_candidates)
     return 1
+}
+
+# 单值门面（既有消费方签名不变）：stdout = URL；直接调用时同时设置 DB_URL_SOURCE。
+db_url_resolve() {
+    local out
+    out="$(db_url_resolve_scan)" || { DB_URL_SOURCE=""; return 1; }
+    DB_URL_SOURCE="$(printf '%s\n' "$out" | sed -n 's/^source=//p')"
+    printf '%s' "$(printf '%s\n' "$out" | sed -n 's/^url=//p')"
+}
+
+# 两值门面：stdout = `url=<…>` / `source=<…>` 两行（需要来源的消费方用；一次扫描取回两项）。
+db_url_resolve_report() {
+    db_url_resolve_scan
 }

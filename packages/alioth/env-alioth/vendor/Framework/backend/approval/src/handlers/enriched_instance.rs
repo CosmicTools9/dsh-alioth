@@ -128,7 +128,8 @@ pub async fn list_enriched(
         .filter(|p| p != "%%");
 
     // Single CTE: derive status in SQL, apply ALL filters, paginate, count via window function
-    let rows: Vec<EnrichedRow> = sqlx::query_as(
+    // 任职账号集合片段注入（唯一实现 = common::position_incumbent_accounts_sql!()）
+    let sql = concat!(
         r#"
         WITH src AS (
             -- 申请人 id 归一：`fk_subject` 在本表的既有契约是**用户 id**（写入侧存调用者 user_id：
@@ -206,10 +207,16 @@ pub async fn list_enriched(
                       UNION ALL
                       SELECT ref_left, ref_right FROM isahl."zc_id_operation_rr_post" WHERE deleted_at IS NULL
                     ) br2 ON br2.ref_left = oe2.ref_left
-                    JOIN isahl."zc_id_subj-position" pos2
-                      ON pos2.id = br2.ref_right AND pos2.deleted_at IS NULL
-                     AND pos2.fk_user = $3
+                    -- 「我是该节点岗位审批人」判据 = 岗位任职账号集合（标量 ∪ 任职桥派生；
+                    -- 唯一实现 = common 片段）——只认标量会漏掉仅挂桥任职的审批人
                     WHERE ie2.ref_left = i.id AND ie2.deleted_at IS NULL
+                      AND EXISTS (
+                        SELECT 1 FROM ("#,
+        common::position_incumbent_accounts_sql!(),
+        r#"
+                        ) inc
+                        WHERE inc.pos_id = br2.ref_right AND inc.uid = $3
+                      )
                   )
                   OR EXISTS (
                     SELECT 1 FROM isahl_auth.ngac_user_rr_attribute ur
@@ -226,17 +233,18 @@ pub async fn list_enriched(
           AND ($4::text IS NULL OR node_name ILIKE $4 OR applicant_name ILIKE $4)
         ORDER BY created_at DESC
         LIMIT $5 OFFSET $6
-        "#,
-    )
-    .bind(query.status.as_deref())  // $1: status filter (None = no filter)
-    .bind(&scope_key)               // $2: scope key (todo/my-request/all)
-    .bind(user_id)                  // $3: user_id for scope filter
-    .bind(q_pattern.as_deref())     // $4: q ILIKE pattern (None = no filter)
-    .bind(page_size)                // $5: limit
-    .bind(offset)                   // $6: offset
-    .fetch_all(pool.get_ref())
-    .await
-    .map_err(|e| AliothError::Database(e.to_string()))?;
+        "#
+    );
+    let rows: Vec<EnrichedRow> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(query.status.as_deref()) // $1: status filter (None = no filter)
+        .bind(&scope_key) // $2: scope key (todo/my-request/all)
+        .bind(user_id) // $3: user_id for scope filter
+        .bind(q_pattern.as_deref()) // $4: q ILIKE pattern (None = no filter)
+        .bind(page_size) // $5: limit
+        .bind(offset) // $6: offset
+        .fetch_all(pool.get_ref())
+        .await
+        .map_err(|e| AliothError::Database(e.to_string()))?;
 
     let total = rows.first().map(|r| r.total_count).unwrap_or(0);
 

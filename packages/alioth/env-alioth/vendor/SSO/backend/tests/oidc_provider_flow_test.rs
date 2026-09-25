@@ -35,6 +35,8 @@ fn test_config() -> Config {
         jwt_refresh_expiry: 604800,
         oauth_google_client_id: None,
         oauth_google_client_secret: None,
+        wechat_miniapp_driver_appid: None,
+        wechat_miniapp_driver_secret: None,
         oauth_github_client_id: None,
         oauth_github_client_secret: None,
         oauth_microsoft_client_id: None,

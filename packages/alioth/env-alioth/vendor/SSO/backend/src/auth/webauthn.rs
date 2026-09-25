@@ -907,10 +907,10 @@ async fn insert_credential(
     Ok(())
 }
 
+/// 获取客户端 IP（转调共享实现 `auth::session::client_ip`——可信跳才采信转发头；
+/// 统一口径见 2026-09-23 fix-auth-ratelimit-client-ip）
 fn get_client_ip(req: &HttpRequest) -> Option<String> {
-    req.connection_info()
-        .realip_remote_addr()
-        .map(|s| s.to_string())
+    crate::auth::session::client_ip(req)
 }
 
 fn get_user_agent(req: &HttpRequest) -> Option<String> {
@@ -1014,6 +1014,8 @@ async fn issue_session_and_tokens(
         mfa_required: false,
         message: Some("Passkey login successful".into()),
         session_id: Some(session.session_token.clone()),
+        username_selection_required: false,
+        candidates: Vec::new(),
     });
 
     let response = set_access_cookie(response, &access_token, state.jwt_access_expiry_secs, None);

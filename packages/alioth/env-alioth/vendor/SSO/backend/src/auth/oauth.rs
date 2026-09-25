@@ -326,12 +326,14 @@ pub struct OAuthProviderInfo {
 }
 
 /// 列出已配置的 OAuth Provider（DB 驱动：isahl_auth.identity_providers 启用项；
-/// 未配置返回空数组——登录页按此隐藏社交登录区，修复"Unknown provider: github"）
+/// 未配置返回空数组——登录页按此隐藏社交登录区，修复"Unknown provider: github"。
+/// 注：该表无 deleted_at 列——2026-09-24 前查询带幻影 deleted_at 过滤导致运行时
+/// 错误被 unwrap_or_default 吞没，providers 恒空、按钮永不渲染）
 async fn list_oauth_providers(pool: web::Data<sqlx::PgPool>) -> HttpResponse {
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT provider_type, name, COALESCE(authorization_endpoint, '') \
          FROM isahl_auth.identity_providers \
-         WHERE enabled AND deleted_at IS NULL ORDER BY id",
+         WHERE enabled ORDER BY id",
     )
     .fetch_all(pool.get_ref())
     .await

@@ -256,8 +256,8 @@ fn dmn_variable_usage(dmn: &Value) -> Vec<String> {
                 for c in cells {
                     if let Some(s) = c.as_str() {
                         if !s.trim().is_empty() {
-                            if let Ok(ast) = runtime_engine::parse_constraint_expression(s) {
-                                collect_field_refs(&ast, &mut out);
+                            if let Ok(vars) = runtime_engine::collect_variables(s) {
+                                out.extend(vars);
                             }
                         }
                     }
@@ -268,26 +268,6 @@ fn dmn_variable_usage(dmn: &Value) -> Vec<String> {
     out.sort();
     out.dedup();
     out
-}
-
-/// AST 级字段引用收集（字符串字面量不计——准确校验）
-fn collect_field_refs(expr: &runtime_engine::ConstraintExpr, out: &mut Vec<String>) {
-    use runtime_engine::ConstraintExpr;
-    match expr {
-        ConstraintExpr::FieldRef(name) => out.push(name.clone()),
-        ConstraintExpr::Binary(l, _, r) => {
-            collect_field_refs(l, out);
-            collect_field_refs(r, out);
-        }
-        ConstraintExpr::Unary(_, e) => collect_field_refs(e, out),
-        ConstraintExpr::And(l, r) | ConstraintExpr::Or(l, r) => {
-            collect_field_refs(l, out);
-            collect_field_refs(r, out);
-        }
-        ConstraintExpr::Not(e) => collect_field_refs(e, out),
-        ConstraintExpr::Call(_, args) => args.iter().for_each(|a| collect_field_refs(a, out)),
-        ConstraintExpr::Literal(_) => {}
-    }
 }
 
 fn invalid_dmn_response(errors: Vec<String>) -> DmnAssistResponse {
@@ -584,8 +564,8 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| e.contains("amount") && e.contains("不在变量清单")),
-            "未知字段必须 fail-closed: {errors:?}"
+                .any(|e| e.contains("规则 1") && e.contains("amount")),
+            "未知字段必须 fail-closed 且带规则坐标: {errors:?}"
         );
     }
 
@@ -594,7 +574,7 @@ mod tests {
         let raw = json!({
             "hitPolicy": "FIRST",
             "inputs": [{"name": "amount"}],
-            "rules": [{ "match": ["amount >> 100"], "output": "go-a" }]
+            "rules": [{ "match": ["amount == (("], "output": "go-a" }]
         });
         let (_, errors) =
             normalize_and_validate_dmn(&raw, &fields(&["amount"]), &fields(&["go-a"]), false);

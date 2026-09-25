@@ -1,6 +1,6 @@
 name: alioth-block
 description: "Block Capability 原型设计与前端实现 — 提取 → 原型 → 实现"
-version: "2.2"
+version: "2.3"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
@@ -53,4 +53,5 @@ tracks:
             args: ["scripts/check/check-prototype-render.ts", "--changed", "--fail"]
             timeout_sec: 300
 source:
-  content_sha256: c23e562f69710098952e8fc56db01c89efbb5dde0a2465efa319b8519c80819b
+  content_sha256: e2a6f8b3357718171d72f5b01777225088d2f5d48a3bf2dec994dc930b1ffae5
+  # 2026-09-24 重记：SKILL.md 经 ee2bf5b72a 禁令文本指针化，typed Track/Step/gate 内容未变（join-loop 收尾核验）

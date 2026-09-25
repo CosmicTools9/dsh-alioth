@@ -1,5 +1,6 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 use super::*;
 
@@ -153,25 +154,13 @@ pub(crate) async fn decide_access(
             .map(|a| a.o_name.clone())
             .collect::<Vec<_>>(),
     };
-    // deny-overrides 全局合并（fix-ngac-decision-consistency）：遍历全部 (UA, OA) 对——
-    // 任一对 Deny 即终态（prohibition 优先于一切 association，可早停）；Permit 记录后
-    // 继续（必须排除其余对上的 Deny）；全不适用为 NotApplicable。遍历顺序不再影响结果。
-    let mut saw_permit = false;
-    for user_attr in &user_attrs {
-        for obj_attr in &object_attrs {
-            match pdp.check_access(user_attr.id, obj_attr.id, action, &ctx) {
-                Decision::Deny => return Decision::Deny,
-                Decision::Permit => saw_permit = true,
-                Decision::NotApplicable => {}
-            }
-        }
-    }
-    if saw_permit || is_admin {
-        // admin 遍历后兜底：仅无匹配（NotApplicable）时豁免 Permit
-        Decision::Permit
-    } else {
-        Decision::NotApplicable
-    }
+    // 合并走唯一实现（`evaluate_merge_in`：deny-overrides + admin 遍历后兜底，
+    // NGAC_SPEC §2.5）——顺带消除逐对 ArcSwap 快照（旧实现每对 load 一次）；
+    let pg = pdp.policy_graph();
+    let ua_ids: Vec<i64> = user_attrs.iter().map(|a| a.id).collect();
+    let oa_ids: Vec<i64> = object_attrs.iter().map(|a| a.id).collect();
+    pdp.evaluate_merge_in(&pg, &ua_ids, &oa_ids, action, &ctx, is_admin)
+        .0
 }
 
 /// 可达性解释：参与决策的属性节点。
@@ -288,63 +277,63 @@ pub(crate) async fn explain_access(
             .map(|a| a.o_name.clone())
             .collect::<Vec<_>>(),
     };
+    // 合并走唯一实现（`evaluate_merge_in`，NGAC_SPEC §2.5）——明细含全部参与求值的
+    // (UA, OA) 对与规则轨迹（不早停），steps 由明细生成；outcome 与真实决策必然一致。
+    let is_admin = user_attrs.iter().any(|a| a.o_name == "admin");
+    let pg = pdp.policy_graph();
+    let ua_ids: Vec<i64> = user_attrs.iter().map(|a| a.id).collect();
+    let oa_ids: Vec<i64> = object_attrs.iter().map(|a| a.id).collect();
+    let (merged, outcomes) = pdp.evaluate_merge_in(&pg, &ua_ids, &oa_ids, action, &ctx, is_admin);
+    let ua_name: HashMap<i64, &str> = user_attrs
+        .iter()
+        .map(|a| (a.id, a.o_name.as_str()))
+        .collect();
+    let oa_by_id: HashMap<i64, &crate::ngac::pip::NgacObjectAttribute> =
+        object_attrs.iter().map(|a| (a.id, a)).collect();
     let mut steps: Vec<ExplainStep> = Vec::new();
-    // 与 decide_access 同一 deny-overrides 合并语义（任一 Deny → deny；否则任一
-    // Permit → permit）。explain 不早停——全对求值以记录完备 steps（解释"为什么"
-    // 需要呈现被 deny 盖住的 allow 边与被 allow 引出的全部候选）。
-    let mut saw_deny = false;
-    let mut saw_permit = false;
-    for ua in &user_attrs {
-        for oa in &object_attrs {
-            let (decision, rules) = pdp.evaluate_pair(ua.id, oa.id, action, &ctx);
-            for r in rules {
-                steps.push(ExplainStep {
-                    user_attribute_id: ua.id,
-                    user_attribute: ua.o_name.clone(),
-                    object_attribute_id: oa.id,
-                    object_attribute: oa.o_name.clone(),
-                    rule_type: r.rule_type,
-                    kind: r.kind,
-                    access_rights: r.access_rights,
-                    conditions: r.conditions,
-                    conditions_met: r.conditions_met,
-                    matched: r.matched,
-                });
-            }
-            match decision {
-                Decision::Deny => saw_deny = true,
-                Decision::Permit => saw_permit = true,
-                Decision::NotApplicable => {}
-            }
+    for pair in outcomes {
+        let Some(oa) = oa_by_id.get(&pair.oa_id) else {
+            continue;
+        };
+        for r in pair.rules {
+            steps.push(ExplainStep {
+                user_attribute_id: pair.ua_id,
+                user_attribute: ua_name
+                    .get(&pair.ua_id)
+                    .copied()
+                    .unwrap_or_default()
+                    .to_string(),
+                object_attribute_id: pair.oa_id,
+                object_attribute: oa.o_name.clone(),
+                rule_type: r.rule_type,
+                kind: r.kind,
+                access_rights: r.access_rights,
+                conditions: r.conditions,
+                conditions_met: r.conditions_met,
+                matched: r.matched,
+            });
         }
     }
-    let outcome = if saw_deny {
-        "deny"
-    } else if saw_permit {
-        "permit"
-    } else {
-        "not_applicable"
-    };
-    // Admin 治理豁免兜底（与 decide_access 同语义：仅 not_applicable 时放行，
-    // 显式 prohibition 对 admin 同样生效——deny-overrides 三方一致）。
-    // 放在遍历后：steps 完备记录（含 matched allow/deny 边）供解释。
-    let is_admin = user_attrs.iter().any(|a| a.o_name == "admin");
-    let (permitted, outcome, reason) = if outcome == "not_applicable" && is_admin {
-        (
+    // Admin 治理豁免 = 遍历后兜底（仅 NotApplicable 时放行）——已在 evaluate_merge_in 内
+    // 与 decide_access 同源；此处仅把决策映射为 explain 的 outcome/reason 文案。
+    let admin_exempted = merged == Decision::Permit && is_admin && !steps.iter().any(|s| s.matched);
+    let (permitted, outcome, reason) = match merged {
+        Decision::Permit if admin_exempted => (
             true,
             "permit",
             "Admin attribute exemption — full access".to_string(),
-        )
-    } else {
-        (
-            outcome == "permit",
-            outcome,
-            match outcome {
-                "permit" => "Access granted by matched association".to_string(),
-                "deny" => "Access denied by matched prohibition".to_string(),
-                _ => "No matching policy".to_string(),
-            },
-        )
+        ),
+        Decision::Permit => (
+            true,
+            "permit",
+            "Access granted by matched association".to_string(),
+        ),
+        Decision::Deny => (
+            false,
+            "deny",
+            "Access denied by matched prohibition".to_string(),
+        ),
+        Decision::NotApplicable => (false, "not_applicable", "No matching policy".to_string()),
     };
     ExplainResponse {
         permitted,

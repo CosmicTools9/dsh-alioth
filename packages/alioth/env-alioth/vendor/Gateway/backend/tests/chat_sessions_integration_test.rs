@@ -17,7 +17,7 @@ use alioth_gateway::api::chat_sessions::adapters::db_message::SqlxMessageAdapter
 use alioth_gateway::api::chat_sessions::adapters::db_session::SqlxSessionAdapter;
 use alioth_gateway::api::chat_sessions::memory_scope::load_subject_persona;
 use alioth_gateway::api::chat_sessions::ports::{
-    AgentDispatchPort, MessageStorePort, SessionStorePort,
+    AgentDispatchPort, MessageMetaFields, MessageStorePort, SessionStorePort,
 };
 use serde_json::json;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,7 +42,7 @@ async fn ensure_registry(pool: &sqlx::PgPool) {
             trigger_registry::AppContainer::Gateway,
         )
         .await;
-        // 与 Gateway/backend/migrations/019_chat_ai_meta.sql 同构（来源标注）
+        // 与参考库结构同构（来源标注：chat_message_meta 由参考库结构 / Backup 快照持有）
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS isahl_auth.chat_message_meta (
                 msg_id         bigint PRIMARY KEY REFERENCES isahl."zc_id_msgs-chat_ai"(id) ON DELETE CASCADE,
@@ -58,7 +58,7 @@ async fn ensure_registry(pool: &sqlx::PgPool) {
         .execute(pool)
         .await
         .expect("ensure chat_message_meta (019)");
-        // 与 Gateway/backend/migrations/021_chat_ai_tool_calls.sql 同构（来源标注）
+        // 与参考库结构同构（来源标注：chat_ai_tool_calls 由参考库结构 / Backup 快照持有）
         sqlx::query(
             r#"ALTER TABLE isahl_auth.chat_message_meta
                    ADD COLUMN IF NOT EXISTS tool_calls jsonb"#,
@@ -220,12 +220,13 @@ async fn meta_roundtrip_and_join_restore() {
         .save_message_meta(
             user_msg.id,
             session_id,
-            "",
-            None,
-            None,
-            Some(&json!([{ "type": "image", "mime": "image/png", "data_base64": "AAAA" }])),
-            Some(&json!([{ "key": "LAB-44", "title": "赔偿标准" }])),
-            None,
+            MessageMetaFields {
+                attachments: Some(
+                    &json!([{ "type": "image", "mime": "image/png", "data_base64": "AAAA" }]),
+                ),
+                knowledge_refs: Some(&json!([{ "key": "LAB-44", "title": "赔偿标准" }])),
+                ..Default::default()
+            },
         )
         .await
         .expect("save user meta");
@@ -240,14 +241,16 @@ async fn meta_roundtrip_and_join_restore() {
         .save_message_meta(
             assistant_msg.id,
             session_id,
-            "data_analysis",
-            Some(&json!({ "kind": "analysis", "score": 0.9 })),
-            Some(&json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 })),
-            None,
-            Some(&json!([{ "key": "LAB-44", "title": "赔偿标准" }])),
-            Some(&json!([
-                { "name": "query_sql", "arguments": { "query": "SELECT 1" }, "success": true, "output": "1" }
-            ])),
+            MessageMetaFields {
+                agent_code: "data_analysis",
+                structured: Some(&json!({ "kind": "analysis", "score": 0.9 })),
+                usage: Some(&json!({ "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 })),
+                knowledge_refs: Some(&json!([{ "key": "LAB-44", "title": "赔偿标准" }])),
+                tool_calls: Some(&json!([
+                    { "name": "query_sql", "arguments": { "query": "SELECT 1" }, "success": true, "output": "1" }
+                ])),
+                ..Default::default()
+            },
         )
         .await
         .expect("save assistant meta");
@@ -517,12 +520,11 @@ async fn session_delete_cascades_to_messages() {
         .save_message_meta(
             ai_msg.id,
             session_id,
-            "general",
-            None,
-            Some(&json!({ "total_tokens": 3 })),
-            None,
-            None,
-            None,
+            MessageMetaFields {
+                agent_code: "general",
+                usage: Some(&json!({ "total_tokens": 3 })),
+                ..Default::default()
+            },
         )
         .await
         .expect("save meta");

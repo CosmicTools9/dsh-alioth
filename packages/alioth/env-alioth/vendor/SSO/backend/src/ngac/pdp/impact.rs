@@ -128,8 +128,9 @@ fn descendant_closure_inclusive(attr_id: i64, ancestors: &HashMap<i64, Vec<i64>>
     out
 }
 
-/// deny-overrides 合并决策（与 decide.rs 同语义，fix-ngac-decision-consistency）：
-/// 任一对 Deny → Some(false)；否则任一对 Permit → Some(true)；全不适用 → None。
+/// deny-overrides 合并决策——合并走唯一实现 `Pdp::evaluate_merge_in`（NGAC_SPEC §2.5）。
+/// `is_admin` 由调用方按主体 UA 闭包名判定（边级预览无具体用户上下文时传 false——
+/// 与既有行为一致；admin 兜底只影响「无策略时也显示受影响」的少报面）。
 fn deny_overrides_in(
     pdp: &Pdp,
     pg: &PolicyGraph,
@@ -137,21 +138,15 @@ fn deny_overrides_in(
     oa_closure: &[i64],
     access_right: &str,
     ctx: &ConditionContext,
+    is_admin: bool,
 ) -> Option<bool> {
-    let mut saw_permit = false;
-    for &ua_c in ua_closure {
-        for &oa_c in oa_closure {
-            match pdp.evaluate_pair_in(pg, ua_c, oa_c, access_right, ctx).0 {
-                Decision::Deny => return Some(false),
-                Decision::Permit => saw_permit = true,
-                Decision::NotApplicable => {}
-            }
-        }
-    }
-    if saw_permit {
-        Some(true)
-    } else {
-        None
+    match pdp
+        .evaluate_merge_in(pg, ua_closure, oa_closure, access_right, ctx, is_admin)
+        .0
+    {
+        Decision::Deny => Some(false),
+        Decision::Permit => Some(true),
+        Decision::NotApplicable => None,
     }
 }
 
@@ -399,6 +394,13 @@ impl Pdp {
                 let ua_cl_after = ancestor_closure(subject, &ua_after);
                 let oa_cl_before = ancestor_closure(edge.oa_id, &oa_before);
                 let oa_cl_after = ancestor_closure(edge.oa_id, &oa_after);
+                // admin 遍历后兜底（NGAC_SPEC §2.5）：主体 UA 闭包含 admin UA ⇒
+                // 无策略也 Permit ⇒ 被删边对 admin 主体不构成影响（少报面消除）
+                let subject_is_admin = |closure: &[i64]| {
+                    closure
+                        .iter()
+                        .any(|id| ua_names.get(id).is_some_and(|n| n == "admin"))
+                };
 
                 for ar in &access_rights {
                     evaluations += 1;
@@ -406,10 +408,24 @@ impl Pdp {
                         truncated = true;
                         break 'outer;
                     }
-                    let before =
-                        deny_overrides_in(self, &pg_before, &ua_cl_before, &oa_cl_before, ar, &ctx);
-                    let after =
-                        deny_overrides_in(self, &pg_after, &ua_cl_after, &oa_cl_after, ar, &ctx);
+                    let before = deny_overrides_in(
+                        self,
+                        &pg_before,
+                        &ua_cl_before,
+                        &oa_cl_before,
+                        ar,
+                        &ctx,
+                        subject_is_admin(&ua_cl_before),
+                    );
+                    let after = deny_overrides_in(
+                        self,
+                        &pg_after,
+                        &ua_cl_after,
+                        &oa_cl_after,
+                        ar,
+                        &ctx,
+                        subject_is_admin(&ua_cl_after),
+                    );
                     if before == after {
                         continue;
                     }

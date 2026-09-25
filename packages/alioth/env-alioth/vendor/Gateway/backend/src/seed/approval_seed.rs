@@ -311,7 +311,7 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                 // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
                 // （审批叶表继承 even-approve 坐标 JC/FTA/↑_NA）
                 let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
-                    match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+                    match ontology_binding::resolve_conn(&mut tx, ("JC", "FTA", "↑_NA")).await {
                         Ok(v) => v,
                         Err(e) => {
                             let _ = tx.rollback().await;

@@ -4,7 +4,7 @@
 //! - H1 社交账号管理：`GET /auth/social/accounts` 与 `DELETE /auth/social/unlink/{providerId}`
 //! - H2.3 审计摄入：`POST /api/ngac/audit`
 //!
-//! 注：运行需已按 `migrations/` 预置的测试库（`user_oauth_accounts`、`identity_providers`、
+//! 注：运行需已按参考库结构预置的测试库（`user_oauth_accounts`、`identity_providers`、
 //! `audit_events` 等表存在）。无 DB 时可 `cargo test --no-run` 仅做编译校验。
 
 mod common;

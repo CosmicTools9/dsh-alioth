@@ -32,16 +32,9 @@ async fn refresh_rejected_after_session_revoked() {
     )
     .await;
 
-    // fixture：预验证邮箱 → register → login（token 绑 sid）
+    // fixture：register → login（token 绑 sid）
     let email = format!("logout-r-{}@test.local", uuid::Uuid::new_v4().simple());
     let username = format!("logout_r_{}", uuid::Uuid::new_v4().simple());
-    let _ = sqlx::query(
-        "INSERT INTO isahl_auth.auth_email_verifications (email, code, purpose, expires_at, verified) \
-         VALUES ($1, '000000', 'register', NOW() + INTERVAL '1 hour', TRUE)",
-    )
-    .bind(&email)
-    .execute(&pool)
-    .await;
     let register_req = test::TestRequest::post()
         .uri("/auth/register")
         .set_json(json!({ "email": email, "username": username, "password": "TestPass123!" }))
@@ -119,11 +112,6 @@ async fn refresh_rejected_after_session_revoked() {
         .bind(&email).execute(&pool).await.ok();
     sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)")
         .bind(&email).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1")
-        .bind(&email)
-        .execute(&pool)
-        .await
-        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
         .bind(&email)
         .execute(&pool)
@@ -134,7 +122,7 @@ async fn refresh_rejected_after_session_revoked() {
 // ── logout Bearer-only 撤销 ────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn logout_with_bearer_revokes_session_and_tokens() {
+async fn logout_with_bearer_revokes_session_only() {
     let pool = setup_pool().await;
     common::setup_schema(&pool).await.ok();
     let auth_state = common::test_auth_state();
@@ -146,16 +134,9 @@ async fn logout_with_bearer_revokes_session_and_tokens() {
     )
     .await;
 
-    // fixture：预验证邮箱 → register → login
+    // fixture：register → login
     let email = format!("logout-b-{}@test.local", uuid::Uuid::new_v4().simple());
     let username = format!("logout_b_{}", uuid::Uuid::new_v4().simple());
-    let _ = sqlx::query(
-        "INSERT INTO isahl_auth.auth_email_verifications (email, code, purpose, expires_at, verified) \
-         VALUES ($1, '000000', 'register', NOW() + INTERVAL '1 hour', TRUE)",
-    )
-    .bind(&email)
-    .execute(&pool)
-    .await;
     let register_req = test::TestRequest::post()
         .uri("/auth/register")
         .set_json(json!({ "email": email, "username": username, "password": "TestPass123!" }))
@@ -183,6 +164,12 @@ async fn logout_with_bearer_revokes_session_and_tokens() {
         .find(|c| c.name() == "access_token")
         .map(|c| c.value().to_string())
         .expect("access_token cookie");
+    let refresh_cookie = resp
+        .response()
+        .cookies()
+        .find(|c| c.name() == "refresh_token")
+        .map(|c| c.value().to_string())
+        .expect("refresh_token cookie");
 
     let sid: String = {
         let claims =
@@ -205,25 +192,30 @@ async fn logout_with_bearer_revokes_session_and_tokens() {
     let resp = test::call_service(&app, logout_req).await;
     assert_eq!(resp.status().as_u16(), 200, "logout should succeed");
 
-    // 会话已 revoke + refresh tokens 全吊销
-    let status: String =
-        sqlx::query_scalar("SELECT status FROM isahl_auth.sso_sessions WHERE session_token = $1")
-            .bind(&sid)
-            .fetch_one(&pool)
-            .await
-            .expect("session row");
-    assert_eq!(
-        status, "revoked",
-        "session must be revoked by Bearer logout"
-    );
-    let revoked_cnt: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM isahl_auth.refresh_tokens WHERE user_id = $1 AND revoked = FALSE",
+    // 本机登出语义（2026-09-22 用户裁决，见 `auth/login/handlers.rs::logout`）：
+    // Bearer-only 登出撤销**本会话**，MUST NOT 吊销该账号其他设备的 refresh token
+    //（否则一次登出让其余设备在 access 存活期内续期失败 → 并发 401）。
+    // ⇒ 不变量不是「全账号 refresh token 全吊销」，而是「本会话失效 ⇒ 该 refresh token 不可续期」。
+    let active_sessions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM isahl_auth.sso_sessions WHERE session_token = $1 AND status = 'active'",
     )
-    .bind(user_id)
+    .bind(&sid)
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert_eq!(revoked_cnt, 0, "all refresh tokens must be revoked");
+    assert_eq!(active_sessions, 0, "登出后本会话 MUST 失效（无 TTL 残留）");
+
+    // 行为面断言（可观察契约）：该 refresh token 已不可续期
+    let refresh_req = test::TestRequest::post()
+        .uri("/auth/refresh")
+        .insert_header(("Cookie", format!("refresh_token={}", refresh_cookie)))
+        .to_request();
+    let resp = test::call_service(&app, refresh_req).await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "登出后本会话 refresh MUST 被拒（会话活性硬门禁）"
+    );
 
     // 清理
     sqlx::query("DELETE FROM isahl_auth.sso_sessions WHERE user_id = $1")
@@ -233,11 +225,6 @@ async fn logout_with_bearer_revokes_session_and_tokens() {
         .ok();
     sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id = $1")
         .bind(user_id)
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1")
-        .bind(&email)
         .execute(&pool)
         .await
         .ok();

@@ -101,17 +101,15 @@ impl ConstraintEngine {
         result
     }
 
-    /// 验证单个约束
+    /// 验证单个约束（唯一引擎：Rhai 沙箱；真值语义见 `expression::is_truthy`）
     fn evaluate_constraint(
         config: &ConstraintConfig,
         variables: &HashMap<String, Value>,
     ) -> Result<bool, String> {
-        let value = crate::expression::ExpressionEvaluator::evaluate_expression(
-            &config.expression,
-            variables,
-        )
-        .map_err(|e| format!("Evaluation error: {}", e))?;
-        Ok(crate::expression::evaluator::ExpressionEvaluator::is_truthy(&value))
+        let value = crate::expression::RhaiExpressionEngine::new()
+            .evaluate(&config.expression, variables)
+            .map_err(|e| format!("Evaluation error: {e}"))?;
+        Ok(crate::expression::is_truthy(&value))
     }
 }
 

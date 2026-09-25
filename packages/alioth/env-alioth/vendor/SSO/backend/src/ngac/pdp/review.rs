@@ -7,7 +7,7 @@
 //!   `Pdp::evaluate_pair`：任一对 Deny → `denied`，否则任一对 Permit → `allowed`，
 //!   遍历顺序（UA 外层、OA 内层、集合内按 id 升序）不影响结果。
 //!   按 action 分区（每 action 恰入一集），与 explain 逐 action 结论严格一致；
-//!   conditions 用 `ConditionContext::default()` 求值。
+//!   conditions 按 v2 上下文（用户有效 UA 名 + OA 闭包名）真实求值（add-ngac-condition-v2）。
 //! - 用户视图：UA 闭包取自 `PostgresPip::get_all_user_attributes_with_inheritance`
 //!   （与运行时决策同一指派源）；`assignments` 仅列直接指派（未删、未过期），
 //!   `ancestor_chain` 自自身起沿祖先闭包展开。
@@ -170,8 +170,8 @@ static REVIEW_CACHE: LazyLock<Mutex<HashMap<String, CachedReviewEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// UA 闭包求值：对单个 access right 做 deny-overrides 全扫描（与 decide_access
-/// 同语义）：任一对 Deny → Some(false)；否则任一对 Permit → Some(true)；
-/// 全不适用 → None。
+/// 同语义）——合并走唯一实现 `Pdp::evaluate_merge_in`（NGAC_SPEC §2.5），含
+/// admin 遍历后兜底（is_admin 由有效 UA 名判定）。
 fn deny_overrides_decision(
     pdp: &Pdp,
     ua_closure: &[i64],
@@ -179,20 +179,15 @@ fn deny_overrides_decision(
     access_right: &str,
     ctx: &ConditionContext,
 ) -> Option<bool> {
-    let mut saw_permit = false;
-    for &ua_c in ua_closure {
-        for &oa_c in oa_closure {
-            match pdp.evaluate_pair(ua_c, oa_c, access_right, ctx).0 {
-                Decision::Deny => return Some(false),
-                Decision::Permit => saw_permit = true,
-                Decision::NotApplicable => {}
-            }
-        }
-    }
-    if saw_permit {
-        Some(true)
-    } else {
-        None
+    let is_admin = ctx.user_ua_names.iter().any(|n| n == "admin");
+    let pg = pdp.policy_graph();
+    match pdp
+        .evaluate_merge_in(&pg, ua_closure, oa_closure, access_right, ctx, is_admin)
+        .0
+    {
+        Decision::Deny => Some(false),
+        Decision::Permit => Some(true),
+        Decision::NotApplicable => None,
     }
 }
 

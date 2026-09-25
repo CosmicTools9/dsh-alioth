@@ -54,6 +54,9 @@ fn is_allowed_dict_table(table: &str) -> bool {
         // 类目字典（cate-*）与标签字典同样可维护：/dict/tables 左栏已列出，
         // 若不在此白名单，点击条目列表即 400「非字典表」。
         || table.starts_with("zc_id_cate-")
+        // 共识族字典（cons-*：容器类目=车型 / 职能类目 / 要素类目 / 时区 / 政体 …）同款族前缀放行——
+        // 原先只显式列 3 张（goods-tags / timezone-cate / polity-cate），车型字典等漏在清单外
+        || table.starts_with("zc_id_cons-")
         || table.starts_with("zc_id_unit-")
         || table.starts_with("zc_id_tags-")
 }
@@ -107,7 +110,7 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'isahl'
         WHERE c.relkind = 'r'
           AND (c.relname LIKE 'zc_id_cate-%' OR c.relname LIKE 'zc_id_tags-%'
-               OR c.relname LIKE 'zc_id_unit-%'
+               OR c.relname LIKE 'zc_id_unit-%' OR c.relname LIKE 'zc_id_cons-%'
                OR c.relname IN ('zc_id_category', 'zc_id_tags', 'zc_id_cons-goods-tags', 'zc_id_unit'))
         ORDER BY c.relname
         "#,
@@ -144,10 +147,10 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
     // 静态短名表 = **回退**（仅服务无 meta 表的 ns 壳库）。MUST NOT 当作第二真相源：
     // 表在 meta 中有行时一律以 meta 的 name 为准（历史漂移：`zc_id_tags-r-type`
     // 此处曾写「关系类型」，模型中心实为「标签-容器分类」）。
-    // cate 45 + tags 20 + unit 32 + 基表（zc_id_category / zc_id_cons-goods-tags / zc_id_tags / zc_id_unit）。
+    // cate 45 + tags 20 + unit 32 + cons 15 + 基表（zc_id_category / zc_id_cons-goods-tags / zc_id_tags / zc_id_unit）。
     fn display_name(table: &str) -> &str {
         // 值口径 = 模型语义核：`isahl_meta.meta_collections.name` 去掉首段族前缀
-        //（类目- / 标签- / 单位- / 实现-），保留 `/通用` `/自持` 后缀。
+        //（类目- / 标签- / 单位- / 实现- / 共识-），保留 `/通用` `/自持` 后缀。
         // 唯一例外 `zc_id_tags-post_view`：模型名「标签-岗位视角」尚未随 2026-09-14
         //「关系视角」裁决更新（归模型中心人工通道），此处保留裁决值。
         match table {
@@ -207,6 +210,22 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
             "zc_id_cate-wh-title" => "工时科目",
             "zc_id_category" => "类目",
             "zc_id_cons-goods-tags" => "商品货描",
+            // 共识族（cons-*）回退短名 = 模型集合名去族前缀（共识-／类目-／标签-），
+            // 与 `isahl_meta.meta_collections.name` 同源；车型字典（容器类目）在本族内
+            "zc_id_cons-consanguinity-cate" => "亲属/血缘类目",
+            "zc_id_cons-cron-cate" => "周期类目",
+            "zc_id_cons-date-tags" => "日期/时间-标签",
+            "zc_id_cons-ethnic_group-cate" => "民族",
+            "zc_id_cons-factor-cate" => "要素类目",
+            "zc_id_cons-function-cate" => "职能类目",
+            "zc_id_cons-industry-cate" => "行业类目",
+            "zc_id_cons-license-cate" => "执照类目",
+            "zc_id_cons-packing-cate" => "包装类目",
+            "zc_id_cons-polity-cate" => "政体-类目",
+            "zc_id_cons-r-type-cate" => "容器类目",
+            "zc_id_cons-timezone-cate" => "时区-类目",
+            "zc_id_cons-ts_concomitant-tags" => "时空伴随-标签",
+            "zc_id_cons-zone-tags" => "地理分区-标签",
             "zc_id_tags" => "标签",
             "zc_id_tags-baseline" => "基线",
             "zc_id_tags-batch" => "批次",
@@ -268,6 +287,8 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
         let group = if table == "zc_id_category"
             || table.starts_with("zc_id_cate-")
             || table == "zc_id_cons-goods-tags"
+            // 共识族：命名后缀即族属（`-cate` → 类目、`-tags` → 标签），其余值沿用下支
+            || (table.starts_with("zc_id_cons-") && !table.ends_with("-tags"))
         {
             "cate"
         } else if table == "zc_id_unit" || table.starts_with("zc_id_unit-") {
@@ -476,7 +497,12 @@ pub async fn create_dict_entry(
     let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
     for c in &cols {
         let v = data.get(*c).cloned().unwrap_or(Value::Null);
-        let bound = crud::bind_json::coerce(&v, col_types.get(*c).map(String::as_str));
+        let bound = crud::bind_json::coerce(
+            &v,
+            col_types
+                .get(*c)
+                .map(crud::column_types::ColumnMeta::data_type),
+        );
         q = crud::bind_json::apply_query_as(q, bound);
     }
     let (new_id,) = q
@@ -542,7 +568,12 @@ pub async fn update_dict_entry(
     let col_types = crud::column_types::resolve(pool.get_ref(), &table).await;
     for c in &cols {
         let v = data.get(*c).cloned().unwrap_or(Value::Null);
-        let bound = crud::bind_json::coerce(&v, col_types.get(*c).map(String::as_str));
+        let bound = crud::bind_json::coerce(
+            &v,
+            col_types
+                .get(*c)
+                .map(crud::column_types::ColumnMeta::data_type),
+        );
         q = crud::bind_json::apply_query_as(q, bound);
     }
     q = q.bind(user_id).bind(id);

@@ -145,7 +145,9 @@ async fn register_core(
         }));
     };
 
-    // email 若提供：格式 + 全局唯一性校验（可选通道，非唯一基点）
+    // email 若提供：仅校验格式（可选联系方式，非身份门禁）。
+    // allow-duplicate-email-accounts：MUST NOT 校验全局唯一性——同一 email MAY 属于多个账号，
+    // 邮箱冲突 MUST NOT 阻断注册（注册的唯一身份门禁 = username 唯一性，见下）。
     if let Some(e) = &email {
         let at_pos = e.find('@');
         let dot_pos = e.rfind('.');
@@ -154,24 +156,6 @@ async fn register_core(
         if !valid {
             return Ok(HttpResponse::BadRequest().json(AuthError {
                 error: "Invalid email format".to_string(),
-            }));
-        }
-        let existing_email: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(\
-                (SELECT 1 FROM isahl_auth.auth_users WHERE email = $1), \
-                (SELECT 1 FROM isahl_auth.auth_user_emails WHERE email = $1 AND deleted_at IS NULL), \
-                0)::bigint",
-        )
-        .bind(e)
-        .fetch_one(pool.get_ref())
-        .await
-        .map_err(|err| {
-            log::error!("Database error checking email: {}", err);
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
-        if existing_email != 0 {
-            return Ok(HttpResponse::Conflict().json(AuthError {
-                error: "User with this email already exists".to_string(),
             }));
         }
     }
@@ -208,37 +192,6 @@ async fn register_core(
             error: e.to_string(),
         }));
     }
-
-    // P1 邮箱所有权验证（fix-sso-auth-gaps）：请求提供 email 时，注册前置要求该邮箱
-    // 已完成 send-code + verify-code（purpose='register' 且 verified=TRUE 且未过期）。
-    // 置于格式/唯一/密码策略校验之后（先报告低级输入错误）；通过后验证记录在注册
-    // 事务内被置过期——单次注册有效，防重放。
-    let email_verification_id: Option<i64> = if let Some(e) = &email {
-        let vid: Option<i64> = sqlx::query_scalar(
-            r#"SELECT id FROM isahl_auth.auth_email_verifications
-               WHERE email = $1 AND purpose = 'register' AND verified = TRUE AND expires_at > NOW()
-               ORDER BY created_at DESC
-               LIMIT 1"#,
-        )
-        .bind(e)
-        .fetch_optional(pool.get_ref())
-        .await
-        .map_err(|err| {
-            log::error!("Database error checking email verification: {}", err);
-            actix_web::error::ErrorInternalServerError("Database error")
-        })?;
-        match vid {
-            Some(v) => Some(v),
-            None => {
-                return Ok(HttpResponse::BadRequest().json(AuthError {
-                    error: "EMAIL_NOT_VERIFIED: this email must be verified via email code before registration"
-                        .to_string(),
-                }));
-            }
-        }
-    } else {
-        None
-    };
 
     // Hash password (offload CPU-intensive Argon2 to blocking pool)
     let password_hash = hash_password_async(password.to_string())
@@ -312,21 +265,6 @@ async fn register_core(
             actix_web::error::ErrorInternalServerError("Failed to create user")
         })?
     };
-
-    // P1 邮箱验证记录消耗（fix-sso-auth-gaps）：注册行落库成功后同事务置过期，
-    // 验证记录单次有效；失败回滚则不消耗（用户可重试注册）。
-    if let Some(vid) = email_verification_id {
-        sqlx::query(
-            "UPDATE isahl_auth.auth_email_verifications SET expires_at = NOW(), updated_at = NOW() WHERE id = $1",
-        )
-        .bind(vid)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            log::error!("Database error consuming email verification: {}", e);
-            actix_web::error::ErrorInternalServerError("Failed to create user")
-        })?;
-    }
 
     // 审批事件（zc_id_even-approve/authorization 叶表）：comments 仅人类可读文本摘要
     // （comments-text-semantics 规约：写侧 MUST NOT JSON）；申请人归属经
@@ -629,10 +567,8 @@ async fn register_core(
     // Create session using BIGINT user_id
     let session_manager = SessionManager::new(pool.get_ref().clone());
     let refresh_token_hash = Some(format!("{:x}", md5::compute(refresh_token.as_bytes())));
-    let ip_address = req
-        .connection_info()
-        .realip_remote_addr()
-        .map(|s| s.to_string());
+    // 客户端 IP（可信跳才采信转发头；见 `auth::session::client_ip` 文档）
+    let ip_address = crate::auth::session::client_ip(&req);
     let user_agent = req
         .headers()
         .get("user-agent")
@@ -662,16 +598,6 @@ async fn register_core(
              VALUES ($1, $2, TRUE, FALSE, NOW(), NOW()) ON CONFLICT DO NOTHING",
         )
         .bind(user_id)
-        .bind(e)
-        .execute(pool.get_ref())
-        .await;
-    }
-
-    // Clean up used email verification record（若有；未验证门禁已移除，此处仅清理残留）
-    if let Some(e) = &email {
-        let _ = sqlx::query(
-            "DELETE FROM isahl_auth.auth_email_verifications WHERE email = $1 AND purpose = 'register'",
-        )
         .bind(e)
         .execute(pool.get_ref())
         .await;

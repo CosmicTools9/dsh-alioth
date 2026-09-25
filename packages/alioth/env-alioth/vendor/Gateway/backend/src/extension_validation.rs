@@ -70,10 +70,11 @@ pub fn known_entity_face_from_app_dir(app_dir: &Path) -> KnownEntityFace {
     face
 }
 
-/// 校验单个已加载扩展的实体/字段引用并逐条 ERROR 日志；返回违规条数（0 = 全部通过）。
+/// 校验单个已加载扩展的实体/字段引用**与表达式**并逐条 ERROR 日志；返回违规条数（0 = 全部通过）。
 ///
-/// 违规文本由 `validate_entities` 生成（含 `app_code` 与明细）；本函数只负责**可见性**：
-/// 逐条 ERROR + 不改变任何加载状态。
+/// 违规文本由 `validate_entities`（实体/字段引用）与 `collect_expression_violations`
+/// （表达式：语法 + 自由函数白名单，引擎单一实现）生成；本函数只负责**可见性**：
+/// 逐条 ERROR + 不改变任何加载状态（运行期可用性优先，阻断职责归 compose-time / repo 门禁）。
 pub fn validate_and_log(extension: &AppLogicExtension, known: &KnownEntityFace) -> usize {
     // 空字段集 = 字段级知识不可得：以声明自身字段填充使该实体字段级退化为恒真
     // （不把未知当缺失），实体级判定保持有效——与 app-agent 旧形态条目同一降级语义。
@@ -91,7 +92,18 @@ pub fn validate_and_log(extension: &AppLogicExtension, known: &KnownEntityFace) 
     for violation in &violations {
         common::telemetry::error!("[extension-entities] {}", violation);
     }
-    violations.len()
+    // 表达式面（加载期唯一实现 = runtime-engine `collect_expression_violations`）：
+    // 退役文法 / 未注册自由函数在此逐条 ERROR 可见（不阻断加载，同实体面策略）。
+    let expr_violations = runtime_engine::collect_expression_violations(extension);
+    for violation in &expr_violations {
+        common::telemetry::error!("[extension-expressions] {}", violation);
+    }
+    // 非致命提示（裸标识符 guard 等）：启动期 WARN 可见，不阻断、不计入违规数
+    // （覆盖「无 flow-plan ⇒ verify-extensions 整体跳过」的 app —— 加载期是其唯一机械可见面）。
+    for advisory in runtime_engine::collect_expression_advisories(extension) {
+        common::telemetry::warn!("[extension-advisory] {}", advisory);
+    }
+    violations.len() + expr_violations.len()
 }
 
 // ── service.json 最小反序列化面（只取实体/字段声明，其余字段忽略） ──────────────
@@ -136,8 +148,10 @@ mod tests {
     /// 捕获 logger：断言「违规确实以 ERROR 级别发出」，而非只断言返回值。
     struct CaptureLogger;
 
-    static RECORDS: LazyLock<Arc<Mutex<Vec<(log::Level, String)>>>> =
-        LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
+    /// 捕获到的日志行（级别 + 文本）。
+    type RecordedLogs = Arc<Mutex<Vec<(log::Level, String)>>>;
+
+    static RECORDS: LazyLock<RecordedLogs> = LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
     static LOGGER: CaptureLogger = CaptureLogger;
 
     impl log::Log for CaptureLogger {
@@ -156,7 +170,7 @@ mod tests {
     }
 
     /// 安装捕获 logger；已有 logger 时返回 None（此时调用方退化为断言返回值）。
-    fn capture_errors() -> Option<&'static Arc<Mutex<Vec<(log::Level, String)>>>> {
+    fn capture_errors() -> Option<&'static RecordedLogs> {
         RECORDS.lock().expect("records mutex").clear();
         if log::set_logger(&LOGGER).is_err() {
             return None;

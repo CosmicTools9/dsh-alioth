@@ -131,6 +131,7 @@ pub fn flag_for_status_code(code: &str) -> &'static str {
         "voided",
         "void",
         "expired",
+        "invalidated",
         "revoked",
         "withdrawn",
         "retired",
@@ -243,6 +244,8 @@ mod tests {
             "PTC-TERMINATED",
             "CERT-REVOKED",
             "sign-released",
+            "invalidated",
+            "CT-INVALIDATED",
         ] {
             assert_eq!(flag_for_status_code(c), "end", "期望 end: {c}");
         }

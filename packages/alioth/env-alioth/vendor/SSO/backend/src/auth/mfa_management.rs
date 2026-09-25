@@ -325,7 +325,7 @@ pub async fn mfa_status(
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/auth/me/mfa")
+        web::scope("/me/mfa")
             .route("/init", web::post().to(mfa_init))
             .route("/enable", web::post().to(mfa_enable))
             .route("/disable", web::post().to(mfa_disable))

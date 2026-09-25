@@ -66,6 +66,26 @@ pub fn decrypt(ciphertext_b64: &str) -> Result<String> {
     String::from_utf8(plaintext).context("Invalid UTF-8 after decryption")
 }
 
+/// 解析带 `enc:` 前缀的凭证值：`enc:` ⇒ AES-256-GCM 解密；其余形态原样返回（兼容明文写入路径）。
+///
+/// 单一实现，供文件存储 / 邮箱 / LLM 等所有「DB 内 `enc_fields` 凭证」消费方共用。
+/// 解密失败时 warn 并回退原值（不 panic）：调用方拿到的仍是原字符串（等价于未接解密器的旧行为），
+/// 但日志点名根因（`SYSTEM_CONFIG_ENC_KEY` 未配置或与录入密钥不一致），避免静默把密文当口令发送。
+pub fn decrypt_prefixed(value: &str) -> String {
+    match value.strip_prefix("enc:") {
+        Some(payload) => match decrypt(payload) {
+            Ok(plain) => plain,
+            Err(e) => {
+                log::warn!(
+                    "凭证解密失败（回退原值；检查 SYSTEM_CONFIG_ENC_KEY 是否配置且与录入时的密钥一致）: {e}"
+                );
+                value.to_string()
+            }
+        },
+        None => value.to_string(),
+    }
+}
+
 /// 对 JSON 对象中的指定 key 进行递归加密
 pub fn encrypt_json_fields(value: &mut serde_json::Value, keys: &[&str]) -> Result<()> {
     if let Some(obj) = value.as_object_mut() {
@@ -116,6 +136,24 @@ mod tests {
         let encrypted = encrypt(plain).unwrap();
         let decrypted = decrypt(&encrypted).unwrap();
         assert_eq!(plain, decrypted);
+    }
+
+    #[test]
+    fn test_decrypt_prefixed() {
+        let key = generate_key();
+        init_encryption(&key).unwrap();
+
+        // 明文（种子写入路径）：原样返回
+        assert_eq!(decrypt_prefixed("plain-password"), "plain-password");
+
+        // `enc:` 密文（system-config 写入路径）：解出原文
+        let plain = "smtp-auth-code-42";
+        let prefixed = format!("enc:{}", encrypt(plain).unwrap());
+        assert_eq!(decrypt_prefixed(&prefixed), plain);
+
+        // 坏密文：回退原值（不 panic——调用方据此走认证失败而非静默成功）
+        let broken = "enc:not-valid-base64!!";
+        assert_eq!(decrypt_prefixed(broken), broken);
     }
 
     #[test]

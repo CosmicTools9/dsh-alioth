@@ -1,9 +1,8 @@
-//! Namespace schema synchronization and compatibility migration
+//! Namespace schema synchronization
 //!
 //! When `NAMESPACE` env var is set at Gateway startup, this module ensures the
-//! namespace-specific database has the latest `isahl`, `isahl_auth`, `isahl_audit`
-//! schemas synced from a reference database, plus applies any pending migration
-//! files for schema upgrades.
+//! namespace-specific database has the `isahl`, `isahl_auth`, `isahl_audit`
+//! schemas synced from a reference database (structure source of truth).
 //!
 //! # Flow
 //!
@@ -11,23 +10,18 @@
 //! 2. Connect to reference database (`REFERENCE_DATABASE_URL` or default dev DB)
 //! 3. Check if namespace DB already has `isahl.zc_id_lifecycle`
 //!    - **No** → full schema sync via `pg_dump --schema-only` from reference
-//! 4. Track applied migrations in `isahl_meta._namespace_schema_migrations` meta table
-//!    (namespace DBs don't have `isahl_meta` — that's management-only; tracking table
-//!    lives in the reference DB, exempted from the Gateway-isahl_meta ban in SECURITY_SPEC §6)
-//! 5. Skip migration files referencing `isahl_meta` — those are Meta-level changes
+//!    - **Yes** → incremental column/table sync
+//!
+//! 结构真相源 = DB（参考库）；应用侧不交付迁移文件（见 `db-ddl-delivery` 规约）。
 //! # Environment
 //!
 //! - `NAMESPACE` — current namespace (activates sync when set)
 //! - `REFERENCE_DATABASE_URL` — source database for schema (default: derive from
 //!   `DATABASE_URL` with db name changed to `aliothstudio_dev`)
-//! - `MIGRATIONS_DIR` — custom migrations directory (default: `migrations/` relative
-//!   to `CARGO_MANIFEST_DIR`)
 
 use sqlx::{AssertSqlSafe, PgPool};
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 
 // ── 增量同步数据结构 ──
@@ -59,64 +53,6 @@ fn normalize_type(typ: &str) -> &str {
 
 /// Schemas to sync from reference database.
 const SYNC_SCHEMAS: &[&str] = &["isahl", "isahl_auth", "isahl_audit"];
-
-/// Meta table tracking which migration files have been applied.
-/// Lives in `isahl_meta` schema of the reference database (aliothstudio_dev),
-/// because namespace databases don't have isahl_meta — tracking goes to reference DB.
-/// 迁移记账表的限定名（唯一字面量来源）：三条静态 SQL 经 `migrations_table!()` 组合，
-/// 编译期同源 ⇒ 改一处即全改，无法漂移。
-macro_rules! migrations_table {
-    () => {
-        "isahl_meta._namespace_schema_migrations"
-    };
-}
-
-/// 迁移记账表的静态 SQL（表名经 `migrations_table!()` 组合 ⇒ 编译期同源，无 `format!` 插值）。
-const SQL_COUNT_APPLIED: &str = concat!(
-    "SELECT COUNT(*) FROM ",
-    migrations_table!(),
-    " WHERE filename = \u{24}1"
-);
-
-/// 见 [`SQL_COUNT_APPLIED`]（同名表的 INSERT 形态）。
-const SQL_INSERT_APPLIED: &str = concat!(
-    "INSERT INTO ",
-    migrations_table!(),
-    " (filename) VALUES (\u{24}1) ON CONFLICT (filename) DO NOTHING"
-);
-
-/// 记账表建表语句（DDL 形态；表名经 `migrations_table!()` 组合，与之同源）。
-const SQL_CREATE_MIGRATIONS_TABLE: &str = concat!(
-    "CREATE TABLE IF NOT EXISTS ",
-    migrations_table!(),
-    " (id SERIAL PRIMARY KEY, ",
-    "filename VARCHAR(255) NOT NULL UNIQUE, ",
-    "applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), ",
-    "checksum VARCHAR(64))"
-);
-
-/// 三条静态 SQL 的目标表 MUST 全等参考库记账表（期望值侧独立书写：误改目标表即失败）。
-#[cfg(test)]
-mod static_sql_tests {
-    use super::*;
-
-    /// 期望值侧：记账表限定名（三条静态 SQL 的目标表 MUST 全等此值）。
-    const EXPECTED_MIGRATIONS_TABLE: &str = "isahl_meta._namespace_schema_migrations";
-
-    #[test]
-    fn migration_sql_constants_target_reference_tracking_table() {
-        for (form, sql) in [
-            ("COUNT", SQL_COUNT_APPLIED),
-            ("INSERT", SQL_INSERT_APPLIED),
-            ("CREATE", SQL_CREATE_MIGRATIONS_TABLE),
-        ] {
-            assert!(
-                sql.contains(EXPECTED_MIGRATIONS_TABLE),
-                "{form} 目标表漂移: {sql}"
-            );
-        }
-    }
-}
 
 /// Run schema sync + migration when `NAMESPACE` is set.
 ///
@@ -167,10 +103,6 @@ pub async fn sync_namespace_schema(pool: &PgPool) {
         } else {
             common::telemetry::info!("release mode: skipping incremental schema sync");
         }
-
-        // Step 2: 运行已有迁移文件（release 也会执行）
-        common::telemetry::info!("Running pending migration files...");
-        run_pending_migrations(pool, &reference_pool).await;
     } else {
         common::telemetry::info!("Namespace database is empty, performing full schema sync...");
         if let Err(e) = full_schema_sync(pool, &reference_pool).await {
@@ -410,7 +342,7 @@ async fn incremental_schema_sync(pool: &PgPool, reference_pool: &PgPool, _ns_url
 /// the `dev-gateway.sh` script.
 async fn full_schema_sync(
     pool: &PgPool,
-    reference_pool: &PgPool,
+    _reference_pool: &PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let _target_url = env::var("DATABASE_URL").unwrap_or_else(|_| {
         common::telemetry::warn!("DATABASE_URL not set, cannot determine target for psql");
@@ -442,8 +374,6 @@ async fn full_schema_sync(
             "pg_dump not found on PATH. Skipping full schema sync. \
                  Ensure the namespace database has the required schemas or install pg_dump."
         );
-        ensure_migrations_table(reference_pool).await;
-        mark_initial_sync(reference_pool).await;
         return Ok(());
     }
 
@@ -504,233 +434,7 @@ async fn full_schema_sync(
         }
     }
 
-    // Ensure the migrations meta table exists
-    ensure_migrations_table(reference_pool).await;
-
-    // Mark all existing migration files as applied (or just the initial sync marker)
-    mark_initial_sync(reference_pool).await;
-
     Ok(())
-}
-/// Ensure the `_namespace_schema_migrations` meta table exists in the reference DB's isahl_meta.
-async fn ensure_migrations_table(reference_pool: &PgPool) {
-    if let Err(e) = sqlx::query(AssertSqlSafe(SQL_CREATE_MIGRATIONS_TABLE))
-        .execute(reference_pool)
-        .await
-    {
-        common::telemetry::warn!(
-            "Failed to create migrations meta table in reference DB: {}",
-            e
-        );
-    }
-}
-
-/// After initial sync, mark all existing migration files as applied
-/// so they don't re-run. Uses reference DB's isahl_meta tracking table.
-async fn mark_initial_sync(reference_pool: &PgPool) {
-    let migration_files = discover_migration_files();
-    for filename in &migration_files {
-        let result = sqlx::query_scalar::<_, i64>(SQL_COUNT_APPLIED)
-            .bind(filename)
-            .fetch_one(reference_pool)
-            .await;
-
-        match result {
-            Ok(count) if count > 0 => {}
-            _ => {
-                let _ = sqlx::query(SQL_INSERT_APPLIED)
-                    .bind(filename)
-                    .execute(reference_pool)
-                    .await;
-            }
-        }
-    }
-}
-
-/// Run pending migration files that haven't been applied yet.
-///
-/// Migration SQL executes against the namespace database (`pool`),
-/// but tracking (which migrations have been applied) is recorded
-/// in the reference database's `isahl_meta` schema (`reference_pool`).
-async fn run_pending_migrations(pool: &PgPool, reference_pool: &PgPool) {
-    ensure_migrations_table(reference_pool).await;
-
-    let migration_files = discover_migration_files();
-    let pending = get_pending_migrations(reference_pool, &migration_files).await;
-
-    if pending.is_empty() {
-        common::telemetry::info!("No pending migrations to apply");
-        return;
-    }
-
-    common::telemetry::info!("Found {} pending migration(s) to apply", pending.len());
-
-    for filename in &pending {
-        common::telemetry::info!("Applying migration: {}", filename);
-        let path = find_migration_file(filename);
-        let path = match path {
-            Some(p) => p,
-            None => {
-                common::telemetry::warn!("Migration file not found on disk: {}", filename);
-                continue;
-            }
-        };
-
-        let sql = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(e) => {
-                common::telemetry::warn!("Failed to read migration file '{}': {}", filename, e);
-                continue;
-            }
-        };
-
-        // Skip migrations that reference isahl_meta schema — those are Meta-level
-        // schema changes that belong in the reference database, not namespace DBs.
-        if sql.contains("isahl_meta") {
-            common::telemetry::info!(
-                "Skipping migration '{}' (references isahl_meta, not applicable to namespace DB)",
-                filename
-            );
-            // Record as skipped in reference DB's tracking table
-            let _ = sqlx::query(SQL_INSERT_APPLIED)
-                .bind(filename)
-                .execute(reference_pool)
-                .await;
-            continue;
-        }
-
-        // Execute migration SQL against namespace DB in a transaction
-        // 用 raw_sql 整文件执行：PostgreSQL 原生解析注释/分号/引号，避免 split(';')
-        // 把注释内分号（如 '-- ...; DTO_DESIGN_SPEC §1.1'）误判为语句边界，
-        // 导致注释残段被当作 SQL 执行（012_fix_cont_lk_health_bigint 事故）。
-        let migrate_result: Result<(), sqlx::Error> = async {
-            let mut tx = pool.begin().await?;
-            sqlx::raw_sql(AssertSqlSafe(sql.as_str()))
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await
-        }
-        .await;
-
-        match migrate_result {
-            Ok(_) => {
-                // Migration succeeded — record as applied in reference DB's tracking table
-                let _ = sqlx::query(SQL_INSERT_APPLIED)
-                    .bind(filename)
-                    .execute(reference_pool)
-                    .await;
-                common::telemetry::info!("Migration '{}' applied successfully", filename);
-            }
-            Err(e) => {
-                common::telemetry::error!(
-                    "Migration '{}' failed: {}. Stopping further migrations.",
-                    filename,
-                    e
-                );
-                break;
-            }
-        }
-    }
-}
-
-/// Discover migration SQL files sorted by name.
-///
-/// Scans `MIGRATIONS_DIR` env var or default `migrations/` directory.
-fn discover_migration_files() -> Vec<String> {
-    let dir = resolve_migrations_dir();
-    let dir = match dir {
-        Some(d) => d,
-        None => return vec![],
-    };
-    let mut files: Vec<String> = match fs::read_dir(&dir) {
-        Ok(entries) => entries
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                let path = entry.path();
-                if path.extension()? != "sql" {
-                    return None;
-                }
-                // Skip deprecated migrations (files with "废弃声明" in first line)
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if content
-                        .lines()
-                        .next()
-                        .is_some_and(|l| l.contains("废弃声明"))
-                    {
-                        return None;
-                    }
-                }
-                Some(path.file_name()?.to_string_lossy().to_string())
-            })
-            .collect(),
-        Err(e) => {
-            common::telemetry::warn!("Cannot read migrations directory '{:?}': {}", dir, e);
-            return vec![];
-        }
-    };
-    files.sort();
-    files
-}
-
-/// Get migration files not yet applied.
-/// Queries the tracking table in the reference DB's isahl_meta.
-async fn get_pending_migrations(reference_pool: &PgPool, all_files: &[String]) -> Vec<String> {
-    let mut pending = Vec::new();
-    for filename in all_files {
-        let applied: Result<i64, _> = sqlx::query_scalar(SQL_COUNT_APPLIED)
-            .bind(filename)
-            .fetch_one(reference_pool)
-            .await;
-
-        match applied {
-            Ok(count) if count > 0 => {}
-            _ => pending.push(filename.clone()),
-        }
-    }
-    pending
-}
-
-/// Resolve the migrations directory path.
-fn resolve_migrations_dir() -> Option<PathBuf> {
-    // Try MIGRATIONS_DIR env var first
-    if let Ok(dir) = env::var("MIGRATIONS_DIR") {
-        let p = PathBuf::from(&dir);
-        if p.is_dir() {
-            return Some(p);
-        }
-        common::telemetry::warn!(
-            "MIGRATIONS_DIR '{}' is not a valid directory, falling back to default",
-            dir
-        );
-    }
-
-    // Default: CARGO_MANIFEST_DIR/migrations/ (compile-time embedded)
-    {
-        let manifest_dir: &str = env!("CARGO_MANIFEST_DIR");
-        let p = PathBuf::from(manifest_dir).join("migrations");
-        if p.is_dir() {
-            return Some(p);
-        }
-    }
-
-    // Fallback: relative from CWD
-    let p = PathBuf::from("migrations");
-    if p.is_dir() {
-        return Some(p);
-    }
-
-    None
-}
-
-/// Find a migration file by name in the migrations directory.
-fn find_migration_file(filename: &str) -> Option<PathBuf> {
-    let dir = resolve_migrations_dir()?;
-    let path = dir.join(filename);
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
-    }
 }
 
 /// Derive the reference database URL from the current DATABASE_URL.

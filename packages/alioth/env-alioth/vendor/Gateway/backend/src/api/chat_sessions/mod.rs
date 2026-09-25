@@ -85,13 +85,16 @@ impl GenerationEntry {
     }
 }
 
+/// 生成条目映射：(session_id, generation_id) → Entry。
+type GenerationMap = HashMap<(i64, i64), GenerationEntry>;
+
 /// 全局生成状态缓存：(session_id, generation_id) → Entry（D2.13 多轮并存；
 /// generation_id = 本轮用户消息 id）。generation_id 精度：202 body/轮询参数
 /// 字符串化（serde_zuid），内部 i64。
-static GENERATION_CACHE: std::sync::LazyLock<Arc<RwLock<HashMap<(i64, i64), GenerationEntry>>>> =
+static GENERATION_CACHE: std::sync::LazyLock<Arc<RwLock<GenerationMap>>> =
     std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
-fn generation_cache() -> &'static Arc<RwLock<HashMap<(i64, i64), GenerationEntry>>> {
+fn generation_cache() -> &'static Arc<RwLock<GenerationMap>> {
     &GENERATION_CACHE
 }
 
@@ -113,7 +116,7 @@ async fn cache_insert(
 
 /// 该 session 最新条目 key（无参轮询/取消用；created_at 最新）。
 fn latest_generation_key(
-    guard: &tokio::sync::RwLockReadGuard<'_, HashMap<(i64, i64), GenerationEntry>>,
+    guard: &tokio::sync::RwLockReadGuard<'_, GenerationMap>,
     session_id: i64,
 ) -> Option<(i64, i64)> {
     guard

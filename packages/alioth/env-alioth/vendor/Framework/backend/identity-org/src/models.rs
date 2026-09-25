@@ -632,9 +632,13 @@ pub type UpdateWaybillRequest = UpdateConsignmentRequest;
 pub struct Vehicle {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
+    /// 序列号（车辆出厂车架号/VIN；业务身份编号——MUST NOT 承载号牌号）
     pub code: Option<String>,
+    /// 描述信息（MUST NOT 承载号牌号；号牌 = `plates`/号牌端点 → 实体↔身份桥）
     pub notice: Option<String>,
     pub comments: Option<String>,
+    /// 发行方（该储元的唯一性来源主体；车辆 = 主机厂；`None` = 发行方未登记）——
+    /// MUST NOT 承载归属/登记组织/承运商语义（归属 = 持有桥叶 `zc_id_subjects_rr_container`）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -720,11 +724,39 @@ impl HasReferenceJoins for Vehicle {
     }
 }
 
+/// 车辆号牌输入（随车辆创建/更新提交；与 `/vehicles/{id}/plates` 同契约，camelCase）。
+///
+/// 号牌号 MUST 符合 GA 36-2018 民用号牌（服务侧入口归一 + 形态校验，见 `common::plate`）；
+/// 落库 = `zc_id_identity`（分类 `plate`）+ `zc_id_entity_rr_identity` 桥（唯一实现 = `crate::plates`）。
+/// 身份行按「值 + 分类」find-or-create（同值同分类一行，命中复用）；同一号牌任一时刻至多绑
+/// 一个存活实体 ⇒ 生效期（`qk_period`）重叠即 409，不重叠（换牌/历史段）方允许
+/// （change `align-storage-issuer-and-holding` §D3/§D4）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VehiclePlateInput {
+    pub plate: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    /// 生效期起；`None` = 无下界（`-∞`）；两个皆空 = 覆盖全部时间
+    #[serde(default)]
+    pub valid_from: Option<DateTime<Utc>>,
+    /// 生效期止；`None` = 无上界（`+∞`）
+    #[serde(default)]
+    pub valid_to: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateVehicleRequest {
+    /// 号牌（可选；随创建一并落身份行 + 桥——可多牌，换牌 = 新增 + 解除）
+    #[serde(default)]
+    pub plates: Vec<VehiclePlateInput>,
+    /// 序列号（车辆出厂车架号/VIN；业务身份编号）
     pub code: Option<String>,
+    /// 描述信息（MUST NOT 承载号牌号——号牌经 `plates`/号牌端点管理）
     pub notice: Option<String>,
     pub comments: Option<String>,
+    /// 发行方（唯一性来源主体；车辆 = 主机厂；`None` = 发行方未登记）——本路径 MUST NOT 以
+    /// 登记组织填充，MUST NOT 承载归属/承运商语义（归属 = 持有桥叶 `zc_id_subjects_rr_container`）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -743,9 +775,15 @@ pub struct CreateVehicleRequest {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateVehicleRequest {
+    /// 号牌（可选；本次新增的号牌——不传即不动既有号牌）
+    #[serde(default)]
+    pub plates: Vec<VehiclePlateInput>,
+    /// 序列号（车辆出厂车架号/VIN）
     pub code: Option<String>,
+    /// 描述信息（MUST NOT 承载号牌号）
     pub notice: Option<String>,
     pub comments: Option<String>,
+    /// 发行方（唯一性来源主体；车辆 = 主机厂）——`None` = 不改动该列；不承载归属/承运商语义
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -782,6 +820,9 @@ pub struct TrafficLine {
     // （功能阶段 设计/实现 × 抽象层级 范例/实例），由 `dk_function.code` 前缀经
     // `trigger-registry::lifecycle::derive_form_type` 派生，业务层禁读写。
     // 线路起讫的结构化落点 = `zc_id_stor-traffic_line_rr_stop` 桥（over-seq + ck_category）。
+    /// 发行方（该储元的唯一性来源主体）——模型对该列只声明 `ReferenceJoin → zc_id_subjects`，
+    /// 无类型约束 ⇒ **任意主体**皆可（承运商只是其中一种取值）；MUST NOT 被解释为承运商来源
+    /// 或归属（change `align-storage-issuer-and-holding` §D1/§D7；线路持有 = `_rr_place` 桥叶）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -848,6 +889,7 @@ pub struct CreateTrafficLineRequest {
     pub notice: Option<String>,
     pub comments: Option<String>,
     // 起讫文本不经本 DTO；`_f_`/`_t_` 由 dk_function 派生（§4.3），结构化起讫 = rr_stop 桥。
+    /// 发行方（唯一性来源主体；任意主体，不限承运商；`None` = 不写该列）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]
@@ -860,6 +902,7 @@ pub struct UpdateTrafficLineRequest {
     pub notice: Option<String>,
     pub comments: Option<String>,
     // 同 Create：`_f_`/`_t_` 不在请求面（§4.3/§4.3.3 形态 1）。
+    /// 发行方（唯一性来源主体；任意主体，不限承运商；`None` = 不改动该列）
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_trustee: Option<i64>,
     #[serde(with = "common::serde_zuid::opt", default)]

@@ -14,6 +14,7 @@ pub fn get_all_categories() -> Vec<ConfigCategory> {
         webhook_category(),
         storage_category(),
         sms_category(),
+        approval_category(),
     ]
 }
 
@@ -208,27 +209,34 @@ fn email_category() -> ConfigCategory {
             schema: vec![
                 with_help(
                     with_placeholder(
-                        field("host", "服务器地址", "text", true),
+                        // 键名 MUST 与消费方契约一致：`common::SmtpEmailService` 反序列化
+                        // `EmailConfig` 读 `smtp_host`/`smtp_port`（缺 smtp_host 直接报
+                        // "Invalid email settings JSON: missing field"）——原先写 `host`/`port`
+                        // 会让 GUI 存下的配置完全不可用。change: fix-email-config-ui-keys
+                        // 第 4 参 = `sensitive`（`required` 恒 true）⇒ 非密字段 MUST 为 false，
+                        // 否则前端把它们塞进 credentials（加密）而消费者只读 settings。
+                        field("smtp_host", "服务器地址", "text", false),
                         "smtp.example.com",
                     ),
                     "SMTP 服务器主机名",
                 ),
                 with_help(
                     with_default(
-                        field("port", "端口", "number", true),
+                        field("smtp_port", "端口", "number", false),
                         serde_json::json!(587),
                     ),
                     "SMTP 端口，通常为 25/587/465",
                 ),
                 with_help(
                     with_placeholder(
-                        field("username", "用户名", "text", true),
+                        field("username", "用户名", "text", false),
                         "noreply@example.com",
                     ),
                     "SMTP 登录用户名",
                 ),
                 with_help(
                     with_placeholder(
+                        // 唯一敏感字段：落 enc_fields.password（消费者从 enc_fields 读）
                         field("password", "密码/授权码", "password", true),
                         "********",
                     ),
@@ -236,7 +244,7 @@ fn email_category() -> ConfigCategory {
                 ),
                 with_help(
                     with_placeholder(
-                        field("from_address", "发件人地址", "text", true),
+                        field("from_address", "发件人地址", "text", false),
                         "noreply@example.com",
                     ),
                     "邮件显示的发件人地址",
@@ -279,13 +287,13 @@ fn im_category() -> ConfigCategory {
                 schema: vec![
                     with_help(
                         with_placeholder(
-                            field("corp_id", "企业 ID", "text", true),
+                            field("corp_id", "企业 ID", "text", false),
                             "wwxxxxxxxxxxxxxxxx",
                         ),
                         "企业微信 CorpID",
                     ),
                     with_help(
-                        with_placeholder(field("agent_id", "应用 ID", "text", true), "1000002"),
+                        with_placeholder(field("agent_id", "应用 ID", "text", false), "1000002"),
                         "企业微信应用 AgentId",
                     ),
                     with_help(
@@ -309,7 +317,7 @@ fn im_category() -> ConfigCategory {
                 schema: vec![
                     with_help(
                         with_placeholder(
-                            field("app_key", "AppKey", "text", true),
+                            field("app_key", "AppKey", "text", false),
                             "dingxxxxxxxxxxxxxxxx",
                         ),
                         "钉钉应用 AppKey",
@@ -330,7 +338,7 @@ fn im_category() -> ConfigCategory {
                     ),
                     with_help(
                         with_placeholder(
-                            field("webhook_secret", "Webhook 密钥", "password", false),
+                            field("webhook_secret", "Webhook 密钥", "password", true),
                             "SECxxxxxxxxxxxxxxxx",
                         ),
                         "群机器人加签密钥（可选）",
@@ -345,7 +353,7 @@ fn im_category() -> ConfigCategory {
                 schema: vec![
                     with_help(
                         with_placeholder(
-                            field("app_id", "App ID", "text", true),
+                            field("app_id", "App ID", "text", false),
                             "cli_xxxxxxxxxxxxxxxx",
                         ),
                         "飞书应用 App ID",
@@ -388,7 +396,7 @@ fn webhook_category() -> ConfigCategory {
             schema: vec![
                 with_help(
                     with_placeholder(
-                        field("url", "回调地址", "url", true),
+                        field("url", "回调地址", "url", false),
                         "https://example.com/webhook",
                     ),
                     "Webhook 回调 URL",
@@ -396,7 +404,7 @@ fn webhook_category() -> ConfigCategory {
                 with_help(
                     with_default(
                         with_options(
-                            field("method", "请求方法", "select", true),
+                            field("method", "请求方法", "select", false),
                             vec![("POST", "POST"), ("PUT", "PUT"), ("PATCH", "PATCH")],
                         ),
                         serde_json::json!("POST"),
@@ -404,7 +412,7 @@ fn webhook_category() -> ConfigCategory {
                     "HTTP 请求方法",
                 ),
                 with_help(
-                    with_placeholder(field("secret", "签名密钥", "password", false), "********"),
+                    with_placeholder(field("secret", "签名密钥", "password", true), "********"),
                     "用于 HMAC 签名的密钥（可选）",
                 ),
                 with_help(
@@ -451,17 +459,17 @@ fn storage_category() -> ConfigCategory {
                 schema: vec![
                     with_help(
                         with_placeholder(
-                            field("endpoint", "Endpoint", "url", true),
+                            field("endpoint", "Endpoint", "url", false),
                             "https://s3.amazonaws.com",
                         ),
                         "S3 Endpoint 地址",
                     ),
                     with_help(
-                        with_placeholder(field("region", "Region", "text", true), "us-east-1"),
+                        with_placeholder(field("region", "Region", "text", false), "us-east-1"),
                         "S3 Region",
                     ),
                     with_help(
-                        with_placeholder(field("bucket", "Bucket", "text", true), "my-bucket"),
+                        with_placeholder(field("bucket", "Bucket", "text", false), "my-bucket"),
                         "存储桶名称",
                     ),
                     with_help(
@@ -495,13 +503,13 @@ fn storage_category() -> ConfigCategory {
                 schema: vec![
                     with_help(
                         with_placeholder(
-                            field("endpoint", "Endpoint", "url", true),
+                            field("endpoint", "Endpoint", "url", false),
                             "https://oss-cn-hangzhou.aliyuncs.com",
                         ),
                         "OSS Endpoint",
                     ),
                     with_help(
-                        with_placeholder(field("bucket", "Bucket", "text", true), "my-bucket"),
+                        with_placeholder(field("bucket", "Bucket", "text", false), "my-bucket"),
                         "存储桶名称",
                     ),
                     with_help(
@@ -563,7 +571,7 @@ fn sms_category() -> ConfigCategory {
                 ),
                 with_help(
                     with_placeholder(
-                        field("sign_name", "短信签名", "text", true),
+                        field("sign_name", "短信签名", "text", false),
                         "阿里云短信测试",
                     ),
                     "已通过审核的短信签名",
@@ -582,9 +590,42 @@ fn sms_category() -> ConfigCategory {
 }
 
 // ============================================
+// 审批（平台环境配置族 zc_id_prot-env_config）
+// ============================================
+
+/// 审批配置分类（add-identity-verify-and-approval-config-gui）——
+/// 承载 `approval:auto-approve` 等审批域开关行；provider 固定 `platform`
+/// （单平台语义，无多服务商），字段 schema 为空——开关经行级 enabled 切换
+/// （settings.enabled，GenericRepository 投影/合并同一通道）。
+fn approval_category() -> ConfigCategory {
+    ConfigCategory {
+        code: "approval".to_string(),
+        notice: "审批".to_string(),
+        description: Some("审批域平台开关（注册审批自动通过等）".to_string()),
+        icon: Some("CheckSquare".to_string()),
+        providers: vec![ConfigProvider {
+            code: "platform".to_string(),
+            notice: "平台".to_string(),
+            description: Some("平台级审批开关".to_string()),
+            schema: vec![],
+            defaults: None,
+        }],
+    }
+}
+
+// ============================================
 // Schema Builder Helpers
 // ============================================
 
+/// 构造表单字段。
+///
+/// **`sensitive` 的语义 = 「落 `credentials`（加密存 `enc_fields`）还是落 `settings`（明文）」**，
+/// 前端按它分流（`SystemConfigPage`：`if (f.sensitive) credentials[k]=v`）。
+/// `required` 恒为 true（本助手不表达必填）。
+/// ⇒ 只有**真正的秘密**（密码 / 密钥 / 签名密钥）可置 true；主机名、端口、账号名、Region、
+/// Bucket、Endpoint 等**非密字段 MUST 置 false**，否则消费者从 `settings` 读不到它们
+/// （典型事故：email 的 host/port、storage 的 endpoint/region/bucket 曾被误标 true ⇒
+/// GUI 存下的配置对消费者完全不可用）。change: fix-email-config-ui-keys。
 fn field(key: &str, notice: &str, field_type: &str, sensitive: bool) -> ConfigFieldSchema {
     ConfigFieldSchema {
         key: key.to_string(),
@@ -624,4 +665,64 @@ fn with_options(mut f: ConfigFieldSchema, opts: Vec<(&str, &str)>) -> ConfigFiel
 fn with_help(mut f: ConfigFieldSchema, text: &str) -> ConfigFieldSchema {
     f.help_text = Some(text.to_string());
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 按 field_type 造一个可序列化的示例值（模拟 GUI 提交）。
+    fn sample(f: &ConfigFieldSchema) -> serde_json::Value {
+        if let Some(v) = f.default_value.clone() {
+            return v;
+        }
+        match f.field_type.as_str() {
+            "number" => serde_json::json!(1),
+            "boolean" => serde_json::json!(true),
+            _ => serde_json::Value::String(
+                f.placeholder
+                    .clone()
+                    .unwrap_or_else(|| "sample".to_string()),
+            ),
+        }
+    }
+
+    /// schema ↔ 消费方契约（防「GUI 存下即不可用」回归）：
+    /// 1. 非密字段（`sensitive=false`）汇入 settings 后 MUST 能被 `common::email::EmailConfig` 反序列化；
+    /// 2. 敏感字段 MUST 恰为消费者从 `enc_fields` 读的 `password`。
+    ///
+    /// 历史事故：email 表单曾用 `host`/`port` 且把非密字段标 `sensitive=true`
+    /// （前端与 service 都会把敏感字段分流进 `credentials`→`enc_fields`）⇒ 消费者读不到而报
+    /// `Invalid email settings JSON: missing field smtp_host`。change: fix-email-config-ui-keys。
+    #[test]
+    fn email_schema_matches_consumer_contract() {
+        let cat = get_category("email").expect("email 分类必须存在");
+        let smtp = cat
+            .providers
+            .iter()
+            .find(|p| p.code == "smtp")
+            .expect("email/smtp provider 必须存在");
+
+        let keys: Vec<&str> = smtp.schema.iter().map(|f| f.key.as_str()).collect();
+        assert!(
+            keys.contains(&"smtp_host") && keys.contains(&"smtp_port"),
+            "表单键名 MUST 与 EmailConfig 字段一致（smtp_host/smtp_port），实际: {keys:?}"
+        );
+
+        let mut settings = serde_json::Map::new();
+        for f in smtp.schema.iter().filter(|f| !f.sensitive) {
+            settings.insert(f.key.clone(), sample(f));
+        }
+        let cfg: common::email::EmailConfig =
+            serde_json::from_value(serde_json::Value::Object(settings))
+                .expect("schema 生成的 settings 必须能被 EmailConfig 反序列化");
+        assert_eq!(cfg.smtp_host, "smtp.example.com");
+        assert_eq!(cfg.username, "noreply@example.com");
+
+        assert_eq!(
+            get_sensitive_keys("email", "smtp"),
+            vec!["password".to_string()],
+            "email 敏感键 MUST 恰为 enc_fields 消费者的 password"
+        );
+    }
 }

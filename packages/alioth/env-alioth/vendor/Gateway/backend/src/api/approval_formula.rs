@@ -1,13 +1,13 @@
-//! 审批公式 AI 生成与模拟执行（P1：DSL 不面向用户手写）
+//! 审批公式 AI 生成与模拟执行（唯一引擎 Rhai；表达式不面向用户手写）
 //!
-//! - `POST /api/approval-flows/formula-assist` — 自然语言 → LLM 生成表达式
-//!   （DSL 或 Rhai）→ 服务端强校验（语法 + 引用字段 ⊆ 变量清单 / Rhai 沙箱
-//!   compile-only）→ 结构化返回（fail-closed：校验失败即 invalid，不落库）
-//! - `POST /api/approval-flows/expr-simulate` — 表达式 + 示例值 → 求值
-//!   （DSL strict fail-closed / Rhai 沙箱）→ {ok, result, error}（可视化模拟执行）
+//! - `POST /api/approval-flows/formula-assist` — 自然语言 → LLM 生成 Rhai 表达式
+//!   → 服务端强校验（语法 + 引用标识符 ⊆ 变量清单）→ 结构化返回
+//!   （fail-closed：校验失败即 invalid，不落库）
+//! - `POST /api/approval-flows/expr-simulate` — 表达式 + 示例值 → 求值（Rhai 沙箱）
+//!   → {ok, result, error}（可视化模拟执行）
 //!
-//! 校验复用统一引擎（runtime-engine：ConstraintExpr parser/evaluator strict +
-//! RhaiExpressionEngine 沙箱 validate）。LLM 复用 chat 基础设施
+//! 校验复用唯一引擎（runtime-engine `RhaiExpressionEngine`：严格变量模式
+//! validate + 沙箱求值）。LLM 复用 chat 基础设施
 //! （DbLlmConfigAdapter，与 admin_ngac_assist 同模式）。
 
 use actix_web::{web, HttpRequest, HttpResponse};
@@ -59,98 +59,47 @@ pub struct SimulateResponse {
     pub error: Option<String>,
 }
 
-/// 表达式强校验（fail-closed）：语法 + 引用字段 ⊆ 变量清单 / Rhai 沙箱 compile-only
+/// 唯一表达式引擎名（平台单一实现，客户端 MUST NOT 传其他值）
+pub const ENGINE: &str = "rhai";
+
+/// 表达式强校验（唯一引擎 Rhai，fail-closed）：语法 + 引用标识符 ⊆ 变量清单 + 自由函数白名单。
+/// `_refs` 成员路径与 `ctx[...]` 索引形态由 `collect_variables` 归一为键名参与比对；
+/// 白名单单一真相源 = `runtime-engine/expression/builtins.json`（未登记函数运行期必
+/// `Function not found`，故 MUST 在写入/模拟入口拦下）。
 fn validate_expression(
     expression: &str,
     engine: &str,
     context_fields: &[String],
 ) -> (bool, Vec<String>) {
-    match engine {
-        "rhai" => {
-            let eng = runtime_engine::RhaiExpressionEngine::new();
-            match eng.validate(expression) {
-                Ok(()) => (true, Vec::new()),
-                Err(e) => (false, vec![e]),
-            }
-        }
-        _ => match runtime_engine::parse_constraint_expression(expression) {
-            Ok(ast) => {
-                let mut used = Vec::new();
-                collect_field_refs(&ast, &mut used);
-                // 模型设计规则（2026-09-01）：`_refs.` 成员路径为外键列引用
-                // 模式（运行时由 ctx 的 _refs 对象解析，成员集合随模型生成），
-                // 不要求出现在可入选变量清单中
-                let unknown: Vec<String> = used
-                    .iter()
-                    .filter(|f| {
-                        !f.starts_with("_refs.")
-                            && !context_fields.iter().any(|c| c.as_str() == f.as_str())
-                    })
-                    .cloned()
-                    .collect();
-                if unknown.is_empty() {
-                    (true, Vec::new())
-                } else {
-                    (
-                        false,
-                        vec![format!(
-                            "引用字段不在变量清单: {}（可用: {}）",
-                            unknown.join(", "),
-                            if context_fields.is_empty() {
-                                "无".to_string()
-                            } else {
-                                context_fields.join(", ")
-                            }
-                        )],
-                    )
-                }
-            }
-            Err(e) => (false, vec![format!("DSL 语法错误: {e}")]),
-        },
+    if engine != ENGINE {
+        return (
+            false,
+            vec![format!("未知引擎 '{engine}'（唯一引擎：{ENGINE}）")],
+        );
+    }
+    // 已知键集 = 上下文清单 + 结构键（_refs 引用容器 / entityId / ctx 恒可见）
+    let mut known: Vec<String> = context_fields.to_vec();
+    known.push("_refs".to_string());
+    known.push("entityId".to_string());
+    known.push("ctx".to_string());
+    match runtime_engine::RhaiExpressionEngine::new().validate_all(expression, &known) {
+        Ok(()) => (true, Vec::new()),
+        Err(e) => (false, vec![e]),
     }
 }
 
-/// AST 级字段引用收集（字符串字面量不计——准确校验）
-fn collect_field_refs(expr: &runtime_engine::ConstraintExpr, out: &mut Vec<String>) {
-    use runtime_engine::ConstraintExpr;
-    match expr {
-        ConstraintExpr::FieldRef(name) => out.push(name.clone()),
-        ConstraintExpr::Binary(l, _, r) => {
-            collect_field_refs(l, out);
-            collect_field_refs(r, out);
-        }
-        ConstraintExpr::Unary(_, e) => collect_field_refs(e, out),
-        ConstraintExpr::And(l, r) | ConstraintExpr::Or(l, r) => {
-            collect_field_refs(l, out);
-            collect_field_refs(r, out);
-        }
-        ConstraintExpr::Not(e) => collect_field_refs(e, out),
-        ConstraintExpr::Call(_, args) => args.iter().for_each(|a| collect_field_refs(a, out)),
-        ConstraintExpr::Literal(_) => {}
-    }
-}
-
-/// 求值（DSL strict / Rhai 沙箱）——模拟执行
+/// 求值（唯一引擎 Rhai）——模拟执行
 fn evaluate_expression(
     expression: &str,
     engine: &str,
     sample: &serde_json::Map<String, Value>,
 ) -> Result<Value, String> {
     use std::collections::HashMap;
-    match engine {
-        "rhai" => {
-            let vars: HashMap<String, Value> =
-                sample.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            runtime_engine::RhaiExpressionEngine::new().evaluate(expression, &vars)
-        }
-        _ => {
-            let ast = runtime_engine::parse_constraint_expression(expression)
-                .map_err(|e| format!("DSL 语法错误: {e}"))?;
-            let vars: HashMap<String, Value> =
-                sample.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            runtime_engine::ExpressionEvaluator::eval_expr_to_json_strict(&ast, &vars)
-        }
+    if engine != ENGINE {
+        return Err(format!("未知引擎 '{engine}'（唯一引擎：{ENGINE}）"));
     }
+    let vars: HashMap<String, Value> = sample.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    runtime_engine::RhaiExpressionEngine::new().evaluate(expression, &vars)
 }
 
 /// 从 LLM 输出提取 JSON（容忍围栏/前后噪声）
@@ -181,11 +130,11 @@ async fn formula_assist(
     body: web::Json<FormulaAssistRequest>,
 ) -> Result<HttpResponse, common::error::AliothError> {
     let _user_id = context::require_auth(&req)?;
-    let engine = body.engine.clone().unwrap_or_else(|| "dsl".to_string());
-    if engine != "dsl" && engine != "rhai" {
+    let engine = body.engine.clone().unwrap_or_else(|| ENGINE.to_string());
+    if engine != ENGINE {
         return Ok(HttpResponse::BadRequest().json(serde_json::json!({
             "expression": "", "engine": engine, "valid": false,
-            "errors": vec![format!("未知引擎 '{engine}'（合法：dsl/rhai）")],
+            "errors": vec![format!("未知引擎 '{engine}'（唯一引擎：{ENGINE}）")],
             "explanation": null, "variable_usage": []
         })));
     }
@@ -206,11 +155,7 @@ async fn formula_assist(
         }
     };
 
-    let engine_desc = if engine == "rhai" {
-        "Rhai 脚本（复杂公式；算术/函数/循环）"
-    } else {
-        "ConstraintExpr DSL（比较 == != < <= > >=、逻辑 && || !、in [..]、contains）"
-    };
+    let engine_desc = "Rhai（比较 == != < <= > >=、逻辑 && || !、in [\"a\",\"b\"]、s.contains(\"x\")、if cond { a } else { b }；字符串用双引号，JSON null 用 ()）";
     // G5：字段清单截断（防 prompt 膨胀——>60 字段仅列前 60 并提示）
     const FIELDS_CAP: usize = 60;
     let fields_desc = if body.context_fields.is_empty() {
@@ -292,19 +237,13 @@ async fn formula_assist(
         })));
     }
 
-    let variable_usage = if engine == "rhai" {
-        Vec::new()
-    } else {
-        runtime_engine::parse_constraint_expression(&expression)
-            .map(|ast| {
-                let mut out = Vec::new();
-                collect_field_refs(&ast, &mut out);
-                out.sort();
-                out.dedup();
-                out
-            })
-            .unwrap_or_default()
-    };
+    let variable_usage = runtime_engine::collect_variables(&expression)
+        .map(|mut used| {
+            used.sort();
+            used.dedup();
+            used
+        })
+        .unwrap_or_default();
 
     // 强校验（fail-closed：校验失败即 invalid，不落库）
     let (valid, errors) = validate_expression(&expression, &engine, &body.context_fields);
@@ -325,7 +264,7 @@ async fn expr_simulate(
     body: web::Json<ExprSimulateRequest>,
 ) -> Result<HttpResponse, common::error::AliothError> {
     let _user_id = context::require_auth(&req)?;
-    let engine = body.engine.clone().unwrap_or_else(|| "dsl".to_string());
+    let engine = body.engine.clone().unwrap_or_else(|| ENGINE.to_string());
     match evaluate_expression(&body.expression, &engine, &body.sample_values) {
         Ok(result) => Ok(HttpResponse::Ok().json(SimulateResponse {
             ok: true,
@@ -358,13 +297,13 @@ async fn formula_fix(
     body: web::Json<FormulaFixRequest>,
 ) -> Result<HttpResponse, common::error::AliothError> {
     let _user_id = context::require_auth(&req)?;
-    let engine = body.engine.clone().unwrap_or_else(|| "dsl".to_string());
-    if engine != "dsl" && engine != "rhai" {
+    let engine = body.engine.clone().unwrap_or_else(|| ENGINE.to_string());
+    if engine != ENGINE {
         return Ok(HttpResponse::BadRequest().json(FormulaAssistResponse {
             expression: String::new(),
             engine: engine.clone(),
             valid: false,
-            errors: vec![format!("未知引擎 '{engine}'（合法：dsl/rhai）")],
+            errors: vec![format!("未知引擎 '{engine}'（唯一引擎：{ENGINE}）")],
             explanation: None,
             variable_usage: vec![],
         }));
@@ -483,19 +422,13 @@ async fn formula_fix(
     }
 
     let (valid, errors) = validate_expression(&expression, &engine, &body.context_fields);
-    let variable_usage = if engine == "rhai" {
-        Vec::new()
-    } else {
-        runtime_engine::parse_constraint_expression(&expression)
-            .map(|ast| {
-                let mut out = Vec::new();
-                collect_field_refs(&ast, &mut out);
-                out.sort();
-                out.dedup();
-                out
-            })
-            .unwrap_or_default()
-    };
+    let variable_usage = runtime_engine::collect_variables(&expression)
+        .map(|mut used| {
+            used.sort();
+            used.dedup();
+            used
+        })
+        .unwrap_or_default();
 
     Ok(HttpResponse::Ok().json(FormulaAssistResponse {
         expression,
@@ -505,40 +438,6 @@ async fn formula_fix(
         explanation,
         variable_usage,
     }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ExprAstRequest {
-    pub expression: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ExprAstResponse {
-    pub ast: Option<Value>,
-    pub error: Option<String>,
-}
-
-async fn expr_ast(
-    req: HttpRequest,
-    body: web::Json<ExprAstRequest>,
-) -> Result<HttpResponse, common::error::AliothError> {
-    let _user_id = context::require_auth(&req)?;
-    match runtime_engine::parse_constraint_expression(&body.expression) {
-        Ok(ast) => match serde_json::to_value(&ast) {
-            Ok(v) => Ok(HttpResponse::Ok().json(ExprAstResponse {
-                ast: Some(v),
-                error: None,
-            })),
-            Err(e) => Ok(HttpResponse::Ok().json(ExprAstResponse {
-                ast: None,
-                error: Some(format!("AST 序列化失败: {e}")),
-            })),
-        },
-        Err(e) => Ok(HttpResponse::Ok().json(ExprAstResponse {
-            ast: None,
-            error: Some(format!("DSL 语法错误: {e}")),
-        })),
-    }
 }
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
@@ -553,8 +452,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     .route(
         "/api/approval-flows/expr-simulate",
         web::post().to(expr_simulate),
-    )
-    .route("/api/approval-flows/expr-ast", web::post().to(expr_ast));
+    );
 }
 
 #[cfg(test)]
@@ -567,67 +465,82 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_dsl_valid() {
+    fn test_validate_valid() {
         let (valid, errors) = validate_expression(
-            "amount > 5000 && code == 'VIP'",
-            "dsl",
+            "amount > 5000 && code == \"VIP\"",
+            ENGINE,
             &fields(&["amount", "code"]),
         );
-        assert!(valid, "合法 DSL 应通过: {:?}", errors);
+        assert!(valid, "合法表达式应通过: {:?}", errors);
         assert!(errors.is_empty());
+        let (valid, _) = validate_expression("ctx[\"act-group\"] == 1", ENGINE, &fields(&[]));
+        assert!(valid, "ctx 索引语法应通过");
     }
 
     #[test]
-    fn test_validate_dsl_syntax_error() {
-        let (valid, errors) = validate_expression("amount >> 5", "dsl", &fields(&["amount"]));
+    fn test_validate_syntax_error() {
+        // 语法错 MUST fail-closed。夹具注意：`amount >> 5` 在 Rhai 中是**合法位运算**
+        // （退役 DSL 才非法）⇒ 旧夹具钉的是已退役文法假设；此处用真语法错（括号不闭合）。
+        let (valid, errors) = validate_expression("amount > ((", ENGINE, &fields(&["amount"]));
         assert!(!valid);
         assert!(!errors.is_empty());
     }
 
     #[test]
-    fn test_validate_dsl_unknown_field_fail_closed() {
-        let (valid, errors) = validate_expression("amount > 100", "dsl", &fields(&["total"]));
+    fn test_validate_unknown_field_fail_closed() {
+        let (valid, _errors) = validate_expression("amount > 100", ENGINE, &fields(&["total"]));
         assert!(!valid, "引用未知字段必须 fail-closed");
-        assert!(errors.iter().any(|e| e.contains("不在变量清单")));
     }
 
     #[test]
-    fn test_validate_dsl_dash_identifier() {
-        let (valid, errors) = validate_expression("act-group == 1", "dsl", &fields(&["act-group"]));
-        assert!(valid, "连字符标识符应通过: {:?}", errors);
+    fn test_validate_unregistered_function_fail_closed() {
+        // 模拟/写入入口 MUST 拦未登记自由函数：Rhai 编译期不报未注册函数，只在求值期失败
+        let (valid, errors) =
+            validate_expression("median([1, 2, 3]) > 0", ENGINE, &fields(&["amount"]));
+        assert!(!valid, "未登记自由函数必须 fail-closed");
+        assert!(errors.iter().any(|e| e.contains("median")), "{errors:?}");
+        let (ok, errs) = validate_expression("sum([1, 2, 3]) > 0", ENGINE, &fields(&["amount"]));
+        assert!(ok, "白名单内函数应通过: {errs:?}");
     }
 
     #[test]
-    fn test_validate_rhai() {
+    fn test_validate_unknown_engine_rejected() {
+        let (valid, errors) = validate_expression("amount > 1", "dsl", &fields(&["amount"]));
+        assert!(!valid, "旧引擎名必须拒绝（单一引擎）");
+        assert!(errors.iter().any(|e| e.contains("唯一引擎")));
+    }
+
+    #[test]
+    fn test_validate_script_forms() {
         let (valid, errors) = validate_expression(
             "let total = 0; for i in 0..3 { total += i; } total > 2",
-            "rhai",
+            ENGINE,
             &[],
         );
-        assert!(valid, "合法 Rhai 应通过: {:?}", errors);
-        let (bad, _) = validate_expression("if {", "rhai", &[]);
-        assert!(!bad, "语法错误 Rhai 应拒绝");
+        assert!(valid, "合法脚本应通过: {:?}", errors);
+        let (bad, _) = validate_expression("if {", ENGINE, &[]);
+        assert!(!bad, "语法错误应拒绝");
     }
 
     #[test]
-    fn test_evaluate_dsl() {
+    fn test_evaluate_condition() {
         let mut sample = serde_json::Map::new();
         sample.insert("amount".to_string(), json!(6000));
-        let r = evaluate_expression("amount > 5000", "dsl", &sample).unwrap();
+        let r = evaluate_expression("amount > 5000", ENGINE, &sample).unwrap();
         assert_eq!(r, json!(true));
     }
 
     #[test]
-    fn test_evaluate_dsl_strict_unknown() {
+    fn test_evaluate_strict_unknown() {
         let sample = serde_json::Map::new();
-        assert!(evaluate_expression("unknown > 1", "dsl", &sample).is_err());
+        assert!(evaluate_expression("unknown > 1", ENGINE, &sample).is_err());
     }
 
     #[test]
     fn test_evaluate_rhai() {
         let mut sample = serde_json::Map::new();
         sample.insert("a".to_string(), json!(10));
-        let r = evaluate_expression("a * 2 + 1", "rhai", &sample).unwrap();
+        let r = evaluate_expression("a * 2 + 1", ENGINE, &sample).unwrap();
         assert_eq!(r, json!(21));
     }
 
@@ -635,28 +548,6 @@ mod tests {
     fn test_extract_json_tolerates_fences() {
         let out = extract_json("```json\n{\"expression\": \"a > 1\"}\n```").unwrap();
         assert!(out.contains("a > 1"));
-    }
-
-    #[test]
-    fn test_expr_ast_serialization_shape() {
-        // G3：ConstraintExpr Serialize → AST JSON（前端计算逻辑图数据源）
-        let ast =
-            runtime_engine::parse_constraint_expression("amount > 5000 && code == 'VIP'").unwrap();
-        let v = serde_json::to_value(&ast).unwrap();
-        let s = v.to_string();
-        assert!(
-            s.contains("amount") && (s.contains("And") || s.contains("and")),
-            "AST JSON 应含字段与逻辑结构: {}",
-            s
-        );
-        // 字符串字面量不泄漏为字段（AST 级精确）
-        let ast2 = runtime_engine::parse_constraint_expression("code == 'VIP'").unwrap();
-        let s2 = serde_json::to_string(&ast2).unwrap();
-        assert!(
-            !s2.contains("\"VIP\"") || s2.contains("String"),
-            "字面量应为 String 字面量: {}",
-            s2
-        );
     }
 
     #[test]

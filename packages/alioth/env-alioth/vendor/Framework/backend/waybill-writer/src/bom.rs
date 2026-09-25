@@ -2,17 +2,27 @@
 
 use common::AliothError as ApiError;
 
-/// 车辆车牌（notice 优先，code 兜底）——追踪 comments 显示车牌而非 id（批注轮 65）
+/// 车辆号牌（**实体↔身份桥**：`zc_id_entity_rr_identity` → `zc_id_identity.identity`，分类 `plate`）
+/// ——追踪 notice/comments 显示号牌而非车辆 id（批注轮 65）。
+///
+/// 口径（change `align-vehicle-plate-identity`）：车辆 `notice`=描述信息、`code`=序列号（车架号/VIN），
+/// 二者均**不承载号牌**；旧口径（`code`/`notice` 双读 + `WZ-E2E-VH-` 前缀特判）已作废。
+/// 无活动桥行 ⇒ 回退车辆 id（保持调用方「必有值」契约，不臆造号牌）。
 pub async fn dispatch_vehicle_plate(
     conn: &mut sqlx::PgConnection,
     vehicle_id: i64,
 ) -> Result<String, ApiError> {
-    // 批注轮（dev 实测）：车辆 code 可为 NULL → CASE 整体 NULL → query_scalar 推断 O=String
-    // 时 decode NULL 报「unexpected null」——显式 Option<String>；code NULL 时取 notice（车牌语义）
+    // 子查询无桥行 ⇒ NULL：query_scalar 推断 O=String 时 decode NULL 报「unexpected null」
+    // ⇒ 显式 Option<String> + flatten（既有实测坑，保留同形）
     let plate: Option<String> = sqlx::query_scalar::<_, Option<String>>(
-    r#"SELECT CASE WHEN COALESCE(code, '') LIKE 'WZ-E2E-VH-%' THEN notice ELSE COALESCE(code, notice, '') END
-       FROM "isahl"."zc_id_stor-ctn-vehicle"
-       WHERE id = $1 AND deleted_at IS NULL"#,
+    r#"SELECT (SELECT i.identity
+                 FROM "isahl"."zc_id_entity_rr_identity" b
+                 JOIN "isahl"."zc_id_identity" i ON i.id = b.ref_right AND i.deleted_at IS NULL
+                 JOIN "isahl"."zc_id_cate-identity" c ON c.id = i.ck_category AND c.deleted_at IS NULL
+                WHERE b.ref_left = v.id AND b.deleted_at IS NULL AND c.code = 'plate'
+                ORDER BY b.id DESC LIMIT 1)
+       FROM "isahl"."zc_id_stor-ctn-vehicle" v
+       WHERE v.id = $1 AND v.deleted_at IS NULL"#,
 )
 .bind(vehicle_id)
 .fetch_optional(&mut *conn)

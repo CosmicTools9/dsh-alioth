@@ -131,7 +131,7 @@ export function ActivityLogo({
     <a
       href={homeHref || '#'}
       className={cn(
-        'flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline shrink-0',
+        'flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline min-w-0',
         showAppName && 'w-60',
       )}
       title={homeTitle || t('shell.backHome')}

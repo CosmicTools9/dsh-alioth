@@ -4,6 +4,7 @@ import {
   DESKTOP_VIEWPORT,
   dimensionsFrom,
   isBaselined,
+  LAYOUT_PROBE,
   minDimensionScore,
   narrowViolations,
   parseBaseline,
@@ -159,5 +160,15 @@ describe('基线机制（存量过渡）', () => {
 describe('探针表达式（结构性约束）', () => {
   test('桌面档常量与窄档集合互不重叠', () => {
     expect(['tablet', 'mobile'].includes(DESKTOP_VIEWPORT)).toBe(false);
+  });
+
+  test('重叠判定 MUST 先按裁剪祖先收敛 rect（可滚动条带屏外项不参与）', () => {
+    // 判据：探针源码含裁剪收敛函数、按 overflow 判定、且重叠循环用收敛后的 rects
+    expect(LAYOUT_PROBE).toContain('const clipRect =');
+    expect(LAYOUT_PROBE).toContain("cs.overflowX !== 'visible'");
+    expect(LAYOUT_PROBE).toContain('const rects = nodes.map(clipRect)');
+    expect(LAYOUT_PROBE).toContain('const ra = rects[i], rb = rects[j]');
+    // 反例守卫：不得回退为直接使用原始 getBoundingClientRect 参与重叠判定
+    expect(LAYOUT_PROBE).not.toContain('const ra = a.getBoundingClientRect()');
   });
 });

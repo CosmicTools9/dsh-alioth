@@ -81,3 +81,41 @@ macro_rules! not_placeholder_subject {
         )
     };
 }
+
+/// 「**真实岗位行**」谓词（SQL 片段，编译期拼接，零运行期分配）。
+///
+/// 判据与 `ALIOTH_ONTOLOGY_SPEC.md §4.3.1` **同源、单一实现**：`zc_id_subj-position` 是
+/// `zc_id_lifecycle` 子表，`_f_`（功能阶段）/`_t_`（抽象层级）由 `dk_function.code` 前两字符派生
+/// （`trigger-registry::lifecycle::derive_form_type`）。`_t_='范例'` = 公有化属权的编制范例
+/// （模板/模式行），其余（`_t_='实例'` 与类列 NULL 的存量行）= 可被业务引用的**具体岗位**。
+///
+/// MUST NOT 用 `_f_ IS NULL`（或 `_t_ IS NULL`）当「真实岗位」判据：岗位类列非空是模型要求，
+/// **类列 NULL 是 §4.3.3 的违规形态 1**（「行存在但不可见」）而非真实岗位的标记；类列归一器
+/// （各 ns 种子链 `seed-zz-class-columns-normalize.sql`）按 `dk_function` 前缀把岗位填成
+/// `_f_='实现' / _t_='实例'` 后，NULL 判据会把**全部真实岗位静默排除**（2026-09-23 实证：
+/// AVIC 审批节点「审批岗位」下拉恒空、组织管理岗位列表 3/13、WZ 1/22 —— 见
+/// `openspec/changes/fix-position-class-predicate/`）。
+///
+/// 用 `IS DISTINCT FROM` 而非 `<>`：类列可空，`NULL <> '范例'` 求值 `NULL` ⇒ 整行被静默丢弃
+/// （同 `not_placeholder_subject` 的 `COALESCE` 教训）。
+///
+/// 用法（`$alias` = 声明了 `_t_` 列的岗位表别名，MUST 为源码标识符）：
+///
+/// ```ignore
+/// concat!("WHERE p.deleted_at IS NULL AND ", common::real_position_row!(p))
+/// format!("{} WHERE deleted_at IS NULL AND {}", SELECT, common::real_position_row!())
+/// ```
+///
+/// 调用点（本宏为唯一实现）：`authority` 审批岗位列表 / 审批人（Approver）仓储三径、
+/// `identity-org` 岗位列表/计数/详情与岗位存在性/更新/软删守卫、主体视角挂接的岗位校验、
+/// `common::ngac_org` 岗位类别 UA 派生与存量 UA 迁移。判据变更 MUST 先改规约
+/// （`openspec/specs/identity-org-core` 的 `real-position-class-predicate`）。
+#[macro_export]
+macro_rules! real_position_row {
+    ($alias:ident) => {
+        concat!(stringify!($alias), "._t_ IS DISTINCT FROM '范例'")
+    };
+    () => {
+        "_t_ IS DISTINCT FROM '范例'"
+    };
+}

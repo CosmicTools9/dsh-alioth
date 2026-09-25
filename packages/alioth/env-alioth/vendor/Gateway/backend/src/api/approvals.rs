@@ -389,7 +389,7 @@ pub async fn transfer_approval(
     };
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
-        match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↓_NC")).await {
+        match ontology_binding::resolve_conn(&mut tx, ("JC", "FTA", "↓_NC")).await {
             Ok(v) => v,
             Err(e) => {
                 common::telemetry::warn!("approvals/transfer: 坐标解析失败: {e}");
@@ -767,7 +767,7 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
     // 本事务内 oper-approve 两处 INSERT（register-context / 主实例）复用同一结果。
     let (dk_scene, dk_factor, dk_function) =
-        match ontology_binding::resolve_conn(&mut *tx, ("JE", "FTA", "↓_EZ")).await {
+        match ontology_binding::resolve_conn(&mut tx, ("JE", "FTA", "↓_EZ")).await {
             Ok(v) => v,
             Err(e) => {
                 common::telemetry::warn!("approvals/apply: 坐标解析失败: {e}");
@@ -873,7 +873,7 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
         // 叶表存在（WZ 等）：写 zc_id_appr-authorization（继承 even-approve）
         // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
         let (leaf_dk_scene, leaf_dk_factor, leaf_dk_function) =
-            match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+            match ontology_binding::resolve_conn(&mut tx, ("JC", "FTA", "↑_NA")).await {
                 Ok(v) => v,
                 Err(e) => {
                     common::telemetry::warn!("approvals/apply: 审批事件坐标解析失败: {e}");
@@ -917,7 +917,7 @@ pub async fn apply_approval(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> 
         // 叶表缺失（Alioth/AVIC-CAASEC/Cosmic-Tools）：写 even-approve 主表
         // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
         let (dk_scene, dk_factor, dk_function) =
-            match ontology_binding::resolve_conn(&mut *tx, ("JC", "FTA", "↑_NA")).await {
+            match ontology_binding::resolve_conn(&mut tx, ("JC", "FTA", "↑_NA")).await {
                 Ok(v) => v,
                 Err(e) => {
                     common::telemetry::warn!("approvals/apply: 坐标解析失败: {e}");

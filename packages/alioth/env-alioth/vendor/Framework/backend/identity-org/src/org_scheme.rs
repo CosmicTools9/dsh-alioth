@@ -8,7 +8,8 @@
 //! 兼容（草稿即发），新方案一律走 draft→activate。
 //! 1. **预检段（写前 fail-fast）**：全部 `policy_class_codes` 必须命中
 //!    派生器只认 active 规范）；任一缺失即整体 400，不产生任何写。
-//! 2. **模板落岗段**：每个 position_template 条目落岗为真实岗位行（`_f_ IS NULL`）：
+//! 2. **模板落岗段**：每个 position_template 条目落岗为真实岗位行（非 `_t_='范例'` 编制范例行；
+//!    判据 = `common::real_position_row!`）：
 //!    - `template_id` 引用：校验范例行在册（`_f_='设计' AND _t_='范例'`、
 //!      tpl_id NULL、未删）→ 实例化（复用 D-2a instantiate 语义：ck_category
 //!      继承、notice=范例名，同范例已有在册实例追加 `-{序号}` 消歧）；

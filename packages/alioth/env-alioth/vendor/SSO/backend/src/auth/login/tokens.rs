@@ -82,22 +82,6 @@ pub(crate) async fn is_valid_refresh_token(
     Ok(result)
 }
 
-/// Revoke all user refresh tokens (for logout)
-pub(super) async fn revoke_all_user_tokens(pool: &PgPool, user_id: i64) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        UPDATE isahl_auth.refresh_tokens
-        SET revoked = TRUE
-        WHERE user_id = $1
-        "#,
-    )
-    .bind(user_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
 /// 物理删除超保留期的已吊销/过期 refresh token（fix-sso-auth-gaps G4）。
 /// 幂等；多实例并发执行安全。revoked 行保留至保留期（审计窗口），过期行同理。
 pub(crate) async fn purge_expired_tokens(

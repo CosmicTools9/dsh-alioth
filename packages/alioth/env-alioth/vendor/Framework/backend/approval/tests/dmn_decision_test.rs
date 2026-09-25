@@ -2,7 +2,7 @@
 //!
 //! 守护可观察行为：
 //! 1. 发布物化：decision 节点 timeline.dmn 落库、出边 label 进 next-ops；
-//! 2. FIRST 策略实体上下文路由：规则 `code == 'C1'` 命中 → 沿 label=go-a 边推进，
+//! 2. FIRST 策略上下文路由：规则 `code == "C1"` 命中 → 沿 label=go-a 边推进，
 //!    go-b 分支零实例；
 //! 3. UNIQUE 多命中：发布通过（结构合法）、运行时推进 fail-closed Validation 阻断
 //!    （错误含命中数与输出集），双分支均无实例；
@@ -171,7 +171,7 @@ async fn first_policy_routes_by_entity_context() {
     let (scope_id, e1) = seed_task_commission(&pool).await;
 
     let rules = json!([
-        {"match": ["code == 'C1'"], "output": "go-a"},
+        {"match": ["code == \"C1\""], "output": "go-a"},
         {"match": [null], "output": "go-b"}
     ]);
     let graph = decision_graph("FIRST", rules);
@@ -234,7 +234,7 @@ async fn unique_multi_match_blocks_fail_closed() {
 
     // 两行恒命中（第一行 code==C1 真 + 第二行通配）→ UNIQUE 违例
     let rules = json!([
-        {"match": ["code == 'C1'"], "output": "go-a"},
+        {"match": ["code == \"C1\""], "output": "go-a"},
         {"match": [null], "output": "go-b"}
     ]);
     let graph = decision_graph("UNIQUE", rules);
@@ -321,7 +321,7 @@ async fn priority_policy_routes_lowest_priority_hit() {
     let graph = decision_graph(
         "PRIORITY",
         json!([
-            {"match": ["code == 'C1'"], "output": "go-a", "priority": 9},
+            {"match": ["code == \"C1\""], "output": "go-a", "priority": 9},
             {"match": [null], "output": "go-b", "priority": 1}
         ]),
     );
@@ -365,7 +365,7 @@ async fn priority_same_priority_multi_hit_blocks_fail_closed() {
     let graph = decision_graph(
         "PRIORITY",
         json!([
-            {"match": ["code == 'C1'"], "output": "go-a", "priority": 5},
+            {"match": ["code == \"C1\""], "output": "go-a", "priority": 5},
             {"match": [null], "output": "go-b", "priority": 5}
         ]),
     );
@@ -526,7 +526,7 @@ async fn decision_description_writes_even_comments() {
     let mut graph = decision_graph(
         "FIRST",
         json!([
-            {"match": ["code == 'C1'"], "output": "go-a"},
+            {"match": ["code == \"C1\""], "output": "go-a"},
             {"match": [null], "output": "go-b"}
         ]),
     );
@@ -566,7 +566,7 @@ async fn decision_without_description_keeps_null_comments() {
     let graph = decision_graph(
         "FIRST",
         json!([
-            {"match": ["code == 'C1'"], "output": "go-a"},
+            {"match": ["code == \"C1\""], "output": "go-a"},
             {"match": [null], "output": "go-b"}
         ]),
     );

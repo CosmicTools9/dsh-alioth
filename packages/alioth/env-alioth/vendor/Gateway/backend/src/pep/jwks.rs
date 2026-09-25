@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn decoding_key_missing_kid_entry_is_key_not_found() {
         let cache = SsoJwksClient::build_cache(&[jwk(Some("k1"), "EC", Some(X), Some(Y))]);
-        assert!(cache.by_kid.get("absent").is_none());
+        assert!(!cache.by_kid.contains_key("absent"));
         // 首条物化为缺省密钥（无 kid 令牌路径）
         assert!(matches!(cache.default, Some(CachedKey::Key(_))));
     }

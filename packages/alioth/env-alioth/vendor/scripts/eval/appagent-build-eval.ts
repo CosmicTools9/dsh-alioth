@@ -73,6 +73,12 @@ function multiFlag(name: string): string[] {
   return out;
 }
 const ROOT = resolve(flag('root') ?? process.env.PROJECT_ROOT ?? resolve(import.meta.dirname, '..', '..'));
+
+/**
+ * 产物内路径归一化（docs/specs/SPEC_MACHINE_PATH_PORTABILITY.md §5 R2）：
+ * 落进 plans/*.md 等受跟踪文档的路径 MUST 以 `<repo>` 表示；绝对路径只用于进程内文件操作。
+ */
+const repoRel = (p: string): string => (p.startsWith(ROOT) ? `<repo>${p.slice(ROOT.length)}` : p);
 const CASES_PATH = join(ROOT, 'Meta', 'backend', 'app-agent', 'eval', 'cases.yaml');
 const DEFAULT_BASELINE = join(ROOT, 'Meta', 'backend', 'app-agent', 'eval', 'baseline.json');
 const GATE = argv.includes('--gate');
@@ -493,6 +499,7 @@ async function cmdRun(): Promise<number> {
   };
 
   const runDir = join(ROOT, 'AppAgentTraces', 'eval', new Date().toISOString().replace(/[:.]/g, '-'));
+
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, 'scores.json'), JSON.stringify(report, null, 2));
   writeFileSync(join(runDir, 'report.md'), renderMarkdown(report));
@@ -507,7 +514,7 @@ async function cmdRun(): Promise<number> {
       c,
       'eval-regression',
       `评测回归：${r.id}（score=${r.score.toFixed(2)}）`,
-      `## 失败维度\n\n${failed.map((f) => `- ${f}`).join('\n')}\n\n证据目录：\`${runDir}\``,
+      `## 失败维度\n\n${failed.map((f) => `- ${f}`).join('\n')}\n\n证据目录：\`${repoRel(runDir)}\``,
       fp,
     );
     if (path) enqueued++;
@@ -540,7 +547,7 @@ async function cmdRun(): Promise<number> {
             .filter((d) => d.status !== 'pass')
             .map((d) => `- ${d.dimension}: ${d.status} — ${d.detail}`)
             .join('\n') +
-          `\n\n证据目录：\`${runDir}\``,
+          `\n\n证据目录：\`${repoRel(runDir)}\``,
         fx,
       );
     }

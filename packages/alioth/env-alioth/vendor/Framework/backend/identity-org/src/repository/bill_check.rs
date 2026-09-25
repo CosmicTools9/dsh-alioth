@@ -62,7 +62,7 @@ impl AliothRepository<BillCheck, CreateBillCheckRequest, UpdateBillCheckRequest,
         sqlx::query_as::<_, BillCheck>(
             r#"INSERT INTO "isahl"."zc_id_bill-check" (code, notice, comments, fk_settle, fk_account, qk_amount, "qk_write-off", qk_tax, sk_currency, created_by_id, dk_scene, dk_factor, dk_function)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-               RETURNING id, code, notice, comments, fk_settle, fk_account, qk_amount, "qk_write-off" AS qk_write_off, qk_tax, sk_currency, created_at, updated_at, deleted_at"#,
+               RETURNING id, code, notice, comments, fk_settle, fk_account, qk_amount, "qk_write-off", qk_tax, sk_currency, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.code).bind(&req.notice).bind(&req.comments)
         .bind(req.fk_settle).bind(req.fk_account)
@@ -132,7 +132,7 @@ impl AliothRepository<BillCheck, CreateBillCheckRequest, UpdateBillCheckRequest,
 
         let sql = format!(
             r#"UPDATE "isahl"."zc_id_bill-check" SET {} WHERE id = ${} AND deleted_at IS NULL
-               RETURNING id, code, notice, comments, fk_settle, fk_account, qk_amount, "qk_write-off" AS qk_write_off, qk_tax, sk_currency, created_at, updated_at, deleted_at"#,
+               RETURNING id, code, notice, comments, fk_settle, fk_account, qk_amount, "qk_write-off", qk_tax, sk_currency, created_at, updated_at, deleted_at"#,
             sets.join(", "),
             id_param
         );

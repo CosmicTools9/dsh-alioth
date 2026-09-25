@@ -296,6 +296,11 @@ impl AliothRepository<Vehicle, CreateVehicleRequest, UpdateVehicleRequest, ApiEr
     }
 
     async fn create(&self, req: CreateVehicleRequest, user_id: i64) -> Result<Vehicle, ApiError> {
+        // 号牌先归一 + 形态校验（非法即拒——避免车辆行落地后留下号牌半成品）
+        let plates = crate::plates::prepare_plates(&req.plates)?;
+        // `fk_trustee` = **发行方**（唯一性来源主体；车辆 = 主机厂；可空 = 发行方未登记）——
+        // MUST NOT 承载归属/登记组织/承运商语义（change `align-storage-issuer-and-holding` §D1）；
+        // 归属（持有）= 主体↔储元桥叶 `zc_id_subjects_rr_container`，本仓储不解释、不派生该列。
         let (dk_scene, dk_factor, dk_function) =
             ontology_binding::resolve(&self.pool, "Vehicle").await?;
         let vehicle = sqlx::query_as::<_, Vehicle>(
@@ -325,6 +330,14 @@ impl AliothRepository<Vehicle, CreateVehicleRequest, UpdateVehicleRequest, ApiEr
             .await?;
         self.apply_vehicle_point(vehicle.id, req.point_lng, req.point_lat, user_id)
             .await?;
+        // 号牌（可多牌）：`zc_id_identity`（分类 plate）+ `zc_id_entity_rr_identity` 桥
+        // （唯一实现 = `crate::plates`；车辆 `notice`/`code` 不承载号牌）
+        if !plates.is_empty() {
+            let mut conn = self.pool.acquire().await.map_err(ApiError::from_sqlx)?;
+            for input in &plates {
+                crate::plates::create_vehicle_plate(&mut conn, vehicle.id, user_id, input).await?;
+            }
+        }
         Ok(vehicle)
     }
 
@@ -334,6 +347,8 @@ impl AliothRepository<Vehicle, CreateVehicleRequest, UpdateVehicleRequest, ApiEr
         req: UpdateVehicleRequest,
         user_id: i64,
     ) -> Result<Option<Vehicle>, ApiError> {
+        // 号牌先归一 + 形态校验（非法即拒——避免字段已更新而号牌非法）
+        let plates = crate::plates::prepare_plates(&req.plates)?;
         let mut sets = Vec::new();
         let mut idx: usize = 0;
 
@@ -349,6 +364,8 @@ impl AliothRepository<Vehicle, CreateVehicleRequest, UpdateVehicleRequest, ApiEr
             idx += 1;
             sets.push(format!("comments = ${}", idx));
         }
+        // `fk_trustee` = 发行方（唯一性来源主体；车辆 = 主机厂）——语义见 `create`，
+        // 不承载归属/承运商（§D1）；入参可选，缺省不动该列
         if req.fk_trustee.is_some() {
             idx += 1;
             sets.push(format!("fk_trustee = ${}", idx));
@@ -391,13 +408,10 @@ impl AliothRepository<Vehicle, CreateVehicleRequest, UpdateVehicleRequest, ApiEr
         if let Some(v) = req.fk_trustee {
             q = q.bind(v);
         }
-        if let Some(v) = req.fk_trustee {
+        if let Some(v) = req.qk_w_capacity {
             q = q.bind(v);
         }
-        if let Some(ref v) = req.qk_w_capacity {
-            q = q.bind(v);
-        }
-        if let Some(ref v) = req.ck_r_type {
+        if let Some(v) = req.ck_r_type {
             q = q.bind(v);
         }
 
@@ -417,11 +431,23 @@ impl AliothRepository<Vehicle, CreateVehicleRequest, UpdateVehicleRequest, ApiEr
                 .await?;
             self.apply_vehicle_point(id, req.point_lng, req.point_lat, user_id)
                 .await?;
+            // 号牌（本次新增；换牌 = 先经号牌端点解除旧牌再新增，历史保留）
+            if !plates.is_empty() {
+                let mut conn = self.pool.acquire().await.map_err(ApiError::from_sqlx)?;
+                for input in &plates {
+                    crate::plates::create_vehicle_plate(&mut conn, id, user_id, input).await?;
+                }
+            }
         }
         Ok(updated)
     }
 
     async fn delete(&self, id: i64, user_id: i64) -> Result<(), ApiError> {
+        // 号牌桥行**随车辆保留**（历史事实：换牌/解绑才软删桥行；车辆软删不等于号牌失效）。
+        // 号牌**判重**域已改「同号牌全局 + 生效期不重叠」（change
+        // `align-storage-issuer-and-holding` §D3/§D4；见 `crate::plates::create_vehicle_plate`），
+        // 已软删车辆的残留绑定不计入占用；**反查**（号牌 → 车辆）仍 MUST 以**车辆存活**为
+        // 谓词（见 `crate::plates` 各查询与 damage-writer/门户反查）⇒ 不误命中已删车辆。
         self.generic.delete(id, user_id).await
     }
 }

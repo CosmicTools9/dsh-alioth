@@ -1281,6 +1281,10 @@ impl<S> NgacEnforcerService<S> {
     /// （fail-closed，敏感列全裁）；无 PDP 客户端（standalone/FAIL_OPEN/e2e）→ 注入 `*`。
     /// `bypass_cache`：版本探针失败时跳过缓存读写（不服务陈旧条目、不把故障期
     /// 的 fail-closed 空授权写入缓存毒化后续请求，fix-ngac-decision-consistency D4）。
+    ///
+    /// 参数（8）：缓存句柄、PDP 客户端、主体、资源类型、令牌类型、令牌、请求、绕缓存位——
+    /// 均为互不重叠的独立输入（无自然聚合体），按 documented exemption 处置。
+    #[allow(clippy::too_many_arguments)]
     async fn inject_authorized_columns(
         column_cache: &std::sync::Arc<super::cache::ColumnCache>,
         ngac_client: Option<&HttpNgacClient>,

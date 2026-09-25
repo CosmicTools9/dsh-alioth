@@ -46,7 +46,7 @@ async fn seed_bound_user(pool: &PgPool, suffix: &str) -> Fixture {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'me_cognition', $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .bind(&email)
     .execute(pool)
@@ -271,7 +271,7 @@ async fn me_returns_null_subject_and_empty_perspectives_for_unbound_user() {
     sqlx::query(
         "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
          VALUES (isahl.gen_next_zuid(), 'me_unbound', $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (email) DO NOTHING",
+         ON CONFLICT (name) DO NOTHING",
     )
     .bind(email)
     .execute(&pool)

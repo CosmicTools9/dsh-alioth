@@ -255,7 +255,7 @@ pub async fn dispatch_vehicles_tx_inner(
         match deduction_pool {
             Some(pid) => pid,
             None => match traffic_line_id {
-                Some(tlid) => ensure_default_capacity_pool(&mut **tx, tlid).await?,
+                Some(tlid) => ensure_default_capacity_pool(tx, tlid).await?,
                 None => {
                     return Err(ApiError::BadRequest(
                         "委托无线路信息，无法生成派车迁移凭证".into(),
@@ -378,14 +378,16 @@ pub async fn dispatch_vehicles_tx_inner(
     // 注：不再做容量池可用量校验（可售扣减已在下单完成，见 create_consignment_inner Step 5b-0）
 
     // ── Step 4-info: 委托单信息（批量共享，提出循环）──
+    // 注：不再投影线路 `fk_trustee`——该列语义 = 唯一性来源主体（发行方），MUST NOT 被
+    // 解释为承运商来源（承运商解析见 Step 1，来源仅 ① 显式 carrier_id ② 容量池产品
+    // `fk_subj-provider`）；投影保留的委托主体/聚合列供批量对账口径，绝不参与 C 解析。
     let consignment_info: (
         i64,
-        Option<i64>,
         rust_decimal::Decimal,
         Option<rust_decimal::Decimal>,
         Option<i64>,
     ) = sqlx::query_as(
-        r#"SELECT o.fk_subject, tl.fk_trustee, agg.agg_w_total, agg.agg_amount, o.qk_date
+        r#"SELECT o.fk_subject, agg.agg_w_total, agg.agg_amount, o.qk_date
                FROM "isahl"."zc_id_orde-land" o
                LEFT JOIN LATERAL (
                    SELECT COALESCE(SUM(qt.mark::numeric), 0) AS agg_qty,
@@ -409,11 +411,9 @@ pub async fn dispatch_vehicles_tx_inner(
                                          WHERE d2.fk_list = o.id AND d2.code NOT LIKE 'DTL-LDG-%'
                                            AND d2.deleted_at IS NULL))
                ) agg ON true
-               LEFT JOIN "isahl"."zc_id_stor-traffic_line" tl ON tl.id = $2
                WHERE o.id = $1 AND o.deleted_at IS NULL"#,
     )
     .bind(consignment_id)
-    .bind(traffic_line_id.unwrap_or(0))
     .fetch_one(&mut **tx)
     .await?;
 
@@ -539,12 +539,12 @@ pub async fn dispatch_vehicles_tx_inner(
     // 叶表坐标（§6.12 声明即必须，循环外解析一次）：运单 orde-land = TX/FJA/↓_EV；
     // 明细 deta-trade_order / 追踪 oper-transport_tracking / 追踪事件 even-tracking = TX/FJA/↓_GG
     let (waybill_scene, waybill_factor, waybill_function) =
-        ontology_binding::resolve_conn(&mut **tx, ("TX", "FJA", "↓_EV")).await?;
+        ontology_binding::resolve_conn(tx, ("TX", "FJA", "↓_EV")).await?;
     let (trade_scene, trade_factor, trade_function) =
-        ontology_binding::resolve_conn(&mut **tx, ("TX", "FJA", "↓_GG")).await?;
+        ontology_binding::resolve_conn(tx, ("TX", "FJA", "↓_GG")).await?;
     // 叶表坐标（§6.12 声明即必须，循环外解析一次）：装载服务叶表 prod-loading = GC/FJA/↓_GG
     let (loading_scene, loading_factor, loading_function) =
-        ontology_binding::resolve_conn(&mut **tx, ("GC", "FJA", "↓_GG")).await?;
+        ontology_binding::resolve_conn(tx, ("GC", "FJA", "↓_GG")).await?;
 
     // PUR（B 的采购实例）在循环后按委托创建一次；多承运商派车时取首个非空承运商为供应商
     // （多 C 混合派车为边缘场景，code 唯一性按委托保证）
@@ -589,10 +589,13 @@ pub async fn dispatch_vehicles_tx_inner(
         .await?;
 
         // ── Step 1: 承运商解析 + C 的销售实例（{运单code}-CSALE）──
-        // C 优先级（方案 A，change: add-dispatch-carrier-selection）：
+        // C 优先级（方案 A，change: add-dispatch-carrier-selection；change:
+        // align-storage-issuer-and-holding 收紧）：仅两源，均可审计：
         //   ① 派车请求 carrier_id（显式选择，业务动作点）
         //   ② 容量池产品 fk_subj-provider（报价/签约承运商）
-        //   ③ 车辆 fk_trustee 优先、线路 fk_trustee 回退（既有语义兜底）
+        // 原第三源「车辆 fk_trustee 优先、线路 fk_trustee 回退」已删除——车辆 `fk_trustee`
+        // 现指唯一性来源主体（发行方，如主机厂）、线路 `fk_trustee` 可为任意发行主体，
+        // 二者皆非承运商来源；缺两源 ⇒ 承运商留空（MUST NOT 由 fk_trustee 推断）。
         let pool_provider: Option<i64> = match capacity_product_id {
             Some(pid) => sqlx::query_scalar::<_, Option<i64>>(
                 r#"SELECT "fk_subj-provider"
@@ -605,19 +608,8 @@ pub async fn dispatch_vehicles_tx_inner(
             .flatten(),
             None => None,
         };
-        let fallback: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
-            r#"SELECT COALESCE(v.fk_trustee, tl.fk_trustee)
-                   FROM "isahl"."zc_id_stor-ctn-vehicle" v
-                   LEFT JOIN "isahl"."zc_id_stor-traffic_line" tl ON tl.id = $2
-                   WHERE v.id = $1 AND v.deleted_at IS NULL"#,
-        )
-        .bind(vehicle_id)
-        .bind(traffic_line_id.unwrap_or(0))
-        .fetch_optional(&mut **tx)
-        .await?
-        .flatten();
-        // C 优先级：派车请求 carrier_id > 容量池产品 fk_subj-provider > 车辆/线路 fk_trustee
-        let carrier: Option<i64> = carrier_id.or(pool_provider).or(fallback);
+        // C 优先级：派车请求 carrier_id > 容量池产品 fk_subj-provider（无第三源）
+        let carrier: Option<i64> = carrier_id.or(pool_provider);
         if pur_carrier.is_none() {
             pur_carrier = carrier;
         }
@@ -920,7 +912,7 @@ pub async fn dispatch_vehicles_tx_inner(
             .bind(carrier)
             // 聚合由明细求和（orde-* 聚合列已删）：运单不再写 qk_total/qk_amount
             // qk_date 继承委托的日期标量引用（F-A 修复：qk_* 为 bigint 引用，禁止绑 NOW()）
-            .bind(consignment_info.4)
+            .bind(consignment_info.3)
             // created_by_id：真实操作者（原硬编码 1=system 为缺陷）
             .bind(user_id)
             .bind(dispatch_form)
@@ -984,7 +976,7 @@ pub async fn dispatch_vehicles_tx_inner(
         // `user_id` 落库——MUST 是真实操作者（不得硬编码 1=system）。
         // 总单关联仍由主运单 order_rr_demand 承载。
         let _mirror_wb_id = insert_order_mirror_tx(
-            &mut **tx,
+            tx,
             wb_id,
             &OrderMirrorInput {
                 // 运单链不承载合同关联（合同 fk_contract 语义仅委托主档；镜像运单保持 NULL）
@@ -997,7 +989,7 @@ pub async fn dispatch_vehicles_tx_inner(
                 comments: &waybill_comments,
                 subject: carrier,
                 object: Some(operator_org),
-                qk_date: consignment_info.4,
+                qk_date: consignment_info.3,
                 fn_code: "↓_BE",
                 kind_label: "运单",
                 // 行级权属（D5）：镜像行与主行同源——真实操作者 uid（原硬编码 1=system 为缺陷）
@@ -1103,7 +1095,7 @@ pub async fn dispatch_vehicles_tx_inner(
         // 镜像运单状态桥同步（矩阵「镜像行与主行同等待遇：状态桥」）：主运单落
         // ST-DISPATCHED 后，镜像 `-R` 行同码同位（幂等，ref_left 唯一约束原地更新）。
         // 缺此步则一切按 lifecycle 状态过滤的读径对镜像行走空，而镜像行本应与主行并见。
-        sync_mirror_status_tx(&mut **tx, wb_id, 1).await?;
+        sync_mirror_status_tx(tx, wb_id, 1).await?;
 
         // ── Step 5b: 派车转换 tsp 凭证（设计契约 §2.4/D8，T7b：dispatch_deduction comments-JSON 退役）──
         // 制造范例在途 → 制造实例在途（源池 STO-TRANSIT qk_outgo / 目标池 STO-TRANSIT qk_income）
@@ -1206,7 +1198,7 @@ pub async fn dispatch_vehicles_tx_inner(
                 DkEntity::TspInstanceLeg
             };
             let (leg_scene, leg_factor, leg_function) =
-                resolve_ontology_coords(&mut **tx, leg_entity).await?;
+                resolve_ontology_coords(tx, leg_entity).await?;
             let (_, leg_tier) = leg_entity.form_type();
             // remove-comments-json-embedding 降级（D1）：凭证 comments 仅人类可读摘要
             let comments = format!(
@@ -1294,7 +1286,26 @@ pub async fn dispatch_vehicles_tx_inner(
                 )));
             }
         }
-        let tracking_id: i64 = sqlx::query_scalar(
+        // 追踪行**幂等**（code = 运单号）：`zc_id_even-tracking` / `oper-transport_tracking` 的 code
+        // 唯一索引为**非部分索引**（不含 `deleted_at IS NULL`）⇒ 同运单二次派车（「取消后同车重派」）
+        // 重复 INSERT 必撞唯一约束。故按 code 复用既有行（含软删行复活），仅缺失时插入。
+        let plate = dispatch_vehicle_plate(&mut *tx, vehicle_id).await?;
+        let tracking_id: i64 = match sqlx::query_scalar::<_, i64>(
+            r#"UPDATE "isahl"."zc_id_oper-transport_tracking"
+                  SET deleted_at = NULL, notice = $2, comments = $3,
+                      updated_by_id = $4, updated_at = NOW()
+                WHERE code = $1
+              RETURNING id"#,
+        )
+        .bind(waybill_code.clone())
+        .bind(format!("{} 在途追踪 车辆:{}", waybill_code, plate))
+        .bind(format!("在途追踪 车辆{} 运单{} 装载{}吨", plate, wb_id, weight))
+        .bind(user_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        {
+            Some(id) => id,
+            None => sqlx::query_scalar(
                 r#"INSERT INTO "isahl"."zc_id_oper-transport_tracking"
                    (id, code, notice, comments, fk_operator, fk_previous, created_by_id, updated_by_id,
                     dk_scene, dk_factor, dk_function)
@@ -1304,69 +1315,89 @@ pub async fn dispatch_vehicles_tx_inner(
                    RETURNING id"#,
             )
             .bind(waybill_code.clone())
-            // 批注轮 65（53553d18）：追踪显示车牌（非车辆 id）——查 notice
-            .bind(format!(
-                "{} 在途追踪 车辆:{}",
-                waybill_code,
-                dispatch_vehicle_plate(&mut *tx, vehicle_id).await?
-            ))
-            // remove-comments-json-embedding 降级（D1）：comments 仅人类可读摘要
-            .bind(format!(
-                "在途追踪 车辆{} 运单{} 装载{}吨",
-                dispatch_vehicle_plate(&mut *tx, vehicle_id).await?,
-                wb_id, weight
-            ))
+            .bind(format!("{} 在途追踪 车辆:{}", waybill_code, plate))
+            .bind(format!("在途追踪 车辆{} 运单{} 装载{}吨", plate, wb_id, weight))
             .bind(alloc.driver_id)
             .bind(consignment_id)
             .bind(trade_scene)
             .bind(trade_factor)
             .bind(trade_function)
-                        .bind(user_id)
-                        .fetch_one(&mut **tx)
-            .await?;
+            .bind(user_id)
+            .fetch_one(&mut **tx)
+            .await?,
+        };
 
         // 缺口修复：追踪链（even-tracking → event_rr_matter → prod-loading → 运单）
         // 追踪页/改派查询经此链反查委托/车辆——原实现只建 tracking 行，真实派车追踪断链。
-        sqlx::query(
-            r#"INSERT INTO "isahl"."zc_id_prod-loading-request"
-                   (id, code, notice, fk_previous, created_by_id, dk_scene, dk_factor, dk_function)
-                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $7, $4, $5, $6)"#,
+        let loading_id: i64 = match sqlx::query_scalar::<_, i64>(
+            r#"UPDATE "isahl"."zc_id_prod-loading-request"
+                  SET deleted_at = NULL, notice = $2, updated_at = NOW()
+                WHERE code = $1
+              RETURNING id"#,
         )
         .bind(format!("LDG-{}", waybill_code))
         .bind(format!("{} 装载服务", waybill_code))
-        .bind(wb_id)
-        .bind(loading_scene)
-        .bind(loading_factor)
-        .bind(loading_function)
-        .bind(user_id)
-        .execute(&mut **tx)
-        .await?;
-        let loading_id: i64 = sqlx::query_scalar(
-            r#"SELECT id FROM "isahl"."zc_id_prod-loading"
-                   WHERE code = $1 AND deleted_at IS NULL LIMIT 1"#,
-        )
-        .bind(format!("LDG-{}", waybill_code))
-        .fetch_one(&mut **tx)
-        .await?;
-        let event_id: i64 = sqlx::query_scalar(
-            r#"INSERT INTO "isahl"."zc_id_even-tracking"
-                   (id, code, notice, fk_subject, created_by_id, dk_scene, dk_factor, dk_function)
+        .fetch_optional(&mut **tx)
+        .await?
+        {
+            Some(id) => id,
+            None => {
+                sqlx::query_scalar(
+                    r#"INSERT INTO "isahl"."zc_id_prod-loading-request"
+                   (id, code, notice, fk_previous, created_by_id, dk_scene, dk_factor, dk_function)
                    VALUES (isahl.gen_next_zuid(), $1, $2, $3, $7, $4, $5, $6)
                    RETURNING id"#,
+                )
+                .bind(format!("LDG-{}", waybill_code))
+                .bind(format!("{} 装载服务", waybill_code))
+                .bind(wb_id)
+                .bind(loading_scene)
+                .bind(loading_factor)
+                .bind(loading_function)
+                .bind(user_id)
+                .fetch_one(&mut **tx)
+                .await?
+            }
+        };
+        // 同上：`uq_zc_id_even-tracking_code` 为**非部分唯一索引** ⇒ 同运单重派 MUST 复用（复活）
+        // 既有事件行，不得重复 INSERT（否则「取消后同车重派」必撞唯一约束）
+        let event_id: i64 = match sqlx::query_scalar::<_, i64>(
+            r#"UPDATE "isahl"."zc_id_even-tracking"
+                  SET deleted_at = NULL, notice = $2, fk_subject = $3, updated_at = NOW()
+                WHERE code = $1
+              RETURNING id"#,
         )
         .bind(format!("EV-{}", waybill_code))
         .bind(format!("{} 派车出发", waybill_code))
         .bind(tracking_id)
-        .bind(trade_scene)
-        .bind(trade_factor)
-        .bind(trade_function)
-        .bind(user_id)
-        .fetch_one(&mut **tx)
-        .await?;
+        .fetch_optional(&mut **tx)
+        .await?
+        {
+            Some(id) => id,
+            None => {
+                sqlx::query_scalar(
+                    r#"INSERT INTO "isahl"."zc_id_even-tracking"
+                   (id, code, notice, fk_subject, created_by_id, dk_scene, dk_factor, dk_function)
+                   VALUES (isahl.gen_next_zuid(), $1, $2, $3, $7, $4, $5, $6)
+                   RETURNING id"#,
+                )
+                .bind(format!("EV-{}", waybill_code))
+                .bind(format!("{} 派车出发", waybill_code))
+                .bind(tracking_id)
+                .bind(trade_scene)
+                .bind(trade_factor)
+                .bind(trade_function)
+                .bind(user_id)
+                .fetch_one(&mut **tx)
+                .await?
+            }
+        };
         sqlx::query(
             r#"INSERT INTO "isahl"."zc_id_event_rr_matter"
                    (id, ref_left, ref_right, created_by_id)
-                   VALUES (isahl.gen_next_uid(333), $1, $2, $3)"#,
+               SELECT isahl.gen_next_uid(333), $1, $2, $3
+               WHERE NOT EXISTS (SELECT 1 FROM "isahl"."zc_id_event_rr_matter" b
+                                  WHERE b.ref_left = $1 AND b.ref_right = $2 AND b.deleted_at IS NULL)"#,
         )
         .bind(event_id)
         .bind(loading_id)
@@ -1567,7 +1598,7 @@ pub async fn dispatch_vehicles_tx_inner(
 
     // 镜像委托状态桥同步（矩阵「镜像行与主行同等待遇：状态桥」）：主委托推进后，
     // 其 `-R` 镜像行同码同位（幂等）；镜像行由 `consignment-writer` 建单时落桥。
-    sync_mirror_status_tx(&mut **tx, consignment_id, user_id).await?;
+    sync_mirror_status_tx(tx, consignment_id, user_id).await?;
 
     Ok(results)
 }

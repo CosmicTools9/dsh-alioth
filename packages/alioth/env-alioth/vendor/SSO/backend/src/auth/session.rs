@@ -130,10 +130,45 @@ pub struct CreateSessionRequest {
 
 /// 客户端 IP（各登录链 create_session 共用；ldap/webauthn 曾有私有复制，
 /// fix-sso-noauth-removal 起新代码统一走本函数）。
+///
+/// **只有可信跳才采信转发头**（2026-09-23 修复 fix-auth-ratelimit-client-ip）：
+/// 本服务所有上游（nginx / Gateway / 各前端静态服务）都与它同机，故仅当 TCP 对端是**回环地址**
+/// 时才读 `X-Forwarded-For`（左起首个）/ `X-Real-IP`；其余对端一律用 TCP 对端地址。
+///
+/// 旧实现无条件读 `realip_remote_addr()`，实测两处后果（两机复现）：
+/// ① **折叠**——平台链路（浏览器 → FE 服务器 → Gateway → SSO）各跳都不设转发头 ⇒
+///    全部远程用户折进 `127.0.0.1` 同一个限流桶，`auth` 档 10 次/60 秒成了**全平台共享额度**，
+///    该桶实测一分钟计数 190–262，任何人多试几次就把别人一起顶到 429；
+/// ② **可伪造**——任何客户端自带 `X-Forwarded-For: 1.2.3.4` 即被原样落库（限流无限开桶）。
 pub(crate) fn client_ip(req: &actix_web::HttpRequest) -> Option<String> {
-    req.connection_info()
-        .realip_remote_addr()
-        .map(|s| s.to_string())
+    client_ip_from_conn_info(&req.connection_info())
+}
+
+/// [`client_ip`] 的核心：只依赖 `ConnectionInfo`，故**中间件**（`ServiceRequest`）可直接复用
+/// `req.connection_info()` 调用同一判定，无需各自复制口径。
+pub(crate) fn client_ip_from_conn_info(conn: &actix_web::dev::ConnectionInfo) -> Option<String> {
+    resolve_client_ip(
+        conn.peer_addr().and_then(parse_ip),
+        conn.realip_remote_addr(),
+    )
+}
+
+/// `ConnectionInfo::peer_addr()` 的形态是 `"ip:port"`（个别内核/代理下为裸 `ip`）：两种都认。
+fn parse_ip(raw: &str) -> Option<std::net::IpAddr> {
+    raw.parse::<std::net::IpAddr>()
+        .ok()
+        .or_else(|| raw.parse::<std::net::SocketAddr>().ok().map(|a| a.ip()))
+}
+
+/// [`client_ip`] 的纯判定（可单测）：对端非回环 ⇒ 只用对端；对端回环 ⇒ 采信转发值，缺失回退对端。
+fn resolve_client_ip(peer_ip: Option<std::net::IpAddr>, forwarded: Option<&str>) -> Option<String> {
+    match peer_ip {
+        Some(ip) if !ip.is_loopback() => Some(ip.to_string()),
+        Some(ip) => forwarded
+            .map(|s| s.to_string())
+            .or_else(|| Some(ip.to_string())),
+        None => forwarded.map(|s| s.to_string()),
+    }
 }
 
 /// 客户端 User-Agent（同上）。
@@ -666,6 +701,36 @@ pub fn verify_logout_token_any(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 分桶键口径（2026-09-23 fix-auth-ratelimit-client-ip）：
+    /// 仅**回环对端**（本机可信跳：nginx / Gateway / 前端静态服务）才采信转发头；
+    /// 非回环对端自带转发头一律忽略（防伪造开无限桶）；对端不可得才退让转发值。
+    #[test]
+    fn resolve_client_ip_trusts_forwarded_only_from_loopback_peer() {
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let remote: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+
+        assert_eq!(
+            resolve_client_ip(Some(loopback), Some("183.156.251.60")).as_deref(),
+            Some("183.156.251.60"),
+            "可信跳 + 转发头 ⇒ 采信转发值（平台链路折叠的修法）"
+        );
+        assert_eq!(
+            resolve_client_ip(Some(loopback), None).as_deref(),
+            Some("127.0.0.1"),
+            "可信跳但无转发头 ⇒ 回退对端（真·本机调用）"
+        );
+        assert_eq!(
+            resolve_client_ip(Some(remote), Some("1.2.3.4")).as_deref(),
+            Some("203.0.113.9"),
+            "非可信跳自带伪造头 ⇒ 忽略，只用对端"
+        );
+        assert_eq!(
+            resolve_client_ip(None, Some("1.2.3.4")).as_deref(),
+            Some("1.2.3.4"),
+            "对端不可得 ⇒ 退让转发值（不臆造）"
+        );
+    }
 
     #[test]
     fn test_generate_session_token() {

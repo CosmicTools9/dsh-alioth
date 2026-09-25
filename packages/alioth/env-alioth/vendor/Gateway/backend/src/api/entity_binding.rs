@@ -13,12 +13,18 @@ use common::context::RequestContext;
 use serde::Deserialize;
 use sqlx::PgPool;
 
-fn current_user(req: &HttpRequest) -> Result<i64, HttpResponse> {
+/// 请求上下文用户。
+///
+/// Err = boxed 响应：`HttpResponse` 直接作 `Err` 会撑大每个 `Result`（128B，
+/// `clippy::result_large_err`）；Box 后 8B，调用方解引用即原响应（语义不变）。
+fn current_user(req: &HttpRequest) -> Result<i64, Box<HttpResponse>> {
     req.extensions()
         .get::<RequestContext>()
         .map(|ctx| ctx.user_id)
         .ok_or_else(|| {
-            HttpResponse::Unauthorized().json(serde_json::json!({"error": "UNAUTHORIZED"}))
+            Box::new(
+                HttpResponse::Unauthorized().json(serde_json::json!({"error": "UNAUTHORIZED"})),
+            )
         })
 }
 
@@ -30,7 +36,7 @@ fn bad_request(code: &str, message: &str) -> HttpResponse {
 pub async fn status(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
     let user_id = match current_user(&req) {
         Ok(u) => u,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     #[allow(clippy::type_complexity)] // sqlx 行类型
     let row: Option<(Option<String>, Option<i64>, bool, Option<serde_json::Value>)> =
@@ -296,7 +302,7 @@ pub async fn bind_personal(
 ) -> HttpResponse {
     let user_id = match current_user(&req) {
         Ok(u) => u,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let b = body.into_inner();
     if b.real_name.trim().is_empty() {
@@ -315,7 +321,7 @@ pub async fn bind_personal(
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
     // 本事务 empl-natural 仅一处 INSERT，就地解析。
     let (dk_scene, dk_factor, dk_function) =
-        match ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG")).await {
+        match ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG")).await {
             Ok(v) => v,
             Err(e) => {
                 common::telemetry::warn!("bind_personal 坐标解析失败: {e}");
@@ -406,7 +412,7 @@ pub async fn bind_personal(
     // 3. 岗位任职桥（M226/ADR A-3：org_write service 入口复用——
     //    attach_employee_bridge 幂等守卫同 add_position_employee：活行 EXISTS 短路/复活软删行）
     if let Err(e) = identity_org::service::org_write::attach_employee_bridge(
-        &mut *tx,
+        &mut tx,
         b.position_id,
         empl_id,
         user_id,
@@ -540,7 +546,7 @@ pub async fn bind_enterprise(
 ) -> HttpResponse {
     let user_id = match current_user(&req) {
         Ok(u) => u,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let b = body.into_inner();
     if b.company_name.trim().is_empty() && b.entity_id.is_none() {
@@ -647,11 +653,8 @@ pub async fn bind_enterprise(
                             // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析
                             // code→ZUID，禁硬编码 ZUID
                             let (dk_scene, dk_factor, dk_function) =
-                                match ontology_binding::resolve_conn(
-                                    &mut *tx,
-                                    ("TX", "FJA", "↓_GG"),
-                                )
-                                .await
+                                match ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG"))
+                                    .await
                                 {
                                     Ok(v) => v,
                                     Err(e) => {
@@ -684,7 +687,7 @@ pub async fn bind_enterprise(
                 rep_name.map(|n| serde_json::json!({"representative_name": n}).to_string());
             // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
             let (dk_scene, dk_factor, dk_function) =
-                match ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG")).await {
+                match ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG")).await {
                     Ok(v) => v,
                     Err(e) => {
                         common::telemetry::warn!("bind_enterprise 坐标解析失败: {e}");
@@ -891,8 +894,7 @@ async fn insert_subject_row(
         .bind(code)
         .bind(user_id);
     if let Some(c) = coords {
-        let (dk_scene, dk_factor, dk_function) =
-            ontology_binding::resolve_conn(&mut **tx, c).await?;
+        let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve_conn(tx, c).await?;
         query = query.bind(dk_scene).bind(dk_factor).bind(dk_function);
     }
     query.fetch_one(&mut **tx).await
@@ -910,7 +912,7 @@ pub async fn bind_subject(
 ) -> HttpResponse {
     let user_id = match current_user(&req) {
         Ok(u) => u,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let b = body.into_inner();
 
@@ -1026,7 +1028,7 @@ pub async fn bind_subject(
 pub async fn unbind(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse {
     let user_id = match current_user(&req) {
         Ok(u) => u,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     // system 哨兵（id=1，auth_seed 契约）不可解绑
     if user_id == 1 {

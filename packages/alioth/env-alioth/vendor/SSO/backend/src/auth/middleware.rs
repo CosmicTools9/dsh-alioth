@@ -212,10 +212,11 @@ where
                 // 认证端点速率限制（SECURITY_SPEC §4）：DB-backed 固定窗口（G3），
                 // 跨实例一致。防护分级：外部注册通道独立更严档。
                 if is_auth_throttled_path(&path) {
-                    let remote_ip = req
-                        .connection_info()
-                        .realip_remote_addr()
-                        .map(|s| s.to_string());
+                    // 分桶键 = 可信跳采信的客户端地址（2026-09-23 fix-auth-ratelimit-client-ip：
+                    // 旧实现无条件读转发头 ⇒ 平台链路全部远程用户折进 127.0.0.1 同一桶，
+                    // 且客户端可自带伪造头绕过限流；详见 `auth::session::client_ip` 文档）。
+                    let remote_ip =
+                        crate::auth::session::client_ip_from_conn_info(&req.connection_info());
                     if let Some(ip) = remote_ip {
                         let (scope, max) = if is_external_register_path(&path) {
                             ("register", register_rate_limit_max())

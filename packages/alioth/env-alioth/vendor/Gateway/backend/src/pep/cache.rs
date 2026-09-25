@@ -154,56 +154,6 @@ impl Default for VersionProbe {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn column_cache_basic_and_invalidate() {
-        let cc = ColumnCache::with_defaults();
-        let key = ColumnCache::make_key(42, "engineers", false);
-        assert_eq!(cc.get(&key), None);
-        cc.set(key.clone(), vec!["a".to_string(), "b".to_string()]);
-        assert_eq!(cc.get(&key), Some(vec!["a".to_string(), "b".to_string()]));
-        cc.invalidate_all();
-        assert_eq!(cc.get(&key), None);
-    }
-
-    #[test]
-    fn version_probe_first_record_no_invalidation() {
-        let probe = VersionProbe::with_ttl(Duration::from_secs(2));
-        let cc = ColumnCache::with_defaults();
-        cc.set("k".to_string(), vec!["a".to_string()]);
-        let changed = probe.apply_version(7, &cc);
-        assert!(!changed, "首次记录（None→Some）不失效");
-        assert_eq!(cc.get("k"), Some(vec!["a".to_string()]));
-        assert_eq!(probe.last_version(), Some(7));
-    }
-
-    #[test]
-    fn version_probe_change_invalidates_column_cache() {
-        let probe = VersionProbe::with_ttl(Duration::from_secs(2));
-        let cc = ColumnCache::with_defaults();
-        probe.apply_version(7, &cc);
-        cc.set("k".to_string(), vec!["a".to_string()]);
-        let changed = probe.apply_version(8, &cc);
-        assert!(changed, "版本变化必须报告");
-        assert_eq!(cc.get("k"), None, "列缓存必须清空");
-        assert_eq!(probe.last_version(), Some(8));
-    }
-
-    #[test]
-    fn version_probe_same_version_no_invalidation() {
-        let probe = VersionProbe::with_ttl(Duration::from_secs(2));
-        let cc = ColumnCache::with_defaults();
-        probe.apply_version(7, &cc);
-        cc.set("k".to_string(), vec!["a".to_string()]);
-        let changed = probe.apply_version(7, &cc);
-        assert!(!changed);
-        assert_eq!(cc.get("k"), Some(vec!["a".to_string()]));
-    }
-}
-
 /// 列级授权缓存——user + resource_type → 授权列集合（TTL 60s，对齐 PDP 对象属性缓存）。
 pub struct ColumnCache {
     entries: RwLock<HashMap<String, (Vec<String>, std::time::Instant)>>,
@@ -273,5 +223,55 @@ impl ColumnCache {
         if let Ok(mut entries) = self.entries.write() {
             entries.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn column_cache_basic_and_invalidate() {
+        let cc = ColumnCache::with_defaults();
+        let key = ColumnCache::make_key(42, "engineers", false);
+        assert_eq!(cc.get(&key), None);
+        cc.set(key.clone(), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(cc.get(&key), Some(vec!["a".to_string(), "b".to_string()]));
+        cc.invalidate_all();
+        assert_eq!(cc.get(&key), None);
+    }
+
+    #[test]
+    fn version_probe_first_record_no_invalidation() {
+        let probe = VersionProbe::with_ttl(Duration::from_secs(2));
+        let cc = ColumnCache::with_defaults();
+        cc.set("k".to_string(), vec!["a".to_string()]);
+        let changed = probe.apply_version(7, &cc);
+        assert!(!changed, "首次记录（None→Some）不失效");
+        assert_eq!(cc.get("k"), Some(vec!["a".to_string()]));
+        assert_eq!(probe.last_version(), Some(7));
+    }
+
+    #[test]
+    fn version_probe_change_invalidates_column_cache() {
+        let probe = VersionProbe::with_ttl(Duration::from_secs(2));
+        let cc = ColumnCache::with_defaults();
+        probe.apply_version(7, &cc);
+        cc.set("k".to_string(), vec!["a".to_string()]);
+        let changed = probe.apply_version(8, &cc);
+        assert!(changed, "版本变化必须报告");
+        assert_eq!(cc.get("k"), None, "列缓存必须清空");
+        assert_eq!(probe.last_version(), Some(8));
+    }
+
+    #[test]
+    fn version_probe_same_version_no_invalidation() {
+        let probe = VersionProbe::with_ttl(Duration::from_secs(2));
+        let cc = ColumnCache::with_defaults();
+        probe.apply_version(7, &cc);
+        cc.set("k".to_string(), vec!["a".to_string()]);
+        let changed = probe.apply_version(7, &cc);
+        assert!(!changed);
+        assert_eq!(cc.get("k"), Some(vec!["a".to_string()]));
     }
 }

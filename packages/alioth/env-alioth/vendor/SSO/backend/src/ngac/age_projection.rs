@@ -11,6 +11,8 @@
 //! - 漂移非零（写路径不再同事务同步后属常态）→ 重放 038（停用 AGE cypher
 //!   同步触发器 + 退役同步函数 + 全量重建）。
 //!
+//! SQL 载体 = 代码内嵌资产 `ngac/sql/`（随 crate 编译；无编号排序/记账/独立运行器语义）。
+//!
 //! **顺序契约**：任何路径重放 037 之后 MUST 重放 038——037 会重建 cypher
 //! 同步触发器，而 AGE 1.8.0 + PG18 下该路径可致后端段错误（signal 11，全簇
 //! reinit，且 PL/pgSQL 捕获不到）。038 是唯一的「写路径去 cypher」保证。
@@ -20,13 +22,12 @@
 
 use sqlx::PgPool;
 
-/// 037 迁移全文（幂等重放即自愈；与 namespace-db / init_db 通道共享同一文件）。
-const PROJECTION_MIGRATION: &str =
-    include_str!("../../migrations/037_age_ngac_graph_projection.sql");
+/// 037 守卫 SQL 全文（代码内嵌资产 `ngac/sql/`，随 crate 编译；幂等重放即自愈）。
+const PROJECTION_MIGRATION: &str = include_str!("sql/037_age_ngac_graph_projection.sql");
 
-/// 038 迁移全文：写路径去 cypher（rebuild-only）+ 全量重建（幂等）。
+/// 038 守卫 SQL 全文（同目录内嵌资产）：写路径去 cypher（rebuild-only）+ 全量重建（幂等）。
 const PROJECTION_REBUILD_ONLY_MIGRATION: &str =
-    include_str!("../../migrations/038_age_ngac_projection_rebuild_only.sql");
+    include_str!("sql/038_age_ngac_projection_rebuild_only.sql");
 
 /// 启动自愈入口：fire-and-forget 语义由调用方决定，本函数同步完成检测与重放。
 pub async fn ensure_ngac_age_projection(pool: &PgPool) {

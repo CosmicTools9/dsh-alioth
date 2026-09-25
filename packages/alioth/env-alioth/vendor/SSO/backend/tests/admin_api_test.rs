@@ -104,7 +104,7 @@ async fn setup_users(pool: &PgPool) -> TestUsers {
         r#"
         INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
         VALUES (isahl.gen_next_zuid(), 'regular_user', 'regular_user', 'regular@test.local', 'active', true, NOW(), NOW())
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT (name) DO NOTHING
         "#,
     )
     .execute(pool)
@@ -124,7 +124,7 @@ async fn setup_users(pool: &PgPool) -> TestUsers {
         r#"
         INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
         VALUES (isahl.gen_next_zuid(), 'admin_user', 'admin_user', 'admin@test.local', 'active', true, NOW(), NOW())
-        ON CONFLICT (email) DO NOTHING
+        ON CONFLICT (name) DO NOTHING
         "#,
     )
     .execute(pool)
@@ -361,8 +361,10 @@ async fn test_create_user_via_db() {
         .ok();
 }
 
+/// 按 email 可查到既有账号（email 非唯一身份基点：同名邮箱可属多账号，
+/// 唯一性判据见 openspec/specs/email-ambiguity-resolution）
 #[tokio::test]
-async fn test_create_user_duplicate_email_rejected() {
+async fn test_create_user_email_lookup() {
     let pool = connect_test_db().await;
     common::setup_schema(&pool)
         .await

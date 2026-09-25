@@ -42,6 +42,12 @@ function makeHarness(mode: 'drift-then-ok' | 'always-fail' | 'drift-always'): Ha
   writeFileSync(srcFile, 'fn main() {}\n');
   const counterFile = join(dir, 'invocations');
   writeFileSync(counterFile, '0');
+  // 夹具自持 `.cargo/config.toml`：否则 `cargo_ensure_source_config` 会走「择源」路径
+  // （`cargo_mirror_select` 真实调用 cargo）⇒ 假 cargo 计数被 +N 污染；
+  // 冷 worktree / 新克隆（无 `.cargo/config.toml`）下本测试必失败（2026-09-23 实证：
+  // 主 checkout 通过、verify worktree 失败 = invocations 2 vs 4）。
+  mkdirSync(join(dir, '.cargo'), { recursive: true });
+  writeFileSync(join(dir, '.cargo', 'config.toml'), '');
 
   const fakeCargo = join(binDir, 'cargo');
   writeFileSync(
@@ -74,11 +80,14 @@ function makeHarness(mode: 'drift-then-ok' | 'always-fail' | 'drift-always'): Ha
   };
 }
 
-/** 在夹具环境里跑守卫（bash + PATH 前置假 cargo + 指纹根收窄到夹具） */
+/** 在夹具环境里跑守卫（bash + PATH 前置假 cargo + 指纹根收窄到夹具 + PROJECT_ROOT 收窄到夹具） */
 function runGuard(h: Harness): { rc: number; stderr: string; invocations: number } {
   const script = [
     'set -uo pipefail',
-    `export PROJECT_ROOT="${REPO_ROOT}"`,
+    // PROJECT_ROOT 指向夹具（而非仓库）：守卫的 `cargo_ensure_source_config` 以
+    // `${PROJECT_ROOT}/.cargo/config.toml` 判定是否走择源路径——指向仓库时该判定随
+    // 「仓库是否已有该（未跟踪）文件」而变，测试即非 hermetic。
+    `export PROJECT_ROOT="${h.dir}"`,
     `export CARGO_RUN_FP_DIRS="${h.dir}/src"`,
     `export CARGO_TARGET_DIR="${h.dir}/target"`,
     `source "${REPO_ROOT}/scripts/lib/src-fingerprint.sh"`,

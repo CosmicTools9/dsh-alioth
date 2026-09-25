@@ -1,9 +1,8 @@
 use async_trait::async_trait;
-use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::api::chat_sessions::adapters::db_message_meta;
-use crate::api::chat_sessions::ports::{MessageRow, MessageStorePort};
+use crate::api::chat_sessions::ports::{MessageMetaFields, MessageRow, MessageStorePort};
 
 /// get_history/get_messages/get_last_user_message_row 共用 meta JOIN 列片段
 /// （列序与 MessageRow FromRow 字段名一致）。
@@ -180,25 +179,9 @@ impl MessageStorePort for SqlxMessageAdapter {
         &self,
         msg_id: i64,
         session_id: i64,
-        agent_code: &str,
-        structured: Option<&Value>,
-        usage: Option<&Value>,
-        attachments: Option<&Value>,
-        knowledge_refs: Option<&Value>,
-        tool_calls: Option<&Value>,
+        fields: MessageMetaFields<'_>,
     ) -> Result<(), String> {
-        db_message_meta::save_meta(
-            &self.pool,
-            msg_id,
-            session_id,
-            agent_code,
-            structured,
-            usage,
-            attachments,
-            knowledge_refs,
-            tool_calls,
-        )
-        .await
+        db_message_meta::save_meta(&self.pool, msg_id, session_id, fields).await
     }
 
     async fn set_message_feedback(

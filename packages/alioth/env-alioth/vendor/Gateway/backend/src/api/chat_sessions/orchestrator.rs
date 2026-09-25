@@ -8,7 +8,8 @@ use ai_agent::agents::tool_orchestrator::ActionHandler;
 use ai_agent::agents::{extract_json_block, tool_orchestrator};
 
 use crate::api::chat_sessions::ports::{
-    AIContactPort, AgentDispatchPort, LlmConfigPort, MessageStorePort, SessionStorePort,
+    AIContactPort, AgentDispatchPort, LlmConfigPort, MessageMetaFields, MessageStorePort,
+    SessionStorePort,
 };
 use crate::api::chat_sessions::{
     AgentInfoResponse, ChatMessageResponse, ChatSessionResponse, ExecuteActionResponse,
@@ -380,6 +381,10 @@ impl DefaultSessionOrchestrator {
     /// metadata{action_type,target_count,confirmed,error?}；user_email 自会话
     /// 属主 auth_users 解析（回落 user:{id}）。await + 错误仅 telemetry——
     /// 审计写入不阻断执行主链。
+    ///
+    /// 参数（8，含 `&self`）：会话/动作/属主/动作类型/目标数/确认位/结果——均为审计载荷的
+    /// 独立字段，拆结构体只在该调用点加一层噪声，按 documented exemption 处置。
+    #[allow(clippy::too_many_arguments)]
     async fn audit_action_execution(
         &self,
         session_id: i64,
@@ -613,7 +618,7 @@ fn draft_context_due(state: Option<&Value>, turn_count: i64, now_secs: i64) -> b
 
 /// C4：成功 patch——重写式更新 draft_context{content,updated_at,source_turn_count}
 /// + 任务状态 ok（一次落库；改写非 append，防无界增长）。纯函数（单测覆盖
-/// 「重写式更新」形态）。
+///   「重写式更新」形态）。
 fn draft_context_success_patch(content: &str, source_turn_count: i64, attempt_at: i64) -> Value {
     let mut patch = bg_task_state_patch("draft_context_state", "ok", attempt_at);
     patch["draft_context"] = serde_json::json!({
@@ -992,6 +997,7 @@ fn action_element_ok(v: &Value) -> bool {
 /// - actions 存在须 array：元素须含 id+label+kind ∈ {message,execute,page_action}
 ///   ——不符剔除元素（warn）；空 array → 连坐剔除键。
 /// - 其余键保留。全部剔除 → None（structured 降级纯文本，不存 meta）。
+///
 /// process_turn 在 extract_json_block 后调用（structured 落 ChatMessageResponse
 /// 与 meta 之前）。
 fn validate_structured(v: Value) -> Option<Value> {
@@ -1541,12 +1547,14 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             .save_message_meta(
                 row.id,
                 input.session_id,
-                &agent_code,
-                agent_result.structured.as_ref(),
-                turn_usage.as_ref(),
-                None,
-                turn_knowledge_refs.as_ref(),
-                turn_tool_calls.as_ref(),
+                MessageMetaFields {
+                    agent_code: &agent_code,
+                    structured: agent_result.structured.as_ref(),
+                    usage: turn_usage.as_ref(),
+                    knowledge_refs: turn_knowledge_refs.as_ref(),
+                    tool_calls: turn_tool_calls.as_ref(),
+                    ..Default::default()
+                },
             )
             .await
         {
@@ -2068,12 +2076,11 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 .save_message_meta(
                     row.id,
                     session_id,
-                    "",
-                    None,
-                    None,
-                    attachments.as_ref(),
-                    knowledge_refs.as_ref(),
-                    None,
+                    MessageMetaFields {
+                        attachments: attachments.as_ref(),
+                        knowledge_refs: knowledge_refs.as_ref(),
+                        ..Default::default()
+                    },
                 )
                 .await
             {
@@ -2153,7 +2160,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         if session.is_none() {
             return Err("SESSION_NOT_FOUND".to_string());
         }
-        let params = params.unwrap_or_else(|| Value::Null);
+        let params = params.unwrap_or(Value::Null);
         if !params.is_object() {
             return Err("INVALID_PARAMS: params must be an object".to_string());
         }
@@ -2753,7 +2760,7 @@ mod tests {
         };
         // 声明面 = 派生面（仅 Backend 入选）
         assert_eq!(
-            derive_allowed_tool_names(&[backend.clone()]),
+            derive_allowed_tool_names(std::slice::from_ref(&backend)),
             vec!["query_sql"]
         );
         // 无声明 ⇒ 空（调用方走无工具路径）

@@ -20,7 +20,13 @@ log = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 rust_decimal = { workspace = true }
-lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-rustls-tls", "builder", "pool"] }
+# SMTP 的 TLS 后端 = native-tls（macOS Security.framework / Linux OpenSSL）。
+# 为何不用 rustls（lettre 默认推荐）：lettre 0.11 `transport/smtp/client/tls.rs:328` 以
+# `#[cfg(all(not(feature = "rustls"), feature = "native-tls"))]` 守卫选择实现 ⇒ rustls 在场时会盖过
+# native-tls，二者不能并存。实测（2026-09-24）：rustls 路径对 smtp.exmail.qq.com:587 STARTTLS
+# 报 `peer closed connection without sending TLS close_notify` 且**邮件未投递**，而同参数 curl
+# （OpenSSL 系）可投递 ⇒ 差异只在 TLS 实现栈。详见 openspec/changes/fix-email-smtp-tls-backend。
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1", "tokio1-native-tls", "builder", "pool"] }
 reqwest = { workspace = true }
 hmac = "0.13"
 sha1 = "0.11"

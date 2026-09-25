@@ -21,6 +21,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { isRecord } from "./lib/type-guards";
 import {
+  DimensionCodesUnavailableError,
   dbDimensionCodes,
   isArtifactDir,
   listNamespaces,
@@ -375,11 +376,20 @@ function main(): void {
   }
   if (module || block) usage(namespaces);
 
-  // factor 码兜底仅 WZ 需要（check-composition C7 同口径）——非 WZ 不触库
-  const factors = ns === "WZ" ? dbDimensionCodes(REPO_ROOT, "factor") : new Set<string>();
-  if (ns === "WZ" && factors.size === 0) {
-    catalog.unresolved.push("factor 码不可得：WZ factor 码回退本次跳过（本条即声明）");
-    console.error("  ⚠️  factor 码不可得 —— WZ factor 码回退本次跳过");
+  // factor 码兜底仅 WZ 需要（check-composition C7 同口径）——非 WZ 不触库；
+  // 不可得即驳回至人在回路（用户裁定 2026-09-23：维度码不能退化）
+  let factors: Set<string>;
+  if (ns === "WZ") {
+    try {
+      factors = dbDimensionCodes(REPO_ROOT, "factor");
+    } catch (e) {
+      if (!(e instanceof DimensionCodesUnavailableError)) throw e;
+      console.error(`\n❌ [驳回·人在回路] capability-catalog 清单校验无法完成：${e.message}`);
+      console.error("   处置：恢复 WZ factor 码输入（DB 可连且 isahl.zc_id_factor 有数据）后重跑；MUST NOT 以缺省 factor 集继续判「引用 ⊆ 清单」。");
+      process.exit(2);
+    }
+  } else {
+    factors = new Set<string>();
   }
 
   const violations = checkTargets(REPO_ROOT, catalog, checkFiles, factors);

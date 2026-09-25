@@ -23,14 +23,15 @@ use crate::handlers::org_tree::{
 };
 
 /// 真实岗位存在性校验（未删除 → 404）。
-/// D-2a 双态判别：`_f_ IS NULL` = 真实岗位（legacy 直建行 + 实例行）；
-/// 编制范例行（`_f_='设计' AND _t_='范例'`）不视为可引用岗位——
-/// 不得作上级岗位/部门分配/任职挂接目标（防设计态行污染实现态关系）。
+/// 真实岗位判据 = `common::real_position_row!`（仅排除 `_t_='范例'` 编制范例行）；
+/// 编制范例行不视为可引用岗位——不得作上级岗位/部门分配/任职挂接目标
+/// （防设计态/模板行污染具体岗位关系）。MUST NOT 用类列 NULL 判据（见该宏文档）。
 async fn ensure_position_exists(pool: &PgPool, position_id: i64) -> Result<(), ApiError> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT COUNT(*) > 0 FROM isahl.\"zc_id_subj-position\"
-         WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL",
-    )
+    let exists: bool = sqlx::query_scalar(concat!(
+        r#"SELECT COUNT(*) > 0 FROM isahl."zc_id_subj-position"
+         WHERE id = $1 AND deleted_at IS NULL AND "#,
+        common::real_position_row!()
+    ))
     .bind(position_id)
     .fetch_one(pool)
     .await
@@ -275,7 +276,7 @@ pub async fn update_position(
         check_parent_cycle(pool, id, new_parent).await?;
     }
 
-    let base: Option<PositionBaseRow> = sqlx::query_as(AssertSqlSafe(
+    let base: Option<PositionBaseRow> = sqlx::query_as(AssertSqlSafe(concat!(
         r#"UPDATE isahl."zc_id_subj-position"
            SET notice = COALESCE($2, notice),
                code = COALESCE($3, code),
@@ -283,11 +284,13 @@ pub async fn update_position(
                fk_user = COALESCE($5, fk_user),
                fk_parent = COALESCE($6, fk_parent),
                ck_category = COALESCE($7, ck_category)
-           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL
+           WHERE id = $1 AND deleted_at IS NULL AND "#,
+        common::real_position_row!(),
+        r#"
            RETURNING id, notice::text, code, comments, fk_user, fk_parent AS parent_id,
                      COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = isahl."zc_id_subj-position".ck_category AND c.deleted_at IS NULL), (SELECT c2.notice FROM isahl.zc_id_category c2 WHERE c2.id = isahl."zc_id_subj-position".ck_category AND c2.deleted_at IS NULL), ''),
-                     NULL::text AS user_name"#,
-    ))
+                     NULL::text AS user_name"#
+    )))
     .bind(id)
     .bind(&body.name)
     .bind(&body.code)
@@ -333,12 +336,13 @@ pub async fn delete_position(
     // + 视角标签行（宿主 = post_rr_view 关联行）级联软删
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
 
-    // _f_ IS NULL：真实岗位视图；编制范例行删除（含实例守卫）暂无删除端点
-    let deleted = sqlx::query(
+    // 真实岗位视图（common::real_position_row!）；编制范例行删除（含实例守卫）暂无删除端点
+    let deleted = sqlx::query(concat!(
         r#"UPDATE isahl."zc_id_subj-position"
            SET deleted_at = NOW()
-           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL"#,
-    )
+           WHERE id = $1 AND deleted_at IS NULL AND "#,
+        common::real_position_row!()
+    ))
     .bind(id)
     .execute(&mut *tx)
     .await
@@ -465,8 +469,8 @@ pub async fn create_approver_position(
 
 /// Approver 岗位行局部更新入口。仅写 notice/ck_category/comments/updated_by_id 四列；
 /// None-门（未提供字段保持现值）由调用方先读 current 行合并终值后传入——本入口收
-/// **已合并终值**，与现 repo UPDATE 等价。`_f_ IS NULL` 守卫同现 repo（范例行不可改）。
-/// 未命中（不存在/已软删/范例行）→ Ok(None) 且不触发 heal；命中 → heal 后 Ok(Some(id))。
+/// **已合并终值**，与现 repo UPDATE 等价。真实岗位守卫（`common::real_position_row!`）同现 repo
+/// （范例行不可改）。未命中（不存在/已软删/范例行）→ Ok(None) 且不触发 heal；命中 → heal 后 Ok(Some(id))。
 pub async fn update_approver_position(
     pool: &PgPool,
     id: i64,
@@ -475,12 +479,14 @@ pub async fn update_approver_position(
     description: Option<&str>,
     user_id: i64,
 ) -> Result<Option<i64>, ApiError> {
-    let updated: Option<i64> = sqlx::query_scalar(
+    let updated: Option<i64> = sqlx::query_scalar(concat!(
         r#"UPDATE isahl."zc_id_subj-position"
            SET notice = $2, ck_category = $3, comments = $4, updated_by_id = $5
-           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL
-           RETURNING id"#,
-    )
+           WHERE id = $1 AND deleted_at IS NULL AND "#,
+        common::real_position_row!(),
+        r#"
+           RETURNING id"#
+    ))
     .bind(id)
     .bind(name)
     .bind(role_id)
@@ -499,17 +505,18 @@ pub async fn update_approver_position(
 /// Approver 岗位行软删入口。与现 repo 等价：仅软删岗位行本身（不级联岗位桥——
 /// 与 [`delete_position`] 的四桥级联不同）；未命中**静默成功**（approvers 端点
 /// 语义：无 NotFound 错误映射）；heal 无条件触发（现 repo M222 heal 同款——
-/// 岗位已软删时 heal 内部无对象即跳过）。`_f_ IS NULL` 守卫同现 repo。
+/// 岗位已软删时 heal 内部无对象即跳过）。真实岗位守卫（`common::real_position_row!`）同现 repo。
 pub async fn delete_approver_position(
     pool: &PgPool,
     id: i64,
     user_id: i64,
 ) -> Result<(), ApiError> {
-    sqlx::query(
+    sqlx::query(concat!(
         r#"UPDATE isahl."zc_id_subj-position"
            SET deleted_at = NOW(), deleted_by_id = $2
-           WHERE id = $1 AND deleted_at IS NULL AND _f_ IS NULL"#,
-    )
+           WHERE id = $1 AND deleted_at IS NULL AND "#,
+        common::real_position_row!()
+    ))
     .bind(id)
     .bind(user_id)
     .execute(pool)

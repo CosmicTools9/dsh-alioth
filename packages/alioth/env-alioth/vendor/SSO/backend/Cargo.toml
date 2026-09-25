@@ -35,6 +35,9 @@ rand = { workspace = true }
 argon2 = { workspace = true }
 aes-gcm = { workspace = true }
 base32 = { workspace = true }
+
+# 凭证解密口径（`enc:` AES-256-GCM）——邮箱口令等 DB 内 enc_fields 字段
+system-config = { path = "../../Framework/backend/system-config" }
 base64 = { workspace = true }
 sha2 = { workspace = true }
 md5 = { workspace = true }

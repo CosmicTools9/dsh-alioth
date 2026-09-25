@@ -1,9 +1,10 @@
-//! 主体资质证照 Handler — WZ logistics-wz 承运商资质管理数据源
+//! 主体资质证照 Handler — WZ 主体资质与证照数据源（消费方：`comprehensive-wz` / `transport-wz`）
 //!
 //! 覆盖：
 //! - `GET /identity-categories` — 证照类型字典（zc_id_cate-identity）
 //! - `GET /subjects/{id}/identities?expiring_days=` — 主体证照列表（含有效期与到期派生字段）
-//! - `POST /subjects/{id}/identities` — 新增证照（事务：identity + segm-date + rr 关联）
+//! - `POST /subjects/{id}/identities` — 新增证照（事务：identity + segm-date + rr 关联；
+//!   同值同分类活动行已存在 → 409 重复登记）
 //! - `PUT /subjects/{id}/identities/{relId}` — 更新证照（证号/类型/名称/有效期）
 //! - `DELETE /subjects/{id}/identities/{relId}` — 删除证照（软删关联 + 实例）
 //!
@@ -11,6 +12,8 @@
 //! - 证照实例 = `zc_id_identity`（identity=证照号, dname=名称, ck_category→类型字典）
 //! - 主体↔证照关联 = `zc_id_entity_rr_identity`（ref_left=主体, ref_right=证照, qk_period→有效期段）
 //! - 有效期 = `zc_id_segm-date`（date_st/date_ed）；更新有效期新建段行并切换 qk_period，不改旧段
+//! - **同值同分类活动行全局唯一**（change `align-storage-issuer-and-holding` §D3）：外部机构核发
+//!   的证照号一行一值，重复登记 → 409（跨主体/跨组织同拒）；软删行不参与判重（可重新关联）
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
@@ -197,8 +200,29 @@ pub async fn create_subject_identity(
         return Err(ApiError::BadRequest("证照名称不能为空".into()));
     }
     let category_id = category_id_by_code(pool.get_ref(), &body.category_code).await?;
+    let cert_no = body.cert_no.trim().to_string();
 
     let mut tx = pool.begin().await.map_err(ApiError::from_sqlx)?;
+
+    // 外部权威标识 = 一行一值（change `align-storage-issuer-and-holding` §D3）：由外部机构核发
+    // 的证照号 MUST 在 `zc_id_identity` 中以「同值同分类一行」存在 ⇒ 判重域 = **全局**
+    // （`upper(identity)` + 分类，跨主体/跨组织），已存在 ⇒ 拒绝重复登记（409）。
+    // 软删（失效）行不参与判重 ⇒ 保留「身份失效后重新关联」通道。
+    let dup: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM \"isahl\".\"zc_id_identity\" \
+         WHERE upper(identity) = upper($1) AND ck_category = $2 AND deleted_at IS NULL \
+         ORDER BY id LIMIT 1",
+    )
+    .bind(&cert_no)
+    .bind(category_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::from_sqlx)?;
+    if let Some(existing_id) = dup {
+        return Err(ApiError::Conflict(format!(
+            "证照号已登记: {cert_no}（同值同分类活动身份行已存在 id={existing_id}；如需改绑请先解除原证照）"
+        )));
+    }
 
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let (dk_scene, dk_factor, dk_function) =
@@ -213,7 +237,7 @@ pub async fn create_subject_identity(
          VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9) RETURNING id",
     )
     .bind(body.name.trim())
-    .bind(body.cert_no.trim())
+    .bind(&cert_no)
     .bind(body.name.trim())
     .bind(category_id)
     .bind(body.comments.clone())

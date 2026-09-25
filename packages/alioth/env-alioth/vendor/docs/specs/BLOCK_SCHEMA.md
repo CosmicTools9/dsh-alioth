@@ -20,11 +20,11 @@
 | `name`             | `string`   | 展示名称。                                                                                                                                            |
 | `version`          | `string`   | Block 定义版本，semver。                                                                                                                              |
 | `prototypeVersion` | `string`   | **条件必填**（原 REQUIRED 已放宽，2026-09-12 裁决）。规范格式 `"v{N}"`（如 `"v1"`, `"v11"`），指向 `b-v{N}.html`。**同 ns `Prototypes/` 下该块目录存在原型痕迹（`b-v*.html` 或 `llm-tsx/`）时 MUST 存在**（门禁 R8）；无任何原型痕迹时 MAY 省略。推导口径见 §4.1。遗留格式 `"b-v{N}"` 仍有 164 个块（新建 MUST 用规范 `"v{N}"`）。 |
-| `block`            | `string`   | Block 业务编码。命名空间 per-NS（Alioth: `"FE"`/`"SCEN"`；AVIC-CAASEC: `"FE"`/`"RD"`；WZ: `{模块前缀}-{功能}` 如 `"OU-PMT"`、`"TR-TRACK"`）。         |
+| `block`            | `string`   | Block 业务编码。命名空间 per-NS（Alioth: `"FE"`/`"SCEN"`；AVIC-CAASEC: `"FE"`/`"RD"`；WZ: `{模块前缀}-{功能}` 如 `"OU-PMT"`、`"TR-TRACK"`）。判据位置：`scripts/check/check-block-json.ts`（缺键 R2；存在但非非空字符串 R11；存量债入 `scripts/check/baselines/block-json-baseline.json`）。 |
 | `services`         | `string[]` | 依赖的 service ID 或 factor code 列表。解析方式依赖 namespace 约定。                                                                                  |
 | `sharing`          | `object`   | 跨模块可见性声明。格式见 §2。                                                                                                                         |
 | `coordinates`      | `object`   | 本体坐标 `{scene:{code,id}, factor:{code,id}, function:{code,id}}`。语义见 §3 与 `ALIOTH_ONTOLOGY_SPEC.md`；dk 静态绑定见 §1.4 与 `BACKEND_FRAMEWORK §7.3.3`。                                                         |
-| `aliothVersion`    | `string`   | Alioth 元模型版本（semver），真相源 = `Meta/backend/alioth-gen/src/lib.rs` 的 `ALIOTH_MODEL_VERSION`。MUST 在全部 namespace 中一致存在，MUST NOT 填技能版本或 Studio 版本；修复入口 `bun scripts/ontology/auto-fix-versions.ts --fix`。 |
+| `aliothVersion`    | `string`   | Alioth 元模型版本（semver），真相源 = `Meta/backend/alioth-gen/src/lib.rs` 的 `ALIOTH_MODEL_VERSION`。MUST 在全部 namespace 中一致存在；修复入口 `bun scripts/ontology/auto-fix-versions.ts --fix`（门禁：`scripts/check/check-block-json.ts`）。 |
 
 ### 1.2 OPTIONAL（block.schema.json properties 中有定义但非 required）
 
@@ -111,6 +111,14 @@
 
 **历史兼容**：部分 Block 使用旧前缀 `"b-v{N}"`（164 个块；等于 `prototypeVersion="b-v1"` 对应 `b-v1.html`）。新建 Block MUST 使用规范 `"v{N}"`。
 
+**设计腿完整性（校验器 R10，2026-09-22 立；判据收紧同日）**：`Sources/Apps/Blocks/{id}/block.json` 存在 ⇒
+`Prototypes/Blocks/{id}` MUST 有 `b-v{N}.html` 且构建源 `llm-tsx/block.tsx` 非桩。**桩判据取或**：
+① `<200B`；② **语义**——默认导出组件体仅 `return null`（空渲染声明壳，自测负例 D）。②为必需：
+文档注释可把声明壳推到 200B 之上（实测 233–247B）而逃逸，产物仍是空壳（视觉验证
+`ready_viewports=0`）。存量违例落 `scripts/check/baselines/block-json-baseline.json` 并 MUST 在
+`BLOCK_READY_UNWIRED_REGISTRY.md` §3.1 有镜像条目；清偿 = 落地真实设计腿（alioth-block Track 1）
+或用户裁决删除实体。
+
 ### 4.1 prototypeVersion 推导口径（缺省时）
 
 | 原型痕迹 | 取值 | 依据 |
@@ -145,4 +153,4 @@ Block 的**前端产物**分两种形态，**至少具备其一**（判定依据
 - SPA 块目录与 Module 前端同构：`frontend/{package.json,vite.config.ts,vitest.config.ts,tsconfig.json,index.html}` + `src/{main.tsx,single-spa.tsx,App.tsx,theme.css,index.css,pages/,components/,stores/,exports/,locales/}`（`MODULE_SPEC.md` §11.1 的口径，仅规模不同）
 - `package.json` 名称 MUST 为 `@alioth/{id}-frontend`，exports MUST 暴露 `./single-spa`（与 Module 前端一致，见 `MODULE_SPEC.md` §11.1）
 - **两者皆无** = 该块尚未产出可挂载/可预览产物 → 校验器报 Warning（`GET /blocks/{id}/validate` 的 `frontend_structure` 检查），骨架期不阻断，交付期 MUST 消除
-- 脚手架 MUST 创建上述结构（MUST NOT 只写 `block.json`）；不按本结构创建的块无法被 Gateway 挂载
+- 脚手架 MUST 创建上述结构；不按本结构创建的块无法被 Gateway 挂载（门禁：`scripts/check/check-block-json.ts`）

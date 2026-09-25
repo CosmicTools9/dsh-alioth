@@ -314,7 +314,7 @@ pub async fn approve_binding_request(
                     None => {
                         // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
                         let (dk_scene, dk_factor, dk_function) =
-                            ontology_binding::resolve_conn(&mut *tx, ("TX", "FJA", "↓_GG")).await?;
+                            ontology_binding::resolve_conn(&mut tx, ("TX", "FJA", "↓_GG")).await?;
                         sqlx::query_scalar(
                             "INSERT INTO isahl.\"zc_id_empl-natural\" (id, notice, code, fk_user, created_by_id, dk_scene, dk_factor, dk_function) \
                              VALUES (isahl.gen_next_zuid(), $1, $2, $3, 1, $4, $5, $6) RETURNING id",

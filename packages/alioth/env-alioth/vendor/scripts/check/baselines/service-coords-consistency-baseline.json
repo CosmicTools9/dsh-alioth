@@ -1,5 +1,5 @@
 {
-  "note": "同表 (scene, factor) 跨 service 声明冲突基线（表级集合，只减不增）：这些表在多个 service.json 中声明了不同 (scene,factor)，属既有债；裁决后从本文件删除。新增冲突即阻断。（同 scene+factor 的 function 分化是 §6.12 判别键设计，不算冲突。）",
+  "note": "同 namespace 内「同表 (scene, factor) 跨 service 声明冲突」基线（键 <ns>::<table>，只减不增）：这些组在同一 namespace 下的多个 service.json 中声明了不同 (scene,factor)，属既有债；裁决后从本文件删除。新增冲突即阻断。跨 namespace 的同表分歧不参与判定（坐标是共享表上的实体分区维度；同 scene+factor 的 function 分化是 §6.12 判别键设计，不算冲突）。",
   "generatedBy": "scripts/check/check-service-coords-consistency.ts --write-baseline",
   "tables": []
 }

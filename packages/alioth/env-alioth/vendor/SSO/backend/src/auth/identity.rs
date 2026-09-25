@@ -29,6 +29,9 @@ pub struct IdentityStatusResponse {
     pub approval_event_id: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_status: Option<String>,
+    /// 驳回原因（verification_status='rejected' 时展示；add-identity-verify-and-approval-config-gui）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejected_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -232,9 +235,10 @@ pub async fn get_identity_status(
         }
     };
 
-    let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>, Option<String>)>(
+    let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>, Option<String>, Option<String>)>(
         r#"
-        SELECT iv.verification_status, u.status, iv.approval_event_id, ast.code AS approval_status
+        SELECT iv.verification_status, u.status, iv.approval_event_id, ast.code AS approval_status,
+               iv.rejected_reason
         FROM isahl_auth.auth_users u
         LEFT JOIN isahl_auth.identity_verifications iv ON iv.user_id = u.id
         LEFT JOIN isahl."zc_id_lifecycle_r_primary-status" ps ON ps.ref_left = iv.approval_event_id AND ps.deleted_at IS NULL
@@ -247,14 +251,19 @@ pub async fn get_identity_status(
     .await;
 
     match row {
-        Ok(Some((ver_status, user_status, approval_event_id, approval_status))) => {
-            HttpResponse::Ok().json(IdentityStatusResponse {
-                verification_status: ver_status.unwrap_or_else(|| "not_submitted".to_string()),
-                user_status: user_status.unwrap_or_else(|| "unknown".to_string()),
-                approval_event_id,
-                approval_status,
-            })
-        }
+        Ok(Some((
+            ver_status,
+            user_status,
+            approval_event_id,
+            approval_status,
+            rejected_reason,
+        ))) => HttpResponse::Ok().json(IdentityStatusResponse {
+            verification_status: ver_status.unwrap_or_else(|| "not_submitted".to_string()),
+            user_status: user_status.unwrap_or_else(|| "unknown".to_string()),
+            approval_event_id,
+            approval_status,
+            rejected_reason,
+        }),
         Ok(None) => HttpResponse::NotFound().json(AuthError {
             error: "User not found".to_string(),
         }),
@@ -588,8 +597,11 @@ async fn extract_user_id(req: &HttpRequest, auth_state: &AuthState) -> Result<i6
 }
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    // 相对 scope（/identity）：挂载方决定前缀——scope("/auth") 内 = /auth/identity，
+    // Gateway 反代 scope("/api/auth") 内 = /api/auth/identity（与 login "/login" 同一约定；
+    // 此前绝对 "/auth/identity" 双重前缀，submit/status/verify 实际 404 不可达）
     cfg.service(
-        web::scope("/auth/identity")
+        web::scope("/identity")
             .route("/submit", web::post().to(submit_identity))
             .route("/status", web::get().to(get_identity_status))
             .route("/verify", web::post().to(verify_identity)),

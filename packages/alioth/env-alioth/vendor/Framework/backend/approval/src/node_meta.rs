@@ -45,7 +45,9 @@ impl SignMode {
 ///
 /// - 入参 op_id = operation 节点行 id（advance 调用方统一传操作行；
 ///   实例侧经 rr_event 桥（ref_left=实例, ref_right=节点事件模板）反查）
-/// - 审批人：三类岗位桥 UNION（ref_left=operation → ref_right=岗位）→ 岗位.fk_user
+/// - 审批人：三类岗位桥 UNION（ref_left=operation → ref_right=岗位）→ 岗位**任职账号集合**
+///   （标量 `fk_user` ∪ 任职桥 `post_rr_employee` 派生账号；唯一实现 =
+///   `common::position_incumbent_accounts_sql!()`）
 /// - 签署模式：`zc_id_operation.ck_cate-proc_op → zc_id_cate-proc_op.code`
 ///
 /// 模型无接线（桥/分类为空）→ 空审批人 + Sequential（现状语义：仅 admin 可见兜底）。
@@ -57,10 +59,15 @@ pub async fn resolve_node_assign<'e, E>(executor: E, op_id: i64) -> Result<NodeA
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    // 单查询双输出：审批人（操作→三类岗位桥 UNION → 岗位.fk_user）+ 签署模式
+    // 单查询双输出：审批人（操作→三类岗位桥 → 岗位**任职账号集合**）+ 签署模式
     // （操作.ck_cate-proc_op → 分类.code）；by-value executor 单次 fetch。
-    let rows: Vec<(Option<i64>, Option<String>)> = sqlx::query_as(
-        r#"WITH cate_rows AS (
+    // 任职账号集合 = 标量 fk_user ∪ 任职桥派生账号（唯一实现 = common 片段；
+    // 只读标量会让「仅经组织管理挂桥任职」的岗位待办恒空——fix-approver-incumbent-source）。
+    let sql = concat!(
+        r#"WITH inc AS ("#,
+        common::position_incumbent_accounts_sql!(),
+        r#" ),
+           cate_rows AS (
                -- 岗位类别四类（2026-09-03）：rr_approve 行带 ck_cate-role 类别；
                -- review/post 无类别（NULL）。升级/备选桥行不直接产生待办——
                -- 升级由 SLA 超时接管、备选按积压阈值动态并入（见文末 UNION 分支）。
@@ -77,10 +84,9 @@ where
                FROM isahl."zc_id_operation_rr_post" WHERE deleted_at IS NULL
            ),
            direct_users AS (
-               SELECT DISTINCT pos.fk_user
+               SELECT DISTINCT inc.uid
                FROM cate_rows br
-               JOIN isahl."zc_id_subj-position" pos
-                 ON pos.id = br.ref_right AND pos.deleted_at IS NULL AND pos.fk_user IS NOT NULL
+               JOIN inc ON inc.pos_id = br.ref_right
                WHERE br.ref_left = $1
                  AND (br.cate_code IS NULL OR br.cate_code IN ('ROLE-DIRECT', 'ROLE-DEPUTY'))
            ),
@@ -93,7 +99,7 @@ where
            in_flight AS (
                SELECT count(*) AS n
                FROM isahl."zc_id_oper-approve" i
-               WHERE i.fk_operator IN (SELECT fk_user FROM direct_users)
+               WHERE i.fk_operator IN (SELECT uid FROM direct_users)
                  AND i.deleted_at IS NULL
                  AND NOT EXISTS (
                      SELECT 1 FROM isahl."zc_id_lifecycle_r_primary-status" ls
@@ -108,30 +114,26 @@ where
                SELECT COALESCE(NULLIF(o.meta->>'backupThreshold', '')::int, 10) AS n
                FROM isahl.zc_id_operation o WHERE o.id = $1 AND o.deleted_at IS NULL
            )
-           SELECT pos.fk_user, c.code
+           SELECT du.uid, c.code
            FROM isahl.zc_id_operation o
-           LEFT JOIN cate_rows brf ON brf.ref_left = o.id
-           LEFT JOIN isahl."zc_id_subj-position" pos
-             ON pos.id = brf.ref_right AND pos.deleted_at IS NULL
-                AND pos.fk_user IS NOT NULL
+           LEFT JOIN direct_users du ON TRUE
            LEFT JOIN isahl."zc_id_cate-proc_op" c
              ON c.id = o."ck_cate-proc_op" AND c.deleted_at IS NULL
            WHERE o.id = $1 AND o.deleted_at IS NULL
-             AND (brf.cate_code IS NULL OR brf.cate_code IN ('ROLE-DIRECT', 'ROLE-DEPUTY'))
            UNION ALL
-           SELECT pos2.fk_user, NULL
+           SELECT inc2.uid, NULL
            FROM backup_pos bp
-           JOIN isahl."zc_id_subj-position" pos2
-             ON pos2.id = bp.ref_right AND pos2.deleted_at IS NULL AND pos2.fk_user IS NOT NULL
+           JOIN inc inc2 ON inc2.pos_id = bp.ref_right
            CROSS JOIN in_flight
            CROSS JOIN backup_threshold
            WHERE in_flight.n >= backup_threshold.n
-           ORDER BY fk_user"#,
-    )
-    .bind(op_id)
-    .fetch_all(executor)
-    .await
-    .map_err(|e| ApiError::Database(format!("resolve node assign: {}", e)))?;
+           ORDER BY 1"#
+    );
+    let rows: Vec<(Option<i64>, Option<String>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(op_id)
+        .fetch_all(executor)
+        .await
+        .map_err(|e| ApiError::Database(format!("resolve node assign: {}", e)))?;
 
     let mut assignees: Vec<i64> = Vec::new();
     let mut mode_code: Option<String> = None;

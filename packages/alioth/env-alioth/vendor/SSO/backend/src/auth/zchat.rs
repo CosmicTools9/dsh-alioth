@@ -128,22 +128,32 @@ async fn handle_password_grant(
         }
     };
 
-    // Fetch user by email/username
-    let query =
-        "SELECT id, password_hash, email FROM isahl_auth.auth_users WHERE email = $1 OR username = $1";
+    // 候选账号解析（allow-duplicate-email-accounts）：email 可属多账号、username 唯一 ⇒
+    // 逐个候选校验密码，**恰好一个**匹配才签发（机器面 fail-closed，无法呈现择账号交互；
+    // 见能力 email-ambiguity-resolution）。候选解析唯一实现 = auth::identifier。
+    let column = crate::auth::identifier::IdentifierColumn::detect(&username);
+    let candidate_ids =
+        match crate::auth::identifier::resolve_candidate_ids(pool.get_ref(), column, &username)
+            .await
+        {
+            Ok(ids) => ids,
+            Err(e) => {
+                log::error!("ZChat auth DB error: {}", e);
+                return HttpResponse::InternalServerError().json(ZchatErrorResponse {
+                    error: "Internal server error".to_string(),
+                });
+            }
+        };
 
-    let user_result = sqlx::query_as::<_, (i64, String, Option<String>)>(query)
-        .bind(&username)
-        .fetch_optional(pool.get_ref())
-        .await;
-
-    let (user_id, stored_hash, email) = match user_result {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            return HttpResponse::Unauthorized().json(ZchatErrorResponse {
-                error: "Invalid credentials".to_string(),
-            });
-        }
+    let rows = match sqlx::query_as::<_, (i64, String, Option<String>)>(
+        "SELECT id, password_hash, email FROM isahl_auth.auth_users \
+         WHERE id = ANY($1) AND password_hash IS NOT NULL ORDER BY id",
+    )
+    .bind(&candidate_ids)
+    .fetch_all(pool.get_ref())
+    .await
+    {
+        Ok(r) => r,
         Err(e) => {
             log::error!("ZChat auth DB error: {}", e);
             return HttpResponse::InternalServerError().json(ZchatErrorResponse {
@@ -152,22 +162,34 @@ async fn handle_password_grant(
         }
     };
 
-    // Verify password (offload CPU-intensive Argon2 to blocking pool)
-    match verify_password_async(password, stored_hash).await {
-        Ok(Some(_)) => {
-            // Success
+    let mut matched: Option<(i64, Option<String>)> = None;
+    for (id, stored_hash, mail) in rows {
+        // Verify password (offload CPU-intensive Argon2 to blocking pool)
+        match verify_password_async(password.clone(), stored_hash).await {
+            Ok(Some(_)) => {
+                if matched.is_some() {
+                    // 多候选同时匹配 ⇒ 无法唯一确定账号，fail-closed（MUST NOT 任取一行）
+                    log::warn!("ZChat auth: identifier 命中多个账号且密码均匹配，拒绝签发");
+                    return HttpResponse::Unauthorized().json(ZchatErrorResponse {
+                        error: "Invalid credentials".to_string(),
+                    });
+                }
+                matched = Some((id, mail));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                log::error!("ZChat auth password verify error: {}", e);
+                return HttpResponse::InternalServerError().json(ZchatErrorResponse {
+                    error: "Internal server error".to_string(),
+                });
+            }
         }
-        Ok(None) => {
-            return HttpResponse::Unauthorized().json(ZchatErrorResponse {
-                error: "Invalid credentials".to_string(),
-            });
-        }
-        Err(e) => {
-            log::error!("ZChat auth password verify error: {}", e);
-            return HttpResponse::InternalServerError().json(ZchatErrorResponse {
-                error: "Internal server error".to_string(),
-            });
-        }
+    }
+
+    let Some((user_id, email)) = matched else {
+        return HttpResponse::Unauthorized().json(ZchatErrorResponse {
+            error: "Invalid credentials".to_string(),
+        });
     };
 
     // 治理闭环：创建持久化 SsoSession 并绑定到访问令牌 sid，
@@ -309,7 +331,7 @@ async fn handle_refresh_grant(
 /// Configure routes (called from main.rs)
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("/auth/zchat")
+        web::scope("/zchat")
             .route("", web::post().to(zchat_auth))
             .route("/verify", web::post().to(zchat_verify)),
     );

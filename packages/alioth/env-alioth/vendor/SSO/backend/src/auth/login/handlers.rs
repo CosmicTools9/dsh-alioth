@@ -5,15 +5,17 @@ use chrono::Utc;
 use sqlx::PgPool;
 
 use super::tokens::{
-    is_valid_refresh_token, record_failed_login, reset_failed_login, revoke_all_user_tokens,
-    revoke_refresh_token, store_refresh_token,
+    is_valid_refresh_token, record_failed_login, reset_failed_login, revoke_refresh_token,
+    store_refresh_token,
 };
 use super::{
     get_client_ip, get_user_agent, list_sessions, revoke_other_sessions, revoke_session, AuthError,
-    LoginRequest, LoginResponse, MfaLoginRequest, MfaLoginResponse, RefreshResponse,
+    LoginCandidate, LoginRequest, LoginResponse, MfaLoginRequest, MfaLoginResponse,
+    RefreshResponse,
 };
 use crate::auth::{
     crypto::decode_secret,
+    identifier::{resolve_candidate_ids, IdentifierColumn},
     jwt::{
         self, access_cookie_name, clear_access_cookie, clear_refresh_cookie, decode_token_any,
         encode_access_token, encode_refresh_token, refresh_cookie_name, set_access_cookie,
@@ -29,6 +31,116 @@ use crate::ngac::pdp::{evaluate_conditions, ConditionContext};
 /// 认证 cookie 应用作用域（isolate-auth-cookie-scope）：读取并校验
 /// `x-auth-cookie-scope` 请求头；缺失/非法 → None（缺省 cookie 名，向后兼容）。
 /// 合法字符 [A-Za-z0-9_-]，长度 ≤32——防 cookie 名注入。
+/// 登录状态门禁（login 与微信小程序一键登录同一口径）：
+/// 返回 Some(响应) = 拦截；None = 放行。active 正常放行；rejected = 驳回暂不授权
+/// 但放行登录（前端展示驳回态；无业务授权由「未挂 employee UA」天然保证）。
+pub(crate) fn status_gate_error(user_status: Option<&str>) -> Option<HttpResponse> {
+    match user_status {
+        Some("active") => None,
+        Some("pending") => Some(HttpResponse::Forbidden().json(AuthError {
+            error: "IDENTITY_REQUIRED".to_string(),
+        })),
+        Some("identity_submitted") => Some(HttpResponse::Forbidden().json(AuthError {
+            error: "IDENTITY_UNDER_REVIEW".to_string(),
+        })),
+        Some("identity_verified") | Some("pending_approval") => {
+            Some(HttpResponse::Forbidden().json(AuthError {
+                error: "APPROVAL_PENDING".to_string(),
+            }))
+        }
+        Some("rejected") => None,
+        _ => Some(HttpResponse::Forbidden().json(AuthError {
+            error: "ACCOUNT_INACTIVE".to_string(),
+        })),
+    }
+}
+
+/// 登录态签发（无 MFA 路径）——`login()` 与微信小程序一键登录共用：
+/// 建会话（sid 绑 JWT，Gateway PEP 据此实现登出即时失效）→ 签 access/refresh（ES256）
+/// → refresh 落库（轮换）→ 写 cookie（`x-auth-cookie-scope` 隔离）。
+pub(crate) async fn issue_login_response(
+    pool: &PgPool,
+    state: &AuthState,
+    req: &HttpRequest,
+    user_id: i64,
+) -> HttpResponse {
+    let session_manager = SessionManager::new(pool.clone());
+    let session = match session_manager
+        .create_session(CreateSessionRequest {
+            user_id,
+            ip_address: get_client_ip(req),
+            user_agent: get_user_agent(req),
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("Failed to create session: {}", e);
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: "Failed to create session".to_string(),
+            });
+        }
+    };
+
+    let mut claims = Claims::with_expiry_seconds(
+        &user_id.to_string(),
+        "",
+        false,
+        state.jwt_access_expiry_secs,
+    );
+    // 绑定 SSO 会话，供 Gateway PEP 实现登出即时失效
+    claims.sid = session.session_token.clone();
+
+    let access_token = match encode_access_token(&claims, &state.jwt_private_key) {
+        Ok(t) => t,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: "Failed to generate token".to_string(),
+            })
+        }
+    };
+    let refresh_token = match encode_refresh_token(
+        &claims,
+        &state.jwt_private_key,
+        state.jwt_refresh_expiry_secs,
+    ) {
+        Ok(t) => t,
+        Err(_) => {
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: "Failed to generate refresh token".to_string(),
+            })
+        }
+    };
+
+    use chrono::TimeDelta;
+    let expires_at = Utc::now() + TimeDelta::seconds(state.jwt_refresh_expiry_secs);
+    if let Err(e) = store_refresh_token(pool, user_id, &refresh_token, expires_at).await {
+        log::error!("Failed to store refresh token: {}", e);
+    }
+
+    let response = HttpResponse::Ok().json(LoginResponse {
+        access_token: Some(access_token.clone()),
+        refresh_token: Some(refresh_token.clone()),
+        mfa_required: false,
+        message: Some("Login successful".to_string()),
+        session_id: Some(session.session_token.clone()),
+        username_selection_required: false,
+        candidates: Vec::new(),
+    });
+    let response = set_access_cookie(
+        response,
+        &access_token,
+        state.jwt_access_expiry_secs,
+        cookie_scope(req).as_deref(),
+    );
+    set_refresh_cookie(
+        response,
+        &refresh_token,
+        state.jwt_refresh_expiry_secs,
+        cookie_scope(req).as_deref(),
+    )
+}
 fn cookie_scope(req: &actix_web::HttpRequest) -> Option<String> {
     req.headers()
         .get("x-auth-cookie-scope")
@@ -42,6 +154,131 @@ fn cookie_scope(req: &actix_web::HttpRequest) -> Option<String> {
         })
 }
 
+/// 标识歧义候选数与密码校验上限（allow-duplicate-email-accounts）：
+/// 超过即按无效凭据处理，避免单请求触发无界 Argon2 校验（DoS 面）。
+const MAX_AMBIGUOUS_CANDIDATES: usize = 20;
+
+/// 多账号共享标识（email/phone）时的**择账号挑战**。
+///
+/// 语义（用户裁决 2026-09-23）：逐个候选校验密码 —— 全部不匹配 MUST 返回 401 且
+/// **不改动任何候选的失败计数**（否则攻击者可用错误密码跨账号锁死同标识全部账号）；
+/// 至少一个匹配 MUST 返回 200 挑战（`username_selection_required` + 该标识全部候选的
+/// username），且 MUST NOT 签发令牌 / 建立会话 / 写认证 cookie。客户端选定账号后以该
+/// username 重新提交登录，走单账号路径完成锁定与 MFA 判定。
+async fn multi_account_challenge(
+    pool: &PgPool,
+    candidates: &[i64],
+    password: &str,
+) -> HttpResponse {
+    if candidates.len() > MAX_AMBIGUOUS_CANDIDATES {
+        log::warn!(
+            "标识命中 {} 个候选，超过校验上限 {}，按无效凭据处理",
+            candidates.len(),
+            MAX_AMBIGUOUS_CANDIDATES
+        );
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "Invalid credentials".to_string(),
+        });
+    }
+
+    let rows = match sqlx::query_as::<
+        _,
+        (
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
+        "SELECT id, username, display_name, password_hash, locked_until \
+         FROM isahl_auth.auth_users WHERE id = ANY($1) ORDER BY id",
+    )
+    .bind(candidates)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("Database error during multi-account login: {}", e);
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: format!("Login failed: {}", e),
+            });
+        }
+    };
+
+    let now = Utc::now();
+    let mut matched = false;
+    let mut locked_count = 0usize;
+    for (_, _, _, password_hash, locked_until) in &rows {
+        if let Some(locked) = locked_until {
+            if *locked > now {
+                locked_count += 1;
+                continue;
+            }
+        }
+        if let Some(hash) = password_hash {
+            if matches!(
+                verify_password_async(password.to_string(), hash.clone()).await,
+                Ok(Some(_))
+            ) {
+                matched = true;
+                break;
+            }
+        }
+    }
+
+    if !matched {
+        // 全部候选均锁定 → 沿用单账号路径的 423 语义；否则 401（不增任何候选计数）
+        if locked_count == rows.len() && !rows.is_empty() {
+            return HttpResponse::Locked().json(AuthError {
+                error: "ACCOUNT_LOCKED: account is temporarily locked, retry later".to_string(),
+            });
+        }
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "Invalid credentials".to_string(),
+        });
+    }
+
+    HttpResponse::Ok().json(LoginResponse {
+        access_token: None,
+        refresh_token: None,
+        mfa_required: false,
+        message: Some("请选择登录账号".to_string()),
+        session_id: None,
+        username_selection_required: true,
+        candidates: rows
+            .iter()
+            .map(|(_, username, display_name, _, _)| LoginCandidate {
+                username: username.clone().unwrap_or_default(),
+                display_name: display_name.clone(),
+            })
+            .collect(),
+    })
+}
+
+/// 唯一 email 匹配的账号 id（无匹配或**多匹配** → None；多匹配记 warn）。
+/// 供 MFA 完成步在无 pending 会话时回落使用（allow-duplicate-email-accounts）：
+/// 多匹配时 MUST NOT 任取一行。
+async fn resolve_unique_email_user(pool: &PgPool, email: &str) -> Option<i64> {
+    match resolve_candidate_ids(pool, IdentifierColumn::Email, email).await {
+        Ok(ids) if ids.len() == 1 => Some(ids[0]),
+        Ok(ids) => {
+            if ids.len() > 1 {
+                log::warn!(
+                    "MFA 完成步：email 命中 {} 个账号，无法唯一定位（应改用 username 登录）",
+                    ids.len()
+                );
+            }
+            None
+        }
+        Err(e) => {
+            log::error!("MFA 完成步：候选解析失败：{}", e);
+            None
+        }
+    }
+}
+
 /// Login with email and password
 pub async fn login(
     pool: web::Data<PgPool>,
@@ -49,46 +286,34 @@ pub async fn login(
     req: HttpRequest,
     body: web::Json<LoginRequest>,
 ) -> HttpResponse {
-    // Auto-detect identifier type: email, username, or phone
+    // 标识判别 + 候选解析（allow-duplicate-email-accounts）：email/phone 可命中多个账号，
+    // username 为唯一身份基点（≤1）。候选解析唯一实现 = auth::identifier（禁本地第二份）
     let identifier = &body.identifier;
-    let (search_column, search_value) = if identifier.contains('@') {
-        ("email", identifier)
-    } else if identifier.starts_with('+')
-        || (identifier.len() >= 8
-            && identifier
-                .chars()
-                .all(|c| c.is_ascii_digit() || c == '-' || c == ' ' || c == '(' || c == ')'))
-    {
-        ("phone", identifier)
-    } else {
-        ("username", identifier)
-    };
+    let column = IdentifierColumn::detect(identifier);
+    log::debug!("Login attempt with {:?}: {}", column, identifier);
 
-    log::debug!("Login attempt with {}: {}", search_column, identifier);
-
-    // Fetch user from database (incl. lockout counters — SECURITY_SPEC §5)
-    // email 为可选认证链路（1:N 存于 auth_user_emails），登录经 auth_user_emails UNION
-    // auth_users.email 解析；username/phone 仍按单列匹配。
-    // 认证标识列闭集（email/phone/username，见上方自动判别）⇒ 查询文本编译期固化（零运行期拼装）
-    let query = match search_column {
-        "email" => {
-            "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
-         COALESCE(failed_login_attempts, 0), locked_until \
-         FROM isahl_auth.auth_users WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails \
-         WHERE email = $1 AND deleted_at IS NULL) OR email = $1"
-        }
-        "phone" => {
-            "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
-         COALESCE(failed_login_attempts, 0), locked_until \
-         FROM isahl_auth.auth_users WHERE phone = $1"
-        }
-        _ => {
-            "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
-         COALESCE(failed_login_attempts, 0), locked_until \
-         FROM isahl_auth.auth_users WHERE username = $1"
+    let candidates = match resolve_candidate_ids(pool.get_ref(), column, identifier).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            log::error!("Database error during login: {}", e);
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: format!("Login failed: {}", e),
+            });
         }
     };
 
+    if candidates.is_empty() {
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "Invalid credentials".to_string(),
+        });
+    }
+
+    // 标识歧义（≥2 个账号共享该标识）：择账号挑战（MUST NOT 任取一行）
+    if candidates.len() > 1 {
+        return multi_account_challenge(pool.get_ref(), &candidates, &body.password).await;
+    }
+
+    // 单账号路径：取该账号（含锁定计数 — SECURITY_SPEC §5）
     let user_result = sqlx::query_as::<
         _,
         (
@@ -99,8 +324,12 @@ pub async fn login(
             i32,
             Option<chrono::DateTime<chrono::Utc>>,
         ),
-    >(query)
-    .bind(search_value)
+    >(
+        "SELECT id, password_hash, COALESCE(mfa_enabled, false), mfa_secret, \
+         COALESCE(failed_login_attempts, 0), locked_until \
+         FROM isahl_auth.auth_users WHERE id = $1",
+    )
+    .bind(candidates[0])
     .fetch_optional(pool.get_ref())
     .await;
 
@@ -204,37 +433,9 @@ pub async fn login(
             .await
             .unwrap_or(None);
 
-    match user_status.as_deref() {
-        Some("active") => {}
-        Some("pending") => {
-            return HttpResponse::Forbidden().json(AuthError {
-                error: "IDENTITY_REQUIRED".to_string(),
-            });
-        }
-        Some("identity_submitted") => {
-            return HttpResponse::Forbidden().json(AuthError {
-                error: "IDENTITY_UNDER_REVIEW".to_string(),
-            });
-        }
-        Some("identity_verified") => {
-            return HttpResponse::Forbidden().json(AuthError {
-                error: "APPROVAL_PENDING".to_string(),
-            });
-        }
-        Some("pending_approval") => {
-            return HttpResponse::Forbidden().json(AuthError {
-                error: "APPROVAL_PENDING".to_string(),
-            });
-        }
-        Some("rejected") => {
-            // refine-rejection-not-disabled：驳回 = 暂不授权——放行登录（前端展示驳回状态页，
-            // 可手动再次发起审批申请）；无业务授权由「未挂 employee UA」天然保证。
-        }
-        _ => {
-            return HttpResponse::Forbidden().json(AuthError {
-                error: "ACCOUNT_INACTIVE".to_string(),
-            });
-        }
+    // 状态门禁（与微信小程序一键登录共享同一实现 status_gate_error）
+    if let Some(resp) = status_gate_error(user_status.as_deref()) {
+        return resp;
     }
 
     // If MFA is enabled, return mfa_required=true
@@ -265,91 +466,170 @@ pub async fn login(
             mfa_required: true,
             message: Some("MFA verification required".to_string()),
             session_id: Some(session.session_token),
+            username_selection_required: false,
+            candidates: Vec::new(),
         });
     }
 
-    // No MFA - create session and issue tokens immediately
-    let session_manager = SessionManager::new(pool.get_ref().clone());
-    let session = match session_manager
-        .create_session(CreateSessionRequest {
-            user_id: user_id_i64,
-            ip_address: get_client_ip(&req),
-            user_agent: get_user_agent(&req),
-            ..Default::default()
-        })
-        .await
-    {
-        Ok(s) => s,
+    // No MFA - create session and issue tokens immediately（共享实现：
+    // 与微信小程序一键登录同一签发段，禁第二份）
+    issue_login_response(pool.get_ref(), state.get_ref(), &req, user_id_i64).await
+}
+
+/// 邮箱验证码登录请求（add-password-reset-and-auth-fixes D3）
+#[derive(serde::Deserialize)]
+pub struct EmailCodeLoginRequest {
+    pub email: String,
+    pub code: String,
+}
+
+/// Login with email verification code
+///
+/// 核验 = email.rs 验证码契约内联（purpose='login'、最新一条、未过期、未用 → 匹配后标 verified）
+/// ——不经 /verify-code 两步，避免核验与登录间的竞态窗口。账号解析 MUST 唯一（email 多账号
+/// 拒绝并提示密码登录择账号，不为验证码登录发明新交互）；失败计入 failed_login_attempts
+/// （SECURITY_SPEC §5 同一锁定语义）；MFA 启用用户拒绝直通（提示密码登录走 mfa 挑战）；
+/// 状态门禁与密码登录共享 status_gate_error。
+pub async fn login_email_code(
+    pool: web::Data<PgPool>,
+    state: web::Data<AuthState>,
+    req: HttpRequest,
+    body: web::Json<EmailCodeLoginRequest>,
+) -> HttpResponse {
+    let candidates =
+        match resolve_candidate_ids(pool.get_ref(), IdentifierColumn::Email, &body.email).await {
+            Ok(ids) => ids,
+            Err(e) => {
+                log::error!("Database error during email-code login: {}", e);
+                return HttpResponse::InternalServerError().json(AuthError {
+                    error: format!("Login failed: {}", e),
+                });
+            }
+        };
+
+    if candidates.is_empty() {
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "Invalid credentials".to_string(),
+        });
+    }
+    if candidates.len() > 1 {
+        return HttpResponse::BadRequest().json(AuthError {
+            error: "该邮箱绑定多个账号，请使用密码登录并选择账号".to_string(),
+        });
+    }
+
+    let user_result = sqlx::query_as::<_, (i64, bool, i32, Option<chrono::DateTime<chrono::Utc>>)>(
+        "SELECT id, COALESCE(mfa_enabled, false), \
+         COALESCE(failed_login_attempts, 0), locked_until \
+         FROM isahl_auth.auth_users WHERE id = $1",
+    )
+    .bind(candidates[0])
+    .fetch_optional(pool.get_ref())
+    .await;
+
+    let (user_id_i64, mfa_enabled, failed_attempts, locked_until) = match user_result {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "Invalid credentials".to_string(),
+            })
+        }
         Err(e) => {
-            log::error!("Failed to create session: {}", e);
+            log::error!("Database error during email-code login: {}", e);
             return HttpResponse::InternalServerError().json(AuthError {
-                error: "Failed to create session".to_string(),
+                error: format!("Login failed: {}", e),
             });
         }
     };
 
-    // Generate tokens with session ID
-    let mut claims = Claims::with_expiry_seconds(
-        &user_id_i64.to_string(),
-        "",
-        false,
-        state.jwt_access_expiry_secs,
-    );
-    // Bind token to the SSO session so the Gateway PEP can enforce
-    // session revocation (logout) promptly.
-    claims.sid = session.session_token.clone();
-
-    let access_token = match encode_access_token(&claims, &state.jwt_private_key) {
-        Ok(t) => t,
-        Err(_) => {
-            return HttpResponse::InternalServerError().json(AuthError {
-                error: "Failed to generate token".to_string(),
-            })
+    // Account lockout check（与密码登录同一语义：锁定中拒绝；过期锁自清并复位计数）
+    if let Some(locked) = locked_until {
+        if locked > Utc::now() {
+            let remaining = (locked - Utc::now()).num_minutes().max(0);
+            return HttpResponse::Locked().json(AuthError {
+                error: format!(
+                    "ACCOUNT_LOCKED: account is temporarily locked, retry after {} minutes",
+                    remaining
+                ),
+            });
         }
-    };
-
-    let refresh_token = match encode_refresh_token(
-        &claims,
-        &state.jwt_private_key,
-        state.jwt_refresh_expiry_secs,
-    ) {
-        Ok(t) => t,
-        Err(_) => {
-            return HttpResponse::InternalServerError().json(AuthError {
-                error: "Failed to generate refresh token".to_string(),
-            })
-        }
-    };
-
-    // Store refresh token in database
-    use chrono::TimeDelta;
-    let expires_at = Utc::now() + TimeDelta::seconds(state.jwt_refresh_expiry_secs);
-    if let Err(e) =
-        store_refresh_token(pool.get_ref(), user_id_i64, &refresh_token, expires_at).await
-    {
-        log::error!("Failed to store refresh token: {}", e);
+        reset_failed_login(pool.get_ref(), user_id_i64).await;
     }
 
-    let response = HttpResponse::Ok().json(LoginResponse {
-        access_token: Some(access_token.clone()),
-        refresh_token: Some(refresh_token.clone()),
-        mfa_required: false,
-        message: Some("Login successful".to_string()),
-        session_id: Some(session.session_token.clone()),
-    });
-
-    let response = set_access_cookie(
-        response,
-        &access_token,
-        state.jwt_access_expiry_secs,
-        cookie_scope(&req).as_deref(),
-    );
-    set_refresh_cookie(
-        response,
-        &refresh_token,
-        state.jwt_refresh_expiry_secs,
-        cookie_scope(&req).as_deref(),
+    // 核验验证码（purpose='login' 内联核验 + 原子标已用）
+    let code_row = sqlx::query_as::<_, (i64, String, bool)>(
+        r#"
+        SELECT id, code, verified
+        FROM isahl_auth.auth_email_verifications
+        WHERE email = $1
+          AND purpose = 'login'
+          AND expires_at > NOW()
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
     )
+    .bind(&body.email)
+    .fetch_optional(pool.get_ref())
+    .await;
+
+    match code_row {
+        Ok(Some((verification_id, stored_code, verified))) => {
+            if verified || stored_code != body.code {
+                record_failed_login(pool.get_ref(), user_id_i64, failed_attempts).await;
+                return HttpResponse::Unauthorized().json(AuthError {
+                    error: "Invalid credentials".to_string(),
+                });
+            }
+            if let Err(e) = sqlx::query(
+                "UPDATE isahl_auth.auth_email_verifications SET verified = TRUE, updated_at = NOW() WHERE id = $1",
+            )
+            .bind(verification_id)
+            .execute(pool.get_ref())
+            .await
+            {
+                log::error!("Failed to mark login code as verified: {}", e);
+                return HttpResponse::InternalServerError().json(AuthError {
+                    error: "Internal server error".to_string(),
+                });
+            }
+        }
+        Ok(None) => {
+            record_failed_login(pool.get_ref(), user_id_i64, failed_attempts).await;
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "Invalid credentials".to_string(),
+            });
+        }
+        Err(e) => {
+            log::error!("Failed to query login verification code: {}", e);
+            return HttpResponse::InternalServerError().json(AuthError {
+                error: "Internal server error".to_string(),
+            });
+        }
+    }
+
+    // 核验通过 — 清锁定计数
+    reset_failed_login(pool.get_ref(), user_id_i64).await;
+
+    // 状态门禁（与密码登录共享同一实现）
+    let user_status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+            .bind(user_id_i64)
+            .fetch_optional(pool.get_ref())
+            .await
+            .unwrap_or(None);
+    if let Some(resp) = status_gate_error(user_status.as_deref()) {
+        return resp;
+    }
+
+    // MFA 启用用户拒绝验证码直通——提示密码登录走 mfa 挑战（design D3 v1 取舍）
+    if mfa_enabled {
+        return HttpResponse::Forbidden().json(AuthError {
+            error: "该账号已启用 MFA，请使用密码登录".to_string(),
+        });
+    }
+
+    // 会话签发（与密码登录/微信小程序同一签发段，禁第二份）
+    issue_login_response(pool.get_ref(), state.get_ref(), &req, user_id_i64).await
 }
 
 /// Complete login with MFA code
@@ -359,32 +639,45 @@ pub async fn login_mfa(
     req: HttpRequest,
     body: web::Json<MfaLoginRequest>,
 ) -> HttpResponse {
-    // Fetch user and MFA secret from database
-    let user_result = sqlx::query_as::<_, (String, String)>(
-        r#"
-        SELECT id, mfa_secret
-        FROM isahl_auth.auth_users
-        WHERE email = $1 AND mfa_enabled = true
-        "#,
-    )
-    .bind(&body.email)
-    .fetch_optional(pool.get_ref())
-    .await;
-
-    let (user_id, encrypted_secret) = match user_result {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            return HttpResponse::Unauthorized().json(AuthError {
-                error: "User not found or MFA not enabled".to_string(),
-            })
+    // 账号解析（allow-duplicate-email-accounts）：MFA 完成步 MUST NOT 按 email 任取一行 ——
+    // email 可属多个账号（原 `WHERE email = $1` + fetch_optional 会校验到任意账号）。
+    // 优先按挑战步签发的 pending 会话定账号；无会话时回落「唯一」email 匹配，多匹配即拒绝。
+    let resolved_user_id: Option<i64> = match body.session_id.as_deref() {
+        Some(sid) if !sid.is_empty() => {
+            let session_manager = SessionManager::new(pool.get_ref().clone());
+            match session_manager.validate_session(sid).await {
+                Ok(s) => Some(s.user_id),
+                Err(e) => {
+                    log::warn!("MFA 完成步：会话无效（{}），回落 email 解析", e);
+                    resolve_unique_email_user(pool.get_ref(), &body.email).await
+                }
+            }
         }
-        Err(e) => {
-            log::error!("Database error during MFA login: {}", e);
-            return HttpResponse::InternalServerError().json(AuthError {
-                error: "MFA verification failed".to_string(),
-            });
-        }
+        _ => resolve_unique_email_user(pool.get_ref(), &body.email).await,
     };
+
+    let Some(user_id_i64) = resolved_user_id else {
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "User not found or MFA not enabled".to_string(),
+        });
+    };
+
+    // Fetch MFA secret for that account
+    let encrypted_secret: Option<String> = sqlx::query_scalar(
+        "SELECT mfa_secret FROM isahl_auth.auth_users \
+         WHERE id = $1 AND mfa_enabled = true AND mfa_secret IS NOT NULL",
+    )
+    .bind(user_id_i64)
+    .fetch_optional(pool.get_ref())
+    .await
+    .unwrap_or(None);
+
+    let Some(encrypted_secret) = encrypted_secret else {
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "User not found or MFA not enabled".to_string(),
+        });
+    };
+    let user_id = user_id_i64.to_string();
 
     // 还原 base32 字符串：支持 enc: 前缀密文（新）与旧明文 base32（迁移期兼容）。
     let base32_secret = match decode_secret(&state.encryption_key, &encrypted_secret) {
@@ -599,11 +892,11 @@ pub async fn logout(
                     }
                 }
                 let user_id = claims.sub.parse::<i64>().unwrap_or(0);
-                if user_id > 0 {
-                    if let Err(e) = revoke_all_user_tokens(pool.get_ref(), user_id).await {
-                        log::warn!("Failed to revoke refresh tokens on Bearer logout: {}", e);
-                    }
-                }
+                // 本分支只有 access token（无 refresh token 可吊销）：会话吊销已在上方完成，
+                // refresh 硬门禁（claims.sid 会话活性校验）会拒绝其后续轮换 ⇒ 本机等价登出。
+                // **不再** revoke_all_user_tokens：那会波及同账号其他设备（2026-09-22 用户裁决，
+                // 见下方 cookie 分支说明）。user_id 仍解析以保留日志上下文。
+                log::info!("Logout (Bearer): session revoked; user_id={user_id}");
             }
         }
     }
@@ -613,11 +906,21 @@ pub async fn logout(
         .cookie(&refresh_cookie_name(scope.as_deref()))
         .map(|c| c.value().to_string())
     {
-        // Try to get user_id from token to revoke all tokens
+        // **只吊销本次登录的这一条 refresh token**（2026-09-22 用户裁决）：
+        // 原实现解出 user_id 后调 revoke_all_user_tokens ⇒ 一次登出令该账号**所有设备**的
+        // refresh token 失效 ⇒ 其余设备 access token 存活到过期（≤15min）后续期失败 ⇒ 并发
+        // 401（经 FE 放大为整树重挂载/闪回）。多机同账号是既定用法（登录不吊销其他会话，
+        // 多会话并存），故登出语义应为「结束**本机**这次会话」。
+        // 「登出全部设备」已由显式端点承担：DELETE /auth/sessions/all → revoke_other_sessions。
+        // 会话吊销（上方 revoke_session）配合 refresh 的 claims.sid 活性硬门禁，已保证本机
+        // 无法再续期；此处仅需让该 refresh token 立即失效（轮换路径同函数）。
         if let Ok(claims) = decode_token_any(&refresh_token, &state.verification_keys()) {
-            let user_id = claims.sub.parse::<i64>().unwrap_or(0);
-            if let Err(e) = revoke_all_user_tokens(pool.get_ref(), user_id).await {
-                log::warn!("Failed to revoke refresh tokens: {}", e);
+            if let Err(e) = revoke_refresh_token(pool.get_ref(), &refresh_token).await {
+                log::warn!(
+                    "Failed to revoke refresh token on logout (user_id={}): {}",
+                    claims.sub,
+                    e
+                );
             }
         }
     }
@@ -898,23 +1201,10 @@ pub async fn me(
             ngac_attrs,
             modules,
         ))) => {
-            // 从 NGAC 属性推导 portal-scope
-            let has_workbench = ngac_attrs.iter().any(|a| a == "admin" || a == "operator");
-            let has_storefront = ngac_attrs
-                .iter()
-                .any(|a| a == "user" || a == "customer" || a == "storefront");
-            let mut portal_scope: Vec<&str> = Vec::new();
-            if has_workbench {
-                portal_scope.push("workbench");
-            }
-            if has_storefront {
-                portal_scope.push("storefront");
-            }
-            // 无 NGAC 属性或未推导出 scope 时默认 workbench
-            if portal_scope.is_empty() {
-                portal_scope.push("workbench");
-            }
-            let portal_default = if has_storefront && !has_workbench {
+            // 门户归属（NGAC 属性驱动，唯一推导源 = auth::portal::derive_portal_scope；
+            // GATEWAY_DESIGN_SPEC §3.3）——扁平业务角色名不参与门户判定
+            let portal_scope: Vec<String> = crate::auth::portal::derive_portal_scope(&ngac_attrs);
+            let portal_default = if portal_scope.len() == 1 && portal_scope[0] == "storefront" {
                 "storefront"
             } else {
                 "workbench"
@@ -1326,7 +1616,14 @@ pub async fn me(
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.route("/login", web::post().to(login))
         .route("/login/mfa", web::post().to(login_mfa))
+        // 邮箱验证码登录（add-password-reset-and-auth-fixes D3；purpose='login' 内联核验）
+        .route("/login/email-code", web::post().to(login_email_code))
         .route("/login/ldap", web::post().to(crate::auth::ldap::ldap_login))
+        // 微信小程序一键登录（wechat-miniapp-one-tap-login；fromType 区分小程序来源）
+        .route(
+            "/wechat/miniapp/login",
+            web::post().to(crate::auth::wechat_miniapp::miniapp_login),
+        )
         .route("/register", web::post().to(crate::auth::register::register))
         // 外部主体注册通道（add-dual-register-channels）：OpenActivity 门户专用
         .route(

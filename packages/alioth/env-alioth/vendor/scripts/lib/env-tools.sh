@@ -32,13 +32,14 @@ env_tools_registry() {
 tool|Git|git|version||true|2.30|install_git|brew install git（macOS）或 apt-get install git（Linux）
 tool|mise|mise|version||true|2026.9.6|install_mise|curl https://mise.jdx.dev/install.sh
 tool|Node.js|node|version||true|24.21|install_nodejs|mise install（根 .mise.toml [tools] pin）或 nvm install
-tool|pnpm|pnpm|version||true|12.5.1|install_pnpm|mise install pnpm（pin 见根 .mise.toml）
+tool|pnpm|pnpm|version||true|12.6.0|install_pnpm|mise install pnpm（pin 见根 .mise.toml）
 tool|bun|bun|version||true|1.4.2|install_bun|brew install bun
 tool|Rust/Cargo|cargo|version||true|1.98|install_rust|rustup update
 tool|Python 3|python3|version||true|3.14|install_python3|brew install python3（macOS）或 apt-get install python3（Linux）
 tool|psql|psql|version||true|18.6|install_pg_isready|brew install postgresql@18（macOS）或 apt-get install postgresql-client（Linux）
 tool|pg_isready|pg_isready|version||true||install_pg_isready|brew install postgresql（macOS）或 apt-get install postgresql-client（Linux）
 tool|jq|jq|version||true||install_jq|brew install jq（macOS）或 apt-get install jq（Linux）
+tool|unzip|unzip|argv|-v|true||install_unzip|brew install unzip（macOS）或 apt-get install unzip（Linux）
 tool|yq|yq|version||true|4.53.3|install_yq|brew install yq（macOS）或 apt-get install yq（Linux）
 tool|GNU coreutils (timeout)|timeout|version||true||install_coreutils|bash scripts/setup/install-dev-tools.sh（coreutils + 软链 ~/.local/bin）
 tool|openspec|openspec|version||true|1.13.1|install_openspec|mise install npm:@fission-ai/openspec（pin 见根 .mise.toml）

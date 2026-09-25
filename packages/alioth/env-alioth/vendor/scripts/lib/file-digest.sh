@@ -71,6 +71,37 @@ file_md5() {
     printf '%s' "$out"
 }
 
+# digest_sha_tool_name —— 打印 sha256 摘要工具名（sha256sum | shasum）；都不可用返回 1
+# 为什么与 md5 原语并存：发布清单的存量语义是 md5（不在此改动）；而安全敏感面（迁移记账等
+# 完整性留痕）受 SECURITY_SPEC §6「不得使用弱加密算法（MD5、SHA1、DES）」约束 ⇒ 该面用 sha256。
+digest_sha_tool_name() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf 'sha256sum'
+    elif command -v shasum >/dev/null 2>&1; then
+        printf 'shasum'
+    else
+        return 1
+    fi
+}
+
+# file_sha256 <file> —— 单个文件的 sha256（十六进制小写）
+# 退出码：2 路径不存在 / 3 缺摘要工具 / 4 计算失败（与 file_md5 同形）
+file_sha256() {
+    local f="${1:-}" out="" tool
+    [ -f "$f" ] || { echo "file_sha256: 文件不存在：${f}" >&2; return 2; }
+    if ! tool="$(digest_sha_tool_name)"; then
+        echo "file_sha256: 缺摘要工具（sha256sum 或 shasum）" >&2
+        return 3
+    fi
+    if [ "$tool" = "sha256sum" ]; then
+        out="$(sha256sum "$f" 2>/dev/null | awk '{print $1}')"
+    else
+        out="$(shasum -a 256 "$f" 2>/dev/null | awk '{print $1}')"
+    fi
+    [ -n "$out" ] || { echo "file_sha256: 摘要计算失败：${f}" >&2; return 4; }
+    printf '%s' "$out"
+}
+
 # files_md5_digest <dir> —— 目录内全部文件的确定性摘要。
 # 算法：对每个文件取 "<md5>  <相对路径>"（路径内的换行转义为字面 \n），按字节序排序后整体再摘要。
 # 遍历用 find -print0 + read -d ''（空格/换行安全的文件名）；定序用 LC_ALL=C sort（POSIX）。

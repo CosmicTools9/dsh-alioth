@@ -1,3 +1,13 @@
+//! SSO（`gateway-sso`）——认证/NGAC/SCIM/admin 服务库。
+//!
+//! clippy 豁免（crate 级，documented）：`result_large_err` —— 本 crate 的 handler 辅助函数
+//! 统一以 `Result<T, HttpResponse>` 返回「错误即响应」形态（NGAC 决策校验 / SCIM 令牌 /
+//! admin 鉴权 / WebAuthn / MFA 等 18 处）；`HttpResponse` 天然 >128B，boxing 只为消 lint
+//! 会引入无收益分配并迫使 100+ 调用点解引用（本 crate 调用点均显式 match，无 `?` 传播），
+//! 语义与可读性双输。Gateway 侧同类 lint 已按 Box + 解引用真修
+//! （`Gateway/backend/src/{api/doc_recognition.rs,api/entity_binding.rs,standalone_auth/mod.rs}`）。
+#![allow(clippy::result_large_err)]
+
 pub mod admin;
 pub mod audit;
 pub mod auth;
@@ -57,9 +67,10 @@ pub fn configure_public_routes(cfg: &mut web::ServiceConfig) {
                 .configure(auth::slo::configure)
                 .configure(auth::reset_password::configure_routes)
                 .configure(auth::password_change::configure_routes)
-                .configure(auth::profile::configure_routes)
+                // /me/* 子 scope 先于 profile 的 scope("/me")（与 without_scope 变体同一纪律）
                 .configure(auth::mfa_management::configure_routes)
                 .configure(auth::notification_preferences::configure_routes)
+                .configure(auth::profile::configure_routes)
                 .configure(auth::social::configure)
                 .configure(auth::portal::configure_routes)
                 .route(
@@ -99,9 +110,12 @@ pub fn configure_public_routes_without_scope(cfg: &mut web::ServiceConfig) {
         .configure(auth::slo::configure)
         .configure(auth::reset_password::configure_routes)
         .configure(auth::password_change::configure_routes)
-        .configure(auth::profile::configure_routes)
+        // /me/* 子 scope 必须先于 profile 的 scope("/me") 注册——actix scope 前缀匹配
+        // 不回退，scope("/me") 在前会把 /me/mfa、/me/notification-preferences 全部
+        // 捕获为 404（2026-09-24 双前缀修复后实证）
         .configure(auth::mfa_management::configure_routes)
         .configure(auth::notification_preferences::configure_routes)
+        .configure(auth::profile::configure_routes)
         .configure(auth::social::configure)
         .configure(auth::portal::configure_routes);
 }
@@ -243,7 +257,12 @@ pub async fn build_server(config: Config) -> std::io::Result<actix_web::dev::Ser
                 // 未设置/非法值落回 smtp，生产不允许隐式降级 log）。
                 let svc: Box<dyn common::EmailService> = match config.email_mode.as_str() {
                     "log" => Box::new(log_email::LogEmailService),
-                    _ => Box::new(common::SmtpEmailService::new(pool.clone())),
+                    // 口令解密口径 = system_config（`enc:` AES-256-GCM）；明文写入原样透传。
+                    // change: openspec/changes/fix-email-credential-decryptor
+                    _ => Box::new(common::SmtpEmailService::with_password_decryptor(
+                        pool.clone(),
+                        system_config::crypto::decrypt_prefixed,
+                    )),
                 };
                 svc
             }))

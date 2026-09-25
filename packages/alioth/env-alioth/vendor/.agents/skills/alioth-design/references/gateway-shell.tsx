@@ -127,7 +127,11 @@ function Logo({
     <a
       href="#"
       className={cn(
-        'flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline shrink-0',
+        // 品牌块 MUST 在窄屏可压缩：`shrink-0` 使其无法让位给右簇，实测 375px 顶栏
+        // 左簇（品牌链接盒）与移动动作按钮几何互叠（Δoverlap=12）。改为 `min-w-0`
+        // 保留 `w-60` 的桌面宽度对齐（与 240px 侧栏同宽），空间不足时按 flex 收缩；
+        // 品牌标签自身是 `hidden sm:inline` + `truncate`，窄屏只剩图标即不再吃宽度。
+        'flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline min-w-0',
         showAppName && 'w-60',
       )}
       title="返回 Gateway"
@@ -310,22 +314,30 @@ export function ActionGroup({
       >
         <span className="w-4 h-4">{icon(isDark ? 'sun' : 'moon')}</span>
       </button>
-      {triggers.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => onTrigger?.(t.id)}
-          className="relative w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
-          title={t.title}
-        >
-          <span className="w-4 h-4">{icon(t.icon)}</span>
-          {t.pendingCount || t.unreadCount ? (
-            <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[8px] leading-none flex items-center justify-center font-bold px-1 border-2 border-card">
-              {t.unreadCount || t.pendingCount}
-            </span>
-          ) : null}
-        </button>
-      ))}
+      {/* 工作区触发项（应用网格 / 待办 / 消息等）在 ≤md 隐藏：它们的 `w-9` 固定宽使右簇
+          min-content 在窄屏超出视口（实测 375px：右簇 390px > 375 ⇒ 左簇被压为 0、菜单按钮与
+          外溢右簇互叠，尾部被 header 的 overflow-hidden 裁掉）。移动端保留 搜索 / 主题 / 语言 / 用户，
+          触发项经工作区 dock 可达。先例：SearchSlot 的桌面输入框 `hidden lg:block`。 */}
+      {triggers.length > 0 && (
+        <div className="hidden md:flex items-center gap-3">
+          {triggers.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onTrigger?.(t.id)}
+              className="relative w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
+              title={t.title}
+            >
+              <span className="w-4 h-4">{icon(t.icon)}</span>
+              {t.pendingCount || t.unreadCount ? (
+                <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[8px] leading-none flex items-center justify-center font-bold px-1 border-2 border-card">
+                  {t.unreadCount || t.pendingCount}
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
