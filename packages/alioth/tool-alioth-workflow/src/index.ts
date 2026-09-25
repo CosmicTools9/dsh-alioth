@@ -26,6 +26,7 @@ import {
   manualToolSurface,
   missingToolSurface,
   parseRuntimeAllowedPrograms,
+  precheckStepInputs,
   repairContractFor,
   saveRun,
   type Adapter,
@@ -396,6 +397,22 @@ export function apply(ctx: Context, config: Config): void {
       const manual = manualToolSurface(adapter).filter(entry => declared.includes(entry.adapterTool))
       const missing = missingToolSurface(adapter, registered).filter(entry => declared.includes(entry.adapterTool))
       const context = gateContext(args.namespace, args.app)
+      // Upstream `precheck_step_inputs` (FAIL-FAST, run_skill.rs): a step whose declared upstream
+      // inputs are absent MUST NOT start — handing it to the model burns a slow call for nothing
+      // (upstream measured 10×; session 22). Nothing advances, and the error carries the repair
+      // contract so the caller sees a rule id plus the missing paths.
+      const precheck = precheckStepInputs({
+        declaredInputs: current.step.inputs,
+        ownOutputs: stepWriteGlobs(current.step, context),
+        preProcRoot: context.preProcRoot,
+        variables: context.variables,
+      })
+      if (precheck.missing.length > 0) {
+        throw new Error(
+          `alioth_workflow: step ${current.step.id} 声明输入缺失（${precheck.missing.length} 项，未启动、未推进）\n`
+          + formatRepairError(repairContractFor('step-input-missing', current.step.id, precheck.missing.join(', '))),
+        )
+      }
       return {
         finished: false,
         track: current.track.name,

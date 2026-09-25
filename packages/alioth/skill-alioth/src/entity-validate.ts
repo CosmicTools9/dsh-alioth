@@ -3,7 +3,8 @@
  * validator semantics (parent-exists, no-circular-inheritance, depth) against
  * the bootstrapped registry, and — with no degradation — checks coordinates
  * and FK local keys against real dictionary snapshots (`coordinates.json`,
- * `fk-index.json`) exported from the AliothStudio dev DB, the same pattern as
+ * `fk-index.json`) generated offline from the model repo and the vendored registry
+ * sidecar (the model release's own `isahl_meta-registry.sql` dump), the same pattern as
  * AliothStudio's own `fk_index.rs`. Pure: registry data is injected, so tests
  * and the future write tool share one model.
  * @module @dsh-alioth/skill-alioth/entity-validate
@@ -83,6 +84,14 @@ const FUNCTION_CODES = new Set(coordinatesDict.function as readonly string[])
 
 /** Physical isahl tables ([table, parent]); new entities must map onto one. */
 const PHYSICAL_TABLES = new Set((physicalTables.tables as unknown as readonly (readonly [string, string])[]).map(([table]) => table))
+/**
+ * Physical table → its inheritance parent ('' for a family root), straight from the model's own
+ * DDL snapshot. This is the whole inventory available without a registry: consumers running in
+ * DDL-only mode (no `isahl_meta` rows) read tables and inheritance from here.
+ */
+export const PHYSICAL_TABLE_PARENTS: ReadonlyMap<string, string> = new Map(
+  (physicalTables.tables as unknown as readonly (readonly [string, string])[]).map(([table, parent]) => [table, parent]),
+)
 /** Root-family common columns every lifecycle table inherits. */
 export const ROOT_COLUMNS = new Set(physicalTables.root_columns as readonly string[])
 

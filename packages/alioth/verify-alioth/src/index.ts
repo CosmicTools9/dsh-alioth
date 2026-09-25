@@ -9,6 +9,27 @@
  */
 
 export {
+  PIPELINE_STAGES,
+  scanStageProgress,
+  pipelineProgressJson,
+  artifactEntry,
+  writePipelineManifest,
+  type PipelineStageSpec,
+  type StageScan,
+  type StageProgressScan,
+  type StageFailure,
+  type ArtifactEntry,
+  type PipelineManifest,
+  type PipelineProgressJson,
+} from './pipeline-progress.ts'
+
+export {
+  createMappingVerdictStore,
+  type MappingVerdict,
+  type MappingVerdictStore,
+} from './mapping-verdicts.ts'
+
+export {
   buildEvalReport,
   writeEvalReport,
   EVAL_REPORT_SCHEMA_VERSION,

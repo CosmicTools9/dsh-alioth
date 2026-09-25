@@ -28,8 +28,16 @@ import * as toolVerify from '@dsh-alioth/tool-alioth-verify'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
 import * as pageFeedback from '@deepseek-ai/dsh-page-feedback'
 import * as toolFeedback from '@dsh-alioth/tool-feedback-alioth'
+import { assembleModelSource, FIXTURE_REGISTRY_SEED } from '../scripts/lib/model-source-fixture.ts'
 
 const GOLDEN = new URL('./__snapshots__/model-surface.json', import.meta.url)
+
+/** A model source assembled from the vendored kit + a tiny registry seed (no `builtin`). */
+async function fixtureModelSource(): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'model-surface-src-'))
+  await assembleModelSource(dir, { seedSql: FIXTURE_REGISTRY_SEED })
+  return dir
+}
 
 describe('model-visible surface snapshot', () => {
   let ctx: Context
@@ -43,7 +51,7 @@ describe('model-visible surface snapshot', () => {
     const plugins = [
       await ctx.plugin(SystemPrompt),
       await ctx.plugin(ToolRuntime),
-      await ctx.plugin(envAlioth, { modelSource: 'builtin', dataRoot, databaseUrl: testDb.url }),
+      await ctx.plugin(envAlioth, { modelSource: await fixtureModelSource(), dataRoot, databaseUrl: testDb.url }),
       await ctx.plugin(toolAlioth, { preProcRoot }),
       await ctx.plugin(toolMeta, {}),
       await ctx.plugin(workflow, { preProcRoot }),
@@ -85,7 +93,7 @@ describe('model-visible surface snapshot', () => {
     expect(current, 'model-visible tool surface changed — review, then refresh with UPDATE_SNAPSHOTS=1').toBe(golden)
   })
 
-  it('registers exactly the twenty-five Alioth tools', () => {
+  it('registers exactly the twenty-six Alioth tools', () => {
     const names = new Set(ctx.tools.schemas().map(s => s.name))
     for (const expected of [
       'alioth_app_list', 'alioth_app_inspect', 'alioth_app_write', 'alioth_app_configure', 'alioth_app_delete',
@@ -94,11 +102,11 @@ describe('model-visible surface snapshot', () => {
       'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_workflow_info', 'alioth_app_create',
       'alioth_workspace_current',
       'alioth_verify', 'alioth_closure', 'alioth_version', 'alioth_patch_assets',
-      'alioth_capabilities', 'alioth_deferred', 'alioth_usage',
+      'alioth_capabilities', 'alioth_deferred', 'alioth_mapping_verdict', 'alioth_usage',
       'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
     ]) {
       expect(names, `tool ${expected} must be registered`).toContain(expected)
     }
-    expect([...names].filter(n => n.startsWith('alioth_'))).toHaveLength(25)
+    expect([...names].filter(n => n.startsWith('alioth_'))).toHaveLength(26)
   })
 })

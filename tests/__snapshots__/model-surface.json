@@ -175,6 +175,32 @@
             "type": "string"
           }
         },
+        "semanticConcepts": {
+          "type": "array",
+          "description": "Extended plan: key concepts from semantic analysis (written into flow-plan.json).",
+          "items": {
+            "type": "string"
+          }
+        },
+        "computations": {
+          "description": "Extended plan: computation specs [{target,formula,dependsOn,trigger}] (written into flow-plan.json)."
+        },
+        "constraints": {
+          "description": "Extended plan: constraint specs [{field,rule,message}] (written into flow-plan.json)."
+        },
+        "businessRules": {
+          "description": "Extended plan: business rules [{entity,condition,action}] (written into flow-plan.json)."
+        },
+        "appMeta": {
+          "description": "Extended plan: app-level metadata (brand/navigation/routing) driving app.json fields."
+        },
+        "coreConstraints": {
+          "type": "array",
+          "description": "Extended plan: <=2 cross-stage invariants as `name：fact` lines.",
+          "items": {
+            "type": "string"
+          }
+        },
         "entities": {
           "type": "array",
           "description": "New entities to register (alioth_entity_write semantics). Existing entities: reference them implicitly via field targetTable.",
@@ -722,6 +748,42 @@
     }
   },
   {
+    "name": "alioth_mapping_verdict",
+    "description": "Record or recall a HUMAN mapping verdict (requirement domain → isahl table) in the knowledge ledger — the harness mirror of the upstream `record_mapping_verdict` sink. Record (default): `keep_gap: true` means \"keep the gap open\" and is REFUSED (nothing is sedimented, the call fails); a `table` outside the platform catalog is refused (a stale verdict would poison later recall); when the registry cannot be read the call fails closed (never writes an unverifiable verdict). Recall: returns this namespace's verdicts, newest first, optionally narrowed by `domain` / `table`.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "The caller's own workspace namespace — resolve with alioth_workspace_current first."
+        },
+        "action": {
+          "type": "string",
+          "description": "\"record\" (default) or \"recall\"."
+        },
+        "domain": {
+          "type": "string",
+          "description": "Requirement domain id (ontology model domain, e.g. material_plan). Required for record; optional filter for recall."
+        },
+        "table": {
+          "type": "string",
+          "description": "Target isahl table name. Required for record (must be in the platform catalog); optional filter for recall."
+        },
+        "verdict_text": {
+          "type": "string",
+          "description": "The operator's verdict text (record only)."
+        },
+        "keep_gap": {
+          "type": "boolean",
+          "description": "record only: true = keep the gap open — refused by design, nothing is stored."
+        }
+      },
+      "required": [
+        "namespace"
+      ]
+    }
+  },
+  {
     "name": "alioth_patch_assets",
     "description": "Two-phase partial edit of an existing App artifact file. \"propose\" — read the file as it is now and return a unified diff + base fingerprint + proposalId; NOTHING is written and the proposal is registered in-process only. \"apply\" — apply a registered proposal and REQUIRES `confirmed: true` (the second phase); without it nothing is written, and a target that changed since the proposal is refused instead of overwriting concurrent edits. `target` is relative to the App directory (Pre-Proc/{ns}/Apps/{app}) and must resolve inside it.",
     "parameters": {
@@ -763,7 +825,7 @@
   },
   {
     "name": "alioth_schema_info",
-    "description": "Query the Alioth entity registry (isahl_meta). Actions: \"entities\" — list collections (optional substring `query` on table/name, exact `category`); \"entity\" — one collection's fields (`collection` = table_name); \"search-fields\" — fields by substring on name/title (`query`). Use before defining or referencing any entity/field; the registry is the structural truth. Dev-seed test entities (names ending -testing/-test) are hidden by default (`filteredTesting` reports how many); pass `includeTesting` to see them. Returns at most `limit` rows (default 20, max 100).",
+    "description": "Query the Alioth entity registry (isahl_meta). Actions: \"entities\" — list collections (optional substring `query` on table/name, exact `category`); \"entity\" — one collection's fields (`collection` = table_name); \"search-fields\" — fields by substring on name/title (`query`). Use before defining or referencing any entity/field; the registry is the structural truth. When the deployment has no registry rows (an open-source model copy ships none) the tool degrades to the model DDL inventory — tables and inheritance only — and says so via `degraded` + `note`. Dev-seed test entities (names ending -testing/-test) are hidden by default (`filteredTesting` reports how many); pass `includeTesting` to see them. Returns at most `limit` rows (default 20, max 100).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -927,13 +989,13 @@
   },
   {
     "name": "alioth_verify",
-    "description": "Programmatic verification over an App's artifacts (no LLM; never narrate a verdict from memory). Actions: \"artifacts\" — build the eval report (rule dimensions: app.json schema validity + prototype standalone-ness) and persist `eval-report.json` (quality stage artifact); \"extensions\" — check every `extensions/*.yaml` declaration against the Gateway loader contract (unknown filename / wrong top-level shape / missing required keys = uncovered = `degraded`, which is NOT a pass); a degraded result REGISTERS a per-App human gate (deferred, cleared only when the canonical `extension-verify.json` says status=passed), so a stale canonical pass cannot wave a degraded run through; \"stage\" — evaluate one of the 7 pipeline stages against its declared artifacts; a missing artifact fails with a `[rule:<id>]` repair contract instead of passing silently. `write=false` skips persistence (dry read); defaults to writing the canonical evidence file.",
+    "description": "Programmatic verification over an App's artifacts (no LLM; never narrate a verdict from memory). Actions: \"artifacts\" — build the eval report (rule dimensions: app.json schema validity + prototype standalone-ness) and persist `eval-report.json` (quality stage artifact); \"extensions\" — check every `extensions/*.yaml` declaration against the Gateway loader contract (unknown filename / wrong top-level shape / missing required keys = uncovered = `degraded`, which is NOT a pass); a degraded result REGISTERS a per-App human gate (deferred, cleared only when the canonical `extension-verify.json` says status=passed), so a stale canonical pass cannot wave a degraded run through; \"stage\" — evaluate one of the 7 pipeline stages against its declared artifacts; a missing artifact fails with a `[rule:<id>]` repair contract instead of passing silently. \"progress\" — the HONEST 7-stage progress projection over the App tree (`pipeline_progress` segment shape): a stage with no declared artifact on disk is `pending` (never reported completed), a stage with artifacts that fail its gate is reported in `failures` (blocking publish; never silently waved through). `write=false` skips persistence (dry read); defaults to writing the canonical evidence file.",
     "parameters": {
       "type": "object",
       "properties": {
         "action": {
           "type": "string",
-          "description": "One of: artifacts, extensions, stage."
+          "description": "One of: artifacts, extensions, stage, progress."
         },
         "namespace": {
           "type": "string",
@@ -949,7 +1011,7 @@
         },
         "modules": {
           "type": "array",
-          "description": "stage only (module-design): module ids that must each have module.json.",
+          "description": "stage/progress: module ids that must each have module.json.",
           "items": {
             "type": "string"
           }

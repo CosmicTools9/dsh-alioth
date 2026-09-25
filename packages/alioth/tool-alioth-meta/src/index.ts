@@ -9,6 +9,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { physicalTableParents } from '@dsh-alioth/skill-alioth'
 import { registerSchemaInfo } from './schema-info.ts'
 import { registerSemanticSearch } from './semantic-search.ts'
 import { registerEntityWrite } from './entity-write.ts'
@@ -34,6 +35,17 @@ export const Config: z<Config> = z.object({
 
 /** Registry terms for embedding: entities + titled fields (excludes test entities). */
 export async function loadSemanticEntries(ctx: Context): Promise<readonly SemanticEntry[]> {
+  if ((await ctx.aliothEnv.ready()).registrySource === 'missing') {
+    // DDL-only deployment: no registry rows to embed. Index the physical tables the model's own
+    // DDL declares, so semantic search still grounds on real tables (names/inheritance) instead of
+    // returning nothing; titles come from the registry and are therefore absent.
+    return [...physicalTableParents.keys()].sort().map(table => ({
+      kind: 'entity' as const,
+      table,
+      name: table,
+      title: '',
+    }))
+  }
   const entities = await ctx.aliothEnv.sql<{ table_name: string; name: string; biz_description: string | null }>(
     `SELECT table_name, name, biz_description
      FROM isahl_meta.meta_collections

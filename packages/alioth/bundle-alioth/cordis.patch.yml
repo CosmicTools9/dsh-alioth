@@ -1,6 +1,6 @@
 # The Alioth plugin group: one bundle mounting the full capability set.
 # Apply with:  dsh --profile headless --patch <this-file> "<task>"
-# Env: ALIOTH_MODEL_SOURCE (default builtin), ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT,
+# Env: ALIOTH_MODEL_SOURCE (required), ALIOTH_DATABASE_URL, ALIOTH_DATA_ROOT,
 # ALIOTH_PRE_PROC_ROOT, DEEPSEEK_API_KEY.
 - id: system-prompt
   config:
@@ -30,7 +30,11 @@
       model only — you cannot advance it (no new physical tables, no model
       version changes); entity registration is a local consumption-side
       extension. The registry is a model snapshot — verify critical
-      assumptions against returned rows, never a guess.
+      assumptions against returned rows, never a guess. When alioth_schema_info
+      reports degraded/[DDL-only] (this deployment has no registry rows), ground
+      on the model's own DDL inventory — the tables and inheritance it returns —
+      state that field-level metadata is unavailable, and do not read an empty
+      result as "no such table".
 
 # AppCreator workspace picker: the SPA 选择工作空间 browses the Alioth app
 # tree instead of the filesystem (namespace → apps → pick an app). Patch
@@ -119,7 +123,7 @@
     - id: env-alioth
       name: '@dsh-alioth/env-alioth'
       config:
-        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE ?? 'builtin'"
+        modelSource: !!js "process.env.ALIOTH_MODEL_SOURCE"
         databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
         dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
 

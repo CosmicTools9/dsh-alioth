@@ -18,7 +18,9 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { runPipeline } from '@dsh-alioth/skill-alioth/agent-machine'
 import { stageOf } from '@dsh-alioth/skill-alioth/agent-machine'
-import { buildPlan, buildPrimitives } from './primitives.ts'
+import { buildPlan, buildPrimitives,
+  type CreateArgs,
+} from './primitives.ts'
 
 export const name = 'tool-alioth-orchestrator'
 export const inject = ['tools', 'aliothEnv']
@@ -102,6 +104,32 @@ export function apply(ctx: Context, config: Config): void {
         type: 'array',
         items: { type: 'string' },
       },
+      semanticConcepts: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Extended plan: key concepts from semantic analysis (written into flow-plan.json).',
+      },
+      computations: {
+        type: 'json',
+        description: 'Extended plan: computation specs [{target,formula,dependsOn,trigger}] (written into flow-plan.json).',
+      },
+      constraints: {
+        type: 'json',
+        description: 'Extended plan: constraint specs [{field,rule,message}] (written into flow-plan.json).',
+      },
+      businessRules: {
+        type: 'json',
+        description: 'Extended plan: business rules [{entity,condition,action}] (written into flow-plan.json).',
+      },
+      appMeta: {
+        type: 'json',
+        description: 'Extended plan: app-level metadata (brand/navigation/routing) driving app.json fields.',
+      },
+      coreConstraints: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Extended plan: <=2 cross-stage invariants as `name：fact` lines.',
+      },
       entities: {
         type: 'array',
         items: {
@@ -168,8 +196,10 @@ export function apply(ctx: Context, config: Config): void {
       // The full pipeline: each stage runs a registered tool through the
       // registry (deterministic, zero LLM). Stage history is returned for
       // audit; the terminal state decides success.
-      const plan = buildPlan(args)
-      const run = await runPipeline('app creation request', buildPrimitives(ctx, exec, args, adapterName, preProcRoot), plan)
+      // 工具面比 CreateArgs 宽（扩展规划面按 JSON 收）；这里显式收窄到管线契约。
+      const createArgs = args as unknown as CreateArgs
+      const plan = buildPlan(createArgs)
+      const run = await runPipeline('app creation request', buildPrimitives(ctx, exec, createArgs, adapterName, preProcRoot), plan)
       const transitions = run.history
       const stages = transitions.map(t => `${t.from.kind}->${stageOf(t.to) ?? t.to.kind}`)
       if (run.state.kind !== 'published') {

@@ -30,8 +30,9 @@ export type RepairClass = 'fixable' | 'retryable' | 'not-fixable'
  * `gate-exit`↔`NonZeroExit`、`gate-timeout`↔`Timeout`、`gate-missing-program`↔
  * `NotWhitelisted`/`IoError`、`gate-output-missing`↔`OutputGlobMiss`、
  * `gate-json-predicate`↔`JsonPredicateFail`、`plan-write-outside-scope`↔
- * `PlanWriteOutsideScope`；`tool-denied`/`write-outside-sandbox`/`unknown` 是 harness 侧
- * 新增（上游对应 `tool_registry` 沙箱拒绝与未分类兜底）。
+ * `PlanWriteOutsideScope`、`step-input-missing`↔`StepInputMissing`（上游
+ * `run_skill.rs:precheck_step_inputs` 的启动前产物预检）；`tool-denied`/`write-outside-sandbox`/
+ * `unknown` 是 harness 侧新增（上游对应 `tool_registry` 沙箱拒绝与未分类兜底）。
  */
 export type FailureKind =
   | 'gate-exit'
@@ -42,6 +43,7 @@ export type FailureKind =
   | 'tool-denied'
   | 'write-outside-sandbox'
   | 'plan-write-outside-scope'
+  | 'step-input-missing'
   | 'unknown'
 
 /** 一次失败的结构化修复契约。 */
@@ -74,6 +76,7 @@ export const REGISTERED_RULE_IDS: readonly string[] = [
   'tool-call-denied',
   'tool-write-outside-sandbox',
   'plan-phase-write-outside-scope',
+  'step-input-missing',
   'unknown-failure',
 ]
 
@@ -124,6 +127,15 @@ function classify(failure: FailureKind, source: string): RepairRule {
         class: 'not-fixable',
         suggestedAction: '改用白名单内程序（bun / npx / cargo / bash / target/debug/ontology-mapping）',
         message: source === '' ? () => '门禁程序不可用' : name => `门禁程序不在白名单或不可启动（${name}）`,
+      }
+    case 'step-input-missing':
+      return {
+        ruleId: 'step-input-missing',
+        class: 'not-fixable',
+        suggestedAction: '先跑产出该输入的步骤（所在 track 的上一环），产物落盘后再重试本步——缺的是上游产物，本步无法自行修复',
+        message: source === ''
+          ? () => '步骤声明的上游输入缺失（未启动）'
+          : id => `步骤 ${id} 声明的上游输入缺失（未启动）`,
       }
     case 'gate-output-missing':
       return {

@@ -3,15 +3,16 @@
  * real Context and verifies, in order:
  *   1. every mounted plugin registers its model-facing tools (asserted by name)
  *   2. env-alioth ready() connects to the environment's PostgreSQL 18 (ALIOTH_DATABASE_URL)
- *      and boots the builtin frozen model (zero network for the model itself)
+ *      and boots an assembled model source fixture (zero network: no model pull, no registry copy)
  *   3. one real tool call round-trips (schema_info entities)
  *   4. doctor reports the expected health state
  * Usage: node --import tsx scripts/smoke-composition.ts [--verbose]
  * Exit 0 = group works end to end.
  */
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { assembleModelSource, FIXTURE_REGISTRY_SEED } from './lib/model-source-fixture.ts'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -53,13 +54,17 @@ const EXPECTED_TOOLS = [
   'alioth_workflow_step', 'alioth_workflow_complete', 'alioth_workflow_info', 'alioth_app_create',
   'alioth_workspace_current',
   'alioth_verify', 'alioth_closure', 'alioth_version', 'alioth_patch_assets',
-  'alioth_capabilities', 'alioth_deferred', 'alioth_usage',
+  'alioth_capabilities', 'alioth_deferred', 'alioth_mapping_verdict', 'alioth_usage',
   'alioth_feedback_pending', 'alioth_feedback_ack', 'alioth_feedback_resolve', 'alioth_feedback_dismiss',
 ]
 
 const ctx = new Context()
 const disposers: Array<() => Promise<void>> = []
 const dataRoot = await mkdtemp(path.join(tmpdir(), 'smoke-data-'))
+// A model source assembled from the vendored kit + a tiny registry seed: `builtin` is retired, so
+// the smoke names its source like a deployment does.
+const modelSource = await mkdtemp(path.join(tmpdir(), 'smoke-model-'))
+await assembleModelSource(modelSource, { seedSql: FIXTURE_REGISTRY_SEED })
 const preProcRoot = await mkdtemp(path.join(tmpdir(), 'smoke-preproc-'))
 
 try {
@@ -68,7 +73,7 @@ try {
   const tools = await ctx.plugin(ToolRuntime)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, {
-    modelSource: 'builtin',
+    modelSource,
     dataRoot,
     databaseUrl,
   })
@@ -111,12 +116,16 @@ try {
   }
   log(`tools registered: ${EXPECTED_TOOLS.length}/${EXPECTED_TOOLS.length}`)
 
-  // 2. Env ready (builtin, zero network)
+  // 2. Env ready: the assembled source (local path, registry seed, vendored kit)
   const info = await ctx.aliothEnv.ready()
-  if (!info.sourceRef.startsWith('builtin-v')) {
-    throw new Error(`expected builtin model, got ${info.sourceRef}`)
+  if (info.registrySource !== 'snapshot') {
+    throw new Error(`expected a registry-bearing source, got registrySource=${info.registrySource}`)
   }
-  log(`env ready: ${info.sourceRef} @ model ${info.modelVersion}`)
+  const adapters = await readdir(path.join(info.modelDir, 'skill-adapters'))
+  if (adapters.length === 0) {
+    throw new Error(`assembled source carries no skill-adapters (${info.modelDir})`)
+  }
+  log(`env ready: ${info.modelDir.replace(tmpdir(), '…')} @ model ${info.modelVersion}, ${adapters.length} adapters`)
 
   // 3. Real tool call round-trip
   const result = await ctx.tools.execute({
@@ -143,7 +152,7 @@ try {
   }
   log(`doctor: core green (semantic-index=${report.checks.find(c => c.name === 'semantic-index')?.ok})`)
 
-  console.log(`SMOKE PASS: group mounted, ${EXPECTED_TOOLS.length} tools registered, builtin env ready, tool round-trip ok, doctor core green`)
+  console.log(`SMOKE PASS: group mounted, ${EXPECTED_TOOLS.length} tools registered, assembled source ready (registry + adapters), tool round-trip ok, doctor core green`)
 } finally {
   for (const dispose of disposers.reverse()) {
     await dispose().catch(() => {})

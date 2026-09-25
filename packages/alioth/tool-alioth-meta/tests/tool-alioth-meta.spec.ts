@@ -8,6 +8,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import * as envAlioth from '@dsh-alioth/env-alioth'
+import { physicalTableParents } from '@dsh-alioth/skill-alioth'
 import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as toolMeta from '../src/index.ts'
 
@@ -382,4 +383,92 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     if (!result.isError) throw new Error('expected alioth_entity_write failure')
     expect(result.error.message).toContain('denied by approval')
   }, 120_000)
+})
+
+describe('tool-alioth-meta (DDL-only deployment)', () => {
+  let dctx: Context
+  let ddb: TestDatabase
+  let dmodel: string
+  let ddata: string
+  const ddisposers: Array<() => Promise<void>> = []
+  let dcounter = 0
+
+  beforeAll(async () => {
+    ddb = await createTestDatabase('metaddl')
+    dmodel = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-meta-ddl-'))
+    ddata = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-meta-ddl-data-'))
+    // An open-source snapshot: the model's own DDL (through the shipped dict snapshots) and a
+    // release anchor, but no registry rows at all.
+    await writeFile(path.join(dmodel, 'latest.json'), '{ "version": "v10.0.33" }\n')
+    dctx = new Context()
+    const systemFiber = await dctx.plugin(SystemPrompt)
+    ddisposers.push(() => systemFiber.dispose())
+    const toolsFiber = await dctx.plugin(ToolRuntime)
+    ddisposers.push(() => toolsFiber.dispose())
+    const envFiber = await dctx.plugin(envAlioth, { modelSource: dmodel, dataRoot: ddata, databaseUrl: ddb.url })
+    ddisposers.push(() => envFiber.dispose())
+    const metaFiber = await dctx.plugin(toolMeta, {})
+    ddisposers.push(() => metaFiber.dispose())
+  }, 120_000)
+
+  afterAll(async () => {
+    for (const dispose of ddisposers.reverse()) {
+      await dispose().catch(() => {})
+    }
+    await rm(dmodel, { recursive: true, force: true })
+    await rm(ddata, { recursive: true, force: true })
+    await ddb.dispose()
+  })
+
+  function callDdl(args: unknown) {
+    return dctx.tools.execute({
+      signal,
+      callId: ToolCallId(`ddl-${++dcounter}`),
+      name: 'alioth_schema_info',
+      arguments: args,
+    })
+  }
+
+  it('boots without the registry and serves the DDL inventory, flagged as degraded', async () => {
+    const env = await (dctx as unknown as { aliothEnv: { ready(): Promise<{ registrySource: string }> } }).aliothEnv.ready()
+    expect(env.registrySource).toBe('missing')
+
+    const listed = await callDdl({ action: 'entities', limit: 3 })
+    if (listed.isError) throw new Error(`expected entities success: ${listed.error.message}`)
+    expect(listed.value).toMatchObject({ degraded: true, filteredTesting: 0 })
+    expect((listed.value as { note: string }).note).toContain('unseeded')
+    const entities = (listed.value as { entities: Array<{ table: string; inherits: string[]; depth: number }> }).entities
+    expect(entities).toHaveLength(3)
+    expect(entities.every(entry => entry.depth >= 0)).toBe(true)
+  })
+
+  it('knows a table and its parent from the DDL, and reports no fields', async () => {
+    const child = [...physicalTableParents.entries()].find(([, parent]) => parent !== '' && parent !== undefined)
+    if (child === undefined) throw new Error('dict snapshot has no child tables')
+    const [table, parent] = child
+    const found = await callDdl({ action: 'entity', collection: table })
+    if (found.isError) throw new Error(`expected entity success: ${found.error.message}`)
+    const value = found.value as { degraded: boolean; collection: { inherits: string[] }; fields: unknown[]; note: string }
+    expect(value.degraded).toBe(true)
+    expect(value.collection.inherits).toEqual([parent])
+    expect(value.fields).toEqual([]) // field metadata is registry-only
+    expect(value.note).toContain('root-family columns')
+
+    const missing = await callDdl({ action: 'entity', collection: 'zc_id_not_a_table' })
+    if (!missing.isError) throw new Error('expected unknown table failure')
+    expect(missing.error.message).toContain('unknown table')
+  })
+
+  it('answers field searches with the degradation note instead of a false empty', async () => {
+    const searched = await callDdl({ action: 'search-fields', query: '库存' })
+    if (searched.isError) throw new Error(`expected search success: ${searched.error.message}`)
+    expect(searched.value).toMatchObject({ degraded: true, fields: [] })
+    expect((searched.value as { note: string }).note).toContain('Field-level metadata')
+  })
+
+  it('embeds the DDL inventory so semantic search still grounds on real tables', async () => {
+    const entries = await toolMeta.loadSemanticEntries(dctx)
+    expect(entries).toHaveLength(physicalTableParents.size)
+    expect(entries.every(entry => entry.kind === 'entity')).toBe(true)
+  })
 })

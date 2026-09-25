@@ -59,10 +59,11 @@ function callTool(name: string, args: unknown) {
 }
 
 let testDb: TestDatabase
+let modelDir: string
 
 beforeAll(async () => {
   testDb = await createTestDatabase('wf')
-  const modelDir = await mkdtemp(path.join(tmpdir(), 'wf-model-'))
+  modelDir = await mkdtemp(path.join(tmpdir(), 'wf-model-'))
   const dataRoot = await mkdtemp(path.join(tmpdir(), 'wf-data-'))
   preProcRoot = await mkdtemp(path.join(tmpdir(), 'wf-preproc-'))
   contentRoot = await mkdtemp(path.join(tmpdir(), 'wf-content-'))
@@ -236,8 +237,9 @@ tracks:
         inputs:
           - "Pre-Proc/{ns}/Apps/{app}/brief.md"
           - "Pre-Proc/{ns}/Apps/{app}/big.txt"
-          - "Pre-Proc/{ns}/Apps/{app}/missing.txt"
-          - "{module}/notes.md"
+          # An absolute path resolves outside the Pre-Proc tree: readable-in-principle, reported
+          # without content. A declared input that is *absent* now fails the step before it starts
+          # (upstream precheck_step_inputs), so it is covered by the precheck spec instead.
           - "/etc/hosts"
         gates:
           - output_glob: "Pre-Proc/{ns}/Apps/{app}/app.json"
@@ -352,11 +354,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
       { path: 'Pre-Proc/Demo/Apps/cover-app/brief.md', content: '任务简述\n' },
       // Over the injection cap: reported truncated, not silently dropped.
       { path: 'Pre-Proc/Demo/Apps/cover-app/big.txt', content: `${'x'.repeat(4000)}\n…(truncated)` },
-      // Unreadable: the path is still reported for the model to explore.
-      { path: 'Pre-Proc/Demo/Apps/cover-app/missing.txt' },
-      // An unknown template variable stays literal, and the resolved path
-      // outside the Pre-Proc tree is reported without content.
-      { path: '{module}/notes.md' },
+      // Outside the Pre-Proc tree: the path is reported, never its content.
       { path: '/etc/hosts' },
     ])
   }, 120_000)
@@ -465,5 +463,93 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     // Completing a run with no current step is a no-op, not an advance.
     const third = expectOk(await callTool('alioth_workflow_complete', { namespace: 'Alioth', app: 'finished-app' }))
     expect(third).toEqual({ finished: true, completedStep: '', gateResults: [], nextStep: '' })
+  })
+})
+
+/**
+ * Step input precheck (upstream `dialog_tools/run_skill.rs:precheck_step_inputs`,
+ * `FailureKind::StepInputMissing`): a step whose declared upstream input is absent MUST NOT start.
+ * Its own Context keeps the probe adapter from colliding with the suite's shared workflow mount.
+ */
+const ADAPTER_YAML_INPUTS = `
+name: alioth-app
+description: "步输入预检"
+version: "2.0"
+tracks:
+  - name: 输入预检
+    steps:
+      - id: "1.1"
+        instruction: "消费上游产物"
+        tools: [write_file]
+        inputs:
+          - "Pre-Proc/{ns}/Apps/{app}/upstream.json"
+        gates:
+          - output_glob: "Pre-Proc/{ns}/Apps/{app}/out.json"
+`
+
+describe('step input precheck', () => {
+  let ctx2: Context
+  let preRoot: string
+  let db2: TestDatabase
+  const closers: Array<() => Promise<void>> = []
+
+  beforeAll(async () => {
+    db2 = await createTestDatabase('wf-inputs')
+    preRoot = await mkdtemp(path.join(tmpdir(), 'wf-inputs-preproc-'))
+    await writeFile(path.join(modelDir, 'skill-adapters', 'inputs-probe.yaml'), ADAPTER_YAML_INPUTS)
+    ctx2 = new Context()
+    const system = await ctx2.plugin(SystemPrompt)
+    closers.push(() => system.dispose())
+    const tools = await ctx2.plugin(ToolRuntime)
+    closers.push(() => tools.dispose())
+    const env = await ctx2.plugin(envAlioth, {
+      modelSource: modelDir,
+      dataRoot: await mkdtemp(path.join(tmpdir(), 'wf-inputs-data-')),
+      databaseUrl: db2.url,
+    })
+    closers.push(() => env.dispose())
+    const wf = await ctx2.plugin(workflow, {
+      preProcRoot: preRoot,
+      contentRoot: await mkdtemp(path.join(tmpdir(), 'wf-inputs-content-')),
+      adapter: 'inputs-probe.yaml',
+      workflowRoot: await mkdtemp(path.join(tmpdir(), 'wf-inputs-runs-')),
+    })
+    closers.push(() => wf.dispose())
+  }, 120_000)
+
+  afterAll(async () => {
+    await db2.dispose()
+    for (const close of closers.reverse()) await close().catch(() => {})
+    await rm(preRoot, { recursive: true, force: true })
+  })
+
+  function call(name: string, args: unknown) {
+    return ctx2.tools.execute({
+      signal,
+      callId: ToolCallId(`wf-inputs-${++counter}`),
+      name,
+      arguments: args,
+    })
+  }
+
+  it('refuses the step and reports the missing upstream input (no payload handed out)', async () => {
+    const result = await call('alioth_workflow_step', { namespace: 'Probe', app: 'app' })
+    expect(result.isError).toBe(true)
+    const message = result.isError ? result.error.message : ''
+    expect(message).toContain('[rule:step-input-missing]')
+    expect(message).toContain('Pre-Proc/Probe/Apps/app/upstream.json')
+    expect(message).toContain('未启动')
+    expect(result.isError ? result.value : true).toBeUndefined()
+  })
+
+  it('hands the step out once the declared input exists', async () => {
+    await mkdir(path.join(preRoot, 'Probe', 'Apps', 'app'), { recursive: true })
+    await writeFile(path.join(preRoot, 'Probe', 'Apps', 'app', 'upstream.json'), '{"ok":true}\n')
+    const result = await call('alioth_workflow_step', { namespace: 'Probe', app: 'app' })
+    const value = expectOk(result)
+    expect(value).toMatchObject({ finished: false, stepId: '1.1' })
+    const inputs = value.inputs as Array<{ path: string; content?: string }>
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]?.content).toContain('"ok":true')
   })
 })

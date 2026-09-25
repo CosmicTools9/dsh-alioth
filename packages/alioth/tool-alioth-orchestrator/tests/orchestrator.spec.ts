@@ -189,6 +189,14 @@ describe('alioth_app_create (PTC orchestrator)', () => {
     // The entity and the app are both on disk / in the registry.
     const appJson = await readFile(path.join(preProcRoot, 'Demo', 'Apps', 'ptc-app', 'app.json'), 'utf8')
     expect(appJson).toContain('"code": "ptc-app"')
+
+    // flow-plan.json：计划的产物面（上游同路径），键为 serde 面 snake_case。
+    const plan = JSON.parse(
+      await readFile(path.join(preProcRoot, 'Demo', 'Apps', 'ptc-app', 'flow-plan.json'), 'utf8'),
+    ) as Record<string, unknown>
+    expect(plan['namespace']).toBe('Demo')
+    expect(plan['used_modules']).toEqual(['inventory'])
+    expect(plan['created_blocks']).toEqual([])
   }, 120_000)
 
   it('fails atomically before writing when an entity definition is invalid', async () => {

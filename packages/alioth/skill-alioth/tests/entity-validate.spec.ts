@@ -41,7 +41,7 @@ describe('entity-validate snapshots', () => {
 
   it('fk index snapshot is a real export with physical local keys', () => {
     const refs = fkIndex.refs as unknown as readonly (readonly [string, string, string, string])[]
-    expect(refs.length).toBeGreaterThan(500)  // generated from vendored seed (899), not dev DB
+    expect(refs.length).toBeGreaterThan(500)  // derived from the vendored registry sidecar dump, not a live DB
     const billCheck = refs.find(([table, field]) => table === 'zc_id_deta-bill-check' && field === 'biller')
     expect(billCheck).toBeDefined()
   })

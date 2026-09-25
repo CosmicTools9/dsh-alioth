@@ -6,6 +6,11 @@
  */
 
 export {
+  flowPlanToWire,
+  flowPlanFromWire,
+} from './flow-plan-wire.ts'
+
+export {
   parseAdapterDocument,
   loadAdapter,
   parseRuntimeAllowedPrograms,
@@ -42,6 +47,13 @@ export {
 } from './gate-programs.ts'
 export { loadRun, readRun, saveRun, type RunMeta, type RunRecord } from './workspace.ts'
 export {
+  precheckStepInputs,
+  resolveInputTemplate,
+  stepInputExists,
+  type StepInputPrecheckInput,
+  type StepInputPrecheckResult,
+} from './step-inputs.ts'
+export {
   ADAPTER_TOOL_TO_DSH,
   ADAPTER_TOOL_VOCABULARY,
   MANUAL_ADAPTER_TOOLS,
@@ -77,6 +89,7 @@ export {
   validateMappedColumn,
   LOCAL_KEYS_BY_TABLE as physicalLocalKeys,
   ROOT_COLUMNS as physicalRootColumns,
+  PHYSICAL_TABLE_PARENTS as physicalTableParents,
   type PhysicalColumnIndex,
   type CoordinatesSpec,
   type EntitySpec,

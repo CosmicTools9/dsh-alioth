@@ -207,6 +207,20 @@ describe('publish preconditions (fail-closed, each on its own)', () => {
       'quality_passed',
     ])
     expect(record.willAutoApprove).toBe(true)
+
+    // 交付 manifest（上游 publish 主链同规）：全部前置通过后才写出，且进度投影诚实。
+    const manifest = JSON.parse(await readFile(path.join(appDir, 'pipeline_manifest.json'), 'utf8')) as {
+      pipeline_progress: {
+        current_stage: string | null
+        stages: Record<string, { status: string; via?: string }>
+        projection: { projected_stages: string[]; non_projected_stages: null }
+      }
+      artifact_manifest: { entries: Array<{ path: string; content_hash: string }> }
+    }
+    expect(manifest.pipeline_progress.stages['appagent-ready']).toMatchObject({ status: 'completed', via: 'appagent' })
+    expect(manifest.pipeline_progress.projection.projected_stages).toHaveLength(7)
+    expect(manifest.artifact_manifest.entries.map(entry => entry.path)).toContain('Apps/pub-ok/app.json')
+    expect(manifest.artifact_manifest.entries.every(entry => /^sha256:[0-9a-f]{64}$/.test(entry.content_hash))).toBe(true)
   }, 120_000)
 
   it('fails closed when the canonical extension report is missing', async () => {
@@ -216,6 +230,8 @@ describe('publish preconditions (fail-closed, each on its own)', () => {
     const published = await primitives.publishing(buildPlan(args), 1)
     expect(published.result.runtimeValidation).toMatchObject({ valid: false })
     expect(checkOf(published, 'publish-extension-verify')?.detail).toContain('[rule:publish-extension-verify-missing]')
+    // 前置失败 ⇒ 不写 manifest（上游承诺「未写出 pipeline_manifest、未触发部署编排」）。
+    await expect(readFile(path.join(appDir, 'pipeline_manifest.json'), 'utf8')).rejects.toThrow()
   }, 120_000)
 
   it('fails closed on a degraded extension report even though the file exists', async () => {

@@ -10,7 +10,7 @@
  */
 
 import { homedir } from 'node:os'
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
@@ -38,6 +38,7 @@ import {
 import {
   appendClosureVerdict,
   artifactFingerprint,
+  artifactEntry,
   buildEvalReport,
   createDeferredStore,
   EXTENSION_FORMS,
@@ -45,15 +46,20 @@ import {
   evaluatePublishShadow,
   evaluateStageGate,
   latestMatchingVerdict,
+  pipelineProgressJson,
+  scanStageProgress,
+  writePipelineManifest,
   listSnapshots,
   snapshotArtifacts,
   verifyExtensions,
   writeEvalReport,
   writeExtensionVerify,
+  type ArtifactEntry,
   type ClosureVerdict,
   type DeferredItem,
 } from '@dsh-alioth/verify-alioth'
 import { generateBlock, generateService } from '@dsh-alioth/gen-alioth'
+import { flowPlanToWire } from '@dsh-alioth/skill-alioth'
 import { PIPELINE_SHARED_SURFACES, runControlledParallel } from './parallel.ts'
 
 export interface CreateArgs {
@@ -84,6 +90,17 @@ export interface CreateArgs {
       readonly junctionTable?: string
     }>
   }>
+
+  /**
+   * 扩展规划面（上游 `flow-plan.json` 的语义）：LLM 供**结构化**规划，组装仍由确定性代码做。
+   * 缺省不填 ⇒ `flow-plan.json` 如实只带基础字段，不伪造规划内容。
+   */
+  readonly semanticConcepts?: FlowPlan['semanticConcepts']
+  readonly computations?: FlowPlan['computations']
+  readonly constraints?: FlowPlan['constraints']
+  readonly businessRules?: FlowPlan['businessRules']
+  readonly appMeta?: FlowPlan['appMeta']
+  readonly coreConstraints?: FlowPlan['coreConstraints']
 }
 
 /** Execute one registered tool through the registry (model-equivalent path). */
@@ -431,6 +448,52 @@ async function appendPublishShadowTrace(appDir: string, line: Record<string, unk
 }
 
 /** Bind the 9-stage pipeline to real tools for one `alioth_app_create` call. */
+/**
+ * 交付 manifest 的产物清单（上游 `publish.rs::register_artifact` 同规：相对路径 + `sha256:` + media_type + stage_id）。
+ * 不可读的候选**不登记**——manifest 只声明真实存在的东西；候选目录两态（上游布局与短形态）都试。
+ */
+async function publishArtifactEntries(input: {
+  readonly appDir: string
+  readonly namespaceRoot: string
+  readonly modules: readonly string[]
+  readonly blocks: readonly string[]
+  readonly services: readonly string[]
+}): Promise<ArtifactEntry[]> {
+  const candidates: Array<{ readonly file: string; readonly stage: string }> = [
+    { file: path.join(input.appDir, 'app.json'), stage: 'appagent-ready' },
+    { file: path.join(input.appDir, 'flow-plan.json'), stage: 'appagent-ready' },
+    { file: path.join(input.appDir, 'eval-report.json'), stage: 'quality' },
+    { file: path.join(input.appDir, 'extension-verify.json'), stage: 'quality' },
+  ]
+  const extensions = await readdir(path.join(input.appDir, 'extensions'), { withFileTypes: true }).catch(() => [])
+  for (const entry of extensions.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (entry.isFile() && (entry.name.endsWith('.yaml') || entry.name.endsWith('.yml'))) {
+      candidates.push({ file: path.join(input.appDir, 'extensions', entry.name), stage: 'quality' })
+    }
+  }
+  const collections: ReadonlyArray<{ readonly ids: readonly string[]; readonly dirs: readonly string[]; readonly file: string; readonly stage: string }> = [
+    { ids: input.modules, dirs: ['Sources/Apps/Modules', 'Modules'], file: 'module.json', stage: 'module-design' },
+    { ids: input.blocks, dirs: ['Sources/Apps/Blocks', 'Blocks'], file: 'block.json', stage: 'block-extract' },
+    { ids: input.services, dirs: ['Sources/Apps/Services', 'Services'], file: 'service.json', stage: 'factor-dev' },
+  ]
+  for (const collection of collections) {
+    for (const id of collection.ids) {
+      for (const dir of collection.dirs) {
+        candidates.push({ file: path.join(input.namespaceRoot, dir, id, collection.file), stage: collection.stage })
+      }
+    }
+  }
+  const entries: ArtifactEntry[] = []
+  const seen = new Set<string>()
+  for (const candidate of candidates) {
+    if (seen.has(candidate.file)) continue
+    seen.add(candidate.file)
+    const entry = await artifactEntry(input.namespaceRoot, candidate.file, candidate.stage)
+    if (entry !== null) entries.push(entry)
+  }
+  return entries
+}
+
 export function buildPrimitives(
   ctx: Context,
   exec: ToolRunContext,
@@ -455,8 +518,25 @@ export function buildPrimitives(
         ...(args.blocks === undefined ? {} : { blocks: args.blocks }),
       })
       writtenFiles = Array.isArray(written.files) ? written.files as string[] : []
+      // flow-plan.json（上游同路径 `Pre-Proc/{ns}/Apps/{app}/flow-plan.json`）：计划的**产物面**。
+      // 此前计划只作管线参数存在——消费者拿不到「这份 app 按什么计划生成」，计划漂移也无从对照。
+      const appDir = path.join(preProcRootOf(preProcRoot), args.namespace, 'Apps', args.code)
+      const planPath = path.join(appDir, 'flow-plan.json')
+      const planTemp = `${planPath}.tmp-${process.pid}`
+      // 非致命：app 树的权威写入是 `alioth_app_write`（写不动时它自己会响）。计划面跟着它落，
+      // 失败**如实记进 evidence**（不静默吞），但不改变本阶段的失败语义——否则一个只读/不可达的
+      // 根会让管线在「app 已写好」之后因附带产物而红，失败归因错位。
+      let planNote: string
+      try {
+        await mkdir(appDir, { recursive: true })
+        await writeFile(planTemp, `${JSON.stringify(flowPlanToWire(buildPlan(args)), null, 2)}\n`)
+        await rename(planTemp, planPath)
+        planNote = 'flow-plan.json written'
+      } catch (error) {
+        planNote = `flow-plan.json NOT written (${error instanceof Error ? error.message : String(error)})`
+      }
       return {
-        evidence: `app creation: container ${args.namespace}/${args.code} ("${args.name}", intent: ${input}), ${writtenFiles.length} files`,
+        evidence: `app creation: container ${args.namespace}/${args.code} ("${args.name}", intent: ${input}), ${writtenFiles.length} files, ${planNote}`,
         artifacts: writtenFiles,
       }
     },
@@ -1025,6 +1105,35 @@ export function buildPrimitives(
       }).catch(() => {})
 
       const published = checks.every(check => check.ok)
+      // 交付 manifest（上游 publish 主链同规）：只在**全部前置通过**后写出，原子替换；
+      // 失败即不写——上游错误文本同样承诺「未写出 pipeline_manifest」。
+      let manifestPath = ''
+      if (published) {
+        const manifestModules = args.modules.map(module => module.id)
+        const scan = await scanStageProgress({
+          appDir,
+          preProcRoot: namespaceRoot,
+          namespace: args.namespace,
+          app: args.code,
+          modules: manifestModules,
+          blocks: args.blocks ?? [],
+          services: args.services ?? [],
+          atManifestWrite: true,
+        })
+        manifestPath = await writePipelineManifest(appDir, {
+          pipeline_progress: pipelineProgressJson(scan, { stageSource: namespaceRoot }),
+          artifact_manifest: {
+            entries: await publishArtifactEntries({
+              appDir,
+              namespaceRoot,
+              modules: manifestModules,
+              blocks: args.blocks ?? [],
+              services: args.services ?? [],
+            }),
+          },
+          open_human_gates: openGates.map(item => item.id),
+        })
+      }
       const failing = checks.filter(check => !check.ok)
       const failedChecks = failing.map(check => check.name)
       // 首个失败前置的**取证**也进 evidence：只报检查名（如 publish-no-open-degraded-gates）
@@ -1045,7 +1154,8 @@ export function buildPrimitives(
       const output: StageOutput = {
         evidence: `publishing attempt ${attempt}: verified=${missing.length === 0}, workflow=${workflowGate}`
           + (published ? '' : `; failed preconditions: ${failedChecks.join(', ')}${firstFailureShown === '' ? '' : ` — ${firstFailureShown}`}`)
-          + `; shadow willAutoApprove=${shadow.willAutoApprove}`,
+          + `; shadow willAutoApprove=${shadow.willAutoApprove}`
+          + (manifestPath === '' ? '' : `; pipeline_manifest=${path.relative(namespaceRoot, manifestPath)}`),
         artifacts: [result.outputPath],
       }
       return { output, result }
@@ -1119,5 +1229,12 @@ export function buildPlan(args: CreateArgs): FlowPlan {
     createdModules: [],
     createdBlocks: [],
     createdServices: [],
+    // 扩展规划面：只在调用方真的给了才写（`exactOptionalPropertyTypes` 下也不留 undefined 键）。
+    ...(args.semanticConcepts === undefined ? {} : { semanticConcepts: args.semanticConcepts }),
+    ...(args.computations === undefined ? {} : { computations: args.computations }),
+    ...(args.constraints === undefined ? {} : { constraints: args.constraints }),
+    ...(args.businessRules === undefined ? {} : { businessRules: args.businessRules }),
+    ...(args.appMeta === undefined ? {} : { appMeta: args.appMeta }),
+    ...(args.coreConstraints === undefined ? {} : { coreConstraints: args.coreConstraints }),
   }
 }

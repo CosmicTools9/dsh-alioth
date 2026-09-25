@@ -21,6 +21,8 @@ import {
   artifactFingerprint,
   buildEvalReport,
   evaluateStageGate,
+  pipelineProgressJson,
+  scanStageProgress,
   EXTENSION_FORMS,
   latestMatchingVerdict,
   readClosureVerdicts,
@@ -35,7 +37,7 @@ import { extensionsGateItem, extensionsGateScope } from './extensions-gate.ts'
 import { asJsonOutput } from './json-output.ts'
 import { appDirOf, assertNamespaceApp, namespaceRootOf, requireString } from './paths.ts'
 
-const VERIFY_ACTIONS = ['artifacts', 'extensions', 'stage'] as const
+const VERIFY_ACTIONS = ['artifacts', 'extensions', 'stage', 'progress'] as const
 const CLOSURE_ACTIONS = ['verdict', 'status'] as const
 
 /** 7 阶段 id（与 `verify-alioth/stage-gates.ts` 的 `StageId` 联合一一对应）。 */
@@ -111,13 +113,16 @@ export function registerVerifyTools(
       + '`extension-verify.json` says status=passed), so a stale canonical pass cannot wave a degraded run through; '
       + '"stage" — evaluate one of the 7 pipeline stages against its declared artifacts; a missing artifact fails '
       + 'with a `[rule:<id>]` repair contract instead of passing silently. '
+      + '"progress" — the HONEST 7-stage progress projection over the App tree (`pipeline_progress` segment shape): '
+      + 'a stage with no declared artifact on disk is `pending` (never reported completed), a stage with artifacts that '
+      + 'fail its gate is reported in `failures` (blocking publish; never silently waved through). '
       + '`write=false` skips persistence (dry read); defaults to writing the canonical evidence file.',
     parameters: {
       action: { type: 'string', required: true, description: `One of: ${VERIFY_ACTIONS.join(', ')}.` },
       namespace: { type: 'string', description: 'Workspace namespace (Pre-Proc/{namespace}); required for every action.' },
       app: { type: 'string', description: 'App code (Apps/{app} under the namespace); required for every action.' },
       stage: { type: 'string', description: `stage only: one of ${STAGE_IDS.join(', ')}.` },
-      modules: { type: 'array', items: { type: 'string' }, description: 'stage only (module-design): module ids that must each have module.json.' },
+      modules: { type: 'array', items: { type: 'string' }, description: 'stage/progress: module ids that must each have module.json.' },
       write: { type: 'boolean', description: 'artifacts/extensions: persist the canonical evidence file (default true).' },
     },
     output: {
@@ -138,6 +143,11 @@ export function registerVerifyTools(
           ok: { type: 'boolean' },
           evidence: { type: 'string' },
           artifacts: { type: 'array', items: { type: 'string' } },
+          currentStage: { type: 'string' },
+          allCompleted: { type: 'boolean' },
+          stages: { type: 'json' },
+          failures: { type: 'json' },
+          progress: { type: 'json' },
         },
       },
       render: (_args, value) => [{
@@ -202,6 +212,34 @@ export function registerVerifyTools(
           gateScope,
           gateRegistered,
           gatesCleared,
+        }
+      }
+
+      if (action === 'progress') {
+        const scan = await scanStageProgress({
+          appDir,
+          preProcRoot: namespaceRootOf(preProcRoot, namespace),
+          namespace,
+          app,
+          modules: parseModules(a.modules),
+        })
+        // 读侧投影：failures **如实报告**而不 throw（只读面必须能描述一棵坏树；
+        // 阻断归 publish 前置与 orchestrator 的 pipelineAdvance）。
+        return {
+          action,
+          currentStage: scan.currentStage ?? '',
+          allCompleted: scan.allCompleted,
+          stages: scan.stages.map(stage => ({
+            id: stage.id,
+            label: stage.label,
+            status: stage.status,
+            gate: stage.gate,
+            hasHumanGate: stage.hasHumanGate,
+            ...(stage.humanGatePrompt === undefined ? {} : { humanGatePrompt: stage.humanGatePrompt }),
+            ...(stage.completedAt === undefined ? {} : { completedAt: stage.completedAt }),
+          })),
+          failures: scan.failures.map(failure => ({ id: failure.id, evidence: failure.evidence })),
+          progress: pipelineProgressJson(scan, { stageSource: namespaceRootOf(preProcRoot, namespace) }),
         }
       }
 

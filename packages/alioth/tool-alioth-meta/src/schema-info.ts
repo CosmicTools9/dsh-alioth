@@ -8,6 +8,43 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { physicalRootColumns, physicalTableParents } from '@dsh-alioth/skill-alioth'
+
+/**
+ * The DDL-only inventory: every physical table with its inheritance parent, from the model's own
+ * DDL snapshot. Served when the deployment has no `isahl_meta` rows (an open-source copy that
+ * ships none) — the agent then works from what the model's DDL carries instead of a registry.
+ */
+function ddlInventory(query: string | undefined, limit: number): {
+  entities: Array<{ table: string; name: string; type: string; category: string; depth: number; inherits: string[]; description: string }>
+  total: number
+} {
+  const needle = (query ?? '').toLowerCase()
+  const depthOf = (table: string): number => {
+    let depth = 0
+    let current = physicalTableParents.get(table) ?? ''
+    while (current !== '' && depth < 32) {
+      depth += 1
+      current = physicalTableParents.get(current) ?? ''
+    }
+    return depth
+  }
+  const rows = [...physicalTableParents.entries()]
+    .filter(([table]) => needle === '' || table.toLowerCase().includes(needle))
+    .sort(([a], [b]) => a.localeCompare(b))
+  return {
+    total: rows.length,
+    entities: rows.slice(0, limit).map(([table, parent]) => ({
+      table,
+      name: table,
+      type: 'table',
+      category: '',
+      depth: depthOf(table),
+      inherits: parent === '' ? [] : [parent],
+      description: '',
+    })),
+  }
+}
 
 interface CollectionRow {
   readonly table_name: string
@@ -96,6 +133,9 @@ export function registerSchemaInfo(ctx: Context): void {
       + '"entity" — one collection\'s fields (`collection` = table_name); '
       + '"search-fields" — fields by substring on name/title (`query`). '
       + 'Use before defining or referencing any entity/field; the registry is the structural truth. '
+      + 'When the deployment has no registry rows (an open-source model copy ships none) the tool '
+      + 'degrades to the model DDL inventory — tables and inheritance only — and says so via '
+      + '`degraded` + `note`. '
       + 'Dev-seed test entities (names ending -testing/-test) are hidden by default '
       + '(`filteredTesting` reports how many); pass `includeTesting` to see them. '
       + 'Returns at most `limit` rows (default 20, max 100).',
@@ -133,6 +173,11 @@ export function registerSchemaInfo(ctx: Context): void {
         properties: {
           action: { type: 'string', required: true },
           filteredTesting: { type: 'number' },
+          degraded: {
+            type: 'boolean',
+            description: 'True when served from the model DDL alone (no isahl_meta rows in this deployment).',
+          },
+          note: { type: 'string', description: 'Why the result is degraded / what is missing.' },
           entities: {
             type: 'array',
             items: {
@@ -180,11 +225,11 @@ export function registerSchemaInfo(ctx: Context): void {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: value.action === 'entities'
+        text: (value.degraded ? '[DDL-only] ' : '') + (value.action === 'entities'
           ? `${value.entities?.length ?? 0} collections${value.entities?.length ? ': ' + value.entities.map(e => e.table).join(', ') : ''}`
           : value.action === 'entity'
             ? `${value.collection?.table}: ${value.fields?.length ?? 0} fields`
-            : `${value.fields?.length ?? 0} fields matching: ${value.fields?.map(f => `${f.collection}.${f.name}`).join(', ')}`,
+            : `${value.fields?.length ?? 0} fields matching: ${value.fields?.map(f => `${f.collection}.${f.name}`).join(', ')}`),
       }],
     },
     async execute(args) {
@@ -195,6 +240,55 @@ export function registerSchemaInfo(ctx: Context): void {
       const limit = args.limit === undefined ? DEFAULT_LIMIT : args.limit
       if (!Number.isInteger(limit) || limit < 1 || limit > MAX_LIMIT) {
         throw new Error(`alioth_schema_info: limit must be an integer in [1, ${MAX_LIMIT}]`)
+      }
+
+      // DDL-only mode: no registry rows in this deployment (an open-source copy that ships none).
+      // The agent then works from what the model's own DDL carries — the physical table inventory
+      // and its inheritance — and is told plainly that registry-only knowledge is missing, rather
+      // than reading an empty result as "no such table exists".
+      if ((await ctx.aliothEnv.ready()).registrySource === 'missing') {
+        const note = 'isahl_meta is unseeded here (the model snapshot ships no registry rows): '
+          + 'tables and inheritance come from the model\'s own DDL snapshot. Field-level metadata, '
+          + 'categories, descriptions and cross-entity references exist only in the registry and '
+          + 'are unavailable in this deployment.'
+        if (action === 'entities') {
+          return {
+            action,
+            degraded: true,
+            note,
+            filteredTesting: 0,
+            entities: ddlInventory(args.query as string | undefined, limit).entities,
+          }
+        }
+        if (action === 'entity') {
+          if (typeof args.collection !== 'string' || args.collection.length === 0) {
+            throw new Error('alioth_schema_info: action "entity" requires "collection"')
+          }
+          const parent = physicalTableParents.get(args.collection)
+          if (parent === undefined) {
+            throw new Error(
+              `alioth_schema_info: unknown table ${JSON.stringify(args.collection)} — not in the model's `
+              + 'DDL inventory; list with action "entities" first',
+            )
+          }
+          return {
+            action,
+            degraded: true,
+            note: `${note} Every lifecycle table also carries the root-family columns: ${[...physicalRootColumns].join(', ')}.`,
+            collection: {
+              table: args.collection,
+              name: args.collection,
+              category: '',
+              inherits: parent === '' ? [] : [parent],
+              description: '',
+            },
+            fields: [],
+          }
+        }
+        if (typeof args.query !== 'string' || args.query.length === 0) {
+          throw new Error('alioth_schema_info: action "search-fields" requires "query"')
+        }
+        return { action, degraded: true, note, fields: [] }
       }
 
       if (action === 'entities') {

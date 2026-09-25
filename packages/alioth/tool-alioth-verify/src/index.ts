@@ -12,6 +12,7 @@
  * | `alioth_patch_assets` | `propose` / `apply`（需 `confirmed: true`） | 目标产物文件（原子写回） |
  * | `alioth_capabilities` | 六组只读能力广告 | 无（零副作用） |
  * | `alioth_deferred` | `register` / `list` / `unlock` | `<dataRoot>/deferred/{scope}.json`（scope = 会话 id 或 app 门 `app-extensions-{ns}-{app}`） |
+ * | `alioth_mapping_verdict` | `record`（默认）/ `recall` | `<dataRoot>/mapping-verdicts/{namespace}.json`（人工映射裁决账本；`keep_gap`、目录外表、目录不可判定一律拒绝） |
  * | `alioth_usage` | 会话用量/成本 | 无（零副作用） |
  *
  * 全局纪律（MUST NOT 软化）：两段式的第二段未确认**不写盘**；`degraded ≠ passed`；
@@ -24,10 +25,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 // 类型锚点：`ctx.aliothEnv` 的模块增强随本包的这一导入进入类型程序（孤立 `tsc -p` 也能解析）。
 import type { AliothEnv } from '@dsh-alioth/env-alioth'
-import { createDeferredStore } from '@dsh-alioth/verify-alioth'
+import { createDeferredStore, createMappingVerdictStore } from '@dsh-alioth/verify-alioth'
 import { registerAssetTools } from './asset-tools.ts'
 import { registerCapabilitiesTool } from './capabilities-tool.ts'
 import { registerDeferredTool } from './deferred-tool.ts'
+import { registerMappingVerdictTool } from './verdict-tool.ts'
 import { registerUsageTool } from './usage-tool.ts'
 import { registerVerifyTools } from './verify-tools.ts'
 
@@ -43,6 +45,8 @@ export interface Config {
   readonly preProcRoot: string
   /** 阻塞登记根；缺省 = 部署状态根（落 `{root}/deferred/{sessionId}.json`，app 级人工门同库）。 */
   readonly deferredRoot?: string
+  /** 人工裁决账本根；缺省 = 部署状态根（落 `{root}/mapping-verdicts/{namespace}.json`）。 */
+  readonly verdictRoot?: string
   /** 适配器文件名（模型快照 `skill-adapters/` 下），用于能力广告的 plan 步判定；缺省 `alioth-app.yaml`。 */
   readonly adapter?: string
   /** 价表 JSON 路径（`{模型: {centsPerInK, centsPerOutK}}`）；缺省不给成本估算（显式 `unavailable`）。 */
@@ -52,6 +56,8 @@ export interface Config {
 export const Config: z<Config> = z.object({
   preProcRoot: z.string().required(),
   deferredRoot: z.string(),
+  /** 人工裁决账本根；缺省 = 部署状态根（落 `{root}/mapping-verdicts/{namespace}.json`）。 */
+  verdictRoot: z.string(),
   adapter: z.string().default(DEFAULT_ADAPTER),
   priceTable: z.string(),
 })
@@ -63,10 +69,12 @@ export function apply(ctx: Context, config: Config): void {
   const env = ctx.get('aliothEnv') as AliothEnv
   const dataRoot = env.dataRoot()
   const deferred = createDeferredStore(config.deferredRoot ?? dataRoot)
+  const verdicts = createMappingVerdictStore(config.verdictRoot ?? dataRoot)
 
   registerVerifyTools(ctx, { preProcRoot, deferred })
   registerAssetTools(ctx, { preProcRoot })
   registerDeferredTool(ctx, { store: deferred })
+  registerMappingVerdictTool(ctx, { store: verdicts, sql: (text, values) => env.sql(text, values as never) })
   registerUsageTool(ctx, config.priceTable === undefined ? {} : { priceTable: config.priceTable })
   registerCapabilitiesTool(ctx, {
     env,
