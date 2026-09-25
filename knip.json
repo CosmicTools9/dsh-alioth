@@ -14,6 +14,9 @@
         "scripts/**/*.ts",
         "tests/**/*.ts"
       ],
+      "ignoreBinaries": [
+        "footprint"
+      ],
       "ignoreDependencies": [
         "@deepseek-ai/dsh",
         "@deepseek-ai/dsh-credentials-local",
