@@ -13687,6 +13687,9 @@ importers:
       '@deepseek-ai/cordis':
         specifier: ^4.0.2
         version: link:../../../../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-client-connection':
+        specifier: ^0.1.7-rc.1
+        version: link:../../../../deepseek-harness/packages/client/connection
       '@deepseek-ai/dsh-tools':
         specifier: ^0.1.7-rc.1
         version: link:../../../../deepseek-harness/packages/core/tools

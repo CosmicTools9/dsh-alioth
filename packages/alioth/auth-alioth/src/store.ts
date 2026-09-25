@@ -45,6 +45,11 @@ export async function ensureAuthSchema(ctx: Context): Promise<void> {
       expires_at timestamptz NOT NULL
     );
     CREATE INDEX IF NOT EXISTS sessions_user_idx ON ${AUTH_SCHEMA}.sessions (user_id);
+    CREATE TABLE IF NOT EXISTS ${AUTH_SCHEMA}.session_bindings (
+      session_id text PRIMARY KEY,
+      user_id text NOT NULL REFERENCES ${AUTH_SCHEMA}.users(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
   `)
 }
 
@@ -115,6 +120,33 @@ export async function bindSession(ctx: Context, tokenHash: string, sessionId: st
 
 export async function deleteSession(ctx: Context, tokenHash: string): Promise<void> {
   await ctx.aliothEnv.sql(`DELETE FROM ${AUTH_SCHEMA}.sessions WHERE token_hash = $1`, [tokenHash])
+}
+
+/**
+ * Bind an agent session to a user — durable, transport-independent identity.
+ *
+ * The browser gate script used to be the only carrier (`sessions.create` sniffed
+ * client-side); when the harness changed its session-creation transport the
+ * binding silently stopped happening and identity degraded to a path guess. The
+ * host runs every HTTP dispatch with the signed-in account in scope
+ * (`@deepseek-ai/dsh-client-connection`), so the binding is written server-side
+ * now; the client script is at most a redundant second path.
+ */
+export async function bindSessionToUser(ctx: Context, sessionId: string, userId: string): Promise<void> {
+  await ctx.aliothEnv.sql(
+    `INSERT INTO ${AUTH_SCHEMA}.session_bindings (session_id, user_id) VALUES ($1, $2)
+     ON CONFLICT (session_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [sessionId, userId],
+  )
+}
+
+/** User id bound to an agent session, or null. */
+export async function userForBoundSession(ctx: Context, sessionId: string): Promise<string | null> {
+  const result = await ctx.aliothEnv.sql<{ user_id: string }>(
+    `SELECT user_id FROM ${AUTH_SCHEMA}.session_bindings WHERE session_id = $1 LIMIT 1`,
+    [sessionId],
+  )
+  return result.rows[0]?.user_id ?? null
 }
 
 export async function deleteExpiredSessions(ctx: Context): Promise<void> {

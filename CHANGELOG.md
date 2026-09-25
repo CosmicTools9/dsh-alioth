@@ -5,6 +5,12 @@ this file records user-visible changes per release.
 
 ## [Unreleased]
 
+### Fixed
+- **会话绑定改由服务端写入**：客户端脚本嗅探的是 harness 旧 REST 路径（`/api/session/create`），harness 换传输后绑定
+  静默失效——m2 实测同一会话落到另一账号的命名空间（工具守卫与工作区选择器双双退化为路径推断）。现在
+  `session/created` 时用 harness 的连接账户上下文写入 `dsh_alioth_auth.session_bindings`，`userForSessionId` 优先读它，
+  守卫在拒绝前再补绑一次；客户端脚本降为冗余路径。
+
 ### Added
 - **裁决召回进决策点**：`alioth_schema_semantic_search` 新增可选 `namespace` + `domain`，命中本命名空间的人工映射裁决时返回 `precedent`（含 `verdict` 与 `ignored` 可判原因）；判定为纯函数（域精确匹配 + 置信门槛 + 目录表存在性，目录为空豁免），账本/目录不可读均降级不阻断。
 - **计划 → 扩展的确定性组装**：`alioth_app_write` 新增 `plan` 参数（flow-plan wire 形态，非法即拒），由 `gen-alioth/src/extension-plan.ts` 按上游 `compose_from_flow_plan` 逐文件派生 `extensions/{constraints,rules,statemachines,workflows}.yaml` + 有模块时的 `profiles.yaml`；空来源保持如实骨架（绝不伪造条目），本体 JSON 不可解析同样退骨架。

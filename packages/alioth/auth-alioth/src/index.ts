@@ -39,7 +39,8 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolExecution, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { hashPassword, verifyPassword } from './password.ts'
 import {
-  AUTH_SCHEMA, bindSession, deleteExpiredSessions, deleteSession, ensureAuthSchema,
+  AUTH_SCHEMA, bindSession, bindSessionToUser, deleteExpiredSessions, deleteSession, ensureAuthSchema,
+  userForBoundSession,
   insertSession, insertUser, sessionByTokenHash, userById, userByNamespace, userByUsername,
 } from './store.ts'
 
@@ -262,6 +263,23 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
+/**
+ * The signed-in account of the dispatch currently being processed.
+ *
+ * Loaded dynamically: `@deepseek-ai/dsh-client-connection` is a **web-profile**
+ * package. A headless tree must boot without it, so a missing module means "no
+ * account in scope", never a failure.
+ * @returns the account string, or null outside a dispatch / without the package.
+ */
+async function connectionAccount(): Promise<string | null> {
+  try {
+    const mod = await import('@deepseek-ai/dsh-client-connection')
+    return mod.currentConnectionAccount()
+  } catch {
+    return null
+  }
+}
+
 export function apply(ctx: Context, config: Config): void {
   // Deployment override: ALIOTH_AUTH_MODE=enforce turns on mandatory
   // authentication for namespace-scoped tools (B/S production); headless
@@ -414,6 +432,13 @@ export function apply(ctx: Context, config: Config): void {
 
     /** User for a bound agent session id (session-bound identity). */
     async userForSessionId(sessionId: string): Promise<{ namespace: string; role: 'admin' | 'user' } | null> {
+      // Lane 0: the server-side binding written when the session was created
+      // (the only lane that needs no client participation).
+      const serverBound = await userForBoundSession(ctx, sessionId)
+      if (serverBound !== null) {
+        const bound = await userById(ctx, serverBound)
+        if (bound !== null) return { namespace: bound.namespace, role: bound.role }
+      }
       const result = await ctx.aliothEnv.sql<{ user_id: string }>(
         `SELECT user_id FROM ${AUTH_SCHEMA}.sessions WHERE session_id = $1 AND expires_at > now() LIMIT 1`,
         [sessionId],
@@ -594,6 +619,44 @@ export function apply(ctx: Context, config: Config): void {
     },
   }
 
+  /**
+   * Bind an agent session to the signed-in account of the dispatch that created it.
+   * Runs inside an HTTP dispatch, so the harness's account scope is in effect;
+   * failures are logged and swallowed — a binding problem MUST NOT break session
+   * creation (identity then simply stays unbound, which the guard reports).
+   * @param sessionId - the freshly created agent session.
+   */
+  async function bindSessionFromConnection(sessionId: string): Promise<boolean> {
+    try {
+      const account = await connectionAccount()
+      if (account === null || account === '' || sessionId === '') {
+        return false
+      }
+      // The account the web gate publishes is the caller's NAMESPACE
+      // (auth-web-alioth resolves the HttpOnly cookie to `user.namespace`), so
+      // the lookup is by namespace first; a username is accepted as well, so the
+      // binding does not depend on which of the two a future resolver hands over.
+      const user = (await userByNamespace(ctx, account)) ?? (await userByUsername(ctx, account))
+      if (user === null) {
+        return false
+      }
+      await bindSessionToUser(ctx, sessionId, user.id)
+      return true
+    } catch (error) {
+      ctx.logger.warn(`auth-alioth: could not bind session ${sessionId} to its connection account: ${error instanceof Error ? error.message : String(error)}`)
+      return false
+    }
+  }
+
+  // Identity is written server-side at session creation. The browser gate script
+  // used to be the only carrier; it tracks a REST path the harness no longer uses,
+  // so a lost binding silently degraded to path-derived identity (observed on m2:
+  // a session landed in another account's namespace). This listener is the
+  // transport-independent carrier; the client script stays as a redundant path.
+  ctx.on('session/created', (session) => {
+    void bindSessionFromConnection(String(session.id))
+  })
+
   // ── guard: tools/pre-execute ────────────────────────────────────────────
   ctx.on('tools/pre-execute', async (exec, next) => {
     if (!exec.name.startsWith('alioth_')) {
@@ -628,7 +691,13 @@ export function apply(ctx: Context, config: Config): void {
   // session carries no bound user identity. Open mode skips it (headless).
   if (effectiveMode === 'enforce') {
     ctx.on('agent/pre-step', async ({ agent }, next) => {
-      const user = await aliothAuth.userForSessionId(String(agent.id))
+      const sessionId = String(agent.id)
+      let user = await aliothAuth.userForSessionId(sessionId)
+      if (user === null && await bindSessionFromConnection(sessionId)) {
+        // Backstop for sessions created before the listener could see them
+        // (e.g. one created in a dispatch whose scope had already ended).
+        user = await aliothAuth.userForSessionId(sessionId)
+      }
       if (user !== null) {
         return next()
       }

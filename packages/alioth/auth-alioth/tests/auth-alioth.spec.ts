@@ -401,3 +401,26 @@ describe('workspace (namespace = user workspace)', () => {
     expect(adminRole.workspaces.map(ws => ws.namespace)).toEqual(['U-alice'])
   })
 })
+
+describe('server-side session binding (no client participation)', () => {
+  it('binds at session creation from the dispatch account, and stays unbound without one', async () => {
+    await ctx.aliothAuth.register('erinsrv', 'password-123')
+    // The harness runs every HTTP dispatch with the signed-in account in scope
+    // (AsyncLocalStorage). This product's resolver publishes the account's
+    // NAMESPACE, so the listener must resolve by namespace.
+    const { connectionAccountStorage } = await import('@deepseek-ai/dsh-client-connection')
+    await connectionAccountStorage.run({ account: 'U-erinsrv' }, async () => {
+      ctx.emit('session/created', { id: 'session-erin-1' } as unknown as Session)
+      await new Promise(resolve => setTimeout(resolve, 100))
+    })
+    // Lane 0 (the server-side binding) answers even though no workspace lists
+    // this session — that is the whole point: identity does not need a path.
+    expect(await ctx.aliothAuth.userForSessionId('session-erin-1')).toMatchObject({ namespace: 'U-erinsrv' })
+
+    // Outside a dispatch there is no account: the session must stay unbound
+    // rather than inheriting someone else's identity.
+    ctx.emit('session/created', { id: 'session-erin-2' } as unknown as Session)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(await ctx.aliothAuth.userForSessionId('session-erin-2')).toBeNull()
+  })
+})
