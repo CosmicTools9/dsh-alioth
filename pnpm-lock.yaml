@@ -13855,6 +13855,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: ^3.18.2
         version: link:../../../../deepseek-harness/vendor/schemastery
+      yaml:
+        specifier: '>=2.8.3'
+        version: 2.9.0
 
   packages/alioth/guard-alioth:
     dependencies:

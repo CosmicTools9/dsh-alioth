@@ -516,6 +516,9 @@ export function buildPrimitives(
         name: args.name,
         modules: args.modules,
         ...(args.blocks === undefined ? {} : { blocks: args.blocks }),
+        // 计划驱动扩展生成（上游 compose_app 的那一段）：计划里有什么就生成什么，
+        // 没有的保持如实骨架——同一个 wire 编解码器，非法计划由写入方拒绝。
+        plan: flowPlanToWire(buildPlan(args)),
       })
       writtenFiles = Array.isArray(written.files) ? written.files as string[] : []
       // flow-plan.json（上游同路径 `Pre-Proc/{ns}/Apps/{app}/flow-plan.json`）：计划的**产物面**。

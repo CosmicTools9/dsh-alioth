@@ -63,19 +63,6 @@ const DEFAULT_APP_STATUS = 'developing'
 /** The app-level extensions per the distribution's artifact tree (DESIGN_INTENT). */
 export const EXTENSION_FILES = ['constraints', 'rules', 'statemachines', 'workflows'] as const
 
-/** Skeleton YAML for one extension kind. Honest placeholder: empty doc + provenance.
- *  Top-level MUST be a YAML sequence: constraints/rules/statemachines/workflows
- *  deserialize into `Vec<T>` at the Gateway ExtensionLoader (2026-08-23 contract
- *  fix — `constraints: []` map wrappers crash Gateway startup). */
-export function generateExtension(kind: string, code: string): string {
-  return `# dsh-alioth generated skeleton — ${kind} for app ${code}.\n# Shape follows the Alioth model extensions/*.yaml contract; extend before import.\n[]\n`
-}
-
-/** Extension file names → skeleton content for an app. */
-export function generateExtensions(code: string): Readonly<Record<string, string>> {
-  return Object.fromEntries(EXTENSION_FILES.map(kind => [`${kind}.yaml`, generateExtension(kind, code)]))
-}
-
 /** Source-skeleton directories for an app (modules; services come with service.json generation).
  *  Mirror layout (fb28b5e02): everything lives under Sources/Apps/. */
 export function sourceModuleDirs(modules: readonly ModuleSpec[]): readonly string[] {

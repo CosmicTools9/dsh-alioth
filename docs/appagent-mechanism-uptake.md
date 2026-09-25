@@ -62,8 +62,25 @@
   `appMeta`/`coreConstraints`），`buildPlan` 只在调用方真的给了才写，`alioth_app_create` 工具面同步开放。
 - 非致命：app 树的权威写入是 `alioth_app_write`（写不动时它自己会响）；计划面跟着它落，失败**如实记进 evidence**
   但不改变本阶段失败语义——否则一个只读根会让管线在「app 已写好」之后因附带产物而红，失败归因错位。
-- **尚未做**：像上游 `compose_app` 那样用计划里的 computations/constraints/businessRules **确定性组装**
-  `extensions/{constraints,rules}.yaml` 等产物——本仓目前的对应物是 gen-alioth + `alioth_app_configure` 的声明式入口。
+### ④b 计划 → 扩展的确定性组装（上游 `composer.rs:485-655, 1451-1474`）
+
+`gen-alioth/src/extension-plan.ts` 按上游逐文件派生，形状对齐 vendored Gateway
+`runtime-engine::extension::load_from_dir` 的反序列化契约：
+
+| 扩展文件 | 计划来源 | 上游同名细节 |
+|---|---|---|
+| `constraints.yaml` | `plan.constraints` | `level` 仅 `"warning"` → `Warning`，其余 `Error`（serde 无 `rename_all` ⇒ 大写） |
+| `rules.yaml` | `plan.business_rules` | `ruleName→name`、`errorMessage→error_message`、`blocking: true`（上游硬编码） |
+| `statemachines.yaml` | `ontology_model_json.transaction_lifecycle` | `state_field: "t_state"`、相位 id→name 映射、guard = `" && "` 相联 |
+| `workflows.yaml` | `plan.workflow_steps` | 单条 `auto_workflow`，动作 `{type: call_procedure}`，`on_error: Abort` |
+| `profiles.yaml` | 声明的模块集 | `profiles.default.modules.<id>`；**无模块时不产出该文件**（上游同规） |
+
+诚实口径：某个来源为空 ⇒ 该文件保持骨架（空序列）+ 头注明缺什么，**绝不伪造**条目；本体 JSON 不可解析
+或缺 `transaction_lifecycle` 同样退骨架。模型面入口是 `alioth_app_write` 的新增 `plan` 参数（用
+`flowPlanFromWire` 收：snake/camel 两态 + 旧别名 + 缺键即拒——**非法计划直接拒绝**，不静默退骨架）。
+
+- **残余**：上游 `composer.rs:1476` 还会把计划里的缺口写成 `request-no-impl/*.md`；本仓未产出该面（缺口以
+  per-App 人工门 + `alioth_deferred` 承载）。
 
 ## 验证
 

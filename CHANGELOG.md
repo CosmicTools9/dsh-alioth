@@ -6,6 +6,7 @@ this file records user-visible changes per release.
 ## [Unreleased]
 
 ### Added
+- **计划 → 扩展的确定性组装**：`alioth_app_write` 新增 `plan` 参数（flow-plan wire 形态，非法即拒），由 `gen-alioth/src/extension-plan.ts` 按上游 `compose_from_flow_plan` 逐文件派生 `extensions/{constraints,rules,statemachines,workflows}.yaml` + 有模块时的 `profiles.yaml`；空来源保持如实骨架（绝不伪造条目），本体 JSON 不可解析同样退骨架。
 - **AppAgent 机制吸收（③②①④）**：步骤输入缺失 fail-fast（`step-input-missing`，未启动即拒）、
   人工映射裁决的沉降与召回（`alioth_mapping_verdict`：`keep_gap`/目录外表/目录不可判定一律拒绝）、
   7 阶段**诚实**进度投影 + `pipeline_manifest.json` 交接产物（全部前置通过才写；缺失=pending 不谎报）、

@@ -358,7 +358,7 @@
   },
   {
     "name": "alioth_app_write",
-    "description": "Generate and persist a validated Alioth app artifact tree: app.json, module.json per module, extensions/*.yaml skeletons, and Sources/Modules/* directories — all under Pre-Proc/{namespace}/Apps/{code}/. Generated app.json/module.json always pass the in-repo contracts before anything is written. Refuses to overwrite an existing app: inspect it first. Requires approval when the deployment sets approvalMode=required.",
+    "description": "Generate and persist a validated Alioth app artifact tree: app.json, module.json per module, extensions/*.yaml skeletons, and Sources/Modules/* directories — all under Pre-Proc/{namespace}/Apps/{code}/. Generated app.json/module.json always pass the in-repo contracts before anything is written. Refuses to overwrite an existing app: inspect it first. Requires approval when the deployment sets approvalMode=required. Pass `plan` (the flow-plan wire form) to have the extension files generated FROM the plan — constraints/rules/statemachines/workflows/profiles, deterministically, zero LLM; omit it and you get honest empty skeletons.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -485,6 +485,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "plan": {
+          "description": "Optional flow plan (flow-plan.json wire form: constraints/business_rules/workflow_steps/created_modules/ontology_model_json/…). When given, extensions/*.yaml are derived from it; a malformed plan is rejected instead of silently generating skeletons."
         }
       },
       "required": [

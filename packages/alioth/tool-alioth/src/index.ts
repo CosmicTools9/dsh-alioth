@@ -20,7 +20,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { generateApp, generateExtensions, generateModule, generateNamespaceWorkspace, generateService, generateServiceCrate, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
-import { validateCoordinates } from '@dsh-alioth/skill-alioth'
+import { validateCoordinates, flowPlanFromWire, } from '@dsh-alioth/skill-alioth'
 import type {} from '@deepseek-ai/dsh-user-approval'
 
 export const name = 'tool-alioth'
@@ -420,7 +420,9 @@ export function apply(ctx: Context, config: Config): void {
       + 'under Pre-Proc/{namespace}/Apps/{code}/. Generated app.json/module.json always '
       + 'pass the in-repo contracts before anything is written. Refuses to overwrite an '
       + 'existing app: inspect it first. Requires approval when the deployment sets '
-      + 'approvalMode=required.',
+      + 'approvalMode=required. Pass `plan` (the flow-plan wire form) to have the extension '
+      + 'files generated FROM the plan — constraints/rules/statemachines/workflows/profiles, '
+      + 'deterministically, zero LLM; omit it and you get honest empty skeletons.',
     parameters: {
       namespace: {
         type: 'string',
@@ -488,6 +490,12 @@ export function apply(ctx: Context, config: Config): void {
       },
       goal: { type: 'string', description: 'App goal (17-field alignment).' },
       nonScope: { type: 'array', items: { type: 'string' }, description: 'Explicit non-scope statements.' },
+      plan: {
+        type: 'json',
+        description: 'Optional flow plan (flow-plan.json wire form: constraints/business_rules/workflow_steps/'
+          + 'created_modules/ontology_model_json/…). When given, extensions/*.yaml are derived from it; '
+          + 'a malformed plan is rejected instead of silently generating skeletons.',
+      },
     },
     output: {
       schema: {
@@ -518,6 +526,13 @@ export function apply(ctx: Context, config: Config): void {
         }
         return module
       })
+      // `plan` 是 flow-plan 的 wire 形态：用同一个编解码器收（snake/camel 两态 + 旧别名 + 缺键即拒），
+      // 非法计划**拒绝**而不是退回骨架——退回骨架会让调用方以为计划生效了。
+      // 两态显式：不给 plan ⇒ `null`（只发骨架）；给了但不合法 ⇒ 拒绝（不静默退骨架）。
+      const plan = args.plan === undefined ? null : flowPlanFromWire(args.plan)
+      if (args.plan !== undefined && plan === null) {
+        throw new Error('alioth_app_write: plan 不是合法的 flow-plan wire 形态（缺必需键）；拒绝据此生成扩展')
+      }
       const spec = {
         id: String(Date.now()),
         namespace: args.namespace,
@@ -577,7 +592,19 @@ export function apply(ctx: Context, config: Config): void {
       }
       const extensionsDir = path.join(appDir, 'extensions')
       await mkdir(extensionsDir, { recursive: true })
-      for (const [file, content] of Object.entries(generateExtensions(args.code))) {
+      // 上游 `compose_from_flow_plan` 的模块候选集 = used_modules ∪ created_modules（去重）——
+      // 只读 used_modules 会让新建模块从 profiles 注册表里消失（上游缺陷 24 的原形）。
+      // 逐字段条件展开：`exactOptionalPropertyTypes` 下整体展开会把可选属性带成 `| undefined`。
+      const extensionPlan = plan === null
+        ? {}
+        : {
+            ...(plan.constraints === undefined ? {} : { constraints: plan.constraints }),
+            ...(plan.businessRules === undefined ? {} : { businessRules: plan.businessRules }),
+            ...(plan.workflowSteps === undefined ? {} : { workflowSteps: plan.workflowSteps }),
+            ...(plan.ontologyModelJson === undefined ? {} : { ontologyModelJson: plan.ontologyModelJson }),
+            modules: [...new Set([...plan.usedModules, ...plan.createdModules])],
+          }
+      for (const [file, content] of Object.entries(generateExtensions(args.code, extensionPlan))) {
         await writeFile(path.join(extensionsDir, file), content)
         files.push(`extensions/${file}`)
       }

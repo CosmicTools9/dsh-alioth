@@ -182,7 +182,7 @@ describe('alioth_app_create (PTC orchestrator)', () => {
       namespace: 'Demo',
       code: 'ptc-app',
       entitiesRegistered: 1,
-      filesWritten: 6,
+      filesWritten: 7, // app.json + module.json + 4 个形态骨架 + 计划声明了模块时的 profiles.yaml
       verified: true,
     })
 
