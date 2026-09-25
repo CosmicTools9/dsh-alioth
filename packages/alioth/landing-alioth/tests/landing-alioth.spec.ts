@@ -25,7 +25,9 @@ describe('landing-alioth (no webServer — service only)', () => {
     // The document asks for the brand mark rather than falling back to the
     // browser's default tab glyph.
     expect(service.html).toContain('href="/favicon.svg"')
-    expect(service.html).toContain('href="/site.webmanifest"')
+    // …and declares no web app manifest: a declared manifest makes the page
+    // installable as a local application, which the B/S product is not.
+    expect(service.html).not.toContain('rel="manifest"')
     expect(service.html).toContain('name="theme-color"')
     await p2.dispose()
   })
@@ -57,7 +59,7 @@ describe('landing-alioth (no webServer — service only)', () => {
 })
 
 describe('landing-alioth (webServer mounted)', () => {
-  it('serves the brand asset set the address bar and installers ask for', async () => {
+  it('serves the brand icon set and refuses both manifest paths', async () => {
     const ctx = new Context()
     const routes: Array<{ kind: string; path: string; handler: (req: unknown, res: never) => void }> = []
     ctx.provide('webServer')
@@ -78,7 +80,10 @@ describe('landing-alioth (webServer mounted)', () => {
     }
     await plugin.dispose()
 
-    expect(Object.keys(served).sort()).toEqual(['/apple-touch-icon.png', '/favicon.ico', '/favicon.svg', '/landing', '/site.webmanifest'])
+    expect(Object.keys(served).sort()).toEqual([
+      '/apple-touch-icon.png', '/favicon.ico', '/favicon.svg', '/landing',
+      '/manifest.webmanifest', '/site.webmanifest',
+    ])
     expect(served['/landing']).toMatchObject({ status: 200, type: 'text/html; charset=utf-8' })
     expect(served['/favicon.svg']).toMatchObject({ status: 200, type: 'image/svg+xml' })
     expect(served['/favicon.ico']!.type).toBe('image/x-icon')
@@ -86,13 +91,11 @@ describe('landing-alioth (webServer mounted)', () => {
     // The mark is a real vector document, not a placeholder.
     expect(served['/favicon.svg']!.body).toContain('<svg')
     expect(served['/favicon.ico']!.body.length).toBeGreaterThan(300)
-    // The manifest is the installer contract: name, colors and both icons.
-    expect(served['/site.webmanifest']!.type).toBe('application/manifest+json')
-    expect(JSON.parse(served['/site.webmanifest']!.body)).toMatchObject({
-      name: 'Alioth AppCreator',
-      theme_color: '#0a0e14',
-    })
-    const manifest = JSON.parse(served['/site.webmanifest']!.body) as { icons: Array<{ src: string }> }
-    expect(manifest.icons.map(icon => icon.src)).toEqual(['/favicon.svg', '/apple-touch-icon.png'])
+    // Both manifest paths are refused, not republished: the console shell's own
+    // dist index asks for `/manifest.webmanifest`, and a served manifest of any
+    // shape is what a browser turns into an "install this app" offer.
+    expect(served['/manifest.webmanifest']).toMatchObject({ status: 404, type: 'text/plain; charset=utf-8' })
+    expect(served['/site.webmanifest']).toMatchObject({ status: 404, type: 'text/plain; charset=utf-8' })
+    expect(JSON.stringify(served)).not.toContain('application/manifest+json')
   })
 })

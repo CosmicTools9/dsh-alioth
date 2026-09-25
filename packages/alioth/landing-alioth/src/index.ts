@@ -69,19 +69,33 @@ interface WebServerLike {
 }
 
 /**
- * Brand assets served beside the landing page: the address-bar icon set and the
- * site manifest. They live at the ORIGIN's conventional paths, not under a
- * landing-only prefix, because every document on the origin references them —
- * our public pages by declaration, the harness console shell by convention
- * (`./favicon.svg`, `./manifest.webmanifest` in its own index). One origin, one
- * mark.
+ * Brand assets served beside the landing page: the address-bar icon set. They
+ * live at the ORIGIN's conventional paths, not under a landing-only prefix,
+ * because every document on the origin references them — our public pages by
+ * declaration, the harness console shell by convention (`./favicon.svg` in its
+ * own index). One origin, one mark.
+ *
+ * A web app manifest is deliberately NOT among them: a manifest that satisfies
+ * the browser's installability rules turns every document on the origin — our
+ * pages *and* the console shell, whose dist index links `./manifest.webmanifest`
+ * and ships one of its own — into an installable local application. The product
+ * is a B/S console, not something a visitor installs; so both conventional
+ * manifest paths are answered by {@link MANIFEST_PATHS} with 404.
  */
 const BRAND_ASSETS: ReadonlyArray<{ path: string; file: string; type: string }> = [
   { path: '/favicon.svg', file: 'favicon.svg', type: 'image/svg+xml' },
   { path: '/favicon.ico', file: 'favicon.ico', type: 'image/x-icon' },
   { path: '/apple-touch-icon.png', file: 'apple-touch-icon.png', type: 'image/png' },
-  { path: '/site.webmanifest', file: 'site.webmanifest', type: 'application/manifest+json' },
 ]
+
+/**
+ * Manifest paths this origin refuses — one per document convention in play:
+ * the harness console shell's own dist index asks for `/manifest.webmanifest`,
+ * and our pages used to declare `/site.webmanifest`. Both answer 404, which is
+ * the only state a browser reads as "not installable": an inert manifest would
+ * leave the door open to a browser relaxing which fields it requires.
+ */
+const MANIFEST_PATHS: readonly string[] = ['/manifest.webmanifest', '/site.webmanifest']
 
 function asWebServer(value: unknown): WebServerLike | undefined {
   if (typeof value !== 'object' || value === null) {
@@ -129,7 +143,21 @@ export function apply(ctx: Context, config: Config): void {
         },
       }))
     }
+    // Named routes win over the SPA fallback seat, so these keep the console
+    // shell's own manifest (shipped in its dist) unreachable — no manifest, no
+    // install prompt, no installable origin.
+    for (const path of MANIFEST_PATHS) {
+      webCtx.effect(() => web.register({
+        kind: 'exact',
+        path,
+        handler: (_request, res) => {
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' })
+          res.end('no web app manifest on this origin\n')
+        },
+      }))
+    }
     ctx.logger.info('landing-alioth: /landing mounted on webServer')
     ctx.logger.info(`landing-alioth: brand assets mounted (${BRAND_ASSETS.map(asset => asset.path).join(', ')})`)
+    ctx.logger.info(`landing-alioth: manifest paths refused (${MANIFEST_PATHS.join(', ')})`)
   })
 }
