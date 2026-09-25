@@ -81,7 +81,7 @@ jobs:
         run: pnpm run check:versions
       - name: composition tree assembly
         run: pnpm run check:tree-assembly
-      - name: composition smoke (real Context, builtin model, zero network)
+      - name: composition smoke (real Context, assembled fixture model source, zero network)
         run: node --import tsx scripts/smoke-composition.ts
 
   dicts-freshness:

@@ -16,4 +16,4 @@ assignees: ''
 
 **Environment**
 
-<!-- OS / Node / Docker / model source (builtin vs repo) / DEEPSEEK_API_KEY present? -->
+<!-- OS / Node / Docker / ALIOTH_MODEL_SOURCE (assembled dir or github:…) / DEEPSEEK_API_KEY present? -->

@@ -4,8 +4,14 @@
  *   `seed-dimensions.sql` (version anchor from `latest.json`)
  * - physical-tables.json: isahl tables + inheritance + root columns from
  *   `002_isahl_tables.sql`
- * - fk-index.json: physical FK references from the vendored isahl_meta seed
- *   (`env-alioth/vendor/backend/ddl/004_isahl_meta_seed_fields.sql`)
+ * - fk-index.json: physical FK references from the **release's** registry sidecar
+ *   (`<model source>/isahl_meta-registry.sql`, a `pg_dump --data-only --inserts` copy the model
+ *   publish pipeline generates — derived data, never committed to Git, delivered out of band),
+ *   read through the same loader the boot uses. Absent sidecar ⇒ the index is not regenerated.
+ *
+ * Everything comes from the model source (`ALIOTH_REPO` / `ALIOTH_MODEL_SOURCE`), never from a
+ * copy vendored in this package: the package carries the structure baseline and the kit
+ * (adapters, prototype chain), the model source carries the model's own content.
  *
  * The library ships with the plugin — no dev-database dependency.
  * Usage: ALIOTH_REPO=~/WorkSpace/Alioth node --import tsx scripts/generate-semantic-dicts.ts
@@ -13,6 +19,7 @@
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { sanitizeRegistryDdl } from '@dsh-alioth/env-alioth'
 
 const ALIOTH_REPO = process.env.ALIOTH_REPO ?? path.join(process.env.HOME ?? '', 'WorkSpace', 'Alioth')
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -138,19 +145,96 @@ function extractRootColumns(source: string): string[] {
 
 const INHERITS_RE = /INHERITS\s*\(/
 
-/** Parse fk references from the vendored isahl_meta field seed. */
-function extractFkIndex(source: string): Array<[string, string, string, string]> {
-  const refs: Array<[string, string, string, string]> = []
+/**
+ * The registry's column order for a table, read from the vendored structure baseline. A
+ * positional `--inserts` row carries no column names, so its values are named by this order —
+ * deriving it from the DDL the registry is actually created with means a baseline change cannot
+ * silently shift `config` into another field the way a hardcoded index list would.
+ */
+function registryColumnOrder(baselineSql: string, table: string): string[] {
+  const columns: string[] = []
+  let inside = false
+  for (const line of baselineSql.split('\n')) {
+    if (!inside) {
+      inside = line.startsWith(`CREATE TABLE isahl_meta.${table} (`)
+      continue
+    }
+    if (line.trim() === ');') {
+      break
+    }
+    const column = /^\s{4}([a-z_][a-z0-9_]*)\s/.exec(line)
+    if (column !== null) {
+      columns.push(column[1] ?? '')
+    }
+  }
+  return columns
+}
+
+/**
+ * Split a `--inserts` dump into statements. pg_dump writes one `INSERT` per line, but a value may
+ * contain a newline (a description written across lines), so a statement ends at the first `;`
+ * outside a string literal instead of at the end of a line. Comment, meta-command and session
+ * lines are dropped by the loader before this runs.
+ */
+function insertStatements(source: string): string[] {
+  const statements: string[] = []
+  let current = ''
+  let inString = false
   for (const line of source.split('\n')) {
-    const match = /INSERT INTO isahl_meta\.meta_fields\s+VALUES\s*\(/.exec(line)
-    if (match === null) continue
-    const rest = line.slice(match[0].length)
-    const closing = rest.lastIndexOf(')')
-    if (closing === -1) continue
-    const fields = splitTopLevel(rest.slice(0, closing))
-    const table = unquote(fields[0] ?? '')
-    const name = unquote(fields[1] ?? '')
-    const configRaw = unquote(fields[10] ?? '')
+    // Comments and blank lines carry no statement — keeping them would fuse a comment banner onto
+    // the row that follows it (`-- Data for Name: …` precedes the first INSERT of each table).
+    if (!inString && /^\s*(?:--.*)?$/.test(line)) {
+      continue
+    }
+    current += `${line}\n`
+    let quotes = 0
+    for (const ch of line) {
+      if (ch === "'") {
+        quotes++
+      }
+    }
+    if (quotes % 2 === 1) {
+      inString = !inString
+    }
+    if (!inString && current.trimEnd().endsWith(';')) {
+      statements.push(current.trim())
+      current = ''
+    }
+  }
+  return statements
+}
+
+/**
+ * Parse fk references from the vendored registry sidecar. Both faces of `pg_dump` are read:
+ * `--inserts` (positional values, named through `registryColumnOrder`) and `--column-inserts`
+ * (the statement names its columns) — values are never taken by a fixed index without that
+ * mapping, so a column the dump reorders must not silently shift `config` into another field.
+ * @param source - the sidecar's text.
+ * @param columnOrder - the `meta_fields` column order from the vendored baseline.
+ * @throws when the dump yields no `meta_fields` rows at all — that means the sidecar's face
+ *   changed and the index would silently come out empty (entity validation reads it).
+ */
+export function extractFkIndex(source: string, columnOrder: readonly string[]): Array<[string, string, string, string]> {
+  const refs: Array<[string, string, string, string]> = []
+  let rows = 0
+  for (const statement of insertStatements(sanitizeRegistryDdl(source, 'vendored isahl_meta-registry.sql'))) {
+    const match = /^INSERT INTO isahl_meta\.meta_fields\s*(?:\(([^)]*)\)\s*)?VALUES \(([\s\S]*)\)(?:\s+ON CONFLICT DO NOTHING)?;?$/.exec(statement)
+    if (match === null) {
+      continue
+    }
+    // A positional `--inserts` row has no column list at all: `splitTopLevel('')` yields one empty
+    // entry, which must NOT be mistaken for "the statement names its columns".
+    const named = splitTopLevel(match[1] ?? '').map(column => column.trim()).filter(column => column.length > 0)
+    const values = splitTopLevel(match[2] ?? '')
+    const columns = named.length > 0 ? named : columnOrder
+    const row: Record<string, string> = {}
+    columns.forEach((column, index) => {
+      row[column] = values[index] ?? ''
+    })
+    rows++
+    const table = unquote(row.fk_collection ?? '')
+    const name = unquote(row.name ?? '')
+    const configRaw = unquote(row.config ?? '')
     if (table.length === 0 || name.length === 0 || configRaw.length === 0) continue
     try {
       const config = JSON.parse(configRaw) as { reference_config?: { target_table?: string; local_key?: string } }
@@ -162,6 +246,13 @@ function extractFkIndex(source: string): Array<[string, string, string, string]>
       // malformed config row: skip
     }
   }
+  if (rows === 0) {
+    throw new Error(
+      'generate-semantic-dicts: no `INSERT INTO isahl_meta.meta_fields … VALUES (…);` row in the '
+      + 'vendored registry sidecar — its dump format changed, and an empty fk index would silently '
+      + 'weaken entity validation. Refresh it from the model source (its release sidecar).',
+    )
+  }
   return refs
 }
 
@@ -169,30 +260,57 @@ async function read(pathStr: string): Promise<string> {
   return readFile(pathStr, 'utf8')
 }
 
-/** Generate the three dictionaries into `targetDir`. Exported for the
+/**
+ * The release directory inside a model source: `<repo>/<version>` when that directory exists,
+ * else the source root (both publication layouts). Exported so the freshness gate resolves the
+ * same directory the generator writes from.
+ * @param repoDir - model source root.
+ */
+export async function resolveReleaseDir(repoDir: string): Promise<{ releaseDir: string; version: string; publishedAt: string }> {
+  const latest = JSON.parse(await read(path.join(repoDir, 'latest.json'))) as { version: string; published_at: string }
+  const versioned = path.join(repoDir, latest.version)
+  const releaseDir = await stat(versioned).then(() => versioned, () => repoDir)
+  return { releaseDir, version: latest.version, publishedAt: latest.published_at }
+}
+
+/** Generate the dictionaries into `targetDir`. Exported for the
  * freshness gate (scripts/check-semantic-dicts.ts regenerates into a temp
  * dir and diffs against the checked-in files). */
-export async function generateDicts(targetDir: string, repoDir = ALIOTH_REPO): Promise<{ source: string }> {
-  const latest = JSON.parse(await read(path.join(repoDir, 'latest.json'))) as { version: string; published_at: string }
+export async function generateDicts(
+  targetDir: string,
+  repoDir = ALIOTH_REPO,
+): Promise<{ source: string; fkIndex: boolean }> {
   // 发行物布局有两态：2026-09-21 起上游模型发布线把产物改为**平铺固定路径**——文件落在仓库根，
   // 版本号只由 `latest.json` 与 annotated tag 承载；更早的发行物仍在 `<repo>/<version>/` 下。
   // 两种都认：有版本目录用版本目录，没有回落仓库根。（只认版本目录会让模型一发新版、
   // CI 的 check:dicts 立刻 ENOENT 全红。）
-  const versioned = path.join(repoDir, latest.version)
-  const contentDir = await stat(versioned).then(() => versioned, () => repoDir)
-  const seeds = await read(path.join(contentDir, 'seed-dimensions.sql'))
-  const tablesDdl = await read(path.join(contentDir, '002_isahl_tables.sql'))
-  const fkSeed = await read(path.join(VENDOR_DDL, '004_isahl_meta_seed_fields.sql'))
+  const { releaseDir, version, publishedAt } = await resolveReleaseDir(repoDir)
+  const seeds = await read(path.join(releaseDir, 'seed-dimensions.sql'))
+  const tablesDdl = await read(path.join(releaseDir, '002_isahl_tables.sql'))
+  // The registry rows are DERIVED data: the model publish pipeline generates the sidecar into its
+  // work tree and it is never committed to Git, so a Git clone (CI) legitimately has none. Absent
+  // ⇒ no fk index is produced; the caller reports that instead of shipping a stale one.
+  const fkSidecar = await readFile(path.join(releaseDir, 'isahl_meta-registry.sql'), 'utf8').then(
+    text => text,
+    () => undefined,
+  )
+  const registryBaseline = await read(path.join(VENDOR_DDL, '002_isahl_meta_schema.sql'))
 
   const scene = extractCodes(seeds, 'zc_id_scene')
   const factor = extractCodes(seeds, 'zc_id_factor')
   const func = extractCodes(seeds, 'zc_id_function')
   const tables = extractTables(tablesDdl)
   const rootColumns = extractRootColumns(tablesDdl)
-  const refs = extractFkIndex(fkSeed)
+  const refs = fkSidecar === undefined
+    ? undefined
+    : extractFkIndex(fkSidecar, registryColumnOrder(registryBaseline, 'meta_fields'))
 
   await mkdir(targetDir, { recursive: true })
-  const provenance = { source: `Alioth repo ${latest.version} (${latest.published_at}) + vendored isahl_meta seed` }
+  // The `source` string must NOT depend on whether the sidecar was present: the freshness gate
+  // regenerates from whatever model source it has (CI clones Git, which carries no sidecar), and a
+  // source-dependent string would make the two dictionaries differ for reasons that are not drift.
+  // The sidecar's identity is recorded inside fk-index.json, which is only written when it exists.
+  const provenance = { source: `Alioth repo ${version} (${publishedAt})` }
   await writeFile(path.join(targetDir, 'coordinates.json'), JSON.stringify({
     $schema: 'https://dsh-alioth.local/schemas/coordinates-dict.json',
     description: 'Alioth coordinate dictionaries, generated offline from the Alioth model repo (semantic-mapping library shipped with the plugin).',
@@ -206,20 +324,31 @@ export async function generateDicts(targetDir: string, repoDir = ALIOTH_REPO): P
     root_columns: rootColumns,
     tables,
   }, null, 1) + '\n')
-  await writeFile(path.join(targetDir, 'fk-index.json'), JSON.stringify({
-    $schema: 'https://dsh-alioth.local/schemas/fk-index.json',
-    description: 'Physical FK reference index [table, field, target, local_key] from the vendored isahl_meta seed.',
-    ...provenance,
-    refs,
-  }, null, 1) + '\n')
+  if (refs !== undefined) {
+    await writeFile(path.join(targetDir, 'fk-index.json'), JSON.stringify({
+      $schema: 'https://dsh-alioth.local/schemas/fk-index.json',
+      description: 'Physical FK reference index [table, field, target, local_key] from the release isahl_meta-registry.sql sidecar (derived data, delivered outside Git).',
+      ...provenance,
+      refs,
+    }, null, 1) + '\n')
+  }
   console.log(`coordinates: scene=${scene.length} factor=${factor.length} function=${func.length}`)
   console.log(`physical-tables: ${tables.length} tables, ${rootColumns.length} root columns`)
-  console.log(`fk-index: ${refs.length} refs`)
-  return { source: provenance.source }
+  console.log(refs === undefined
+    ? `fk-index: NOT regenerated — no isahl_meta-registry.sql sidecar at ${releaseDir}`
+    : `fk-index: ${refs.length} refs`)
+  return { source: provenance.source, fkIndex: refs !== undefined }
 }
 
 async function main(): Promise<void> {
-  const { source } = await generateDicts(DATA_DIR)
+  const { source, fkIndex } = await generateDicts(DATA_DIR)
+  if (!fkIndex) {
+    // Probe-and-ignore: the sidecar is derived data delivered out of band, so a clone legitimately
+    // has none. The other two dictionaries still regenerate; fk-index.json stays as shipped (its
+    // bytes stay anchored — the anchor hashes what is on disk, and `source` records the absence).
+    console.warn('generate-semantic-dicts: model source carries no isahl_meta-registry.sql sidecar —')
+    console.warn('  fk-index.json left as is; the other two dictionaries were regenerated.')
+  }
   // Anchor: tamper-evidence for the checked-in library. The freshness gate
   // (check-semantic-dicts.ts) verifies hashes and, when ALIOTH_REPO is set,
   // regenerates and diffs.

@@ -10,7 +10,7 @@
 - [ ] `pnpm run test` green
 - [ ] `mise run gates` (or CI) green
 - [ ] Model-visible surface changed? → refreshed `tests/__snapshots__/model-surface.json` via `UPDATE_SNAPSHOTS=1` and reviewed the diff
-- [ ] Vendor tree changed? → regenerated `vendor/PROVENANCE.json` via `check:vendor --update`
+- [ ] Vendor tree changed? → `pnpm run sync:framework` + `pnpm run check:vendor` (compliance only since 2026-09-24; the sha256 manifest was retired)
 - [ ] Semantic dicts changed? → ran `generate-semantic-dicts.ts` (anchor refreshed)
 
 ## Scope check

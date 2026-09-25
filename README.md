@@ -3,13 +3,13 @@
 **Dialogue-driven enterprise app generator for the [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh), built on the Alioth v10 data model.**
 
 A user describes an app in dialogue; the plugin group registers business entities
-in the Alioth entity registry and emits AliothStudio-importable artifacts
+in the Alioth entity registry and emits AliothMeta-importable artifacts
 (`app.json`, `module.json`, `extensions/`, prototype, `Sources/` skeleton)
 through a **deterministic, programmatic pipeline** — the LLM supplies structured
 parameters and semantic decisions only, never artifact text.
 
 - Pure consumer of the published Alioth model ([CosmicTools9/Alioth](https://github.com/CosmicTools9/Alioth), Apache-2.0) — never advances it.
-- Zero-network first boot: frozen model artifacts vendored; PostgreSQL 18 comes from the environment (host server, the container's PGDG build, or the CI service) through `ALIOTH_DATABASE_URL`.
+- Keyless first boot: the model source is a directory assembled once (`mise run alioth:model-source`, release content + the vendored adapters); PostgreSQL 18 comes from the environment (host server, the container's PGDG build, or the CI service) through `ALIOTH_DATABASE_URL`.
 - B/S deliverable: register/login, per-user `U-<username>` namespace isolation over a shared workspace.
 
 ## Packages
@@ -41,13 +41,35 @@ mise run alioth:doctor       # environment self-check (exit 0 = green)
 dsh --profile headless --patch packages/alioth/bundle-alioth/cordis.patch.yml "<task>"
 ```
 
-Docker: `docker build -t dsh-alioth . && docker run --rm -p 3100:3100 -e DEEPSEEK_API_KEY=... -v alioth-data:/data dsh-alioth`
+Docker: `docker build -t dsh-alioth . && docker run --rm -p 3100:3100 \
+  -e DEEPSEEK_API_KEY=... -e ALIOTH_MODEL_SOURCE=/app/model-source -v alioth-data:/data dsh-alioth`
+(mount an assembled model source, or pass its path inside the container; the keyless `--check` assembles a fixture itself).
 (keyless self-check: `docker run --rm --entrypoint /app/scripts/docker-check.sh dsh-alioth`).
+
+## Registry & database
+
+The model source is **required** (`ALIOTH_MODEL_SOURCE`; the package's frozen `builtin` snapshot was
+retired 2026-09-24 — there is no fallback). Assemble one with
+`mise run alioth:model-source -- --source <model distribution> --out <dir>`: release content
+(version anchor + the derived `isahl_meta-registry.sql` rows) plus the adapters the release does not ship.
+
+The `isahl_meta` registry is bootstrapped from that source only (frozen structure baseline
++ the release's `isahl_meta-registry.sql` rows) into the database `ALIOTH_DATABASE_URL` names.
+`mise run launch` and `mise run alioth:doctor` run the **same** bootstrap function:
+
+- missing registry tables → **self-healed** on the first query either way (the bootstrap is lazy, so a
+  serving console is not yet a bootstrapped one);
+- a registry that is merely *stale* (model evolved) is never re-applied — use `mise run alioth:doctor --reset`;
+- a database that **holds the Alioth model** (`regular tables under schema isahl`) is refused on every
+  path — point the DSN at the plugin's own database.
+
+Operator-facing details, the release-file contract and the troubleshooting table:
+[`docs/registry-bootstrap.md`](docs/registry-bootstrap.md) (Chinese).
 
 ## Gates
 
 CI (`.github/workflows/`): typecheck · lint · tests+coverage thresholds · knip ·
-strip-only compatibility · vendor provenance · version sync · semantic-dict
+strip-only compatibility · vendor compliance (LICENSE/NOTICE) · version sync · semantic-dict
 freshness · tree assembly · composition smoke · commitlint · audit · shellcheck ·
 gitleaks · docker build+`--check`.
 

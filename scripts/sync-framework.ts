@@ -1,21 +1,20 @@
 /**
- * Framework sync: AliothStudio is the SOURCE OF TRUTH for the framework code
+ * Framework sync: AliothMeta is the SOURCE OF TRUTH for the framework code
  * dsh-alioth vendors (design references, prototype toolchain, build/check
  * scripts, skill adapters, Framework backend crates). This script copies the
  * declared file set from a AliothStudio checkout into env-alioth/vendor/,
- * re-applies the one recorded local patch (PROTOTYPE_TOOL_ROOT), and refreshes
- * PROVENANCE.json.
+ * and re-applies the one recorded local patch (PROTOTYPE_TOOL_ROOT).
  *
- *   ALIOTH_STUDIO_ROOT=../AliothStudio pnpm run sync:framework           # sync
- *   ALIOTH_STUDIO_ROOT=../AliothStudio pnpm run sync:framework --check   # drift report only
+ *   ALIOTH_STUDIO_ROOT=../AliothMeta pnpm run sync:framework           # sync
+ *   ALIOTH_STUDIO_ROOT=../AliothMeta pnpm run sync:framework --check   # drift report only
  *
- * `--check` compares sha256 per manifest file and exits 1 on drift — the local
+ * `--check` compares sha256 per synced file against the source and exits 1 on drift — the local
  * freshness gate (same discipline as `check:dicts --require-fresh`). Both modes
  * then assert the synced tree is self-consistent: every gate script an adapter
  * spawns and every declared `reference_paths` / `inputs` asset must resolve
  * inside the vendor tree, so a sync set can never ship an adapter whose
  * programs or context assets are absent. CI does not run this: the truth source
- * is the AliothStudio working checkout.
+ * is the AliothMeta working checkout.
  * @module scripts/sync-framework
  */
 
@@ -29,10 +28,23 @@ import { unreachableAdapterReferences } from './lib/adapter-references.ts'
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..')
 const VENDOR = path.join(REPO_ROOT, 'packages', 'alioth', 'env-alioth', 'vendor')
-const STUDIO_ROOT = path.resolve(process.env.ALIOTH_STUDIO_ROOT ?? path.join(REPO_ROOT, '..', 'AliothStudio'))
+const STUDIO_ROOT = path.resolve(process.env.ALIOTH_STUDIO_ROOT ?? path.join(REPO_ROOT, '..', 'AliothMeta'))
 const CHECK_ONLY = process.argv.includes('--check')
 
-/** Declared sync set: AliothStudio source → vendored destination (relative to VENDOR). */
+/** Declared sync set: upstream source → vendored destination (relative to VENDOR). */
+/**
+ * SYNC_SET entries that live OUTSIDE the upstream repository: upstream's `Pre-Proc/` is a symlink
+ * to its artifacts root, so a clean `git archive HEAD` snapshot can never carry them — while an
+ * adapter declares one of them as an `inputs` reference, so it must still reach the vendor tree.
+ * Taken from the live checkout when present; skipped with a notice when a snapshot does not have
+ * them (otherwise the policy-compliant clean-snapshot sync could never run at all).
+ */
+const EXTERNAL_SOURCES = new Set<string>([
+  'Pre-Proc/Alioth/Prototypes/Modules/system-settings/llm-tsx/module.tsx',
+  'Pre-Proc/Alioth/Sources/Apps/Services',
+  'Pre-Proc/Alioth/openapi',
+])
+
 const SYNC_SET: readonly { readonly source: string; readonly dest: string }[] = [
   // 2026-09-14 upstream relocated the adapter set from the repo root into the
   // AppAgent crate (openspec change relocate-skill-adapters-into-appagent;
@@ -133,15 +145,14 @@ const EXCLUDED_SOURCE_DIRS = new Set(['target', 'node_modules'])
  * of the checkout, not framework artifacts. `Gateway/backend/data/` is the
  * gateway's local file-storage root (`.gitignore:186`; uploads land in
  * `data/local-files/{ns}/{kind}/{id}/`) — vendoring it pins user uploads in
- * PROVENANCE.json and drifts on every local run.
+ * the vendor tree and drifts on every local run.
  */
 const EXCLUDED_SOURCE_SUBTREES: readonly string[] = ['Gateway/backend/data']
 
 /**
  * Files never synced: editor/runtime artifacts the repository gitignores
- * (.DS_Store, .env and friends, logs). Syncing one puts an entry in
- * PROVENANCE.json that no clone can satisfy, and the vendor provenance gate
- * reports "manifest entry without file" in CI.
+ * (.DS_Store, .env and friends, logs). Syncing one commits local runtime state
+ * that no clone should carry.
  */
 function isExcludedSourceFile(name: string): boolean {
   return name === '.DS_Store'
@@ -254,7 +265,7 @@ function reapplyLocalPatches(): string[] {
 
 function main(): number {
   if (!existsSync(STUDIO_ROOT)) {
-    console.error(`sync-framework: AliothStudio checkout not found at ${STUDIO_ROOT} — set ALIOTH_STUDIO_ROOT`)
+    console.error(`sync-framework: upstream checkout not found at ${STUDIO_ROOT} — set ALIOTH_STUDIO_ROOT (the framework source of truth is the AliothMeta checkout)`)
     return 1
   }
 
@@ -265,6 +276,20 @@ function main(): number {
   for (const entry of SYNC_SET) {
     const source = path.join(STUDIO_ROOT, entry.source)
     if (!existsSync(source)) {
+      if (EXTERNAL_SOURCES.has(entry.source)) {
+        console.log(`framework-sync: external source not in this checkout (kept as vendored): ${entry.source}`)
+        // Nothing to compare against here, but the vendored copy is what the adapters read: mark
+        // it produced so the prune pass leaves it alone.
+        const destRoot = path.join(VENDOR, entry.dest)
+        if (existsSync(destRoot)) {
+          if (statSync(destRoot).isFile()) {
+            produced.add(entry.dest)
+          } else {
+            for (const rel of walkDestFiles(destRoot)) produced.add(path.join(entry.dest, rel))
+          }
+        }
+        continue
+      }
       console.error(`sync-framework: source missing: ${entry.source}`)
       return 1
     }
@@ -298,7 +323,11 @@ function main(): number {
   // and the LICENSE/NOTICE pair belong to other scripts), and the by-name
   // exclusions above are kept — they are deployment templates, not sync output.
   const dirDests = SYNC_SET
-    .filter(entry => statSync(path.join(STUDIO_ROOT, entry.source)).isDirectory())
+    .filter(entry => EXTERNAL_SOURCES.has(entry.source)
+      // An external entry has no source in a clean snapshot; its vendored subtree is still owned
+      // by this sync (it is what the adapters read), so it stays out of the prune set.
+      ? existsSync(path.join(VENDOR, entry.dest))
+      : statSync(path.join(STUDIO_ROOT, entry.source)).isDirectory())
     .map(entry => entry.dest)
   const stale = [...walkDestFiles(VENDOR)]
     .filter(relative => !produced.has(relative))
@@ -349,20 +378,20 @@ function main(): number {
 
   if (CHECK_ONLY) {
     if (drifted.length > 0) {
-      console.error(`framework-sync: ${drifted.length} file(s) drifted from AliothStudio (${STUDIO_ROOT}):`)
+      console.error(`framework-sync: ${drifted.length} file(s) drifted from the upstream checkout (${STUDIO_ROOT}):`)
       for (const item of drifted.slice(0, 20)) console.error(`  - ${item}`)
       if (drifted.length > 20) console.error(`  … +${drifted.length - 20} more`)
-      console.error('run `pnpm run sync:framework` to refresh, then `pnpm run check:vendor --update`')
+      console.error('run `pnpm run sync:framework` to refresh')
       return 1
     }
     if (stale.length > 0) {
       console.error(`framework-sync: ${stale.length} vendored file(s) SYNC_SET no longer produces:`)
       for (const item of stale.slice(0, 20)) console.error(`  - ${item}`)
       if (stale.length > 20) console.error(`  … +${stale.length - 20} more`)
-      console.error('run `pnpm run sync:framework` to prune, then `pnpm run check:vendor --update`')
+      console.error('run `pnpm run sync:framework` to prune')
       return 1
     }
-    console.log(`framework-sync: OK (${checked} files match AliothStudio)`)
+    console.log(`framework-sync: OK (${checked} files match the upstream checkout)`)
     return 0
   }
 
@@ -388,7 +417,6 @@ function main(): number {
     for (const item of stale) console.log(`  - ${item}`)
   }
   for (const patch of patches) console.log(`framework-sync: patch re-applied — ${patch}`)
-  console.log('next: pnpm run check:vendor --update')
   return 0
 }
 

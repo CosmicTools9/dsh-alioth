@@ -3,7 +3,8 @@
 # The image ships the full Alioth consumer plugin group: PostgreSQL 18 (PGDG build,
 # started by the entry script on /data — env-alioth connects through
 # ALIOTH_DATABASE_URL and never provisions a cluster of its own),
-# the frozen builtin model (vendor artifacts, zero network at first boot),
+# an assembled model source given as ALIOTH_MODEL_SOURCE (`builtin` was retired 2026-09-24;
+# the package ships no snapshot). The keyless --check assembles a fixture source itself.
 # the file-based semantic dictionaries, bun (prototype gates), and the dsh web
 # entry point. Model-visible behavior: `dsh --profile web --patch <bundle>`.
 #
@@ -111,7 +112,6 @@ COPY --from=build /deepseek-harness/package.json /deepseek-harness/package.json
 ENV DSH_WEB_PORT=3100 \
     DSH_OPEN=false \
     ALIOTH_DATA_ROOT=/data/alioth \
-    ALIOTH_MODEL_SOURCE=builtin \
     PATH="/usr/lib/postgresql/18/bin:${PATH}" \
     PGPASSWORD=alioth
 

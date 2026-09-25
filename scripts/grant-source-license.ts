@@ -99,4 +99,8 @@ async function usernameOf(
   return result.rows[0]?.username
 }
 
-await main()
+main().catch((error: unknown) => {
+  // One line, exit 1: the message is the diagnosis an operator needs; a stack would bury it.
+  console.error(`grant-source-license: ${error instanceof Error ? error.message : String(error)}`)
+  process.exitCode = 1
+})

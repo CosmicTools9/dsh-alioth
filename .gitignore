@@ -25,3 +25,10 @@ coverage*/
 # Deployment TLS material (CA-issued certificates and private keys).
 # Keys must never enter the repository — ship them to the host out of band.
 ca/
+
+# The model registry rows are DERIVED data (a `pg_dump --data-only --inserts` of the model's
+# isahl_meta) and NEVER enter Git under this name: this package ships no model snapshot
+# (`builtin` was retired 2026-09-24), the runtime reads them from `ALIOTH_MODEL_SOURCE`, and the
+# assembler (`scripts/assemble-model-source.ts`) writes them under `<source>/backend/ddl/`.
+# The structure baseline (`002_isahl_meta_schema.sql`) stays frozen in the vendor tree.
+isahl_meta-registry.sql

@@ -65,11 +65,19 @@ async function main(): Promise<void> {
 
   // 2. freshness vs the model repo
   let fresh = false
+  let fkChecked = false
   if (await pathExists(path.join(ALIOTH_REPO, 'latest.json'))) {
     const tmp = await mkdtemp(path.join(tmpdir(), 'dicts-fresh-'))
     try {
-      await generateDicts(tmp, ALIOTH_REPO)
+      const { fkIndex } = await generateDicts(tmp, ALIOTH_REPO)
+      fkChecked = fkIndex
       for (const name of DICTS) {
+        if (name === 'fk-index.json' && !fkIndex) {
+          // Probe-and-ignore: the registry sidecar is derived data, delivered outside Git, so the
+          // model source legitimately has none. The anchored bytes above still hold; regeneration
+          // of this one dictionary is simply not verifiable here — reported, never silently passed.
+          continue
+        }
         const generated = await readFile(path.join(tmp, name), 'utf8')
         const checkedIn = await readFile(path.join(DATA_DIR, name), 'utf8')
         if (generated !== checkedIn) {
@@ -90,7 +98,10 @@ async function main(): Promise<void> {
     process.exitCode = 1
     return
   }
-  console.log(`semantic-dict gate: OK (anchored @ ${anchor.source.slice(0, 60)}${fresh ? ', fresh vs model repo' : ', freshness not checked (no ALIOTH_REPO)'})`)
+  const freshNote = fresh
+    ? (fkChecked ? ', fresh vs model repo' : ', fresh vs model repo (fk-index: no registry sidecar, anchored bytes only)')
+    : ', freshness not checked (no ALIOTH_REPO)'
+  console.log(`semantic-dict gate: OK (anchored @ ${anchor.source.slice(0, 60)}${freshNote})`)
 }
 
 main().catch(error => {
