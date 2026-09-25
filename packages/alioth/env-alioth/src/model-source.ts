@@ -2,14 +2,19 @@
  * Alioth model snapshot resolution. dsh-alioth is a sibling consumer of the
  * Alioth model. The model's current channel is the Alioth model repository
  * (github:CosmicTools9/Alioth or a local checkout). The consumption-side
- * artifacts — the `backend/ddl/*isahl_meta*.sql` registry baseline, the
+ * artifacts — the `backend/ddl/002_isahl_meta_schema.sql` structure baseline, the
  * `skill-adapters/*.yaml` definitions, and the prototype build scripts — are
- * vendored from the historical AppCreator distribution (frozen, Apache-2.0).
+ * vendored from the historical AppCreator distribution (frozen, Apache-2.0). The registry *rows*
+ * are the model release's own sidecar (`isahl_meta-registry.sql`) — derived data, delivered with
+ * the release and never committed — so a source either carries them or the registry boots
+ * `missing`;
+ * the package no longer ships a snapshot of its own (`builtin` retired 2026-09-24).
  * GitHub snapshots are cached per commit SHA under `<dataRoot>/models`.
  * @module @dsh-alioth/env-alioth/model-source
  */
 
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -29,22 +34,40 @@ const MODEL_VERSION_RE = /ALIOTH_MODEL_VERSION[\s\S]{0,400}?unwrap_or_else\(\s*\
 
 /**
  * A parsed model-source spec.
- * - `builtin` — the frozen model vendored inside this package (`vendor/`); zero network.
  * - `github` — `{repo}` is `owner/name`; `ref` is a branch, tag, or SHA.
- * - `local` — a filesystem path to a model-distribution checkout.
+ * - `local` — a filesystem path to a model distribution (or an assembled source that also carries
+ *   `skill-adapters/`).
  */
 export type ModelSpec
-  = | { kind: 'builtin' }
-    | { kind: 'github'; repo: string; ref: string }
+  = | { kind: 'github'; repo: string; ref: string }
     | { kind: 'local'; path: string }
 
-/** The vendored frozen model version (upstream distribution stopped at v10.x). */
-const BUILTIN_MODEL_VERSION = '10.0.0'
+/**
+ * The configured model source, or a loud failure. There is no default: the package used to ship a
+ * frozen snapshot (`builtin`) and that was retired on 2026-09-24 — a silent fallback to "whatever
+ * the package has" is exactly the second copy that drifts from the model.
+ * @param value - the source string, defaulting to `ALIOTH_MODEL_SOURCE`.
+ */
+export function requireModelSource(value: string | undefined = process.env.ALIOTH_MODEL_SOURCE): string {
+  if (value === undefined || value.trim().length === 0) {
+    throw new Error(
+      'env-alioth: ALIOTH_MODEL_SOURCE is required — point it at a model distribution '
+      + '(github:owner/repo[@ref]) or at an assembled source directory (release content plus '
+      + 'skill-adapters/); the package no longer ships a frozen snapshot.',
+    )
+  }
+  return value.trim()
+}
 
-/** Parse a model-source string: `builtin`, `github:owner/repo[@ref]`, or a filesystem path. */
+/** Parse a model-source string: `github:owner/repo[@ref]` or a filesystem path. */
 export function parseModelSource(spec: string): ModelSpec {
   if (spec === 'builtin') {
-    return { kind: 'builtin' }
+    // Said out loud: `builtin` would otherwise parse as a local path and fail far away, as a
+    // missing directory.
+    throw new Error(
+      "env-alioth: model source 'builtin' was retired (2026-09-24) — point ALIOTH_MODEL_SOURCE at "
+      + 'a model distribution (github:owner/repo[@ref]) or an assembled source directory.',
+    )
   }
   if (spec.startsWith('github:')) {
     const rest = spec.slice('github:'.length)
@@ -67,12 +90,93 @@ export function parseModelSource(spec: string): ModelSpec {
 
 /** The model artifacts this plugin consumes from a snapshot, all absolute paths. */
 export interface ModelArtifacts {
-  /** `backend/ddl/*isahl_meta*.sql`, filename-sorted. Non-`isahl_meta` DDL files (AppCreator's own persistence) are excluded. */
+  /** Registry DDL, filename-sorted: the vendored structure baseline first, then the snapshot's
+   * registry *data* seeds (the publication's dedicated `*isahl_meta*.sql`), falling back to the
+   * vendored seeds when the snapshot ships none. Non-`isahl_meta` DDL (the model's own physical
+   * tables, dimension seeds, AppCreator's persistence) is excluded — the registry is this
+   * plugin's schema, not the model's. */
   readonly ddlFiles: readonly string[]
   /** `skill-adapters/*.yaml`. */
   readonly skillAdapterFiles: readonly string[]
   /** `Pre-Proc/Alioth/_schema/*.schema.json`. */
   readonly artifactSchemaFiles: readonly string[]
+  /** The publication's own version (`latest.json`), when the snapshot is a model release. */
+  readonly publicationVersion?: string
+  /**
+   * Where the registry rows came from. `snapshot` — the model source ships them (the dedicated
+   * `*isahl_meta*.sql` copy a model release is generated with); `missing` — it ships none, so the
+   * registry boots unseeded and the path degrades to the metadata the model's own DDL carries
+   * (a warning, never a boot failure).
+   */
+  readonly registrySource: 'snapshot' | 'missing'
+}
+
+/** Registry structure baseline: frozen AppCreator distribution, vendored inside this package. */
+const VENDOR_DDL = path.resolve(new URL('../vendor/backend/ddl', import.meta.url).pathname)
+/** The baseline's schema file — the one registry SQL a model release never has to ship. */
+const SCHEMA_BASELINE_FILE = '002_isahl_meta_schema.sql'
+
+/**
+ * Resolve where a model snapshot's released content lives, accepting both publication layouts:
+ * the flat fixed-path release (2026-09-21+: files at the repository root, version carried by
+ * `latest.json` and the annotated tag) and the older `<root>/<version>/` directories. Same rule
+ * as `scripts/generate-semantic-dicts.ts`; a snapshot with neither (the vendored AppCreator tree)
+ * resolves to its own root.
+ * @param root - snapshot root.
+ */
+async function resolveContentRoot(root: string): Promise<{ contentDir: string; version?: string }> {
+  const release = await readFile(path.join(root, 'latest.json'), 'utf8')
+    .then(text => JSON.parse(text) as { version?: unknown })
+    .catch(() => null)
+  const version = typeof release?.version === 'string' && release.version.length > 0 ? release.version : undefined
+  if (version === undefined) {
+    return { contentDir: root }
+  }
+  const versioned = path.join(root, version)
+  return { contentDir: await dirHasEntries(versioned) ? versioned : root, version }
+}
+
+/**
+ * The registry DDL to execute, filename-sorted, with the source it came from. The registry rows
+ * come from the snapshot only: the official distribution ships them (the dedicated
+ * `*isahl_meta*.sql` copy a model release is generated with), while a copy that ships none
+ * degrades — `missing`, the
+ * boot warns, and the registry stays empty, leaving the agent to work from the metadata the
+ * model's own DDL carries. The frozen structure baseline is always included, so a snapshot that
+ * ships rows but no schema still bootstraps.
+ * Non-`isahl_meta` SQL (the model's physical tables, dimension seeds) is never executed: the
+ * registry belongs to this plugin, not to the model.
+ */
+async function registryDdl(
+  contentDir: string,
+): Promise<{ files: string[]; source: ModelArtifacts['registrySource'] }> {
+  const [nested, flat] = await Promise.all([
+    listDirMatching(path.join(contentDir, 'backend', 'ddl'), '.sql', name => name.includes('isahl_meta')),
+    listDirMatching(contentDir, '.sql', name => name.includes('isahl_meta')),
+  ])
+  const byName = new Map([...nested, ...flat].map(file => [path.basename(file), file]))
+  const shipped = [...byName.keys()].some(name => name !== SCHEMA_BASELINE_FILE)
+  byName.set(SCHEMA_BASELINE_FILE, byName.get(SCHEMA_BASELINE_FILE) ?? path.join(VENDOR_DDL, SCHEMA_BASELINE_FILE))
+  const files = [...byName.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, file]) => file)
+  const usable = files.filter(file => existsSync(file))
+  if (usable.length === 0) {
+    return { files: [], source: 'missing' }
+  }
+  return { files: usable, source: shipped ? 'snapshot' : 'missing' }
+}
+
+export async function inspectModelArtifacts(root: string): Promise<ModelArtifacts> {
+  const { contentDir, version } = await resolveContentRoot(root)
+  const { files: ddlFiles, source: registrySource } = await registryDdl(contentDir)
+  const skillAdapterFiles = await listDirMatching(path.join(root, 'skill-adapters'), '.yaml')
+  const artifactSchemaFiles = await listDirMatching(path.join(root, 'Pre-Proc', 'Alioth', '_schema'), '.schema.json')
+  return {
+    ddlFiles,
+    skillAdapterFiles,
+    artifactSchemaFiles,
+    ...(version === undefined ? {} : { publicationVersion: version }),
+    registrySource,
+  }
 }
 
 /** List `dir` entries matching `suffix` (and `include` when given), filename-sorted to absolute paths. Missing dir → empty. */
@@ -83,16 +187,6 @@ function listDirMatching(dir: string, suffix: string, include?: (name: string) =
       .sort()
       .map(name => path.join(dir, name)))
     .catch(() => [])
-}
-
-export async function inspectModelArtifacts(root: string): Promise<ModelArtifacts> {
-  const ddlFiles = await listDirMatching(path.join(root, 'backend', 'ddl'), '.sql', name => name.includes('isahl_meta'))
-  if (ddlFiles.length === 0) {
-    throw new Error(`env-alioth: no backend/ddl/*isahl_meta*.sql under ${root} — not an Alioth model snapshot`)
-  }
-  const skillAdapterFiles = await listDirMatching(path.join(root, 'skill-adapters'), '.yaml')
-  const artifactSchemaFiles = await listDirMatching(path.join(root, 'Pre-Proc', 'Alioth', '_schema'), '.schema.json')
-  return { ddlFiles, skillAdapterFiles, artifactSchemaFiles }
 }
 
 /**
@@ -178,16 +272,17 @@ async function downloadGithubTarball(repo: string, sha: string, dest: string): P
  * needed. Local sources are validated in place — no copy is made.
  */
 export async function resolveModelSnapshot(spec: ModelSpec, cacheRoot: string): Promise<ModelSnapshot> {
-  if (spec.kind === 'builtin') {
-    // Zero-network frozen model: vendored under this package's `vendor/`.
-    const dir = path.resolve(new URL('../vendor', import.meta.url).pathname)
-    const artifacts = await inspectModelArtifacts(dir)
-    return { dir, sourceRef: `builtin-v${BUILTIN_MODEL_VERSION}`, modelVersion: BUILTIN_MODEL_VERSION, artifacts }
-  }
   if (spec.kind === 'local') {
     const dir = path.resolve(spec.path)
     const artifacts = await inspectModelArtifacts(dir)
-    return { dir, sourceRef: await gitHead(dir), modelVersion: await extractModelVersion(dir), artifacts }
+    return {
+      dir,
+      sourceRef: await gitHead(dir),
+      // A model release carries its version in `latest.json`; the vendored AppCreator tree carries
+      // it in `alioth-gen/src/lib.rs`, which a release does not ship.
+      modelVersion: artifacts.publicationVersion?.replace(/^v/, '') ?? await extractModelVersion(dir),
+      artifacts,
+    }
   }
   const sha = await resolveGithubRef(spec.repo, spec.ref)
   const dir = path.join(cacheRoot, 'models', spec.repo.replace('/', '__'), sha)
@@ -195,5 +290,10 @@ export async function resolveModelSnapshot(spec: ModelSpec, cacheRoot: string): 
     await downloadGithubTarball(spec.repo, sha, dir)
   }
   const artifacts = await inspectModelArtifacts(dir)
-  return { dir, sourceRef: sha, modelVersion: await extractModelVersion(dir), artifacts }
+  return {
+    dir,
+    sourceRef: sha,
+    modelVersion: artifacts.publicationVersion?.replace(/^v/, '') ?? await extractModelVersion(dir),
+    artifacts,
+  }
 }

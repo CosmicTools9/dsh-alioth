@@ -135,12 +135,85 @@ describe('env-alioth model artifacts', () => {
     }
   })
 
-  it('rejects directories without an isahl_meta DDL baseline', async () => {
+  it('never fails the snapshot over missing registry rows', async () => {
+    // The registry rows are derived data, not versioned artifacts: a snapshot without them (here:
+    // no model face at all — a wrong path) still resolves, carrying the frozen structure baseline
+    // only and reporting `missing`. Boot warns and continues; the open-source path then works from
+    // the metadata in the model's own DDL instead of a registry.
     const empty = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-notmodel-'))
     try {
-      await expect(inspectModelArtifacts(empty)).rejects.toThrow('not an Alioth model snapshot')
+      const artifacts = await inspectModelArtifacts(empty)
+      expect(artifacts.registrySource).toBe('missing')
+      expect(artifacts.ddlFiles.map(file => path.basename(file))).toEqual(['002_isahl_meta_schema.sql'])
     } finally {
       await rm(empty, { recursive: true, force: true })
+    }
+  })
+
+  it('takes registry rows from a flat model release and nothing else from it', async () => {
+    // The publication layout (2026-09-21+): fixed paths at the repository root, version in
+    // `latest.json`. dsh-alioth executes the dedicated registry rows it ships and the vendored
+    // structure baseline — never the model's own physical DDL or dimension seeds.
+    const release = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-release-'))
+    try {
+      await Promise.all([
+        writeFile(path.join(release, 'latest.json'), '{ "version": "v10.0.33", "published_at": "2026-09-23" }\n'),
+        writeFile(path.join(release, '001_schema.sql'), 'CREATE SCHEMA IF NOT EXISTS isahl;\n'),
+        writeFile(path.join(release, '002_isahl_tables.sql'), 'CREATE TABLE isahl.zc_id_sample (id integer);\n'),
+        writeFile(path.join(release, 'seed-dimensions.sql'), 'INSERT INTO isahl.zc_id_scene VALUES (1);\n'),
+        writeFile(path.join(release, '003_isahl_meta_collections.sql'), SEED_COLLECTIONS_DDL),
+        writeFile(path.join(release, '004_isahl_meta_fields.sql'), SEED_FIELDS_DDL),
+      ])
+      const artifacts = await inspectModelArtifacts(release)
+      expect(artifacts.ddlFiles.map(file => path.basename(file))).toEqual([
+        '002_isahl_meta_schema.sql',
+        '003_isahl_meta_collections.sql',
+        '004_isahl_meta_fields.sql',
+      ])
+      expect(artifacts.publicationVersion).toBe('v10.0.33')
+      expect(artifacts.registrySource).toBe('snapshot')
+      const snapshot = await resolveModelSnapshot({ kind: 'local', path: release }, release)
+      expect(snapshot.modelVersion).toBe('10.0.33') // `latest.json` is the anchor; lib.rs is not shipped
+      expect(snapshot.artifacts.ddlFiles[0]).toContain('vendor/backend/ddl/002_isahl_meta_schema.sql')
+    } finally {
+      await rm(release, { recursive: true, force: true })
+    }
+  })
+
+  it('degrades a release that ships no registry rows to DDL-only metadata', async () => {
+    // An open-source or older release: the model's physical DDL is there, the registry rows are
+    // not. The registry boots unseeded (`missing` → boot warning) rather than borrowing rows the
+    // release never shipped; the agent falls back to what the model's own DDL carries.
+    const release = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-oldrelease-'))
+    try {
+      await Promise.all([
+        writeFile(path.join(release, 'latest.json'), '{ "version": "v10.0.20" }\n'),
+        writeFile(path.join(release, '002_isahl_tables.sql'), 'CREATE TABLE isahl.zc_id_sample (id integer);\n'),
+      ])
+      const artifacts = await inspectModelArtifacts(release)
+      expect(artifacts.ddlFiles.map(file => path.basename(file))).toEqual(['002_isahl_meta_schema.sql'])
+      expect(artifacts.registrySource).toBe('missing')
+    } finally {
+      await rm(release, { recursive: true, force: true })
+    }
+  })
+
+  it('reads a versioned release directory when the anchor points at one', async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-versioned-'))
+    try {
+      await Promise.all([
+        writeFile(path.join(repo, 'latest.json'), '{ "version": "v10.0.20" }\n'),
+        mkdir(path.join(repo, 'v10.0.20'), { recursive: true }),
+      ])
+      await writeFile(path.join(repo, 'v10.0.20', '003_isahl_meta_collections.sql'), SEED_COLLECTIONS_DDL)
+      const artifacts = await inspectModelArtifacts(repo)
+      expect(artifacts.ddlFiles.map(file => path.basename(file))).toEqual([
+        '002_isahl_meta_schema.sql',
+        '003_isahl_meta_collections.sql',
+      ])
+      expect(artifacts.ddlFiles[1]).toContain('v10.0.20')
+    } finally {
+      await rm(repo, { recursive: true, force: true })
     }
   })
 
@@ -163,6 +236,8 @@ interface FakeState {
   registryTable?: boolean
   /** Regular tables the catalog counts in `isahl_meta` — a foreign registry's occupancy. Defaults 0. */
   schemaTables?: number
+  /** Regular tables the catalog counts in `isahl` — the Alioth model's presence. Defaults 0. */
+  modelTables?: number
 }
 
 /**
@@ -184,7 +259,11 @@ function fakeQuery(state: FakeState): QueryFn {
       return { rows: [{ exists: state.isahlSchema }], rowCount: 1 }
     }
     if (sql.includes('count(*)')) {
-      return { rows: [{ n: String(state.schemaTables ?? 0) }], rowCount: 1 }
+      // Two callers count regular tables: the model-database guard (`isahl`) and the
+      // registry-occupancy probe (`isahl_meta`).
+      const schema = String(values?.[0] ?? '')
+      const n = schema === 'isahl' ? (state.modelTables ?? 0) : (state.schemaTables ?? 0)
+      return { rows: [{ n: String(n) }], rowCount: 1 }
     }
     if (sql.includes('FROM pg_class')) {
       // A registry table cannot exist without its schema — the probe the code makes first.
@@ -288,10 +367,27 @@ describe('env-alioth bootstrapDatabase', () => {
     expect(state.executedDdl).toEqual([])
   })
 
+  it('refuses a model database before touching any registry state', async () => {
+    // Precedence: the database contract is checked before the registry probes, so a model
+    // database never sees a DROP, a baseline run, or a stamp — even when its `isahl_meta`
+    // would otherwise look adoptable.
+    const state: FakeState = {
+      isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: true, modelTables: 986,
+    }
+    const err = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
+      .then(() => null, error => error)
+    expect(err).toBeInstanceOf(Error)
+    expect(err?.message).toContain('holds the Alioth model')
+    expect(err?.message).toContain('986 table(s)')
+    expect(err?.message).toContain('fake_db')
+    expect(state.executedDdl).toEqual([])
+    expect(state.stampTable).toBe(false)
+  })
+
   it('bootstraps the baseline into an existing isahl_meta that holds no tables of its own', async () => {
-    // A model-sample `isahl_meta` (its `devv_*` views only) and a half-created schema both
-    // leave this shape behind: the schema exists, the registry does not. Creating the
-    // baseline into it restores service without dropping anything the sample owns.
+    // A leftover `isahl_meta` schema without registry tables (a half-created schema, or a
+    // registry whose tables were dropped) leaves this shape behind. Creating the baseline
+    // into it restores service without dropping anything it does not own.
     const state: FakeState = { isahlSchema: true, stamp: null, stampTable: false, executedDdl: [], registryTable: false, schemaTables: 0 }
     const result = await bootstrapDatabase(fakeQuery(state), ddlFiles, { modelVersion: '10.0.0', sourceRef: 'sha-1' })
     expect(result).toEqual({ created: true, stamped: true })
@@ -328,8 +424,8 @@ describe('env-alioth bootstrapDatabase', () => {
 
 describe('env-alioth doctor maskUrl', () => {
   it('masks credentials but keeps structure', () => {
-    expect(maskUrl('postgres://alioth:secret@127.0.0.1:5432/alioth'))
-      .toBe('postgres://alioth:***@127.0.0.1:5432/alioth')
+    expect(maskUrl('postgres://alioth:secret@127.0.0.1:5432/dsh_alioth'))
+      .toBe('postgres://alioth:***@127.0.0.1:5432/dsh_alioth')
     expect(maskUrl('postgresql://u:p%40@h/db')).toBe('postgresql://u:***@h/db')
   })
 })
@@ -442,7 +538,7 @@ describe('env-alioth end-to-end (environment PostgreSQL)', () => {
 const networkTests = process.env.DSH_ALIOTH_NETWORK_TESTS === '1'
 
 describe.skipIf(!networkTests)('env-alioth github snapshot', () => {
-  it('pulls a github distribution and resolves artifacts (historical AppCreator channel; new model channel is CosmicTools9/Alioth, validated via builtin/local)', { timeout: 300_000 }, async () => {
+  it('pulls a github distribution and resolves artifacts (historical AppCreator channel; new model channel is CosmicTools9/Alioth, validated via local sources)', { timeout: 300_000 }, async () => {
     const cacheRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-gh-'))
     try {
       const snapshot = await resolveModelSnapshot(
@@ -480,7 +576,7 @@ describe('env-alioth doctor observability', () => {
       expect(semantic?.detail).toContain('not built')
       const dicts = report.checks.find(check => check.name === 'dictionary-snapshots')
       expect(dicts?.ok).toBe(true)
-      expect(dicts?.detail).toContain('FROZEN')
+      expect(dicts?.detail).toContain('skill-alioth/src/data/')
     } finally {
       await fiber.dispose()
       await db.dispose()
@@ -590,10 +686,59 @@ describe('env-alioth isahl_meta occupancy', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('refuses a database that holds the Alioth model', async () => {
+    // The retired contract put this registry inside the model-sample database ("same database,
+    // different schema"). `isahl_meta` is a namespace the model owns too, so the registry must
+    // live in its own database; a model database is refused before anything is created.
+    const db = await createTestDatabase('modeldb')
+    const handle = await acquirePostgres({ url: db.url })
+    try {
+      await handle.query('CREATE SCHEMA isahl')
+      await handle.query('CREATE TABLE isahl.zc_id_sample (id integer)')
+      const err = await bootstrapDatabase(handle.query, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'local' })
+        .then(() => null, error => error)
+      expect(err).toBeInstanceOf(Error)
+      expect(err?.message).toContain('holds the Alioth model')
+      expect(err?.message).toContain('1 table(s)')
+      expect(err?.message).toContain('dedicated database')
+      expect(err?.message).toContain('dsh_alioth')
+      // Nothing was created on the way to the refusal: no registry, no stamp.
+      expect(await handle.query("SELECT to_regclass('isahl_meta.meta_collections')::text AS r")).toMatchObject({
+        rows: [{ r: null }],
+      })
+      expect(await handle.query("SELECT to_regclass('dsh_alioth.model_state')::text AS r")).toMatchObject({
+        rows: [{ r: null }],
+      })
+    } finally {
+      await handle.close()
+      await db.dispose()
+    }
+  })
+
+  it('refuses an already-bootstrapped registry once the database gains the model', async () => {
+    // Adoption is checked too: a database that was a legitimate registry and later receives the
+    // model (restore, re-provisioning) must fail loud rather than quietly operate in it.
+    const db = await createTestDatabase('adoptedmodeldb')
+    const handle = await acquirePostgres({ url: db.url })
+    try {
+      await expect(bootstrapDatabase(handle.query, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'local' }))
+        .resolves.toEqual({ created: true, stamped: true })
+      await handle.query('CREATE SCHEMA isahl')
+      await handle.query('CREATE TABLE isahl.zc_id_sample (id integer)')
+      const err = await bootstrapDatabase(handle.query, ddlFiles, { modelVersion: '10.0.0', sourceRef: 'local' })
+        .then(() => null, error => error)
+      expect(err).toBeInstanceOf(Error)
+      expect(err?.message).toContain('holds the Alioth model')
+    } finally {
+      await handle.close()
+      await db.dispose()
+    }
+  })
+
   it('creates the registry inside an existing schema that holds no tables of its own', async () => {
-    // m2/dev shape: the deployment database carries an `isahl_meta` from the model sample
-    // (views only), the registry tables gone. Service must come back without dropping the
-    // sample's objects — the baseline is created into the existing schema.
+    // A leftover `isahl_meta` schema without registry tables (a partially applied baseline, or a
+    // registry whose tables were dropped). The service must come back without dropping objects
+    // it does not own — the baseline is created into the existing schema.
     const db = await createTestDatabase('emptyschema')
     const handle = await acquirePostgres({ url: db.url })
     try {
@@ -617,10 +762,10 @@ describe('env-alioth isahl_meta occupancy', () => {
   })
 
   it('repairs a registry whose tables were dropped, keeping foreign objects', async () => {
-    // The m2/dev shape: the schema survives with the baseline's non-idempotent objects
-    // (`CREATE TYPE` has no IF NOT EXISTS) but the registry tables are gone — plus objects
-    // from another lineage living in the same schema. The repair clears what the baseline
-    // is about to recreate and leaves everything else alone.
+    // The schema survives with the baseline's non-idempotent objects (`CREATE TYPE` has no
+    // IF NOT EXISTS) but the registry tables are gone — plus objects from another lineage in the
+    // same schema. The repair clears what the baseline is about to recreate and leaves everything
+    // else alone.
     const db = await createTestDatabase('partialregistry')
     const handle = await acquirePostgres({ url: db.url })
     try {

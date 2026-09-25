@@ -83,7 +83,7 @@ export function acquirePostgres(options: PgOptions): Promise<PgHandle> {
     return Promise.reject(new Error(
       'env-alioth: no PostgreSQL URL configured. This plugin uses the environment\'s PostgreSQL 18 '
       + '(it no longer starts an embedded cluster). Set ALIOTH_DATABASE_URL — e.g. '
-      + '`ALIOTH_DATABASE_URL=postgres://alioth@127.0.0.1:5432/alioth` in ~/.dsh-alioth.env (dev) or '
+      + '`ALIOTH_DATABASE_URL=postgres://alioth@127.0.0.1:5432/dsh_alioth` in ~/.dsh-alioth.env (dev) or '
       + '/etc/dsh-alioth/env (prod) — or pass Config.databaseUrl',
     ))
   }

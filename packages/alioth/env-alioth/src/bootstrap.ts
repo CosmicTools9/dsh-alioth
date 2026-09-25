@@ -7,17 +7,31 @@
  * stamp recording which snapshot the registry was bootstrapped from. Upgrades
  * are never applied destructively: a stamp mismatch is reported as drift, not
  * auto-migrated.
+ *
+ * Database contract: the registry belongs to its own database. A database holding the
+ * Alioth model (regular tables under `isahl`) is refused on every call — the "same
+ * database, different schema" convention retired on 2026-09-24 put this plugin's
+ * `isahl_meta` next to the model's own objects, under a name the model owns too.
  * @module @dsh-alioth/env-alioth/bootstrap
  */
 
 import { readFile } from 'node:fs/promises'
 import type { QueryResult, QueryResultRow } from 'pg'
 import type { QueryFn } from './pg.ts'
+import { sanitizeRegistryDdl } from './registry-ddl.ts'
 
 /** The registry schema bootstrapped from the model DDL baseline. */
 const REGISTRY_SCHEMA = 'isahl_meta'
 /** This plugin's private state schema — never touches `isahl_meta`. */
 const STAMP_SCHEMA = 'dsh_alioth'
+/**
+ * The Alioth model's data space. A database carrying regular tables here holds the
+ * model itself (its business tables, e.g. the AppCreator/AliothStudio sample), so it
+ * is NOT a valid target for this plugin's registry: `isahl_meta` is a name the model
+ * also owns, and co-locating the two put this plugin's tables inside the model's
+ * database (the "same database, different schema" convention, retired 2026-09-24).
+ */
+const MODEL_SAMPLE_SCHEMA = 'isahl'
 
 const STAMP_DDL = `
 CREATE SCHEMA IF NOT EXISTS ${STAMP_SCHEMA};
@@ -95,6 +109,30 @@ async function countTables(query: QueryFn, schema: string): Promise<number> {
   return Number.parseInt(result.rows[0]?.n ?? '0', 10)
 }
 
+/**
+ * Refuse a database that holds the Alioth model. Checked on EVERY bootstrap — creation,
+ * adoption and drift reporting alike — because the failure mode is a shared name, not a
+ * missing object: `isahl_meta` belongs to the model too, so a registry living here lands
+ * among the model's own objects and its `isahl` tables, where `resetRegistry()` and the
+ * baseline's `DROP … RESTRICT` repairs operate on a namespace this plugin does not own.
+ * @param query - the target database's query surface.
+ */
+async function assertNotModelDatabase(query: QueryFn): Promise<void> {
+  const tables = await countTables(query, MODEL_SAMPLE_SCHEMA)
+  if (tables === 0) {
+    return
+  }
+  const database = await query<{ name: string }>('SELECT current_database() AS name')
+  throw new Error(
+    `env-alioth: database "${database.rows[0]?.name ?? '?'}" holds the Alioth model (schema `
+    + `\`${MODEL_SAMPLE_SCHEMA}\`, ${tables} table(s)) — refusing to bootstrap this plugin's registry inside it. `
+    + 'A model database is not a registry database: `isahl_meta` is a namespace the model owns as well, so the '
+    + 'baseline, its repairs and resetRegistry() would act next to the model\'s own objects. Point '
+    + 'ALIOTH_DATABASE_URL at a dedicated database (e.g. `postgres://alioth@127.0.0.1:5432/dsh_alioth`) and move the '
+    + '`dsh_alioth*` schemas there — docs/migrations/2026-09-24-registry-out-of-model-database.md has the commands.',
+  )
+}
+
 /** Read the stamp row; `null` when the table or row is absent. */
 export async function readStamp(query: QueryFn): Promise<BootstrapStamp | null> {
   const table = await query<{ oid: number | null }>(
@@ -129,6 +167,7 @@ export async function bootstrapDatabase(
   ddlFiles: readonly string[],
   current: ModelProvenance,
 ): Promise<BootstrapResult> {
+  await assertNotModelDatabase(query)
   let created = false
   if (!await tableExists(query, REGISTRY_SCHEMA, 'meta_collections')) {
     // The baseline is load-once BY CONTRACT, so it is never re-applied over a registry — but an
@@ -148,7 +187,8 @@ export async function bootstrapDatabase(
         + 'database whose `isahl_meta` is empty or this plugin\'s, or drop the foreign schema first.',
       )
     }
-    const baseline = (await Promise.all(ddlFiles.map(file => readFile(file, 'utf8')))).join('\n')
+    const baseline = (await Promise.all(ddlFiles.map(async file =>
+      sanitizeRegistryDdl(await readFile(file, 'utf8'), file)))).join('\n')
     // ONE round trip = one implicit transaction (simple-query protocol): consumers never observe
     // the schema without its views, and any conflict rolls back to the state before the repair.
     await query([

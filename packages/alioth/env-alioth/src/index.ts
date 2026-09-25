@@ -1,7 +1,7 @@
 /**
  * Self-bootstrapping Alioth environment for the DeepSeek Harness. Uses the
- * model's open distribution (github:CosmicTools9/Alioth, or the builtin
- * frozen vendor set — default), provisions
+ * model's open distribution (github:CosmicTools9/Alioth, or a local model
+ * distribution / assembled source — `ALIOTH_MODEL_SOURCE`, required), provisions
  * PostgreSQL when none is configured, bootstraps the `isahl_meta` entity
  * registry per the model DDL baseline, and exposes a read-only `doctor()`
  * health report. dsh-alioth is a sibling consumer of the Alioth model — not
@@ -31,7 +31,11 @@ export interface Config {
    * `~/.dsh-alioth.env`, or a deployment with no `/etc/dsh-alioth/env`) it fails loud.
    */
   readonly databaseUrl?: string
-  /** `github:owner/repo[@ref]` or a filesystem path to a model-distribution checkout. */
+  /**
+   * `github:owner/repo[@ref]` or a filesystem path to a model distribution, or to an assembled
+   * source directory (release content plus `skill-adapters/`). Required: the package no longer
+   * ships a frozen snapshot, so there is nothing to fall back to.
+   */
   readonly modelSource: string
   /** State root for model snapshots. Default: XDG data home + `/dsh-alioth`. */
   readonly dataRoot?: string
@@ -39,7 +43,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   databaseUrl: z.string(),
-  modelSource: z.string().default('builtin'),
+  modelSource: z.string(),
   dataRoot: z.string(),
 })
 
@@ -49,6 +53,8 @@ export interface AliothEnvInfo {
   readonly modelDir: string
   readonly sourceRef: string
   readonly modelVersion: string
+  /** Where the registry rows came from — `missing` means the boot warned and continued unseeded. */
+  readonly registrySource: 'snapshot' | 'missing'
   readonly bootstrap: BootstrapResult
 }
 
@@ -146,6 +152,16 @@ export class AliothEnv extends Service {
       this.handle = await acquirePostgres({ url: this.config.databaseUrl ?? '' })
     }
     this.snapshot = snapshot
+    if (snapshot.artifacts.registrySource === 'missing') {
+      // The registry files are not versioned artifacts: a deployment without them warns and
+      // starts (registry-backed tools fail on their own terms), because a boot refusal here
+      // would take the whole console down over derived data that is regenerated from the model.
+      this.ctx.logger.warn(
+        `env-alioth: no isahl_meta.* registry files under ${snapshot.dir} and none vendored — `
+        + 'starting with an unseeded registry; alioth_schema_info / entity tools stay unavailable '
+        + 'until they are provided',
+      )
+    }
     const bootstrap = await bootstrapDatabase(this.handle.query, snapshot.artifacts.ddlFiles, {
       modelVersion: snapshot.modelVersion,
       sourceRef: snapshot.sourceRef,
@@ -155,11 +171,16 @@ export class AliothEnv extends Service {
       modelDir: snapshot.dir,
       sourceRef: snapshot.sourceRef,
       modelVersion: snapshot.modelVersion,
+      registrySource: snapshot.artifacts.registrySource,
       bootstrap,
     }
   }
 }
 export { maskUrl } from './doctor.ts'
+/** The registry sidecar loader — shared with the offline dictionary generator so both read a model
+ * release's dump exactly the same way. */
+export { sanitizeRegistryDdl } from './registry-ddl.ts'
+export { inspectModelArtifacts, parseModelSource, requireModelSource, resolveModelSnapshot } from './model-source.ts'
 // A raw connection for tools that only need the database (no model snapshot).
 export { acquirePostgres, type PgHandle } from './pg.ts'
 export {
