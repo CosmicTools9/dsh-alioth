@@ -706,19 +706,14 @@ function gateScript(landingPath: string): string {
     + `localStorage.setItem('dsh.uiWorkspace.pickOnNewSession','1');`
     + `localStorage.setItem('dsh.uiWorkspace.appPicking','1');`
     + `if(nu){localStorage.setItem('dsh.uiWorkspace.namespaceFilter','U-'+nu)}}catch(e){}`
-    // Bind every sessions.create result to the caller's identity: the
-    // harness API is in-process — HTTP identity never reaches tool execution;
-    // only session binding does. Identity rides the same-origin session
-    // cookie (no raw token in the browser's storage).
-    + `var of=window.fetch;`
-    + `window.fetch=function(i){var a=arguments;return of.apply(this,a).then(function(res){`
-    + `try{var u=typeof i==='string'?i:(i&&i.url)||'';`
-    + `if(u.indexOf('/api/session/create')!==-1&&res.ok){res.clone().json().then(function(b){`
-    + `var p=b&&((b.result&&b.result.ok&&b.result.value)||b.payload||b);var sid=p&&(p.sessionId||p.id);`
-    + `if(sid){of('/api/auth/bind',{method:'POST',headers:{'content-type':'application/json'},`
-    + `body:JSON.stringify({sessionId:sid})}).catch(function(){});}`
-    + `}).catch(function(){});}}catch(e){}`
-    + `return res;});};`
+    // Identity is bound SERVER-side (`auth-alioth` listens for `session/created`
+    // and reads the harness's connection account). This script used to sniff a
+    // `/api/session/create` REST response to POST `/api/auth/bind`; the harness
+    // creates sessions over its service transport, so that path never matched and
+    // the binding silently stopped happening (found on m2: a session ran under
+    // another account's namespace). Keeping a sniffer for a transport we do not
+    // own was the defect — the cookie gate above is the only job left here.
+    // `POST /api/auth/bind` remains for non-browser clients that own their token.
     + `})();</script>`
 }
 
