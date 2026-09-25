@@ -26,8 +26,15 @@
   （基线是 load-once 契约，增表会让「结构恒用包内基线」不再成立），改为部署自有的文件账本
   `<dataRoot>/mapping-verdicts/{namespace}.json`（追加语义与上游 memory 同规：新裁决在后，召回最新在前；
   tmp + rename 原子替换）。
-- 召回面：`recall` 返回该命名空间最新在前的裁决，可按 `domain`/`table` 收窄。上游由 memory 子系统在装配
-  上下文时召回；本仓先给出显式读取面，**注入进提示词尚未做**。
+- 召回面：`recall` 返回该命名空间最新在前的裁决，可按 `domain`/`table` 收窄。
+- **裁决召回进决策点（本轮补齐）**：上游 `analyze_ontology::recall_verdicts` + `transfer_ontology::decide_verdict`
+  在**做映射决定之前**取先例并判定是否可采用。本仓同形移植：
+  - 判定是纯函数 `verify-alioth/src/mapping-decisions.ts`（域 **精确**匹配 + 置信 ≥ `ACCEPT_SCORE` +
+    目录表存在性；目录为空则豁免存在性——「查不到」在目录不可用时不能当否决证据）；
+  - 查询面 `tool-alioth-meta/src/precedents.ts`（账本不可读 ⇒ 空集**不阻断**；目录读失败 ⇒ `catalog: 'unavailable'`
+    如实透出并退到编译期常量面，与上游同行为）；
+  - 注入点 = `alioth_schema_semantic_search`（模型在映射前必用的对齐工具）：给了 `namespace` + `domain`
+    即返回 `precedent` 段（`verdict` 与 `ignored` 带可判原因），模型据此「采用或显式改写」。
 
 ## ① 进度投影与交付交接（上游 `pipeline/progress.rs`，change `fix-appagent-pipeline-handoff`）
 

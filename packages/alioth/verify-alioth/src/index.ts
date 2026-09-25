@@ -9,6 +9,16 @@
  */
 
 export {
+  ACCEPT_SCORE,
+  LIFECYCLE_ENTITIES,
+  decideMappingVerdict,
+  type IgnoredVerdict,
+  type MappingDecision,
+  type MappingDecisionResult,
+  type PlatformCatalogView,
+} from './mapping-decisions.ts'
+
+export {
   PIPELINE_STAGES,
   scanStageProgress,
   pipelineProgressJson,

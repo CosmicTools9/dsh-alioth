@@ -13,6 +13,7 @@
   "dependencies": {
     "@dsh-alioth/env-alioth": "workspace:*",
     "@dsh-alioth/skill-alioth": "workspace:*",
+    "@dsh-alioth/verify-alioth": "workspace:*",
     "@huggingface/transformers": "4.2.0"
   },
   "peerDependencies": {

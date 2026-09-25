@@ -8,6 +8,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { resolvePrecedents } from './precedents.ts'
 import { ensureSemanticIndex, TransformersEmbedder, type SemanticEntry } from './embedding.ts'
 
 /** Register the `alioth_schema_semantic_search` tool. */
@@ -19,7 +20,9 @@ export function registerSemanticSearch(ctx: Context, loadEntries: (ctx: Context)
       + 'terms that literal matching misses (e.g. "库存余额" or "inventory balance" hits 库存-账户金额). '
       + 'Embeds registry terms with a multilingual model; first use downloads the model and builds '
       + 'an index under the data root (offline afterwards). Use for near-miss concepts; for exact '
-      + 'names use alioth_schema_info.',
+      + 'names use alioth_schema_info. Pass `namespace` + `domain` (requirement domain id) to also '
+      + 'receive the HUMAN mapping precedent recorded for that domain (`precedent.verdict`) — a '
+      + 'decision a person already made beats a fresh guess; override it deliberately if wrong.',
     parameters: {
       query: {
         type: 'string',
@@ -34,6 +37,14 @@ export function registerSemanticSearch(ctx: Context, loadEntries: (ctx: Context)
         type: 'string',
         description: 'Restrict to "entity" or "field".',
       },
+      namespace: {
+        type: 'string',
+        description: 'Optional (with `domain`): the caller namespace, to look up its human mapping precedents.',
+      },
+      domain: {
+        type: 'string',
+        description: 'Optional (with `namespace`): requirement domain id whose precedent should be reported.',
+      },
     },
     output: {
       schema: {
@@ -41,6 +52,7 @@ export function registerSemanticSearch(ctx: Context, loadEntries: (ctx: Context)
         additionalProperties: false,
         properties: {
           query: { type: 'string', required: true },
+          precedent: { type: 'json' },
           hits: {
             type: 'array',
             items: {
@@ -79,8 +91,14 @@ export function registerSemanticSearch(ctx: Context, loadEntries: (ctx: Context)
       const entries = await loadEntries(ctx)
       const index = await ensureSemanticIndex(ctx.aliothEnv.dataRoot(), entries, new TransformersEmbedder())
       const hits = await index.search(args.query.trim(), topK, kind)
+      // 人工先例（上游 `recall_verdicts` + `decide_verdict`）：只在调用方给出 namespace+domain 时查。
+      // 账本/目录不可达都**不阻断**检索（先例是加速面，不是判据来源），并把不可用状态如实透出。
+      const precedent = args.namespace !== undefined && args.domain !== undefined
+        ? await resolvePrecedents(ctx.aliothEnv, { namespace: args.namespace, domain: args.domain })
+        : undefined
       return {
         query: args.query,
+        ...(precedent === undefined ? {} : { precedent }),
         hits: hits.map(hit => ({
           score: Number(hit.score.toFixed(4)),
           kind: hit.entry.kind,

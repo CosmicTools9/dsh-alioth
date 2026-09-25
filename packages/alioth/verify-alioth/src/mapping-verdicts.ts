@@ -28,7 +28,8 @@ export interface MappingVerdict {
   readonly table: string
   readonly verdictText: string
   readonly source: 'user'
-  readonly confidence: 1
+  /** 人工档恒为 1（上游承载 人工/evo 两类先例，故类型是 number，不是字面量 1）。 */
+  readonly confidence: number
   /** ISO 时间戳。 */
   readonly recordedAt: string
 }

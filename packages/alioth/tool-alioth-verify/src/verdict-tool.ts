@@ -17,10 +17,7 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
-import type { MappingVerdict, MappingVerdictStore } from '@dsh-alioth/verify-alioth'
-
-/** 上游 `state::PlatformCatalog.lifecycle_entities` 的编译期常量面（zc_id_bill/event/entity/status）。 */
-const LIFECYCLE_ENTITIES: readonly string[] = ['zc_id_bill', 'zc_id_event', 'zc_id_entity', 'zc_id_status']
+import { LIFECYCLE_ENTITIES, type MappingVerdict, type MappingVerdictStore } from '@dsh-alioth/verify-alioth'
 
 /** 注册表读取面（`ctx.aliothEnv.sql` 满足）。 */
 export interface RegistryQuery {
