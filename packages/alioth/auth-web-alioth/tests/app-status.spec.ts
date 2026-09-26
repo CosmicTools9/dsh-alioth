@@ -57,8 +57,8 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 
-function status(): Promise<AppStatus> {
-  return buildAppStatus({ namespace: APP.namespace, code: APP.code, dir: appDir }, dataRoot)
+function status(model: { readonly version: string; readonly sourceRef: string } | null = null): Promise<AppStatus> {
+  return buildAppStatus({ namespace: APP.namespace, code: APP.code, dir: appDir }, dataRoot, model)
 }
 
 describe('buildAppStatus artifacts', () => {
@@ -105,7 +105,7 @@ describe('buildAppStatus artifacts', () => {
   it('separates an absent app.json from an unparseable one', async () => {
     const absent = await status()
     expect(absent.artifacts.appJson).toEqual({
-      present: false, valid: false, errors: [], name: null, status: null, version: null, modules: 0, blocks: 0,
+      present: false, valid: false, errors: [], name: null, status: null, version: null, minAliothVersion: null, modules: 0, blocks: 0,
     })
 
     await write('app.json', '{ not json')
@@ -209,5 +209,48 @@ describe('buildAppStatus pipeline', () => {
 
     expect(result.pipeline.closure).toMatchObject({ present: true, verdict: 'approved', seq: 2 })
     expect(result.pipeline.closure).toHaveProperty('at')
+  })
+})
+
+describe('buildAppStatus model dependency', () => {
+  it('names the deployment model and resolves the app\'s declared minimum against it', async () => {
+    await write('app.json', validAppJson({ min_alioth_version: '10.0.0' }))
+    const result = await status({ version: '10.0.34', sourceRef: 'local' })
+
+    expect(result.model).toEqual({ version: '10.0.34', sourceRef: 'local' })
+    expect(result.artifacts.appJson.minAliothVersion).toBe('10.0.0')
+    expect(result.dependency).toEqual({ declared: '10.0.0', model: '10.0.34', satisfied: true })
+  })
+
+  it('flags a declared minimum the deployment does not provide', async () => {
+    await write('app.json', validAppJson({ min_alioth_version: '10.1.0' }))
+    const result = await status({ version: '10.0.34', sourceRef: 'local' })
+
+    expect(result.dependency).toEqual({ declared: '10.1.0', model: '10.0.34', satisfied: false })
+  })
+
+  it('reports an unknown deployment model instead of guessing one', async () => {
+    await write('app.json', validAppJson())
+    const result = await status(null)
+
+    expect(result.model).toBeNull()
+    // Undecidable is reported as unsatisfied: the panel never claims a dependency is met
+    // when one side of the comparison is missing.
+    expect(result.dependency).toEqual({ declared: '10.0.0', model: '', satisfied: false })
+  })
+
+  it('treats a non-release declared value as undecidable', async () => {
+    await write('app.json', validAppJson({ min_alioth_version: 'v10-latest' }))
+    const result = await status({ version: '10.0.34', sourceRef: 'local' })
+
+    expect(result.dependency.satisfied).toBe(false)
+  })
+
+  it('normalises a v-prefixed publication tag to the form artifacts carry', async () => {
+    await write('app.json', validAppJson())
+    const result = await status({ version: 'v10.0.34', sourceRef: 'tag:v10.0.34' })
+
+    expect(result.model).toEqual({ version: '10.0.34', sourceRef: 'tag:v10.0.34' })
+    expect(result.dependency.model).toBe('10.0.34')
   })
 })

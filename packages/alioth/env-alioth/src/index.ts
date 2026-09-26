@@ -76,6 +76,7 @@ export class AliothEnv extends Service {
       const handle = this.handle
       this.handle = undefined
       this.snapshot = undefined
+      this.model = undefined
       this.ensure = undefined
       return handle?.close()
     })
@@ -83,6 +84,25 @@ export class AliothEnv extends Service {
   private ensure: Promise<AliothEnvInfo> | undefined
   private handle: PgHandle | undefined
   private snapshot: ModelSnapshot | undefined
+  /** Model-source resolution memo for `modelInfo()` — independent of the database lifecycle. */
+  private model: Promise<ModelSnapshot> | undefined
+
+  /**
+   * The model this deployment consumes — the version and provenance an artifact's declared
+   * dependency is checked against. Resolved from the configured source alone: no database
+   * connection, no registry bootstrap. Display surfaces (the console's app-status panel,
+   * `alioth_app_inspect`) must be able to name the model without side effects — opening a
+   * panel must never bootstrap the registry.
+   */
+  async modelInfo(): Promise<{ readonly version: string; readonly sourceRef: string; readonly dir: string }> {
+    this.model ??= resolveModelSnapshot(parseModelSource(this.config.modelSource), this.dataRoot())
+      .catch((error: unknown) => {
+        this.model = undefined
+        throw error
+      })
+    const snapshot = await this.model
+    return { version: snapshot.modelVersion, sourceRef: snapshot.sourceRef, dir: snapshot.dir }
+  }
 
   /** Resolve the environment (snapshot → database → bootstrap), memoized. */
   ready(): Promise<AliothEnvInfo> {

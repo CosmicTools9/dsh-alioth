@@ -21,6 +21,12 @@ this file records user-visible changes per release.
   守卫在拒绝前再补绑一次；客户端脚本降为冗余路径。
 
 ### Added
+- **产物声明模型依赖，并在工具面与控制台显示**：生成期把**本部署的模型版本**写进产物——`app.json.min_alioth_version`、
+  `block.json`/`service.json.aliothVersion`（此前是硬编码 `10.0.0` 下限，只有 orchestrator 的 block 骨架传真值）；
+  非发行形态的模型源（夹具 / git ref）退契约下限，绝不把 `0.0.0-fixture` 写成依赖。读回侧 `alioth_app_inspect` 新增
+  `modelVersion` / `modelVersionSatisfied`（声明的下限 vs 部署提供的模型；任一侧不可判定即 false），控制台「应用状态」
+  面板新增「模型版本 / 模型依赖」两行。显示面走新增的 `ctx.aliothEnv.modelInfo()`——只解析模型源、**不连数据库、不引导注册表**。
+  比较口径单点在 `gen-alioth/src/version.ts`；`module.json` 不动（上游 MODULE_SPEC 无模型版本键，module 的依赖由所属 app 承载）。
 - **裁决召回进决策点**：`alioth_schema_semantic_search` 新增可选 `namespace` + `domain`，命中本命名空间的人工映射裁决时返回 `precedent`（含 `verdict` 与 `ignored` 可判原因）；判定为纯函数（域精确匹配 + 置信门槛 + 目录表存在性，目录为空豁免），账本/目录不可读均降级不阻断。
 - **计划 → 扩展的确定性组装**：`alioth_app_write` 新增 `plan` 参数（flow-plan wire 形态，非法即拒），由 `gen-alioth/src/extension-plan.ts` 按上游 `compose_from_flow_plan` 逐文件派生 `extensions/{constraints,rules,statemachines,workflows}.yaml` + 有模块时的 `profiles.yaml`；空来源保持如实骨架（绝不伪造条目），本体 JSON 不可解析同样退骨架。
 - **AppAgent 机制吸收（③②①④）**：步骤输入缺失 fail-fast（`step-input-missing`，未启动即拒）、

@@ -8,3 +8,4 @@ export { generateExtensions, type ExtensionPlanInput } from './extension-plan.ts
 
 export { validateArtifact, validateArtifactWith, type ArtifactKind, type ArtifactSchemas, type ValidationResult } from './validate.ts'
 export { generateApp, generateModule, generateBlock, generateService, generateNamespaceWorkspace, generateServiceCrate, sourceModuleDirs, sourceServiceDirs, EXTENSION_FILES, type AppSpec, type GeneratedApp, type ModuleSpec, type BlockSpec, type NavigationGroup, type ServiceSpec, type ServiceEntitySpec } from './generate.ts'
+export { compareModelVersions, DEFAULT_MIN_ALIOTH_VERSION, displayModelVersion, modelVersionAnchor, parseModelVersion, satisfiesModelVersion } from './version.ts'

@@ -867,3 +867,31 @@ describe('env-alioth database configuration', () => {
     expect(Date.now() - started).toBeLessThan(1000)
   })
 })
+
+/**
+ * Display surfaces (the console's app-status panel, `alioth_app_inspect`) name the model this
+ * deployment consumes. That read must not bootstrap a registry: the model source alone answers it,
+ * so opening a panel never dials a database.
+ */
+describe('env-alioth model info', () => {
+  it('resolves the model version from the source alone, without a database', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-modelinfo-'))
+    const modelDir = path.join(root, 'model')
+    await makeModelFixture(modelDir, '10.0.34')
+    const ctx = new Context()
+    // A DSN that must never be dialled — any connection attempt would fail loudly here.
+    const fiber = await ctx.plugin(AliothEnv, {
+      modelSource: modelDir,
+      dataRoot: path.join(root, 'data'),
+      databaseUrl: 'postgres://nobody@127.0.0.1:1/none',
+    })
+    try {
+      await expect(ctx.aliothEnv.modelInfo()).resolves.toMatchObject({ version: '10.0.34', sourceRef: 'local' })
+      // Memoized: the second read answers from the same resolution.
+      await expect(ctx.aliothEnv.modelInfo()).resolves.toMatchObject({ version: '10.0.34' })
+    } finally {
+      await fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})

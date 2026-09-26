@@ -658,3 +658,106 @@ describe('dsh-alioth alioth_app_delete', () => {
     })
   })
 })
+
+/**
+ * The products must declare the model they were built against, and the readback must show
+ * whether this deployment satisfies that declaration. The env service is optional to this
+ * plugin (artifact writing must not require a database), so the stub here only offers
+ * `modelInfo()` — the same shape the real service exposes.
+ */
+describe('dsh-alioth model-version dependency', () => {
+  let depRoot: string
+  let depCtx: Context
+  let depCalls = 0
+
+  function call(name: string, args: unknown) {
+    return depCtx.tools.execute({
+      signal,
+      callId: ToolCallId(`dep-${++depCalls}`),
+      name,
+      arguments: args,
+    })
+  }
+
+  beforeAll(async () => {
+    depRoot = await mkdtemp(path.join(tmpdir(), 'dsh-alioth-modeldep-'))
+    depCtx = new Context()
+    await depCtx.plugin(SystemPrompt)
+    await depCtx.plugin(ToolRuntime)
+    await depCtx.plugin(tool, { preProcRoot: depRoot })
+    // `provide` is untyped for services this package does not declare (env-alioth owns
+    // 'aliothEnv'), so the reflection layer is reached through one named handle.
+    const provide = (depCtx as unknown as { provide(name: string, value: unknown): void }).provide
+    // The live version arrives as a publication tag; artifacts carry bare digits.
+    provide('aliothEnv', {
+      modelInfo: () => Promise.resolve({ version: 'v10.0.34', sourceRef: 'stub-source', dir: depRoot }),
+    })
+  })
+
+  afterAll(async () => {
+    await rm(depRoot, { recursive: true, force: true })
+  })
+
+  it('stamps the deployment model version into app.json', async () => {
+    const written = await call('alioth_app_write', {
+      namespace: 'Alioth',
+      code: 'model-dep',
+      name: 'Model dep',
+      modules: [{ id: 'inventory', name: '库存' }],
+    })
+    if (written.isError) throw new Error(`expected alioth_app_write success: ${written.error.message}`)
+    // The dependency is asserted on the artifact bytes — that is what "marked in the product" means.
+    await expect(readFile(path.join(depRoot, 'Alioth', 'Apps', 'model-dep', 'app.json'), 'utf8'))
+      .resolves.toContain('"min_alioth_version": "10.0.34"')
+  })
+
+  it('stamps it into a service scaffold too', async () => {
+    const scaffold = await call('alioth_sources_scaffold', {
+      namespace: 'Alioth',
+      services: [{ id: 'inventory-svc', domain: 'inventory', layer: 1, entities: [] }],
+    })
+    if (scaffold.isError) throw new Error(`expected alioth_sources_scaffold success: ${scaffold.error.message}`)
+
+    await expect(
+      readFile(path.join(depRoot, 'Alioth', 'Sources', 'Apps', 'Services', 'inventory-svc', 'service.json'), 'utf8'),
+    ).resolves.toContain('"aliothVersion": "10.0.34"')
+  })
+
+  it('reports the dependency on inspect: declared minimum versus the deployment model', async () => {
+    const satisfied = await call('alioth_app_inspect', { namespace: 'Alioth', app: 'model-dep' })
+    if (satisfied.isError) throw new Error(`expected alioth_app_inspect success: ${satisfied.error.message}`)
+    expect(satisfied.value).toMatchObject({
+      minAliothVersion: '10.0.34',
+      modelVersion: '10.0.34',
+      modelVersionSatisfied: true,
+    })
+
+    // An artifact requiring a newer model than the deployment provides is surfaced, not hidden.
+    const dir = path.join(depRoot, 'Alioth', 'Apps', 'needs-newer')
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      path.join(dir, 'app.json'),
+      JSON.stringify({ ...VALID_APP, code: 'needs-newer', min_alioth_version: '10.99.0' }),
+    )
+    const unmet = await call('alioth_app_inspect', { namespace: 'Alioth', app: 'needs-newer' })
+    if (unmet.isError) throw new Error(`expected alioth_app_inspect success: ${unmet.error.message}`)
+    expect(unmet.value).toMatchObject({
+      minAliothVersion: '10.99.0',
+      modelVersion: '10.0.34',
+      modelVersionSatisfied: false,
+    })
+  })
+
+  it('falls back to the contract floor without the env service, and says the model is unknown', async () => {
+    // The shared fixture context above mounts no `aliothEnv`.
+    const written = await callWrite({ namespace: 'Alioth', code: 'no-env', name: 'No env', modules: [] })
+    if (written.isError) throw new Error(`expected alioth_app_write success: ${written.error.message}`)
+    await expect(readFile(path.join(root, 'Alioth', 'Apps', 'no-env', 'app.json'), 'utf8'))
+      .resolves.toContain('"min_alioth_version": "10.0.0"')
+
+    const inspect = await callInspect({ namespace: 'Alioth', app: 'no-env' })
+    if (inspect.isError) throw new Error(`expected alioth_app_inspect success: ${inspect.error.message}`)
+    // Unknown deployment model: the readback reports '' and does not claim the dependency is met.
+    expect(inspect.value).toMatchObject({ modelVersion: '', modelVersionSatisfied: false })
+  })
+})

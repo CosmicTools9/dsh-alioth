@@ -13,7 +13,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { SessionApp } from '@dsh-alioth/auth-alioth'
-import { validateArtifact } from '@dsh-alioth/gen-alioth'
+import { validateArtifact, satisfiesModelVersion, displayModelVersion } from '@dsh-alioth/gen-alioth'
 import { readRun } from '@dsh-alioth/skill-alioth'
 import { createDeferredStore, readClosureVerdicts } from '@dsh-alioth/verify-alioth'
 
@@ -28,6 +28,8 @@ interface AppStatusAppJson {
   readonly name: string | null
   readonly status: string | null
   readonly version: string | null
+  /** The artifact's declared model dependency (`min_alioth_version`). */
+  readonly minAliothVersion: string | null
   readonly modules: number
   readonly blocks: number
 }
@@ -44,6 +46,20 @@ interface AppStatusDeferredItem {
 export interface AppStatus {
   readonly ok: true
   readonly app: { readonly namespace: string; readonly code: string; readonly dir: string }
+  /**
+   * The model this deployment consumes — null when the env service is unreachable. The console
+   * names the model instead of leaving the deployment's dependency on it implicit.
+   */
+  readonly model: { readonly version: string; readonly sourceRef: string } | null
+  /**
+   * The app's own model dependency: what `app.json` declares versus what this deployment
+   * provides. `satisfied` is false when either side is unknown — the panel never guesses.
+   */
+  readonly dependency: {
+    readonly declared: string | null
+    readonly model: string
+    readonly satisfied: boolean
+  }
   readonly artifacts: {
     readonly appJson: AppStatusAppJson
     readonly extensions: {
@@ -110,10 +126,10 @@ function asStringArray(value: unknown): readonly string[] {
 async function readAppJson(dir: string): Promise<AppStatusAppJson> {
   const parsed = await readJson(path.join(dir, 'app.json'))
   if (parsed === null) {
-    return { present: false, valid: false, errors: [], name: null, status: null, version: null, modules: 0, blocks: 0 }
+    return { present: false, valid: false, errors: [], name: null, status: null, version: null, minAliothVersion: null, modules: 0, blocks: 0 }
   }
   if ('error' in parsed) {
-    return { present: true, valid: false, errors: [`app.json 无法解析：${parsed.error}`], name: null, status: null, version: null, modules: 0, blocks: 0 }
+    return { present: true, valid: false, errors: [`app.json 无法解析：${parsed.error}`], name: null, status: null, version: null, minAliothVersion: null, modules: 0, blocks: 0 }
   }
   const validation = validateArtifact('app', parsed.value)
   const document = asRecord(parsed.value)
@@ -125,6 +141,7 @@ async function readAppJson(dir: string): Promise<AppStatusAppJson> {
     name: typeof document.name === 'string' ? document.name : null,
     status: typeof document.status === 'string' ? document.status : null,
     version: typeof document.version === 'string' ? document.version : null,
+    minAliothVersion: typeof document.min_alioth_version === 'string' ? document.min_alioth_version : null,
     modules: asStringArray(config.modules).length,
     blocks: asStringArray(config.blocks).length,
   }
@@ -163,7 +180,7 @@ async function countModulesOnDisk(dir: string): Promise<number> {
  * @param dataRoot - deployment data root (`ctx.aliothEnv.dataRoot()`).
  * @returns the panel payload; never throws for corrupt on-disk state.
  */
-export async function buildAppStatus(app: SessionApp, dataRoot: string): Promise<AppStatus> {
+export async function buildAppStatus(app: SessionApp, dataRoot: string, model: { readonly version: string; readonly sourceRef: string } | null = null): Promise<AppStatus> {
   const run = await readRun(path.join(dataRoot, 'workflows'), { namespace: app.namespace, app: app.code })
     .then(record => record, error => ({ error: error instanceof Error ? error.message : String(error) }))
 
@@ -179,11 +196,25 @@ export async function buildAppStatus(app: SessionApp, dataRoot: string): Promise
   const verdicts = await readClosureVerdicts(app.dir).catch(() => [] as const)
   const last = verdicts.length > 0 ? verdicts[verdicts.length - 1] : undefined
 
+  const appJson = await readAppJson(app.dir)
+  // The panel shows the deployment's model exactly as the artifacts spell it (bare digits for a
+  // release), so a `v`-prefixed publication tag cannot render as "vv10.0.34" or disagree with
+  // the declared dependency next to it.
+  const deploymentModel = model === null
+    ? null
+    : { version: displayModelVersion(model.version), sourceRef: model.sourceRef }
+
   return {
     ok: true,
     app: { namespace: app.namespace, code: app.code, dir: app.dir },
+    model: deploymentModel,
+    dependency: {
+      declared: appJson.minAliothVersion,
+      model: deploymentModel?.version ?? '',
+      satisfied: satisfiesModelVersion(appJson.minAliothVersion ?? '', model?.version ?? '') ?? false,
+    },
     artifacts: {
-      appJson: await readAppJson(app.dir),
+      appJson,
       extensions: {
         files: await countFiles(path.join(app.dir, 'extensions'), '.yaml'),
         verification: await readExtensionVerification(app.dir),

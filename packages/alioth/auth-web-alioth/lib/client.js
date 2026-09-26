@@ -200,6 +200,13 @@ window.__ModuleLoader__.load({
       const pipeline = body.pipeline
       const run = pipeline.run
       const closure = pipeline.closure
+      // 模型依赖显示：部署实际提供的模型 vs app.json 声明的下限（判定在服务端算好，客户端只画）。
+      const model = body.model
+      const dependency = body.dependency
+      const modelText = model === null ? '未知（环境服务不可达）' : 'v' + model.version
+      const dependencyText = dependency.declared === null || dependency.declared === ''
+        ? '未声明'
+        : '≥' + dependency.declared + (dependency.satisfied ? ' ✓ 满足' : ' ✗ 不满足')
 
       const appJsonTone = appJson.present && appJson.valid ? panel.ok : panel.bad
       const appJsonText = appJson.present
@@ -220,6 +227,8 @@ window.__ModuleLoader__.load({
       const artifactCard = card('产物', [
         statusRow('app.json', appJsonText, appJsonTone),
         statusRow('名称 / 状态', (appJson.name || '—') + ' · ' + (appJson.status || '—')),
+        statusRow('模型版本', modelText, model === null ? panel.warn : undefined),
+        statusRow('模型依赖', dependencyText, dependency.satisfied ? panel.ok : (dependency.declared === null || dependency.declared === '' ? panel.label : panel.bad)),
         statusRow('模块 / 块', appJson.modules + ' / ' + appJson.blocks + '（磁盘 ' + artifacts.modulesOnDisk + ' 个 module.json）'),
         statusRow('extensions', artifacts.extensions.files + ' 个 yaml · ' + EXTENSION_TEXT[artifacts.extensions.verification], EXTENSION_TONE[artifacts.extensions.verification]),
         statusRow('Sources / 原型', artifacts.sources.dirs + ' 个目录 · prototype.html ' + (artifacts.prototype.html ? '有' : '无')),

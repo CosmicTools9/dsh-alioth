@@ -19,7 +19,7 @@ import path from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { generateApp, generateExtensions, generateModule, generateNamespaceWorkspace, generateService, generateServiceCrate, sourceModuleDirs, validateArtifact } from '@dsh-alioth/gen-alioth'
+import { generateApp, generateExtensions, generateModule, generateNamespaceWorkspace, generateService, generateServiceCrate, sourceModuleDirs, validateArtifact, displayModelVersion, modelVersionAnchor, satisfiesModelVersion } from '@dsh-alioth/gen-alioth'
 import { validateCoordinates, flowPlanFromWire, } from '@dsh-alioth/skill-alioth'
 import type {} from '@deepseek-ai/dsh-user-approval'
 
@@ -70,6 +70,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Version used for newly grown modules when the existing app.json lacks one. */
 const DEFAULT_VERSION = '0.1.0'
+
+/**
+ * The slice of `ctx.aliothEnv` this plugin reads. Deliberately structural and optional:
+ * artifact writing must not require a database, and `modelInfo()` resolves the model source
+ * alone (no registry bootstrap) — so a deployment that only writes artifacts still gets the
+ * version stamped into them, and one without the env service falls back to the contract floor.
+ */
+interface ModelInfoSource {
+  modelInfo(): Promise<{ readonly version: string }>
+}
+
+/** The deployment's model version, or null when the env service is absent/unresolvable. */
+async function modelInfoOf(ctx: Context): Promise<{ readonly version: string } | null> {
+  try {
+    const env = ctx.get('aliothEnv') as ModelInfoSource | undefined
+    if (typeof env?.modelInfo !== 'function') return null
+    return { version: (await env.modelInfo()).version }
+  } catch {
+    return null
+  }
+}
 
 /**
  * Route one tool call through the composed ApprovalService when the deployment
@@ -310,12 +331,18 @@ export function apply(ctx: Context, config: Config): void {
             },
           },
           missing: { type: 'array', required: true, items: { type: 'string' } },
+          /** The model this deployment consumes ('' when the env service is unreachable). */
+          modelVersion: { type: 'string', required: true },
+          /** Whether the deployment's model satisfies this artifact's declared minimum. */
+          modelVersionSatisfied: { type: 'boolean', required: true },
         },
       },
       render: (_args, value) => [{
         type: 'text',
         text: `Alioth app ${value.namespace}/${value.code} v${value.version}: `
           + `${value.modules.length} modules, ${value.blocks.length} blocks`
+          + `, model dependency >=${value.minAliothVersion}`
+          + (value.modelVersion === '' ? ' (deployment model unknown)' : ` on model ${value.modelVersion}${value.modelVersionSatisfied ? '' : ' — NOT satisfied'}`)
           + (value.missing.length > 0 ? `, missing required: ${value.missing.join(', ')}` : ''),
       }],
     },
@@ -376,6 +403,7 @@ export function apply(ctx: Context, config: Config): void {
       const brand = typeof record.brand === 'object' && record.brand !== null
         ? record.brand as Record<string, unknown>
         : {}
+      const deploymentModel = await modelInfoOf(ctx)
       return {
         code: asString(record.code) ?? '',
         name: asString(record.name) ?? '',
@@ -402,6 +430,13 @@ export function apply(ctx: Context, config: Config): void {
           adminRoles: asStringArray(permissions.adminRoles),
         },
         missing: REQUIRED_FIELDS.filter(key => !(key in record)),
+        // 依赖显示：产物声明的下限 vs 部署实际提供的模型。任一侧不可判定（env 不可达 /
+        // 版本非发行形态）即如实报 false——显示面不猜。
+        modelVersion: displayModelVersion(deploymentModel?.version ?? ''),
+        modelVersionSatisfied: satisfiesModelVersion(
+          asString(record.min_alioth_version) ?? '',
+          deploymentModel?.version ?? '',
+        ) ?? false,
       }
     },
     presentCall: args => ({
@@ -550,6 +585,9 @@ export function apply(ctx: Context, config: Config): void {
         ...(args.brand === undefined ? {} : { brand: args.brand }),
         ...(args.goal === undefined ? {} : { goal: args.goal }),
         ...(args.nonScope === undefined ? {} : { nonScope: args.nonScope }),
+        // 产物必须声明它对模型的依赖：app.json 的 min_alioth_version 打部署自己的模型版本
+        // （env 服务不可达时退到契约下限）。这样「这个 app 是在哪个模型下生成的」在产物里就有据可查。
+        minAliothVersion: modelVersionAnchor((await modelInfoOf(ctx))?.version),
       }
       const generated = generateApp(spec)
       // Contract gate: never persist an artifact that fails its own contract.
@@ -975,9 +1013,11 @@ export function apply(ctx: Context, config: Config): void {
       if (args.services.length === 0) {
         throw new Error('alioth_sources_scaffold: declare at least one service')
       }
-      // Upstream crate-naming convention: {ns_lower}-service-{id} (wz-service-*,
+      // 上游 crate-naming convention: {ns_lower}-service-{id} (wz-service-*,
       // cosmic-tools-service-*) — keeps gateway dep keys per-namespace collision-free.
       const nsLower = args.namespace.toLowerCase()
+      // 一次性解析：这批 service.json 共用同一个依赖声明（部署自己的模型版本）。
+      const aliothVersion = modelVersionAnchor((await modelInfoOf(ctx))?.version)
       const specs = args.services.map(service => generateService({
         id: service.id,
         namespace: args.namespace,
@@ -988,6 +1028,8 @@ export function apply(ctx: Context, config: Config): void {
         backendCrate: `${nsLower}-service-${service.id}`,
         hasBackend: true,
         hasFrontend: false,
+        // 同一口径：service.json 的 aliothVersion 声明它对模型的依赖。
+        aliothVersion,
         ontology: {
           entities: (service.entities ?? []).map(entity => ({
             name: entity.name,

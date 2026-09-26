@@ -1671,10 +1671,12 @@ describe('client face artifact', () => {
     const panelBody = {
       ok: true,
       app: { namespace: 'U-ada', code: 'default', dir: '/data/Pre-Proc/U-ada/Apps/default' },
+      model: { version: '10.0.34', sourceRef: 'local' },
+      dependency: { declared: '10.0.0', model: '10.0.34', satisfied: true },
       artifacts: {
         appJson: {
           present: true, valid: false, errors: ['//permissions: required'], name: '库存', status: 'developing',
-          version: '1.0.0', modules: 2, blocks: 3,
+          version: '1.0.0', minAliothVersion: '10.0.0', modules: 2, blocks: 3,
         },
         extensions: { files: 4, verification: 'degraded' },
         sources: { dirs: 1 },
@@ -1716,6 +1718,10 @@ describe('client face artifact', () => {
       expect(texts).toContain('轨道 1 · 步骤 2 · 已完成 5 步（最后 module-creation）')
       expect(texts).toContain('rejected · #3 · 2026-09-24T01:00:00.000Z')
       expect(texts.some(text => text.includes('扩展未装配'))).toBe(true)
+      // The model dependency is on the panel: the version this deployment consumes and
+      // whether the app's own declared minimum is met.
+      expect(texts).toContain('v10.0.34')
+      expect(texts.some(text => text.includes('≥10.0.0 ✓ 满足'))).toBe(true)
 
       // The actions row opens the prototype tab — the only file surface the
       // console exposes — rather than reimplementing any browser itself.
@@ -1737,6 +1743,27 @@ describe('client face artifact', () => {
       await delay(0)
       const emptyTexts = treeTexts(renderPanel())
       expect(emptyTexts.join('')).toContain('选择一个应用')
+
+      // A deployment whose model source is unresolvable says so instead of naming a version,
+      // and reports the dependency as unmet rather than met-by-default.
+      globals.fetch = () => Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({
+          ...panelBody,
+          model: null,
+          dependency: { declared: '10.0.0', model: '', satisfied: false },
+        }),
+      })
+      hooks = []
+      cursor = 0
+      effects.length = 0
+      renderPanel()
+      effects.forEach(fn => fn())
+      await delay(0)
+      const unknownTexts = treeTexts(renderPanel())
+      expect(unknownTexts.some(text => text.includes('未知（环境服务不可达）'))).toBe(true)
+      expect(unknownTexts.some(text => text.includes('≥10.0.0 ✗ 不满足'))).toBe(true)
     } finally {
       globals.fetch = savedFetch
     }

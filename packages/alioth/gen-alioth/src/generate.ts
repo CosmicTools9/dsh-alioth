@@ -5,6 +5,8 @@
  * @module @dsh-alioth/gen-alioth/generate
  */
 
+import { DEFAULT_MIN_ALIOTH_VERSION } from './version.ts'
+
 export interface ModuleSpec {
   readonly id: string
   readonly name: string
@@ -48,6 +50,12 @@ export interface AppSpec {
    * rather than leaving a downstream stage to patch the artifact after the fact.
    */
   readonly status?: string
+  /**
+   * The model version this app is generated against — stamped into
+   * `min_alioth_version`, the artifact's declared dependency on the model. Callers pass the
+   * deployment's live model version; omitting it declares the contract floor.
+   */
+  readonly minAliothVersion?: string
 }
 
 export interface GeneratedApp {
@@ -56,7 +64,6 @@ export interface GeneratedApp {
 }
 
 const DEFAULT_VERSION = '0.1.0'
-const DEFAULT_MIN_ALIOTH_VERSION = '10.0.0'
 /** Newly generated apps are under construction; `developing` is in the AppAgent evaluation's enum. */
 const DEFAULT_APP_STATUS = 'developing'
 
@@ -180,7 +187,7 @@ export function generateApp(spec: AppSpec): GeneratedApp {
     routing: { base, defaultRoute },
     navigation,
     status: spec.status ?? DEFAULT_APP_STATUS,
-    min_alioth_version: DEFAULT_MIN_ALIOTH_VERSION,
+    min_alioth_version: spec.minAliothVersion ?? DEFAULT_MIN_ALIOTH_VERSION,
   }
   const modules = spec.modules.map(module => generateModule({ namespace: spec.namespace, version }, module))
   return { app, modules }

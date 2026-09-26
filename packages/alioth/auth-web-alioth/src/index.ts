@@ -193,6 +193,23 @@ function dataRootOf(ctx: Context): string {
 }
 
 /**
+ * The deployment's model, read through the optional env service. `modelInfo()` resolves the
+ * configured model source alone — no database, no registry bootstrap — so the read-only panel
+ * can name the model without a side effect. Null when the service is absent or unresolvable:
+ * the panel then says "unknown" rather than inventing a version.
+ */
+async function modelInfoOf(ctx: Context): Promise<{ readonly version: string; readonly sourceRef: string } | null> {
+  try {
+    const env = (ctx.get as (name: string) => unknown).call(ctx, 'aliothEnv') as { modelInfo?: () => Promise<{ version: string; sourceRef: string }> } | undefined
+    if (typeof env?.modelInfo !== 'function') return null
+    const info = await env.modelInfo()
+    return { version: info.version, sourceRef: info.sourceRef }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Structural face of the billing capability (absent in trees that do not mount it).
  * Only the L2 authorization is read: wiring the download to `getSubscription` would
  * sell the ¥4,999 tier for the ¥1,399 one.
@@ -980,7 +997,7 @@ export function apply(ctx: Context, config: Config): void {
         return
       }
       try {
-        sendJson(response, 200, await buildAppStatus(app, dataRootOf(ctx)))
+        sendJson(response, 200, await buildAppStatus(app, dataRootOf(ctx), await modelInfoOf(ctx)))
       } catch (error) {
         sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
       }

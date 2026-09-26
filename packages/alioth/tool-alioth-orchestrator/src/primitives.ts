@@ -58,7 +58,7 @@ import {
   type ClosureVerdict,
   type DeferredItem,
 } from '@dsh-alioth/verify-alioth'
-import { generateBlock, generateService } from '@dsh-alioth/gen-alioth'
+import { generateBlock, generateService, modelVersionAnchor } from '@dsh-alioth/gen-alioth'
 import { flowPlanToWire } from '@dsh-alioth/skill-alioth'
 import { PIPELINE_SHARED_SURFACES, runControlledParallel } from './parallel.ts'
 
@@ -678,7 +678,7 @@ export function buildPrimitives(
         } else {
           try {
             await mkdir(path.dirname(file), { recursive: true })
-            const scaffold = generateBlock({ id, namespace: args.namespace, name: id, aliothVersion: modelVersion })
+            const scaffold = generateBlock({ id, namespace: args.namespace, name: id, aliothVersion: modelVersionAnchor(modelVersion) })
             await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, 'utf8')
             created.push(id)
             artifacts.push(file)
@@ -758,6 +758,8 @@ export function buildPrimitives(
       // `ontology.entities:[]`（实体映射由本体阶段回填）、`domain` 缺省取 id（精化阶段替换）。
       const namespaceRoot = path.join(preProcRootOf(preProcRoot), args.namespace)
       const declared = args.services ?? []
+      // 产物声明依赖：service.json 的 aliothVersion 取本部署的模型版本（与 blockCreation 同口径）。
+      const { modelVersion } = await ctx.aliothEnv.ready()
       const created: string[] = []
       const kept: string[] = []
       const artifacts: string[] = []
@@ -781,6 +783,7 @@ export function buildPrimitives(
             backendCrate: `${args.namespace.toLowerCase()}-service-${id}`,
             hasBackend: false,
             hasFrontend: false,
+            aliothVersion: modelVersionAnchor(modelVersion),
             ontology: { entities: [] },
           })
           await writeFile(file, `${JSON.stringify(scaffold, null, 2)}\n`, 'utf8')
