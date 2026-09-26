@@ -11,7 +11,12 @@
  * `@deepseek-ai/dsh-client-*: failed`、~18 个客户端条目 pending、连 composer 都没有——而 `/landing` 仍
  * 200、node 侧门禁全绿，任何非浏览器判据都看不见。
  *
- * 用法：`node --import tsx scripts/build-harness-web.ts [harnessRoot]`（缺省 `../deepseek-harness`）。
+ * 运行位置无关：本文件会被 COPY 到 `/tmp` 之类「不在任何 `type: module` 包内」的路径执行，那里 tsx 按
+ * **CJS** 加载，顶层 await 与 `import.meta` 都不可用（CI 实测：`Top-level await is currently not
+ * supported with the "cjs" output format`）。故：逻辑包在 `main()` 里，脚本目录用 `argv[1]` 推导。
+ *
+ * 用法：`node --import tsx scripts/build-harness-web.ts [harnessRoot]`（缺省 `<脚本>/../../deepseek-harness`，
+ * 即消费者仓库的同级 harness 检出；在别处执行时显式传 harnessRoot）。
  * @module @dsh-alioth/scripts/build-harness-web
  */
 
@@ -19,42 +24,62 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
-const harnessRoot = path.resolve(process.argv[2] ?? path.join(import.meta.dirname, '..', '..', 'deepseek-harness'))
-const helperPath = path.join(harnessRoot, 'scripts', 'client-build-environment.ts')
-if (!existsSync(helperPath)) {
-  throw new Error(`build-harness-web: ${harnessRoot} 不是 harness checkout（缺 scripts/client-build-environment.ts）`)
-}
-const viteBin = path.join(harnessRoot, 'apps', 'web', 'node_modules', '.bin', 'vite')
-if (!existsSync(viteBin)) {
-  throw new Error(`build-harness-web: 缺 ${viteBin} —— 先在 harness 里安装依赖（pnpm install），否则 web 面建不出来`)
-}
+/** 本脚本所在目录：`argv[1]` 是入口路径，CJS 与 ESM 下都成立。 */
+const scriptDir = path.dirname(process.argv[1] ?? process.cwd())
+const harnessRoot = path.resolve(process.argv[2] ?? path.join(scriptDir, '..', '..', 'deepseek-harness'))
 
-// 用 harness 自己的 helper 算环境，顺序与 scripts/build.ts 一致：先算 → 构建 → 最后写记录。
-const helper = await import(helperPath) as {
-  CLIENT_BUILD_PROFILE_SELECTOR: string
-  CLIENT_BUILD_RECORD_PATH: string
+/** harness 侧的 helper 面（我们只借用它算环境与写记录，不重写）。 */
+interface ClientBuildHelper {
+  readonly CLIENT_BUILD_PROFILE_SELECTOR: string
+  readonly CLIENT_BUILD_RECORD_PATH: string
   repositoryClientBuildEnvironment(root: string, env: NodeJS.ProcessEnv): Record<string, string>
   resolveClientBuildEnvironment(repository: Record<string, string>, profile: string | undefined): Record<string, string>
   clientBuildProcessEnvironment(env: NodeJS.ProcessEnv, client: Record<string, string>): NodeJS.ProcessEnv
   writeClientBuildRecord(root: string, client: Record<string, string>): { artifacts: { fileCount: number } }
 }
-const repositoryEnvironment = helper.repositoryClientBuildEnvironment(harnessRoot, process.env)
-const clientEnvironment = helper.resolveClientBuildEnvironment(repositoryEnvironment, process.env[helper.CLIENT_BUILD_PROFILE_SELECTOR])
-rmSync(path.join(harnessRoot, helper.CLIENT_BUILD_RECORD_PATH), { force: true })
 
-const built = spawnSync(viteBin, ['build'], {
-  cwd: path.join(harnessRoot, 'apps', 'web'),
-  env: helper.clientBuildProcessEnvironment(process.env, clientEnvironment),
-  stdio: 'inherit',
+async function main(): Promise<void> {
+  const helperPath = path.join(harnessRoot, 'scripts', 'client-build-environment.ts')
+  if (!existsSync(helperPath)) {
+    throw new Error(`build-harness-web: ${harnessRoot} 不是 harness checkout（缺 scripts/client-build-environment.ts）`)
+  }
+  const viteBin = path.join(harnessRoot, 'apps', 'web', 'node_modules', '.bin', 'vite')
+  if (!existsSync(viteBin)) {
+    throw new Error(`build-harness-web: 缺 ${viteBin} —— 先在 harness 里安装依赖（pnpm install），否则 web 面建不出来`)
+  }
+
+  // 顺序与 harness 的 scripts/build.ts 一致：先算环境 → 构建 → 最后写记录。
+  const helper = await import(helperPath) as ClientBuildHelper
+  const repositoryEnvironment = helper.repositoryClientBuildEnvironment(harnessRoot, process.env)
+  const clientEnvironment = helper.resolveClientBuildEnvironment(
+    repositoryEnvironment,
+    process.env[helper.CLIENT_BUILD_PROFILE_SELECTOR],
+  )
+  rmSync(path.join(harnessRoot, helper.CLIENT_BUILD_RECORD_PATH), { force: true })
+
+  const built = spawnSync(viteBin, ['build'], {
+    cwd: path.join(harnessRoot, 'apps', 'web'),
+    env: helper.clientBuildProcessEnvironment(process.env, clientEnvironment),
+    stdio: 'inherit',
+  })
+  if (built.status !== 0) {
+    throw new Error(
+      `build-harness-web: vite build 退出码 ${String(built.status ?? built.signal)} —— 控制台会加载不到新客户端包，`
+      + '别带着过期 web 面发布',
+    )
+  }
+
+  const record = helper.writeClientBuildRecord(harnessRoot, clientEnvironment)
+  const committed = JSON.parse(
+    readFileSync(path.join(harnessRoot, helper.CLIENT_BUILD_RECORD_PATH), 'utf8'),
+  ) as { environment?: Record<string, string> }
+  process.stdout.write(
+    `build-harness-web: ${String(record.artifacts.fileCount)} 个客户端资产，`
+    + `记录 commit=${committed.environment?.['DSH_CLIENT_COMMIT_HASH'] ?? '?'}（harness ${harnessRoot}）\n`,
+  )
+}
+
+main().catch((error: unknown) => {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+  process.exitCode = 1
 })
-if (built.status !== 0) {
-  throw new Error(`build-harness-web: vite build 退出码 ${String(built.status ?? built.signal)} —— 控制台会加载不到新客户端包，别带着过期 web 面发布`)
-}
-
-const record = helper.writeClientBuildRecord(harnessRoot, clientEnvironment)
-const committed = JSON.parse(readFileSync(path.join(harnessRoot, helper.CLIENT_BUILD_RECORD_PATH), 'utf8')) as {
-  environment?: Record<string, string>
-}
-process.stdout.write(
-  `build-harness-web: ${String(record.artifacts.fileCount)} 个客户端资产，记录 commit=${committed.environment?.['DSH_CLIENT_COMMIT_HASH'] ?? '?'}（harness ${harnessRoot}）\n`,
-)
