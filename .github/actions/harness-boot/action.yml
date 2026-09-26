@@ -39,7 +39,11 @@ runs:
         # globs, so it must NOT live at dsh-alioth/deepseek-harness. Verified
         # locally in this exact layout: `pnpm install --frozen-lockfile` passes.
         repository: William-d-zk/deepseek-harness
-        ref: 2c1c749b3a0e2b3ecc53b20e6285401027ddf9fc
+        # The leading baseline of the Alioth line: the rc.2 upstream merge
+        # (`dsh-v0.1.7-rc.2`) plus the two follow-ups that made both faces typecheck
+        # clean. Pin and lockfile MUST move together — regenerate `pnpm-lock.yaml`
+        # against this revision in the same commit, or the frozen install fails.
+        ref: 7d10ecfe424bfb48520d32e393b78734c9377f70
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
