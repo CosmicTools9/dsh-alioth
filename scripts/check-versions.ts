@@ -7,7 +7,7 @@
  * the root package.json `version`. Examples stay 0.0.0 private and exempt.
  * Usage: node --import tsx scripts/check-versions.ts
  */
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -46,6 +46,15 @@ async function main(): Promise<void> {
       if (manifest.license !== root.license) {
         problems.push(`${manifest.name}: license "${manifest.license ?? 'MISSING'}" != root "${root.license}"`)
       }
+    }
+  }
+
+  // Licensing/compliance face of the *source* distribution: the repository must
+  // ship its own license + attribution and the aggregate third-party disclosure.
+  // The container image carries the same set (asserted by scripts/docker-check.sh).
+  for (const file of ['LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) {
+    if ((await stat(path.join(ROOT, file)).catch(() => null)) === null) {
+      problems.push(`${file}: missing at the repository root`)
     }
   }
 

@@ -132,6 +132,14 @@ COPY --from=build /deepseek-harness/package.json /deepseek-harness/package.json
 # so a runtime image without it is the same class of failure as a stale web face.
 COPY --from=build /deepseek-harness/.dsh-build /deepseek-harness/.dsh-build
 
+# Licenses/notices for redistributed code. Apache-2.0 §4(a)/(d) requires giving
+# recipients a copy of the License and retaining NOTICE; MIT requires retaining
+# the copyright + permission notice. Without these the image redistributes both
+# Apache-2.0 (plugin group, vendored model artifacts) and MIT (harness) code
+# without their licenses. scripts/docker-check.sh asserts each file exists.
+COPY dsh-alioth/LICENSE dsh-alioth/NOTICE dsh-alioth/THIRD_PARTY_NOTICES.md /app/
+COPY --from=build /deepseek-harness/LICENSE /deepseek-harness/THIRD_PARTY_NOTICES.md /deepseek-harness/
+
 # Web GUI port.
 ENV DSH_WEB_PORT=3100 \
     DSH_OPEN=false \

@@ -18,6 +18,15 @@ for f in /deepseek-harness/apps/web/dist/index.html /deepseek-harness/.dsh-build
   fi
 done
 echo "console artifacts OK: $(find /deepseek-harness/apps/web/dist -type f | wc -l | tr -d ' ') files in dist, record commit=$(sed -n 's/.*\"DSH_CLIENT_COMMIT_HASH\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' /deepseek-harness/.dsh-build/client-build-environment.json | head -n 1)"
+echo "--- licenses/notices (redistributed code must ship its license) ---"
+for f in /app/LICENSE /app/NOTICE /app/THIRD_PARTY_NOTICES.md \
+         /deepseek-harness/LICENSE /deepseek-harness/THIRD_PARTY_NOTICES.md; do
+  if [ ! -f "$f" ]; then
+    echo "FAIL: $f missing — the image redistributes Apache-2.0/MIT code without its license/notice";
+    exit 1;
+  fi
+done
+echo "licenses/notices OK"
 echo "--- doctor (assembled fixture model source, environment PostgreSQL) ---"
 # `builtin` is retired and a container self-check must stay keyless: assemble a fixture source
 # (vendored kit + a tiny registry seed) for the check itself. A real deployment passes its own

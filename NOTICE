@@ -44,3 +44,20 @@ rebuild it.
 This repository is licensed under Apache-2.0 (see LICENSE). Native
 implementations of Alioth model pipeline semantics carry this attribution
 and remain under Apache-2.0.
+
+## Bundled runtime (Docker image)
+
+The container image this repository builds bundles a built DeepSeek Harness
+checkout (MIT, Copyright (c) 2026 DeepSeek) alongside the plugin group
+(Apache-2.0). Both licenses are permissive, and the image carries the license and
+notice files for both sides — `/app/{LICENSE,NOTICE,THIRD_PARTY_NOTICES.md}` and
+`/deepseek-harness/{LICENSE,THIRD_PARTY_NOTICES.md}` — asserted by
+`scripts/docker-check.sh`, so a redistributed image can never silently drop them.
+
+## Commercial use
+
+Apache-2.0 and MIT both grant commercial use; no further permission is required
+*by them*. Separately from those copyright licenses, this project's operator
+requires authorization before any commercial use of dsh-alioth — a contractual
+matter with the copyright holders that does not alter the file-level licenses
+above. See `THIRD_PARTY_NOTICES.md` § Commercial use.

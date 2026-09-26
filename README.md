@@ -94,4 +94,11 @@ commitlint (Conventional Commits, English). Bypass: `git commit --no-verify`.
 
 Apache-2.0 (see `LICENSE`, `NOTICE`). Vendored model artifacts in
 `packages/alioth/env-alioth/vendor/` are Apache-2.0 works of The Alioth Authors,
-redistributed with attribution.
+redistributed with attribution. The plugin group runs on the DeepSeek Harness
+(MIT — Copyright (c) 2026 DeepSeek), and the container image bundles a built
+harness checkout; it ships the license and notice files for both sides. The
+aggregate third-party disclosure is `THIRD_PARTY_NOTICES.md`.
+
+Both licenses are permissive — commercial use additionally requires
+**authorization from this project's operator** (see `THIRD_PARTY_NOTICES.md`
+§ Commercial use).
