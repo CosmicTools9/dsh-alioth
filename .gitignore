@@ -32,3 +32,12 @@ ca/
 # assembler (`scripts/assemble-model-source.ts`) writes them under `<source>/backend/ddl/`.
 # The structure baseline (`002_isahl_meta_schema.sql`) stays frozen in the vendor tree.
 isahl_meta-registry.sql
+
+# Project-local agent skills (`/.agents/skills/<name>/SKILL.md`): the deploy/ops
+# runbooks this checkout's agent sessions load by name. Authored and updated per
+# session (not a published artifact), and deliberately NOT tracked — the same
+# path name means something else inside the product (the workflow bridge's
+# provisioned reference assets, and the read-only shared assets the /preview
+# route may serve), neither of which lives at this repository root. Anchored to
+# the root so vendored/fixture `.agents/` trees stay visible to git.
+/.agents/
