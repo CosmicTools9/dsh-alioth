@@ -37,7 +37,9 @@ jobs:
       - name: build image
         # Context is the workspace root: it holds dsh-alioth/ and the sibling
         # deepseek-harness/, which is exactly what the Dockerfile consumes.
-        run: docker build -f dsh-alioth/Dockerfile -t dsh-alioth:ci .
+        # GIT_COMMIT: the build context excludes .git, so the harness's client build record would
+        # otherwise carry no commit (its helper reads `git rev-parse HEAD`).
+        run: docker build --build-arg GIT_COMMIT="$(git -C dsh-alioth rev-parse HEAD)" -f dsh-alioth/Dockerfile -t dsh-alioth:ci .
       # `--check` goes through the entry script, which starts PostgreSQL 18 on
       # /data and exports ALIOTH_DATABASE_URL before running docker-check.sh.
       - name: keyless self-check (composition smoke + doctor, no API key)

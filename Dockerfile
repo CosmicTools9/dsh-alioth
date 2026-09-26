@@ -50,7 +50,10 @@ RUN pnpm run build:lib:host && pnpm run build:lib:client
 # while `/landing` still answers 200. Built through the consumer's single entrypoint script so
 # the Dockerfile and the ops release runner share one implementation.
 COPY dsh-alioth/scripts/build-harness-web.ts /tmp/build-harness-web.ts
-RUN node --import tsx /tmp/build-harness-web.ts .
+# The build context excludes .git, so pass the checkout's commit in: the harness's helper reads
+# `git rev-parse HEAD` and its result is baked into the client bundle + the build record.
+ARG GIT_COMMIT=
+RUN DSH_BUILD_COMMIT="${GIT_COMMIT}" node --import tsx /tmp/build-harness-web.ts .
 
 # ── the consumer workspace ──
 # The build context is the PARENT of both checkouts (see the header), so the

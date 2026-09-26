@@ -48,6 +48,17 @@ async function main(): Promise<void> {
     throw new Error(`build-harness-web: 缺 ${viteBin} —— 先在 harness 里安装依赖（pnpm install），否则 web 面建不出来`)
   }
 
+  // 容器构建上下文里没有 `.git`（.dockerignore 排除），而 harness 的 helper 只有 commit hash 依赖
+  // git（dirty 探针在非 git 树里返回 undefined，不抛）。它认预置的 DSH_CLIENT_COMMIT_HASH，所以在
+  // 无 `.git` 时用环境顶替：优先 CI 注入的 DSH_BUILD_COMMIT/GITHUB_SHA，否则一个中性占位符。
+  // 不做这一步，Docker 构建会以 `Command failed: git rev-parse HEAD` 失败（CI 实测）。
+  if (!existsSync(path.join(harnessRoot, '.git')) && !process.env['DSH_CLIENT_COMMIT_HASH']) {
+    const injected = process.env['DSH_BUILD_COMMIT'] ?? process.env['GITHUB_SHA']
+    const commit = injected !== undefined && /^[0-9a-f]{7,40}$/i.test(injected) ? injected.slice(0, 7) : '0000000'
+    process.env['DSH_CLIENT_COMMIT_HASH'] = commit
+    process.stdout.write(`build-harness-web: 无 .git（容器构建）→ commit=${commit}\n`)
+  }
+
   // 顺序与 harness 的 scripts/build.ts 一致：先算环境 → 构建 → 最后写记录。
   const helper = await import(helperPath) as ClientBuildHelper
   const repositoryEnvironment = helper.repositoryClientBuildEnvironment(harnessRoot, process.env)
