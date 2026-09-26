@@ -10,6 +10,14 @@ set -eu
 echo "== dsh-alioth container self-check =="
 echo "--- composition smoke (group mount, tools, round-trip) ---"
 node --import tsx /app/scripts/smoke-composition.ts
+echo "--- console build artifacts (web face built, not just the libraries) ---"
+for f in /deepseek-harness/apps/web/dist/index.html /deepseek-harness/.dsh-build/client-build-environment.json; do
+  if [ ! -f "$f" ]; then
+    echo "FAIL: $f missing — the console would serve missing/stale client assets (Failed to load plugins)";
+    exit 1;
+  fi
+done
+echo "console artifacts OK: $(find /deepseek-harness/apps/web/dist -type f | wc -l | tr -d ' ') files in dist, record commit=$(sed -n 's/.*\"DSH_CLIENT_COMMIT_HASH\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' /deepseek-harness/.dsh-build/client-build-environment.json | head -n 1)"
 echo "--- doctor (assembled fixture model source, environment PostgreSQL) ---"
 # `builtin` is retired and a container self-check must stay keyless: assemble a fixture source
 # (vendored kit + a tiny registry seed) for the check itself. A real deployment passes its own

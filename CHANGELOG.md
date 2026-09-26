@@ -6,6 +6,15 @@ this file records user-visible changes per release.
 ## [Unreleased]
 
 ### Fixed
+- **控制台构建产物（web 面）不再被当成「库建好就算完」**：容器镜像与部署机此前只建 harness 的库
+  （`build:lib:*` / `build:native`），而控制台发的是 `apps/web/dist` + `.dsh-build/client-build-environment.json`
+  ——只建库 ⇒ 新客户端包加载失败（`Failed to load plugins`、无 composer），而 `/landing` 仍 200、node 侧门禁全绿
+  （2026-09-26 dev 实测）。新增单一入口 `scripts/build-harness-web.ts`（复刻 harness `scripts/build.ts` 的 web 段），
+  Dockerfile 在库构建后调用它、运行阶段随产物一起拷 `.dsh-build/`，`scripts/docker-check.sh` 断言两者在位；
+  运维发布脚本把它接为安装相位 `[6/6]`，并新增只读前置 `0e`（记录里的 commit 必须等于目标机/本地 harness HEAD，
+  否则拒绝发布）。
+
+### Added
 - **会话绑定改由服务端写入**：客户端脚本嗅探的是 harness 旧 REST 路径（`/api/session/create`），harness 换传输后绑定
   静默失效——m2 实测同一会话落到另一账号的命名空间（工具守卫与工作区选择器双双退化为路径推断）。现在
   `session/created` 时用 harness 的连接账户上下文写入 `dsh_alioth_auth.session_bindings`，`userForSessionId` 优先读它，

@@ -44,6 +44,13 @@ RUN pnpm install --no-frozen-lockfile --ignore-scripts
 # AppCreator client patches (session pick gate, namespace isolation, picker
 # controls): replayed from the consumer workspace before building.
 RUN pnpm run build:lib:host && pnpm run build:lib:client
+# The console serves BUILT client artifacts (`apps/web/dist` + the client build record). The
+# library builds above do not produce them: a lib-only image ships the console with stale or
+# missing client assets and it fails to load plugins (`Failed to load plugins`, no composer),
+# while `/landing` still answers 200. Built through the consumer's single entrypoint script so
+# the Dockerfile and the ops release runner share one implementation.
+COPY dsh-alioth/scripts/build-harness-web.ts /tmp/build-harness-web.ts
+RUN node --import tsx /tmp/build-harness-web.ts .
 
 # ── the consumer workspace ──
 # The build context is the PARENT of both checkouts (see the header), so the
@@ -107,6 +114,10 @@ COPY --from=build /deepseek-harness/vendor /deepseek-harness/vendor
 COPY --from=build /deepseek-harness/apps /deepseek-harness/apps
 COPY --from=build /deepseek-harness/native /deepseek-harness/native
 COPY --from=build /deepseek-harness/package.json /deepseek-harness/package.json
+# The client build record travels with the client artifacts it describes: the console's
+# served bundle is bound to it (commit + public environment values baked at build time),
+# so a runtime image without it is the same class of failure as a stale web face.
+COPY --from=build /deepseek-harness/.dsh-build /deepseek-harness/.dsh-build
 
 # Web GUI port.
 ENV DSH_WEB_PORT=3100 \
