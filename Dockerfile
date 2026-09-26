@@ -43,7 +43,17 @@ COPY deepseek-harness/ ./
 RUN pnpm install --no-frozen-lockfile --ignore-scripts
 # AppCreator client patches (session pick gate, namespace isolation, picker
 # controls): replayed from the consumer workspace before building.
-RUN pnpm run build:lib:host && pnpm run build:lib:client
+# The two library faces, run as the binaries the package scripts wrap. Explicitly
+# NOT `pnpm run build:lib:*`: (1) `build:lib:host` ends with
+# `pnpm --filter @deepseek-ai/dsh-desktop run bundle`, whose tsdown config hard-codes
+# `git rev-parse HEAD` and therefore fails in a build context without `.git`
+# (rc.2 introduced this; the CI image build died on it), and the container never runs
+# the desktop app, so that artifact is not needed here; (2) `pnpm run` also refuses
+# outright when a workspace lock disagrees with its manifests.
+RUN node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -b tsconfig.host.json \
+ && ./node_modules/.bin/tsdown --env.DSH_BUILD_FACE host \
+ && node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -b tsconfig.client.json \
+ && ./node_modules/.bin/tsdown --env.DSH_BUILD_FACE client
 # The console serves BUILT client artifacts (`apps/web/dist` + the client build record). The
 # library builds above do not produce them: a lib-only image ships the console with stale or
 # missing client assets and it fails to load plugins (`Failed to load plugins`, no composer),
