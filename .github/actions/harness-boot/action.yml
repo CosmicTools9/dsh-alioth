@@ -40,10 +40,13 @@ runs:
         # locally in this exact layout: `pnpm install --frozen-lockfile` passes.
         repository: William-d-zk/deepseek-harness
         # The leading baseline of the Alioth line: the rc.2 upstream merge
-        # (`dsh-v0.1.7-rc.2`) plus the two follow-ups that made both faces typecheck
-        # clean. Pin and lockfile MUST move together — regenerate `pnpm-lock.yaml`
-        # against this revision in the same commit, or the frozen install fails.
-        ref: 7d10ecfe424bfb48520d32e393b78734c9377f70
+        # (`dsh-v0.1.7-rc.2`), its two typecheck follow-ups, and the client
+        # re-layering that made `verify-client-domain-graph` clean repo-wide
+        # (`workspace/workspace` also gained the optional `dsh-session-projection-cache`
+        # dependency the session-delete path needs). Pin and lockfile MUST move
+        # together — regenerate `pnpm-lock.yaml` against this revision in the same
+        # commit, or the frozen install fails.
+        ref: 9c06a071f175fefb5337e187160fbfa108d6c179
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
