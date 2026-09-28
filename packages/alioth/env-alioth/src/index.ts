@@ -202,7 +202,7 @@ export { maskUrl } from './doctor.ts'
 export { sanitizeRegistryDdl } from './registry-ddl.ts'
 export { inspectModelArtifacts, parseModelSource, requireModelSource, resolveModelSnapshot } from './model-source.ts'
 // A raw connection for tools that only need the database (no model snapshot).
-export { acquirePostgres, type PgHandle } from './pg.ts'
+export { acquirePostgres, createSerialLane, type PgHandle } from './pg.ts'
 export {
   provisionPrototypeRoot,
   removeProvisionedAssets,

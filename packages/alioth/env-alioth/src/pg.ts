@@ -35,6 +35,30 @@ export interface PgHandle {
 }
 
 /**
+ * One task at a time, FIFO: a queued task starts only after the previous one
+ * settled, and a rejection settles the lane without breaking it.
+ *
+ * The handle funnels every statement through one lane because the connection it
+ * owns is a single `pg.Client`: pg rejects a second `client.query()` issued while
+ * one is in flight ("Calling client.query() when the client is already executing
+ * a query" — a warning in pg 8, a hard error from pg 9), and the replay predicates
+ * below only hold while nothing else is in flight: a statement pg refused to send
+ * may be replayed, one that merely failed must never be.
+ * @returns enqueue function: `(task) => task()` serialized onto the lane.
+ */
+export function createSerialLane(): <T>(task: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(task: () => Promise<T>): Promise<T> => {
+    const run = tail.then(task, task)
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+}
+
+/**
  * The failure where pg *refused to send* the statement because the connection was
  * already known dead — so it provably never executed server-side, and replaying it
  * on a fresh connection cannot double-apply a write.
@@ -125,15 +149,18 @@ function createHandle(parts: HandleParts): PgHandle {
     current = replacement
     return replacement
   }
-  const query: QueryFn = async (text, values) => {
-    const args = values === undefined ? undefined : [...values]
+  const lane = createSerialLane()
+  const dispatch = async <T extends QueryResultRow>(
+    text: string,
+    args: readonly unknown[] | undefined,
+  ): Promise<QueryResult<T>> => {
     try {
-      return await current.query(text, args)
+      return await current.query<T>(text, args === undefined ? undefined : [...args])
     } catch (error) {
       if (isUnsentConnectionFailure(error)) {
         // Refused before sending: replaying is safe and keeps a long session alive.
         parts.onLog?.('env-alioth: db connection was dead — reconnecting once')
-        return await (await replace()).query(text, args)
+        return await (await replace()).query<T>(text, args === undefined ? undefined : [...args])
       }
       if (isConnectionLevelFailure(error)) {
         // May have executed: never replayed. Drop the corpse so the *next* query
@@ -144,10 +171,17 @@ function createHandle(parts: HandleParts): PgHandle {
       throw error
     }
   }
+  const query: QueryFn = (text, values) => {
+    const args = values === undefined ? undefined : [...values]
+    return lane(() => dispatch(text, args))
+  }
   return {
     query,
     url: parts.url,
     close: async () => {
+      // Drain the lane first: ending the client under a queued statement would
+      // fail that statement for a reason the caller cannot act on.
+      await lane(async () => {}).catch(() => {})
       await current.end().catch(() => {})
     },
   }
