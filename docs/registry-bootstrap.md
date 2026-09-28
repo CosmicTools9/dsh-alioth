@@ -47,8 +47,8 @@ collections=986 fields=31759 model_version=10.0.34 auth_schema_tables=2
 
 | 源 | 注册表行 | 套件（`skill-adapters/`） | 结论 |
 |---|---|---|---|
-| **组装源**（部署用；`mise run alioth:model-source`） | 发行物那份（986 / 31759，`v10.0.34`） | **8 个** | ✅ 唯一完整的形态：内容 + 套件同处一目录 |
-| 原始模型树（如 `~/WorkSpace/Alioth`） | 986 / 31759 ✓ | **0** ✗ | 缺套件 ⇒ 工作流/编排缺面；只适合做字典/内容来源 |
+| **组装源**（部署用；`mise run alioth:model-source`） | 发行物那份（**990 / 32295**，`v10.0.35`；`v10.0.34` 时为 986 / 31759） | **8 个** | ✅ 唯一完整的形态：内容 + 套件同处一目录 |
+| 原始模型树（如 `~/WorkSpace/Alioth`） | 990 / 32295 ✓（与组装源同源；2026-09-28 实测） | **0** ✗ | 缺套件 ⇒ 工作流/编排缺面；只适合做字典/内容来源 |
 | GitHub 克隆（`main` / `v10.0.33`） | 无（HTTP 404，实测） | 无（HTTP 404，实测） | 两者都缺 ⇒ 只适合字典新鲜度校验 |
 
 组装器（`scripts/assemble-model-source.ts`）把两半合成到 `<out>`：发行物内容（`latest.json` + 注册表行 + 模型 DDL/种子）
@@ -115,5 +115,5 @@ pnpm run check:vendor                                 # vendor 合规（LICENSE/
 | 控制台能开、某个操作 500 | 懒引导在那个请求里才失败 | 看日志里的 `env-alioth:` 行；先跑一次 `alioth:doctor` |
 | `ALIOTH_MODEL_SOURCE is required` | `builtin` 已退役、且未配置模型源 | `mise run alioth:model-source -- --source <模型发行物> --out <dir>`，把 `<dir>` 写进部署 env |
 | `model source 'builtin' was retired` | 配置里仍写着退役的源 | 同上；该错误是刻意响亮（否则会被当成路径去解析） |
-| 行数从 905 变/不变 | 看 `registrySource` 与 `modelVersion`（§4） | 发行物带 `isahl_meta-registry.sql` ⇒ 986 |
+| 行数从 905 变/不变 | 看 `registrySource` 与 `modelVersion`（§4） | 发行物带 `isahl_meta-registry.sql` ⇒ 与发行物同版本（`v10.0.35` = **990 / 32295**；`v10.0.34` = 986 / 31759） |
 | `registrySource: 'missing'`、注册表类工具报错 | 模型源没带 `isahl_meta-registry.sql` | 给模型源带上该 sidecar（带外投递；不要拷进本包，避免第二份副本漂移） |
