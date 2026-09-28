@@ -46,7 +46,7 @@ runs:
         # dependency the session-delete path needs). Pin and lockfile MUST move
         # together — regenerate `pnpm-lock.yaml` against this revision in the same
         # commit, or the frozen install fails.
-        ref: 6965bc88fa201fc8992e656d68ef2968065b2bcb
+        ref: 41455376692a4ca7777a8e302d0e99be11a880e6
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
