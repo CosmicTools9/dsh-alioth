@@ -121,6 +121,11 @@ this file records user-visible changes per release.
 - Semantic dictionaries refreshed against the model release (coordinates 644,
   physical tables 986, FK index 2661); the generator accepts both the versioned
   and the flat model publication layout.
+- Semantic dictionaries refreshed against model **v10.0.36**: coordinates 644
+  (scene 108 / factor 118 / function 418) and physical tables 990 unchanged,
+  FK index 3528 → **3529** refs; `check:dicts` anchors the snapshots to that
+  release. The release's registry sidecar carries 990 collections / 32298
+  fields (v10.0.35: 990 / 32295).
 - Generated apps carry the lifecycle `status` the evaluation requires, so no
   later stage patches the artifact.
 
