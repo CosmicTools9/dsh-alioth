@@ -6,6 +6,7 @@ this file records user-visible changes per release.
 ## [Unreleased]
 
 ### Fixed
+- **应用页把 `app.json` 的声明 code 当成工作区名**：改名只动目录、不更新 `<app>/app.json` 的 `code`，于是列表按声明显示旧名（实测 `Apps/wms` 的 app.json 声明 `warehouse-management`）——改名到目录名会被「already exists」拦下，而它声称要改的源目录根本不存在。现在：目录名即工作区身份；`renameApp` 先校验源目录（错误指向真因）、改名时同步 `app.json.code`（同名改名=就地修订）；列表读到漂移**自动修订**，仅当产物不可写时才渲染不一致徽标。
 - **SQL 漏斗串行化**：`PgHandle` 只持一个 `pg.Client`，此前并发调用者（多个插件在 boot 期同时打 `ctx.aliothEnv.sql()`）会让语句在同一条连接上重叠——pg@8 只打弃用告警（启动日志可见），pg@9 变成硬错；更要紧的是漏斗自己的重放判定（「未发出 ⇒ 可重放」/「可能已执行 ⇒ 绝不重放」）只在无并发在飞时成立。现所有语句走单车道 FIFO 队列（`createSerialLane`），关闭时先排空车道再断连；新增 4 条测试（3 条队列不变量 + 1 条真库并发串行断言）。
 - **控制台构建产物（web 面）不再被当成「库建好就算完」**：容器镜像与部署机此前只建 harness 的库
   （`build:lib:*` / `build:native`），而控制台发的是 `apps/web/dist` + `.dsh-build/client-build-environment.json`

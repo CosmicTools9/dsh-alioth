@@ -25,6 +25,7 @@ import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import type { WorkspaceApp } from '@dsh-alioth/auth-alioth'
 import z from '@deepseek-ai/schemastery'
 import { buildAppStatus } from './app-status.ts'
 import { isPrototypePath, listPrototypes, prototypeUrl } from './prototypes.ts'
@@ -560,7 +561,7 @@ function sendWorkspacePage(
     namespace: string
     preProcPath: string
     deployPath: string
-    apps: ReadonlyArray<{ code: string; name: string }>
+    apps: ReadonlyArray<WorkspaceApp>
   }>,
   error = '',
   prototypes: ReadonlyArray<{ namespace: string; app: string; href: string; file: string; size: number }> = [],
@@ -572,7 +573,7 @@ function sendWorkspacePage(
   // level to move to. Controls stay on the viewer's own namespace.
   // The name always shows; only the rename control is scoped to the viewer's
   // own namespace (an app in someone else's namespace is read-only here).
-  const appControl = (app: { code: string; name: string }): string => `
+  const appControl = (app: WorkspaceApp): string => `
   <form method="post" action="/api/alioth/apps/rename" class="rename">
     <input type="hidden" name="from" value="${esc(app.code)}">
     <input name="to" value="${esc(app.code)}" pattern="[a-zA-Z0-9][a-zA-Z0-9-]*" required
@@ -589,6 +590,9 @@ function sendWorkspacePage(
   ${ws.apps.length === 0 ? '<p class="dim">暂无应用 — 在下方新建，或直接在对话中让 Alioth 助手创建</p>' : `
   <ul class="apps">${ws.apps.map(app => `<li><span class="code">${esc(app.code)}</span>${
     app.name === '' ? '' : `<span class="appname">${esc(app.name)}</span>`}${
+    app.declaredCode === undefined
+      ? ''
+      : `<span class="warn" title="该应用的 app.json 声明的 code 与目录名不一致（工作区身份是目录名）；改名到目录名即可同步">app.json: ${esc(app.declaredCode)}</span>`}${
     ws.namespace === viewerNamespace ? appControl(app) : ''}</li>`).join('')}</ul>`}
   ${(() => {
     const builds = prototypes.filter(p => p.namespace === ws.namespace)
@@ -646,6 +650,7 @@ padding:1.1rem 1.25rem;margin-bottom:1rem}
 .apps li{font-size:.92rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
 .apps .code{font-family:var(--mono);color:var(--text)}
 .apps .appname{font-size:.85rem;color:var(--dim)}
+.apps .warn{font-family:var(--mono);font-size:.78rem;color:var(--accent-2);border:1px solid var(--line);border-radius:999px;padding:.05rem .5rem}
 .rename{display:flex;align-items:center;gap:.4rem;margin-left:auto}
 .rename input{background:#070b11;border:1px solid var(--line);border-radius:6px;
 color:var(--text);padding:.28rem .5rem;font-size:.85rem;font-family:var(--mono);width:11rem}

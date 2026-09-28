@@ -1069,6 +1069,7 @@ describe('workspace page with apps and 成品预览 (standard view)', () => {
     // Two apps: one declaring code+name, one falling back to the dir name.
     await mkdir(path.join(nsRoot, 'Apps', 'app-x'), { recursive: true })
     await writeFile(path.join(nsRoot, 'Apps', 'app-x', 'app.json'), JSON.stringify({ code: 'APPX', name: '示例应用' }))
+    // The listing repairs this stale declared code; asserted below.
     await mkdir(path.join(nsRoot, 'Apps', 'app-y'), { recursive: true })
     // Prototype builds: served from the content root (Pre-Proc/<ns>/…) …
     const served = path.join(nsRoot, 'Prototypes', 'Apps', 'demo')
@@ -1087,11 +1088,20 @@ describe('workspace page with apps and 成品预览 (standard view)', () => {
     expect(response.status).toBe(200)
     const html = await response.text()
     expect(html).toContain('<h1>应用</h1>')
-    expect(html).toContain('<span class="code">APPX</span>')
+    // The DIRECTORY is the workspace identity, so that is what the row offers to
+    // rename; the app.json code is an artifact inside it and is shown separately
+    // when the two disagree (a listing that showed the declared code offered a
+    // name no operation could act on).
+    expect(html).toContain('<span class="code">app-x</span>')
     expect(html).toContain('<span class="appname">示例应用</span>')
-    // dana's own namespace: rows carry the in-place rename control, prefilled.
+    // The listing repaired the artifact's stale declared code, so no divergence
+    // chip is rendered (it only appears when the repair cannot be written).
+    expect(html).not.toContain('class="warn"')
+    // dana's own namespace: rows carry the in-place rename control, prefilled
+    // with the name the rename actually acts on.
     expect(html).toContain('action="/api/alioth/apps/rename"')
-    expect(html).toContain('name="to" value="APPX"')
+    expect(html).toContain('name="from" value="app-x"')
+    expect(html).toContain('name="to" value="app-x"')
     expect(html).toContain('name="to" value="app-y"')
     // The unnamed app shows no name suffix (exactly one appname span here).
     expect(html.match(/class="appname"/g) ?? []).toHaveLength(1)

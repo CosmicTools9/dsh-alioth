@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -286,6 +286,79 @@ describe('workspace (namespace = user workspace)', () => {
     // Renaming to the same name is a no-op that keeps the entry.
     await expect(ctx.aliothAuth.renameApp('U-grace', 'books', 'books')).resolves.toEqual({ code: 'books', name: '' })
     expect(await readdir(path.join(preProcRoot, 'U-grace', 'Apps'))).toEqual(['books', 'default'])
+  })
+
+  it('rename keeps the artifact in step: app.json.code follows the directory', async () => {
+    await ctx.aliothAuth.ensureWorkspace('U-hana')
+    await ctx.aliothAuth.createApp('U-hana', 'ledger')
+    await writeFile(
+      path.join(preProcRoot, 'U-hana', 'Apps', 'ledger', 'app.json'),
+      `${JSON.stringify({ namespace: 'U-hana', code: 'ledger', name: '账本', min_alioth_version: '10.0.0' }, null, 2)}\n`,
+    )
+    await expect(ctx.aliothAuth.renameApp('U-hana', 'ledger', 'books'))
+      .resolves.toEqual({ code: 'books', name: '账本' })
+    const written = JSON.parse(
+      await readFile(path.join(preProcRoot, 'U-hana', 'Apps', 'books', 'app.json'), 'utf8'),
+    ) as Record<string, unknown>
+    // Every other field survives; the workspace name IS the app code.
+    expect(written).toMatchObject({ code: 'books', name: '账本', namespace: 'U-hana', min_alioth_version: '10.0.0' })
+  })
+
+  it('names the real problem when the source is gone, and repairs a drifted artifact', async () => {
+    // The reported failure: the page listed the artifact's stale declared code,
+    // so renaming to the directory's name answered "already exists" while the
+    // source it claimed to rename had never existed.
+    await ctx.aliothAuth.ensureWorkspace('U-iris')
+    await ctx.aliothAuth.createApp('U-iris', 'wms')
+    await expect(ctx.aliothAuth.renameApp('U-iris', 'warehouse-management', 'wms'))
+      .rejects.toThrow(/does not exist/)
+    // Renaming a workspace to its own name is the repair path for the drift.
+    await writeFile(
+      path.join(preProcRoot, 'U-iris', 'Apps', 'wms', 'app.json'),
+      `${JSON.stringify({ code: 'warehouse-management', name: '仓储' }, null, 2)}\n`,
+    )
+    await expect(ctx.aliothAuth.renameApp('U-iris', 'wms', 'wms')).resolves.toEqual({ code: 'wms', name: '仓储' })
+    const repaired = JSON.parse(
+      await readFile(path.join(preProcRoot, 'U-iris', 'Apps', 'wms', 'app.json'), 'utf8'),
+    ) as Record<string, unknown>
+    expect(repaired.code).toBe('wms')
+  })
+
+  it('lists apps by directory identity and repairs a diverging declared code', async () => {
+    // A registered account: `workspaces()` hides orphan U-* directories.
+    await ctx.aliothAuth.register('jon', 'password-123')
+    await ctx.aliothAuth.createApp('U-jon', 'app-one')
+    const artifact = path.join(preProcRoot, 'U-jon', 'Apps', 'app-one', 'app.json')
+    await writeFile(artifact, `${JSON.stringify({ code: 'legacy-name', name: '旧名' }, null, 2)}\n`)
+
+    const view = (await ctx.aliothAuth.workspaces({ namespace: 'U-jon', role: 'admin' })).workspaces
+      .find(ws => ws.namespace === 'U-jon')
+    // `default` is provisioned with the namespace and carries no app.json, so it
+    // keeps the plain shape.
+    expect(view?.apps.map(app => app.code)).toEqual(['app-one', 'default'])
+    // The listing repairs the artifact instead of offering a name no operation
+    // could act on, so the entry comes back plain and the file is in step.
+    expect(view?.apps.find(app => app.code === 'app-one')).toEqual({ code: 'app-one', name: '旧名' })
+    expect(JSON.parse(await readFile(artifact, 'utf8'))).toMatchObject({ code: 'app-one', name: '旧名' })
+  })
+
+  it('reports a divergence it cannot repair (unwritable artifact)', async () => {
+    await ctx.aliothAuth.register('kay', 'password-123')
+    await ctx.aliothAuth.createApp('U-kay', 'app-one')
+    const artifact = path.join(preProcRoot, 'U-kay', 'Apps', 'app-one', 'app.json')
+    await writeFile(artifact, `${JSON.stringify({ code: 'legacy-name', name: '旧名' }, null, 2)}\n`)
+    const { chmod } = await import('node:fs/promises')
+    await chmod(artifact, 0o444)
+    try {
+      const view = (await ctx.aliothAuth.workspaces({ namespace: 'U-kay', role: 'admin' })).workspaces
+        .find(ws => ws.namespace === 'U-kay')
+      // The repair could not land, so the entry keeps the divergence visible.
+      expect(view?.apps.find(app => app.code === 'app-one'))
+        .toEqual({ code: 'app-one', name: '旧名', declaredCode: 'legacy-name' })
+      expect(JSON.parse(await readFile(artifact, 'utf8')).code).toBe('legacy-name')
+    } finally {
+      await chmod(artifact, 0o644)
+    }
   })
 
   it('derives session identity from the workspace path when no binding row exists', async () => {

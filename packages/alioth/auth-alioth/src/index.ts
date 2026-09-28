@@ -31,7 +31,7 @@
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, rename } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -129,8 +129,16 @@ export const Config: z<Config> = z.object({
 
 /** One app entry inside a workspace. */
 export interface WorkspaceApp {
+  /** The app's identity: its directory under `Apps/` — the name every operation acts on. */
   readonly code: string
   readonly name: string
+  /**
+   * The `code` the artifact's own `app.json` declares, present only when it
+   * differs from {@link code}. A workspace is renamed by its directory, so a
+   * diverging artifact is a state the caller must see rather than a name it may
+   * act on.
+   */
+  readonly declaredCode?: string
 }
 
 /** One namespace workspace: the AliothStudio layout (`Pre-Proc/{ns}/`, `Deploy/{ns}/`). */
@@ -165,24 +173,75 @@ const APP_NAME_PATTERN_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]*$/
  */
 export const DEFAULT_APP_WORKSPACE = 'default'
 
-/** One Apps/ entry: the app.json code/name when readable, the dir name otherwise. */
+/**
+ * One Apps/ entry. The DIRECTORY is the identity (`code`): every operation —
+ * rename, pick, session workspace — acts on that name, and `app.json` is an
+ * artifact inside it. The artifact's own `code` is reported separately as
+ * {@link WorkspaceApp.declaredCode} when it disagrees, so a stale declaration is
+ * visible instead of being mistaken for the workspace's name (a listing that
+ * showed the declared code made a renamed app unrenameable: the name it offered
+ * no longer existed on disk while the target did).
+ */
 async function readAppEntry(appsRoot: string, dir: string): Promise<WorkspaceApp> {
   try {
     const parsed = JSON.parse(await readFile(path.join(appsRoot, dir, 'app.json'), 'utf8')) as Record<string, unknown>
-    return { code: typeof parsed.code === 'string' ? parsed.code : dir, name: typeof parsed.name === 'string' ? parsed.name : '' }
+    const name = typeof parsed.name === 'string' ? parsed.name : ''
+    const declared = typeof parsed.code === 'string' && parsed.code !== dir ? parsed.code : undefined
+    return declared === undefined ? { code: dir, name } : { code: dir, name, declaredCode: declared }
   } catch {
     return { code: dir, name: '' }
   }
 }
 
-/** App entries under one namespace's Apps/ dir (tolerant: broken app.json → code only). */
+/**
+ * Rewrite `app.json`'s `code` to the directory name, preserving every other
+ * field. Absent or unparsable artifacts are left alone: this package tolerates
+ * a broken artifact (the directory is still a workspace), it does not repair
+ * one. @returns whether a file was rewritten.
+ */
+async function syncDeclaredCode(appsRoot: string, dir: string): Promise<boolean> {
+  const file = path.join(appsRoot, dir, 'app.json')
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>
+  } catch {
+    return false
+  }
+  if (parsed.code === dir) {
+    return false
+  }
+  await writeFile(file, `${JSON.stringify({ ...parsed, code: dir }, null, 2)}\n`)
+  return true
+}
+
+/**
+ * App entries under one namespace's Apps/ dir (tolerant: broken app.json → code only).
+ *
+ * A drifting `app.json.code` is REPAIRED here rather than merely reported: the
+ * directory is the workspace identity, so an artifact that contradicts it is
+ * stale state, not an alternative name — and the listing is where an operator
+ * sees it. The repair is idempotent and confined to that one app directory; when
+ * the write cannot land (read-only artifact, unreadable file) the entry keeps its
+ * {@link WorkspaceApp.declaredCode} so the divergence stays visible.
+ */
 async function listWorkspaceApps(preProcRoot: string, namespace: string): Promise<WorkspaceApp[]> {
   const appsRoot = path.join(preProcRoot, namespace, 'Apps')
   const dirs = await readdir(appsRoot, { withFileTypes: true }).then(entries =>
     entries.filter(entry => entry.isDirectory() && !entry.name.startsWith('.')).map(entry => entry.name)).catch(() => [])
   const apps: WorkspaceApp[] = []
   for (const dir of dirs) {
-    apps.push(await readAppEntry(appsRoot, dir))
+    const entry = await readAppEntry(appsRoot, dir)
+    if (entry.declaredCode === undefined) {
+      apps.push(entry)
+      continue
+    }
+    try {
+      const repaired = await syncDeclaredCode(appsRoot, dir)
+      apps.push(repaired ? { code: entry.code, name: entry.name } : entry)
+    } catch {
+      // Unwritable artifact: report the divergence instead of hiding it.
+      apps.push(entry)
+    }
   }
   apps.sort((a, b) => a.code.localeCompare(b.code))
   return apps
@@ -547,7 +606,17 @@ export function apply(ctx: Context, config: Config): void {
      */
     async renameApp(namespace: string, from: string, to: string): Promise<WorkspaceApp> {
       const appsRoot = path.join(preProcRoot, namespace, 'Apps')
+      const source = appDir(namespace, from)
+      // The source is checked BEFORE the target: a stale `from` (e.g. the name
+      // an artifact declares while its directory already carries another one)
+      // must report itself, not a target collision it cannot cause.
+      if (!existsSync(source)) {
+        throw new Error(`aliothAuth.renameApp: ${namespace}/Apps/${from} does not exist`)
+      }
       if (from === to) {
+        // Same name: still the repair path for an artifact whose declared code
+        // drifted from its directory.
+        await syncDeclaredCode(appsRoot, from)
         return await readAppEntry(appsRoot, from)
       }
       const target = appDir(namespace, to)
@@ -557,7 +626,7 @@ export function apply(ctx: Context, config: Config): void {
         throw new Error(`aliothAuth.renameApp: ${namespace}/Apps/${to} already exists`)
       }
       try {
-        await rename(appDir(namespace, from), target)
+        await rename(source, target)
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code
         if (code === 'ENOENT') {
@@ -568,6 +637,10 @@ export function apply(ctx: Context, config: Config): void {
         }
         throw error
       }
+      // The workspace name IS the app code, so the artifact has to follow the
+      // directory: a stale `app.json.code` is what let a renamed app be listed
+      // under a name it no longer had.
+      await syncDeclaredCode(appsRoot, to)
       const prototypesRoot = path.join(preProcRoot, namespace, 'Prototypes', 'Apps')
       await rename(path.join(prototypesRoot, from), path.join(prototypesRoot, to)).catch(() => undefined)
       return await readAppEntry(appsRoot, to)
