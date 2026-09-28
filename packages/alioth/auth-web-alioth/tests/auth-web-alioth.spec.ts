@@ -670,6 +670,12 @@ describe('web gate (real harness WebServer)', () => {
     // the injected script MUST NOT track a transport we do not own — the old
     // `/api/session/create` sniffer stopped matching and silently killed binding.
     expect(out).not.toContain('/api/session/create')
+    // The default app is the deployment's fallback workspace: the script names it
+    // from the server's own root, so an unaccounted Session lands there instead
+    // of an ungrouped bucket.
+    expect(out).toContain(
+      `dsh.uiWorkspace.fallbackWorkspacePath',${JSON.stringify(`${previewPreProcRoot}/`)}+'U-'+nu+'/Apps/default'`,
+    )
     // The injected script must be syntactically valid JS — a broken gate
     // silently never redirects (this regressed once on string-concat seams).
     const match = out.match(/<script>([\s\S]*?)<\/script>/)

@@ -717,7 +717,14 @@ function cookieToken(request: IncomingMessage): string | null {
 
 // ── gate script (tapIndex) ──────────────────────────────────────────────
 
-function gateScript(landingPath: string): string {
+function gateScript(landingPath: string, preProcRoot: string): string {
+  // The account's default app IS the product's fallback workspace, so the
+  // deployment declares it here: every Session the tree cannot account for
+  // belongs under it, and the console never renders an ungrouped bucket. The
+  // path is computed from the server's own root, so the client needs no request
+  // of its own (the harness reads the flag while restoring, before any fetch
+  // could answer).
+  const appRoot = preProcRoot.endsWith('/') ? preProcRoot : `${preProcRoot}/`
   return `<script>(function(){`
     + `if(!/(^|;)\\s*${MARKER_COOKIE}=/.test(document.cookie)){location.replace('${landingPath}');return;}`
     // AppCreator session gate: every New Session must choose the target app
@@ -727,7 +734,9 @@ function gateScript(landingPath: string): string {
     + `try{var nu=decodeURIComponent((document.cookie.match(/(^|;)\\s*${MARKER_COOKIE}=([^;]*)/)||[])[2]||'');`
     + `localStorage.setItem('dsh.uiWorkspace.pickOnNewSession','1');`
     + `localStorage.setItem('dsh.uiWorkspace.appPicking','1');`
-    + `if(nu){localStorage.setItem('dsh.uiWorkspace.namespaceFilter','U-'+nu)}}catch(e){}`
+    + `if(nu){localStorage.setItem('dsh.uiWorkspace.namespaceFilter','U-'+nu);`
+    // 兜底：default 应用就是兜底工作区（每账号预置）——无归属会话落到它下面，不再出现「未分组」。
+    + `localStorage.setItem('dsh.uiWorkspace.fallbackWorkspacePath',${JSON.stringify(appRoot)}+'U-'+nu+'/Apps/default')}}catch(e){}`
     // Identity is bound SERVER-side (`auth-alioth` listens for `session/created`
     // and reads the harness's connection account). This script used to sniff a
     // `/api/session/create` REST response to POST `/api/auth/bind`; the harness
@@ -1404,7 +1413,7 @@ async function listVisiblePrototypes(
       // otherwise the login page (no-landing compositions stay functional).
       webCtx.effect(() => web.tapIndex(html => {
         const target = landing()?.path ?? '/login'
-        return html.includes('</head>') ? html.replace('</head>', `${gateScript(target)}</head>`) : html
+        return html.includes('</head>') ? html.replace('</head>', `${gateScript(target, preProcRoot(config))}</head>`) : html
       }))
       if (typeof web.port === 'number') {
         guiOrigin = `http://${typeof web.host === 'string' ? web.host : '127.0.0.1'}:${web.port}`
