@@ -43,10 +43,12 @@ runs:
         # (`dsh-v0.1.7-rc.2`), its two typecheck follow-ups, and the client
         # re-layering that made `verify-client-domain-graph` clean repo-wide
         # (`workspace/workspace` also gained the optional `dsh-session-projection-cache`
-        # dependency the session-delete path needs). Pin and lockfile MUST move
+        # dependency the session-delete path needs). Plus the browser-local
+        # Ungrouped bucket suppression (`25e679fdd4`, client source only — no
+        # manifest change, so the lockfile stays). Pin and lockfile MUST move
         # together — regenerate `pnpm-lock.yaml` against this revision in the same
         # commit, or the frozen install fails.
-        ref: 41455376692a4ca7777a8e302d0e99be11a880e6
+        ref: 25e679fdd4858d14223e8a2f5a3ba235d312bf1c
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
