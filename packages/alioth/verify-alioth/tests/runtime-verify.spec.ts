@@ -10,8 +10,9 @@ import {
   buildRuntimeVerify,
   readRuntimeVerify,
   redactRuntimeEvidence,
+  runtimeFailure,
   runtimeVerdictOutcome,
-  runtimeVerifyUnlock,
+  runtimeVerificationSatisfied,
   writeRuntimeVerify,
   RUNTIME_VERIFY_DEGRADED_NAME,
   RUNTIME_VERIFY_NAME,
@@ -127,21 +128,41 @@ describe('writeRuntimeVerify', () => {
   })
 })
 
-describe('runtimeVerifyUnlock', () => {
-  it('unlocks on the content predicate /verdict == ready, never on file existence', async () => {
+describe('runtimeVerificationSatisfied + runtimeFailure（全自动：无人工门）', () => {
+  it('treats only a real ready verdict as satisfied, never file existence', async () => {
     const dir = await appDir()
     try {
-      const condition = runtimeVerifyUnlock(dir)
-      expect(condition.kind).toBe('artifact-json-pointer')
-      expect(condition.path).toBe(path.join(dir, RUNTIME_VERIFY_NAME))
-      expect(condition.pointer).toBe('/verdict')
-      expect(condition.equals).toBe('ready')
-
+      expect(await runtimeVerificationSatisfied(dir)).toBe(false)
       await writeRuntimeVerify(dir, buildRuntimeVerify({ namespace: 'ns', app: 'a', verdict: 'failed' }))
-      const failedDoc = JSON.parse(await readFile(condition.path, 'utf8'))
-      expect(failedDoc[condition.pointer.slice(1)]).not.toBe(condition.equals)
+      expect(await runtimeVerificationSatisfied(dir)).toBe(false)
+      await writeRuntimeVerify(dir, buildRuntimeVerify({ namespace: 'ns', app: 'a', verdict: 'ready' }))
+      expect(await runtimeVerificationSatisfied(dir)).toBe(true)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('classifies failures for automatic handling and reports nothing on ready', () => {
+    expect(runtimeFailure({ verdict: 'ready' })).toBeNull()
+
+    const artifact = runtimeFailure({ verdict: 'failed', failure_kind: 'artifact', failures: ['probe /health 503'] })
+    expect(artifact).toEqual({
+      ruleId: 'runtime-artifact-failed',
+      class: 'fixable',
+      action: '按 failures/probes 修产物（app.json/模块/扩展/服务骨架）后重跑验证',
+      detail: 'probe /health 503',
+    })
+
+    expect(runtimeFailure({ verdict: 'environment_unreachable', failure_kind: 'environment' })?.class).toBe('retryable')
+    expect(runtimeFailure({ verdict: 'environment_unreachable' })?.ruleId).toBe('runtime-environment-unreachable')
+    expect(runtimeFailure({ verdict: 'environment_unreachable', failure_kind: 'auth' })?.ruleId).toBe('runtime-control-unauthorized')
+    expect(runtimeFailure({ verdict: 'environment_unreachable', failure_kind: 'capability' })?.class).toBe('not-fixable')
+  })
+
+  it('defaults the failure kind from the verdict (failed ⇒ artifact, unreachable/started ⇒ environment)', () => {
+    expect(buildRuntimeVerify({ namespace: 'ns', app: 'a', verdict: 'failed' }).failure_kind).toBe('artifact')
+    expect(buildRuntimeVerify({ namespace: 'ns', app: 'a', verdict: 'environment_unreachable' }).failure_kind).toBe('environment')
+    expect(buildRuntimeVerify({ namespace: 'ns', app: 'a', verdict: 'started' }).failure_kind).toBe('environment')
+    expect(buildRuntimeVerify({ namespace: 'ns', app: 'a', verdict: 'ready' }).failure_kind).toBeNull()
   })
 })

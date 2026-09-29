@@ -12,6 +12,10 @@
  * - 证据脱敏：不落凭据值域（`token`/`password`/`secret`/`dsn`/`database_url`… 一律抹除），
  *   与上游 `trace::redact_json` + §9.3「证据 MUST NOT 含凭据值」同纪律。
  * - 本平面只判「容器可启动并就绪」，**不是 E2E**（§9.7）：MUST NOT 作为 `e2e_verify` 的替代。
+ * - **全自动、无人工门**（2026-09-29 用户裁决）：环境不可达等失败 MUST 以**机器可执行的失败契约**
+ *   （{@link runtimeFailure} 的 `artifact|environment|auth|capability` 分类 + 类与动作）交给自动重试墙
+ *   与 agent 修复闭环消化；**MUST NOT** 登记「等人放行」的人工门，也 MUST NOT 把 degraded 当通过。
+ *   `verdict === 'ready'` 的现状由 {@link runtimeVerificationSatisfied} 作**幂等判定**（已通过则不重跑）。
  * @module @dsh-alioth/verify-alioth/runtime-verify
  */
 
@@ -30,6 +34,13 @@ export const RUNTIME_VERIFY_SCHEMA = 'alioth-runtime-verify/v1'
  * （不写 canonical，不解除门）；`environment_unreachable` 属降级。
  */
 export type RuntimeVerdict = 'ready' | 'failed' | 'started' | 'environment_unreachable'
+
+/**
+ * 失败分类（机器可执行，驱动自动处置）：
+ * `artifact` = 产物缺陷（agent 可修）｜`environment` = 环境/引擎不可达（自动重试）｜
+ * `auth` = 控制面 token 缺失或错误（配置面）｜`capability` = 容器服务未开启/非本机引擎（平台面）。
+ */
+export type RuntimeFailureKind = 'artifact' | 'environment' | 'auth' | 'capability'
 
 /** 单条探针（§9.3：`via` 是观测点，容器内通过 ≠ 宿主可达）。 */
 export interface RuntimeProbe {
@@ -63,6 +74,8 @@ export interface RuntimeVerifyDoc {
   readonly probes: readonly RuntimeProbe[]
   readonly failures: readonly string[]
   readonly cleanup: RuntimeCleanup
+  /** 失败分类（成功时为 null；降级/失败时 MUST 给出，供自动处置）。 */
+  readonly failure_kind: RuntimeFailureKind | null
   readonly logs_cmd: string
   readonly duration_ms: number | null
   readonly started_at: string
@@ -123,6 +136,7 @@ export interface RuntimeVerifyInput {
   readonly probes?: readonly RuntimeProbe[]
   readonly failures?: readonly string[]
   readonly cleanup?: RuntimeCleanup
+  readonly failure_kind?: RuntimeFailureKind | null
   readonly logs_cmd?: string
   readonly duration_ms?: number | null
   readonly started_at?: string
@@ -156,6 +170,9 @@ export function buildRuntimeVerify(input: RuntimeVerifyInput): RuntimeVerifyDoc 
     probes: redactRuntimeEvidence(input.probes ?? []) as readonly RuntimeProbe[],
     failures: input.failures ?? [],
     cleanup: input.cleanup === undefined ? { ...CLEANUP_NOT_RUN } : redactRuntimeEvidence(cleanup) as RuntimeCleanup,
+    // 缺省分类：通过 → null；产物缺陷(真实运行失败) → artifact；其余（不可达/未就绪） → environment。
+    failure_kind: input.failure_kind
+      ?? (input.verdict === 'ready' ? null : input.verdict === 'failed' ? 'artifact' : 'environment'),
     logs_cmd: input.logs_cmd === undefined ? '' : String(redactRuntimeEvidence(input.logs_cmd)),
     duration_ms: input.duration_ms ?? null,
     started_at: input.started_at ?? new Date().toISOString(),
@@ -228,21 +245,65 @@ export async function readRuntimeVerify(appDir: string): Promise<RuntimeVerifySt
 }
 
 /**
- * 降级门的**解除条件**（内容谓词，RFC 6901）：`/verdict == "ready"`。
- * 与上游 `TriggerCondition::JsonFieldEquals` 同语义；MUST NOT 退化为「文件存在」。
+ * **幂等判定**（全自动链的复用点）：canonical 存在且 `/verdict === "ready"` ⇒ 已通过，不必重跑。
+ * 这不是「门解除」——没有人工门；「文件存在」也**不算**通过（`failed` 同样产生 canonical）。
  * @param appDir - 应用产物目录。
- * @returns 可直接喂给 deferred store 的 `artifact-json-pointer` 条件。
+ * @returns 是否已有一次真实的 ready 记录。
  */
-export function runtimeVerifyUnlock(appDir: string): {
-  readonly kind: 'artifact-json-pointer'
-  readonly path: string
-  readonly pointer: string
-  readonly equals: unknown
-} {
-  return {
-    kind: 'artifact-json-pointer',
-    path: path.join(appDir, RUNTIME_VERIFY_NAME),
-    pointer: '/verdict',
-    equals: 'ready',
+export async function runtimeVerificationSatisfied(appDir: string): Promise<boolean> {
+  const { canonical } = await readRuntimeVerify(appDir)
+  return canonical?.verdict === 'ready'
+}
+
+/** 机器可执行的失败处置（类沿用仓库 `RepairClass` 三态；格式化归 skill-alioth 的 repair 契约）。 */
+export interface RuntimeFailure {
+  readonly ruleId: string
+  readonly class: 'fixable' | 'retryable' | 'not-fixable'
+  readonly action: string
+  readonly detail: string
+}
+
+/**
+ * 把一次运行期验证的结论翻成**自动处置契约**（不触发任何人工流程）。
+ * @param doc - 证据文档（或其 verdict/failure_kind）。
+ * @returns 失败契约；`ready` 返回 null（通过即无事可做）。
+ */
+export function runtimeFailure(doc: {
+  readonly verdict: RuntimeVerdict
+  readonly failure_kind?: RuntimeFailureKind | null
+  readonly failures?: readonly string[]
+  readonly container?: string
+}): RuntimeFailure | null {
+  if (doc.verdict === 'ready') return null
+  const detail = (doc.failures ?? []).join('; ')
+  switch (doc.failure_kind) {
+    case 'artifact':
+      return {
+        ruleId: 'runtime-artifact-failed',
+        class: 'fixable',
+        action: '按 failures/probes 修产物（app.json/模块/扩展/服务骨架）后重跑验证',
+        detail,
+      }
+    case 'auth':
+      return {
+        ruleId: 'runtime-control-unauthorized',
+        class: 'not-fixable',
+        action: '补齐/轮换控制面 token（ALIOTH_RUNTIME_CONTROL_TOKEN 或其文件载体，0600 且 ≥32 字符）后重跑',
+        detail,
+      }
+    case 'capability':
+      return {
+        ruleId: 'runtime-container-service-unavailable',
+        class: 'not-fixable',
+        action: '平台侧开启容器服务（仅 Linux、本机引擎）或改指本机控制面后重跑',
+        detail,
+      }
+    default:
+      return {
+        ruleId: 'runtime-environment-unreachable',
+        class: 'retryable',
+        action: '自动重试（重试墙按调用签名收敛）；持续不可达时核控制面端点/网络/TLS 后重跑',
+        detail,
+      }
   }
 }
