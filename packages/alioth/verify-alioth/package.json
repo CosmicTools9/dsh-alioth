@@ -1,6 +1,6 @@
 {
   "name": "@dsh-alioth/verify-alioth",
-  "description": "Alioth AppAgent verification/closure library: eval reports, extension runtime verification, closure audit, artifact versioning/rollback, staged patches, build-eval baseline, capability advertisement, deferred store, usage aggregation, stage gates, publish shadow",
+  "description": "Alioth AppAgent verification/closure library: eval reports, extension runtime verification, closure audit, artifact versioning/rollback, staged patches, build-eval baseline, capability advertisement, deferred store, usage aggregation, stage gates, publish shadow, runtime (container) verification evidence + control-plane client",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,

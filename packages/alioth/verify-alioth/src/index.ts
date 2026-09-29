@@ -105,3 +105,36 @@ export {
 export { aggregateUsage, estimateCost, type PriceTable, type UsageEvent, type UsageSummary } from './usage.ts'
 export { evaluateStageGate, interactionDeclaration, type StageGateOutcome, type StageGatePending, type StageId } from './stage-gates.ts'
 export { evaluatePublishShadow, PUBLISH_SHADOW_PREDICATES, type PublishShadow } from './auto-gate.ts'
+export {
+  buildRuntimeVerify,
+  readRuntimeVerify,
+  redactRuntimeEvidence,
+  runtimeVerdictOutcome,
+  runtimeVerifyUnlock,
+  writeRuntimeVerify,
+  RUNTIME_VERIFY_DEGRADED_NAME,
+  RUNTIME_VERIFY_NAME,
+  RUNTIME_VERIFY_SCHEMA,
+  type RuntimeCleanup,
+  type RuntimeProbe,
+  type RuntimeVerdict,
+  type RuntimeVerdictOutcome,
+  type RuntimeVerifyDoc,
+  type RuntimeVerifyInput,
+  type RuntimeVerifyState,
+  type RuntimeVerifyWritten,
+} from './runtime-verify.ts'
+export {
+  createRuntimeControl,
+  outcomeForStatus,
+  parseControlCapability,
+  resolveRuntimeControlToken,
+  RUNTIME_TOKEN_MIN_LENGTH,
+  type ControlCapability,
+  type ControlOutcome,
+  type ControlResponse,
+  type RuntimeControlClient,
+  type RuntimeControlConfig,
+  type StartContainerBody,
+  type TokenResolution,
+} from './runtime-control.ts'

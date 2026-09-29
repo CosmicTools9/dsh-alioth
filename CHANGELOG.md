@@ -17,6 +17,7 @@ this file records user-visible changes per release.
   否则拒绝发布）。
 
 ### Added
+- **运行期（容器）验证的证据面**：`verify-alioth` 新增 `runtime-verify.ts`（canonical `runtime-verify.json` 与降级 `runtime-verify.degraded.json` **互斥**——真实执行 `verdict ∈ ready|failed` 才写 canonical，降级写 degraded 并清 canonical；门解除 = 内容谓词 `/verdict == "ready"`，不用文件存在；证据按键名脱敏）与 `runtime-control.ts`（容器托管平面控制面消费端：`/containers` 动词、§11 状态码归一、token 载体与 Meta 同序且 `0600`/≥32 字符 fail-closed、`Host` 覆写、TLS 校验可显式关闭）。对齐 `NS_APP_RUNTIME_HOSTING_SPEC.md` §9/§11 与 上游 AppAgent `verify_runtime.rs`；**尚不含**模型面工具与管线门接线。
 - **会话绑定改由服务端写入**：客户端脚本嗅探的是 harness 旧 REST 路径（`/api/session/create`），harness 换传输后绑定
   静默失效——m2 实测同一会话落到另一账号的命名空间（工具守卫与工作区选择器双双退化为路径推断）。现在
   `session/created` 时用 harness 的连接账户上下文写入 `dsh_alioth_auth.session_bindings`，`userForSessionId` 优先读它，
