@@ -1,4 +1,5 @@
 {
+  "extends": "./tsconfig.harness-paths.json",
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2024"],
@@ -9,7 +10,12 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-    "verbatimModuleSyntax": true,
+    // The typecheck program extends tsconfig.harness-paths.json, so it compiles
+    // the harness sources this checkout imports. Those sources read the vendor
+    // tier's ambient const enums (`FiberState` from @deepseek-ai/cordis), which
+    // `verbatimModuleSyntax: true` rejects; the harness base runs the same flag
+    // off for the same reason. Import-style discipline stays with oxlint.
+    "verbatimModuleSyntax": false,
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "resolveJsonModule": true,

@@ -63,6 +63,10 @@ Positioning (from `AppCreator/DESIGN_INTENT.md`): AppCreator is the open-source 
 - **AppAgent pipeline**: `Meta/backend/app-agent/` — a state machine consuming `skill-adapters/*.yaml` (typed Track/Step/gate definitions: `alioth-app.yaml`, `alioth-module.yaml`, `alioth-block.yaml`, `alioth-compose.yaml`, `alioth-ontology.yaml`, ...). This is the pipeline the plugin drives to create apps.
 - **Data flow**: dialogue request → AppAgent state machine (tracks/steps/gates) → `alioth-gen`/`ontology-mapping` engines → Pre-Proc artifacts (`Pre-Proc/{namespace}/Apps/{app}/app.json` + `extensions/` + `prototype.html` + `gateway_design.md` + `Sources/` skeleton) → importable by AliothStudio/Gateway. Plugin bridge shape: harness tool → Rust binary/API (app-agent / alioth-gen CLI) → PostgreSQL `isahl_meta` → artifacts.
 
+## Harness source plane
+
+`pnpm run gen:harness-paths` derives `tsconfig.harness-paths.json` from the sibling `../deepseek-harness` manifests, and the root tsconfig extends it, so `typecheck` reads that checkout's sources rather than its built declarations; `pnpm run check:harness-paths` is the drift gate and runs first in `mise run gates`. The vendor tier is deliberately absent from the map — its sources are not written under the strictness set the harness packages use, so compiling them here reports errors in `vendor/cordis` — and the emit build still resolves through node_modules, so nothing here changes what ships. `verbatimModuleSyntax` is off for the same reason the harness keeps it off: the mapped sources read the vendor tier's ambient const enums.
+
 ## Key Directories
 
 ### Harness (`/Users/william.d.zk/WorkSpace/deepseek-harness`)

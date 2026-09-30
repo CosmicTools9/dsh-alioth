@@ -15,6 +15,8 @@
     "lint": "oxlint --deny-warnings .",
     "lint:fix": "oxlint --fix --fix-suggestions --deny-warnings .",
     "check:strip-only": "node --import tsx scripts/check-strip-only.ts",
+    "check:harness-paths": "node --import tsx scripts/gen-harness-paths.ts --check",
+    "gen:harness-paths": "node --import tsx scripts/gen-harness-paths.ts",
     "check:vendor": "node --import tsx scripts/check-vendor.ts",
     "sync:framework": "node --import tsx scripts/sync-framework.ts",
     "check:versions": "node --import tsx scripts/check-versions.ts",
