@@ -5,7 +5,18 @@ this file records user-visible changes per release.
 
 ## [Unreleased]
 
+### Changed
+- **运行在 harness `0.2.0-rc.2` 线上**：`@deepseek-ai/*` 声明范围与 vendor 层（`@deepseek-ai/cordis` `^4.0.4`、
+  `cordis-plugin-loader` `^1.0.5`、`schemastery` `^3.18.4`）随 sibling checkout 一起前进，pnpm 单源到 12.6.0
+  （`packageManager` + Dockerfile + CI 引脚同动，lockfile 随之重生成）；安全底抬到同大版本内的最小修复版
+  （undici / ip-address / fast-uri / brace-expansion），`pnpm audit --audit-level=moderate` 回到绿。
+
 ### Fixed
+- **右侧栏两个 tab 的互跳按钮点了没反应**：「原型」与「应用状态」互为入口的按钮从一个只注入了
+  `sidebarRightTabs` 的 cordis scope 读 `sidebarRight` —— 未注入的服务属性读取会**直接抛**
+  `cannot get property "sidebarRight" without inject`（不是 undefined），于是点击只留一条控制台报错、界面毫无反应；
+  typecheck / 树装配 / 桩测试全绿也复现（只有浏览器 E2E 看得见）。现注入列表同时声明两者，客户端工件的 inject 桩改为
+  复刻该 guard（旧形态下 3 条测试红）。
 - **应用页把 `app.json` 的声明 code 当成工作区名**：改名只动目录、不更新 `<app>/app.json` 的 `code`，于是列表按声明显示旧名（实测 `Apps/wms` 的 app.json 声明 `warehouse-management`）——改名到目录名会被「already exists」拦下，而它声称要改的源目录根本不存在。现在：目录名即工作区身份；`renameApp` 先校验源目录（错误指向真因）、改名时同步 `app.json.code`（同名改名=就地修订）；列表读到漂移**自动修订**，仅当产物不可写时才渲染不一致徽标。
 - **SQL 漏斗串行化**：`PgHandle` 只持一个 `pg.Client`，此前并发调用者（多个插件在 boot 期同时打 `ctx.aliothEnv.sql()`）会让语句在同一条连接上重叠——pg@8 只打弃用告警（启动日志可见），pg@9 变成硬错；更要紧的是漏斗自己的重放判定（「未发出 ⇒ 可重放」/「可能已执行 ⇒ 绝不重放」）只在无并发在飞时成立。现所有语句走单车道 FIFO 队列（`createSerialLane`），关闭时先排空车道再断连；新增 4 条测试（3 条队列不变量 + 1 条真库并发串行断言）。
 - **控制台构建产物（web 面）不再被当成「库建好就算完」**：容器镜像与部署机此前只建 harness 的库
