@@ -45,10 +45,14 @@ runs:
         # (`workspace/workspace` also gained the optional `dsh-session-projection-cache`
         # dependency the session-delete path needs). Plus the browser-local
         # Ungrouped bucket suppression (`25e679fdd4`, client source only — no
-        # manifest change, so the lockfile stays). Pin and lockfile MUST move
-        # together — regenerate `pnpm-lock.yaml` against this revision in the same
-        # commit, or the frozen install fails.
-        ref: 25e679fdd4858d14223e8a2f5a3ba235d312bf1c
+        # manifest change, so the lockfile stays).
+        # 2026-09-30: advanced across the 0.2.0-rc.2 upstream merge — the whole
+        # workspace bumped 0.1.7-rc.2 → 0.2.0-rc.2, so the consumer's declared
+        # ranges moved to `^0.2.0-rc.2` and every harness importer section in
+        # `pnpm-lock.yaml` was regenerated. Pin and lockfile MUST move
+        # together — regenerate `pnpm-lock.yaml` against this revision in the
+        # same commit, or the frozen install fails.
+        ref: fe5fe906e240d1540b237afa711891ab84a24d8b
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
@@ -57,7 +61,7 @@ runs:
     - name: enable pnpm
       if: inputs.build == 'true'
       shell: bash
-      run: corepack enable && corepack prepare pnpm@12.3.4 --activate
+      run: corepack enable && corepack prepare pnpm@12.6.0 --activate
     - name: harness install + host build
       if: inputs.build == 'true'
       shell: bash

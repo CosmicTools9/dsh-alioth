@@ -510,7 +510,11 @@ window.__ModuleLoader__.load({
       }
       // The right-Sidebar tab registers only where that registry exists (web
       // profiles); a tree without it keeps the chip and gains nothing else.
-      ctx.inject(['sidebarRightTabs'], (scope) => {
+      // `sidebarRight` must be declared alongside the registry: cordis resolves
+      // a service property only on a context that injected it (`cannot get
+      // property "sidebarRight" without inject`), and both bodies open the other
+      // tab through it.
+      ctx.inject(['sidebarRightTabs', 'sidebarRight'], (scope) => {
         scope.effect(() => scope.sidebarRightTabs.register(aliothTabDefinition))
         scope.effect(() => scope.slots.inject('sidebar.right.pane.tab', () => scope.slots.register({
           name: 'sidebar.right.pane.tab',

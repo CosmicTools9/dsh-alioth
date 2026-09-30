@@ -23,7 +23,7 @@ FROM node:24.20-slim AS build
 # node-pty/koffi compile native bits when prebuilds are missing (linux-arm64).
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ git \
   && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@12.3.4 --activate
+RUN corepack enable && corepack prepare pnpm@12.6.0 --activate
 
 # Host harness source tree first: this workspace's @deepseek-ai devDeps
 # resolve through ../deepseek-harness, and the harness must be built before

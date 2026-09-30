@@ -1421,6 +1421,33 @@ function findNode(tree: unknown, label: string): { readonly props: Record<string
   return undefined
 }
 
+/**
+ * An injected scope that resolves only what the plugin DECLARED, like the real
+ * client context: `vendor/cordis` resolves a service property through a proxy
+ * whose `get` trap throws `cannot get property "<name>" without inject` for an
+ * undeclared name. A stub that hands over every service regardless hides a dead
+ * call site — the cross-tab buttons shipped calling `scope.sidebarRight.openTab`
+ * from a scope that had only injected `sidebarRightTabs`, so they threw
+ * `without inject` in the console and did nothing. `effect`/`slots`/`inject`
+ * are framework members the plugin's own root injection and the derived context
+ * always carry.
+ * @param deps - the names the plugin passed to `ctx.inject`.
+ * @param scope - the stub scope, mirroring the real one's own properties.
+ * @returns the scope, guarded against undeclared service reads.
+ */
+function guardedScope(deps: readonly string[], scope: Record<string, unknown>): Record<string, unknown> {
+  const declared: Record<string, true> = { effect: true, slots: true, inject: true, get: true, on: true }
+  for (const dep of deps) declared[dep] = true
+  return new Proxy(scope, {
+    get: (target, prop, receiver) => {
+      if (typeof prop === 'string' && declared[prop] !== true && prop in target) {
+        throw new Error(`cannot get property "${prop}" without inject`)
+      }
+      return Reflect.get(target, prop, receiver)
+    },
+  })
+}
+
 describe('client face artifact', () => {
   it('ships a valid client module (shell.overlay user chip)', async () => {
     // Hand-authored closure-factory (no build step) — guard its contract:
@@ -1459,7 +1486,7 @@ describe('client face artifact', () => {
       // gate the chip, and it must declare what it needs.
       inject: (deps: readonly string[], callback: (scope: unknown) => void) => {
         sidebarDeps = deps
-        callback({
+        callback(guardedScope(deps, {
           effect: (fn: () => unknown) => { fn() },
           sidebarRightTabs: {
             register: (definition: Record<string, unknown>) => {
@@ -1472,7 +1499,7 @@ describe('client face artifact', () => {
             register: (options: { key: string }, _body: unknown) => { tabSeatKeys.push(options.key); return () => {} },
           },
           sidebarRight: { openTab: () => {} },
-        })
+        }))
         return () => {}
       },
       slots: {
@@ -1496,7 +1523,7 @@ describe('client face artifact', () => {
 
     // Both Alioth tab types register through the optional sidebar registry,
     // each body under its own keyed seat.
-    expect(sidebarDeps).toEqual(['sidebarRightTabs'])
+    expect(sidebarDeps).toEqual(['sidebarRightTabs', 'sidebarRight'])
     const guideOf = (id: string): { title: () => string; description: () => string } | undefined =>
       (tabDefinitions.get(id) as { guide?: Array<{ title: () => string; description: () => string }> } | undefined)?.guide?.[0]
     expect(tabDefinitions.get('@dsh-alioth/sidebar-prototype')).toMatchObject({ kind: 'alioth-prototype' })
@@ -1661,8 +1688,8 @@ describe('client face artifact', () => {
       // harness shell (the gate only shadows it off loopback).
       get: () => ({ isLoopback: true }),
       effect: (fn: () => unknown) => { fn() },
-      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
-        callback({
+      inject: (deps: readonly string[], callback: (scope: unknown) => void) => {
+        callback(guardedScope(deps, {
           effect: (fn: () => unknown) => { fn() },
           sidebarRightTabs: { register: () => () => {} },
           slots: {
@@ -1674,7 +1701,7 @@ describe('client face artifact', () => {
             },
           },
           sidebarRight: { openTab: (kind: string) => { opened.push(kind) } },
-        })
+        }))
         return () => {}
       },
       slots: {
@@ -1828,8 +1855,8 @@ describe('client face artifact', () => {
       // harness shell (the gate only shadows it off loopback).
       get: () => ({ isLoopback: true }),
       effect: (fn: () => unknown) => { fn() },
-      inject: (_deps: readonly string[], callback: (scope: unknown) => void) => {
-        callback({
+      inject: (deps: readonly string[], callback: (scope: unknown) => void) => {
+        callback(guardedScope(deps, {
           effect: (fn: () => unknown) => { fn() },
           sidebarRightTabs: { register: () => () => {} },
           slots: {
@@ -1841,7 +1868,7 @@ describe('client face artifact', () => {
             },
           },
           sidebarRight: { openTab: (kind: string) => { opened.push(kind) } },
-        })
+        }))
         return () => {}
       },
       slots: { inject: (_key: string, callback: () => unknown) => { callback(); return () => {} }, register: () => () => {} },
