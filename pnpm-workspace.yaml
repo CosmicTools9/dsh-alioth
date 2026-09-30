@@ -32,7 +32,7 @@ overrides:
   # Security floors raised 2026-09-13 from `pnpm audit --audit-level=moderate`
   # (12 high / 6 moderate). Each stays within the range's own major line so
   # consumers keep their expected API.
-  fast-uri: '^3.1.6'
+  fast-uri: '^3.1.8'
   js-yaml: '^4.3.2'
   hono: '^4.13.5'
   qs: '^6.16.0'
@@ -42,6 +42,22 @@ overrides:
   pnpm: '12.6.0'
   sharp: '>=0.35.4'
   yaml: '>=2.8.3'
+  # Security floors raised 2026-09-30 from `pnpm audit --audit-level=moderate`
+  # (11 high / 18 moderate after the harness moved to the 0.2.0-rc.2 line).
+  # Every offending path is reached through the harness sibling checkout —
+  # `util/http-proxy` + `web/web-fetch-http` (undici), `apps/desktop`'s
+  # electron-builder chain (brace-expansion via minimatch), and the
+  # `@modelcontextprotocol/sdk` → `express-rate-limit` / ajv subtrees
+  # (ip-address, fast-uri) — so the floor belongs to this workspace the same way
+  # the pre-existing entries do. Scoped to each package's own major line: a
+  # consumer that asked for undici 7 or brace-expansion 1 must not be handed a
+  # different major. Each value is the lowest release that clears its advisories.
+  'undici@^8': '^8.10.2'
+  'undici@^7': '^7.29.1'
+  'ip-address@^10': '^10.7.1'
+  'brace-expansion@^1': '^1.1.21'
+  'brace-expansion@^2': '^2.1.7'
+  'brace-expansion@^5': '^5.0.12'
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
