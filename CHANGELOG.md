@@ -6,10 +6,13 @@ this file records user-visible changes per release.
 ## [Unreleased]
 
 ### Changed
-- **运行在 harness `0.2.0-rc.2` 线上**：`@deepseek-ai/*` 声明范围与 vendor 层（`@deepseek-ai/cordis` `^4.0.4`、
-  `cordis-plugin-loader` `^1.0.5`、`schemastery` `^3.18.4`）随 sibling checkout 一起前进，pnpm 单源到 12.6.0
-  （`packageManager` + Dockerfile + CI 引脚同动，lockfile 随之重生成）；安全底抬到同大版本内的最小修复版
-  （undici / ip-address / fast-uri / brace-expansion），`pnpm audit --audit-level=moderate` 回到绿。
+- **运行在 harness `0.2.1-alpha.1` 线上**：`@deepseek-ai/*` 声明范围（`^0.2.1-alpha.1`）与 vendor 层（`@deepseek-ai/cordis` `^4.0.5-alpha.1`、
+  `schemastery` `^3.18.5-alpha.1`）随 sibling checkout 一起前进——`linkWorkspacePackages` 只在版本区间被 sibling 满足时才出 link，
+  升版后旧的 `^0.2.0-rc.2`/`^4.0.4`/`^3.18.4` 一律静默回退 registry（members/examples 曾混装 registry dsh rc.2 + registry schemastery 3.18.4，
+  与组合里的 vendor 副本形成双实例），本次全 manifest 清扫后 74 条 importer 全部落回 vendor/link，registry tarball 残留为 0。
+  上游 invariant 插件重构删除了 `@deepseek-ai/dsh-invariants` 包，本仓零引用，死依赖随线切除；pnpm 单源到 12.8.1、node 26.10.0
+  （`packageManager` + mise + CI 引脚同动，lockfile 随之重生成）。安全底维持同大版本内最小修复版
+  （undici / ip-address / fast-uri / brace-expansion），`pnpm audit --audit-level=moderate` 保持绿。
 
 ### Fixed
 - **右侧栏两个 tab 的互跳按钮点了没反应**：「原型」与「应用状态」互为入口的按钮从一个只注入了
