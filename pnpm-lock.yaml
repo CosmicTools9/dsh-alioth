@@ -14484,8 +14484,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/host/directory-picker
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
     devDependencies:
       '@deepseek-ai/dsh-client-connection':
         specifier: ^0.2.1-alpha.1
@@ -14503,8 +14503,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
@@ -14515,8 +14515,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/auth-alioth':
         specifier: workspace:*
         version: link:../auth-alioth
@@ -14540,8 +14540,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
 
   packages/alioth/billing-web-alioth:
     dependencies:
@@ -14549,8 +14549,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/billing-alioth':
         specifier: workspace:*
         version: link:../billing-alioth
@@ -14616,8 +14616,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       acorn:
         specifier: 8.15.0
         version: 8.15.0
@@ -14656,8 +14656,8 @@ importers:
         specifier: workspace:^
         version: link:../../../../deepseek-harness/packages/feedback/page-feedback
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
 
   packages/alioth/gen-alioth:
     dependencies:
@@ -14665,8 +14665,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       yaml:
         specifier: '>=2.8.3'
         version: 2.9.0
@@ -14689,8 +14689,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
@@ -14710,8 +14710,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
 
   packages/alioth/skill-alioth:
     dependencies:
@@ -14719,8 +14719,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       yaml:
         specifier: '>=2.8.3'
         version: 2.9.0
@@ -14734,8 +14734,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/gen-alioth':
         specifier: workspace:*
         version: link:../gen-alioth
@@ -14752,8 +14752,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
@@ -14783,8 +14783,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
@@ -14817,8 +14817,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
@@ -14838,8 +14838,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
@@ -14859,8 +14859,8 @@ importers:
         specifier: ^0.2.1-alpha.1
         version: link:../../../../deepseek-harness/packages/core/tools
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
 
   packages/alioth/verify-alioth:
     dependencies:
@@ -14868,8 +14868,8 @@ importers:
         specifier: ^4.0.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/cordis
       '@deepseek-ai/schemastery':
-        specifier: ^3.18.4
-        version: 3.18.4
+        specifier: ^3.18.5-alpha.1
+        version: link:../../../../deepseek-harness/vendor/schemastery
       yaml:
         specifier: '>=2.8.3'
         version: 2.9.0
