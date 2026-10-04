@@ -52,7 +52,7 @@ runs:
         # `pnpm-lock.yaml` was regenerated. Pin and lockfile MUST move
         # together — regenerate `pnpm-lock.yaml` against this revision in the
         # same commit, or the frozen install fails.
-        ref: fe5fe906e240d1540b237afa711891ab84a24d8b
+        ref: 02a0004b4be0e4145fb4c5e858dd49981a3394db
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'

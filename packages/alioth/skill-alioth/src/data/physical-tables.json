@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/physical-tables.json",
  "description": "isahl physical table index [table, parent] + root-family common columns, generated offline from the Alioth model repo.",
- "source": "Alioth repo v10.0.36 (2026-09-28T19:41:45.099725+00:00)",
+ "source": "Alioth repo v10.0.38 (2026-10-03T14:58:42.193626+00:00)",
  "root_columns": [
   "created_at",
   "created_by_id",
@@ -3327,12 +3327,8 @@
    "zc_id_status"
   ],
   [
-   "zc_id_stus-place",
-   "zc_id_stus-storage"
-  ],
-  [
    "zc_id_stus-channel",
-   "zc_id_stus-place"
+   "zc_id_status"
   ],
   [
    "zc_id_stus-collect",
@@ -3467,6 +3463,10 @@
    "zc_id_status"
   ],
   [
+   "zc_id_stus-place",
+   "zc_id_stus-storage"
+  ],
+  [
    "zc_id_stus-plan",
    "zc_id_status"
   ],
@@ -3517,6 +3517,10 @@
   [
    "zc_id_stus-purchase",
    "zc_id_stus-trade"
+  ],
+  [
+   "zc_id_stus-repository",
+   "zc_id_stus-storage"
   ],
   [
    "zc_id_stus-retail",
@@ -3584,7 +3588,7 @@
   ],
   [
    "zc_id_stus-vessel",
-   "zc_id_stus-vehicle"
+   "zc_id_status"
   ],
   [
    "zc_id_subj-sovereign",

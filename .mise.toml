@@ -14,7 +14,7 @@
 #   GitHub release（本机实测 >5min 未完成）。版本真理源在 Dockerfile（1.4.2）。
 
 [tools]
-node = "24.20.0"
+node = "26.10.0"
 [tasks]
 launch = "bash scripts/launch-web.sh"
 "alioth:doctor" = "pnpm exec tsx scripts/alioth-doctor.ts"
