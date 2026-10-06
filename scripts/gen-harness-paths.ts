@@ -49,6 +49,23 @@ function sourceOfTypesPath(typesPath: string): string | undefined {
 }
 
 /**
+ * Packages whose sources are excluded from the map and consumed through their
+ * built declarations instead. Same class of exclusion as the vendor tier:
+ * - `dsh-llm-deepseek` compiles its SSE parser against the DOM type surface
+ *   (`BufferSource`) that the harness's own typecheck provides but this repo's
+ *   lib set deliberately does not — mapping it here would drag the whole
+ *   settings/config-editor/app-boot source chain into this program, where the
+ *   vendored loader's type identity then clashes with the registry copy
+ *   app-picker installs (measured: 9 errors, all in harness boot sources).
+ * A consumer importing these two packages typechecks against `lib/types/*.d.ts`
+ * of the sibling checkout — the checkout is built first by contract.
+ */
+const SOURCE_EXCLUDED = new Set([
+  '@deepseek-ai/dsh-llm-deepseek',
+  '@deepseek-ai/dsh-llm-deepseek-api-key',
+])
+
+/**
  * Collect every specifier this repo may import from the harness checkout.
  *
  * The vendor tier (`@deepseek-ai/cordis`, its plugin family, `schemastery`,
@@ -71,6 +88,7 @@ function collectExports(): HarnessExport[] {
       exports?: Record<string, { types?: string } | string>
     }
     if (parsed.name === undefined || parsed.exports === undefined) continue
+    if (SOURCE_EXCLUDED.has(parsed.name)) continue
     for (const [key, target] of Object.entries(parsed.exports)) {
       // `./package.json` is not code, and the `./src/*` escape hatch names a
       // source path that a TS `paths` entry cannot express as a subpath pattern.

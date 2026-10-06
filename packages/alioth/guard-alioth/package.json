@@ -13,6 +13,7 @@
     "./surface": "./src/surface.ts",
     "./whitelist": "./src/whitelist.ts",
     "./ledger": "./src/ledger.ts",
+    "./metering": "./src/metering.ts",
     "./nudge": "./src/nudge.ts",
     "./package.json": "./package.json"
   },

@@ -405,6 +405,8 @@ describe('服务面', () => {
     expect(summary.total).toEqual({ tokensIn: 100, tokensOut: 20, calls: 1 })
     expect(summary.byModel['deepseek-chat']).toEqual({ tokensIn: 100, tokensOut: 20, calls: 1 })
     expect(summary.turns).toEqual([{ turn: 1, wallMs: 500, calls: 1 }])
-    expect(summary.cost.kind).toBe('unavailable')
+    // 内置默认价表（DeepSeek 牌价）让成本口径从第一轮起可得；部署仍可用
+    // priceTable 文件整体覆盖（给 `{}` 即显式 unavailable）。
+    expect(summary.cost).toEqual({ kind: 'estimated', totalCents: 0.036 })
   })
 })

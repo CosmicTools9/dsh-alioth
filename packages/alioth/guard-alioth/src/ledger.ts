@@ -272,6 +272,17 @@ export class SessionLedger {
     return aggregateUsage(this.sessions.get(sessionId)?.usage ?? [], this.options.prices)
   }
 
+  /** 该会话已记录的用量事件数（计量的落账游标）。 */
+  usageCount(sessionId: string): number {
+    return this.sessions.get(sessionId)?.usage.length ?? 0
+  }
+
+  /** 从下标 `from` 起的用量事件（计量的增量读取；越界 → 空数组）。 */
+  usageSlice(sessionId: string, from: number): UsageEvent[] {
+    const usage = this.sessions.get(sessionId)?.usage ?? []
+    return usage.slice(Math.max(0, from))
+  }
+
   /** 本 turn 的估算成本（分）；价表缺省/模型无价 → `null`（不判上限，不以 0 冒充）。 */
   private turnCost(sessionId: string, turn: number): number | null {
     const events = (this.sessions.get(sessionId)?.usage ?? []).filter(event => event.turn === turn)

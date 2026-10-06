@@ -21,6 +21,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -38,6 +39,7 @@ import {
   type SourceEntitlement,
 } from './source-download.ts'
 import { signSourceLink, verifySourceLink } from './source-link.ts'
+import { LoginThrottle, clientKeyOf } from './throttle.ts'
 
 export const name = 'auth-web-alioth'
 export const inject = ['aliothAuth']
@@ -212,11 +214,19 @@ async function modelInfoOf(ctx: Context): Promise<{ readonly version: string; re
 
 /**
  * Structural face of the billing capability (absent in trees that do not mount it).
- * Only the L2 authorization is read: wiring the download to `getSubscription` would
+ * The entitlement decision point is preferred when present (one seam decides);
+ * `sourceLicense` stays as the fallback for an older billing line. Only the L2
+ * authorization is read either way: wiring the download to `getSubscription` would
  * sell the ¥4,999 tier for the ¥1,399 one.
  */
 interface BillingLike {
   sourceLicense(userId: string): Promise<{ readonly until: Date } | null>
+  entitlement?(actor: { readonly id: string; readonly role: 'admin' | 'user' }, capability: string): Promise<{
+    readonly allowed: boolean
+    readonly until: Date | null
+    readonly reason: string
+  }>
+  audit?(actor: string, event: string, target?: string, evidence?: string): Promise<void>
 }
 
 function billingOf(ctx: Context): BillingLike | undefined {
@@ -228,6 +238,11 @@ function billingOf(ctx: Context): BillingLike | undefined {
   } catch {
     return undefined
   }
+}
+
+/** The billing capability's audit seam, when mounted (C6: auth events join it). */
+function auditOf(ctx: Context): NonNullable<BillingLike['audit']> | undefined {
+  return billingOf(ctx)?.audit
 }
 
 /**
@@ -242,6 +257,13 @@ function billingOf(ctx: Context): BillingLike | undefined {
 async function sourceAccessOf(ctx: Context, userId: string): Promise<SourceEntitlement> {
   const billing = billingOf(ctx)
   if (billing === undefined) return { entitled: false, until: null, reason: 'none' }
+  // The entitlement decision point is THE seam when the billing line has it.
+  if (typeof billing.entitlement === 'function') {
+    const decision = await billing.entitlement({ id: userId, role: 'user' }, 'source-download')
+    const until = decision.until === null ? null : decision.until.toISOString()
+    if (decision.allowed) return { entitled: true, until, reason: 'licensed' }
+    return { entitled: false, until, reason: decision.until === null ? 'none' : 'expired' }
+  }
   const license = await billing.sourceLicense(userId)
   return sourceEntitlement(license, new Date())
 }
@@ -387,8 +409,12 @@ ${icpFooter(icp)}
 </body></html>`)
 }
 
-function loginForm(error: string): string {
+function loginForm(error: string, ssoHref = ''): string {
+  const sso = ssoHref === '' ? '' : `
+<form method="get" action="${esc(ssoHref)}"><button>通过统一身份（SSO）登录</button></form>
+<p class="alt">或使用本地账号</p>`
   return `${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
+${sso}
 <form method="post" action="/api/auth/login">
 <label>用户名<input name="username" required autocomplete="username"></label>
 <label>密码<input name="password" type="password" required autocomplete="current-password"></label>
@@ -684,10 +710,16 @@ const SESSION_COOKIE = 'alioth_session'
 /** JS-readable marker cookie: the tapIndex gate script checks presence only. */
 const MARKER_COOKIE = 'alioth_user'
 
-function authCookies(token: string, username: string, maxAgeSeconds: number): string[] {
+/**
+ * Session cookies. `Secure` follows the deployment's public origin: an https
+ * origin (reverse-proxied B/S) gets Secure cookies so the session never rides
+ * a plaintext hop; direct-LAN http deployments stay cookie-working.
+ */
+function authCookies(token: string, username: string, maxAgeSeconds: number, secure = false): string[] {
+  const flags = `HttpOnly; Path=/; SameSite=Lax${secure ? '; Secure' : ''}; Max-Age=${maxAgeSeconds}`
   return [
-    `${SESSION_COOKIE}=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}`,
-    `${MARKER_COOKIE}=${encodeURIComponent(username)}; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}`,
+    `${SESSION_COOKIE}=${token}; ${flags}`,
+    `${MARKER_COOKIE}=${encodeURIComponent(username)}; Path=/; SameSite=Lax${secure ? '; Secure' : ''}; Max-Age=${maxAgeSeconds}`,
   ]
 }
 
@@ -766,6 +798,28 @@ export function apply(ctx: Context, config: Config): void {
     body: string,
     headers?: Record<string, string | string[]>,
   ): void => sendAuthPage(response, status, title, body, headers, icp)
+  /** Cookies go Secure whenever the deployment names an https public origin. */
+  const cookieSecure = publicOrigin?.startsWith('https') ?? false
+  /** 登录/注册限流（在线 B/S 的最低暴力破解防线；内存态、有界）。 */
+  const throttle = new LoginThrottle()
+  /** C6 审计缝：认证事件进 billing 的 append-only 账本（缺席即跳过，不打断认证流）。 */
+  const auditFor = (actor: string, event: string, target?: string, evidence?: string): void => {
+    void auditOf(ctx)?.(actor, event, target, evidence).catch(error => {
+      ctx.logger.warn(`auth-web-alioth: audit write failed (${event}): ${String(error)}`)
+    })
+  }
+  /** 浏览器表单状态变更的同源校验（SameSite=Lax 之上的第二道 CSRF 防线）。 */
+  const sameOriginPost = (request: IncomingMessage): boolean => {
+    const originHeader = request.headers.origin
+    const hostHeader = request.headers.host
+    if (!isFormPost(request) || originHeader === undefined || hostHeader === undefined) return true
+    return originHeader === `http://${hostHeader}` || originHeader === `https://${hostHeader}`
+  }
+  /** 登录页的 SSO 入口（identity adapter 为 OIDC 时出现）。 */
+  const ssoHref = (): string => {
+    const auth = ctx.get('aliothAuth') as { authMode?: () => 'local' | 'oidc' } | undefined
+    return auth?.authMode?.() === 'oidc' ? '/api/auth/oidc/start' : ''
+  }
   /** GUI origin once the webServer carrier mounts (set by the inject callback
    * below); the standalone success page links across origins with it —
    * cookies are per-origin, so a same-origin "/" link would silently keep
@@ -823,60 +877,166 @@ export function apply(ctx: Context, config: Config): void {
    * behind a LAN gateway the bind address is loopback and unreachable). */
   const handleAuthApi = async (request: IncomingMessage, response: ServerResponse, sameOrigin = false): Promise<void> => {
     const url = new URL(request.url ?? '/', 'http://localhost')
+    // 浏览器表单状态变更必须同源（第二道 CSRF 防线；无 Origin 的 JSON 客户端不受影响）。
+    if (request.method === 'POST' && !sameOriginPost(request)) {
+      sendJson(response, 403, { error: 'origin mismatch' })
+      return
+    }
     if (request.method === 'POST' && url.pathname === '/api/auth/register') {
       const body = await readBody(request)
       const username = typeof body.username === 'string' ? body.username : ''
       const password = typeof body.password === 'string' ? body.password : ''
+      const throttleKey = `${clientKeyOf(request)}\u0000${username}`
+      if (throttle.blocked(throttleKey)) {
+        const message = `尝试过于频繁，请 ${Math.ceil(5)} 分钟后再试`
+        if (isFormPost(request)) {
+          sendPage(response, 429, '注册', registerForm(message))
+        } else {
+          sendJson(response, 429, { error: message })
+        }
+        return
+      }
       if (isFormPost(request)) {
         try {
           const result = await auth().register(username, password)
+          throttle.reset(throttleKey)
+          auditFor(username, 'auth.register', `user:${username}`, '')
           if (sameOrigin) {
             response.writeHead(302, {
               location: portalUrl(request) ?? '/workspace',
-              'set-cookie': authCookies(result.token, username, ttlSeconds),
+              'set-cookie': authCookies(result.token, username, ttlSeconds, cookieSecure),
             })
             response.end()
           } else {
             sendPage(response, 201, '注册', successBody('注册', result.token, result.namespace, workspaceHref()),
-              { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+              { 'set-cookie': authCookies(result.token, username, ttlSeconds, cookieSecure) })
           }
         } catch (error) {
+          throttle.failure(throttleKey)
           sendPage(response, 400, '注册', registerForm(friendlyError(error, 'register')))
         }
         return
       }
-      const result = await auth().register(username, password)
-      sendJson(response, 201, result, { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+      try {
+        const result = await auth().register(username, password)
+        throttle.reset(throttleKey)
+        auditFor(username, 'auth.register', `user:${username}`, '')
+        sendJson(response, 201, result, { 'set-cookie': authCookies(result.token, username, ttlSeconds, cookieSecure) })
+      } catch (error) {
+        throttle.failure(throttleKey)
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
       return
     }
     if (request.method === 'POST' && url.pathname === '/api/auth/login') {
       const body = await readBody(request)
       const username = typeof body.username === 'string' ? body.username : ''
       const password = typeof body.password === 'string' ? body.password : ''
-      if (isFormPost(request)) {
+      const throttleKey = `${clientKeyOf(request)}\u0000${username}`
+      if (throttle.blocked(throttleKey)) {
+        const message = '登录尝试过于频繁，请几分钟后再试'
+        if (isFormPost(request)) {
+          sendPage(response, 429, '登录', loginForm(message, ssoHref()))
+        } else {
+          sendJson(response, 429, { error: message })
+        }
+        return
+      }
+      const loginFlow = async (): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }> => {
         try {
           const result = await auth().login(username, password)
+          throttle.reset(throttleKey)
+          return result
+        } catch (error) {
+          throttle.failure(throttleKey)
+          auditFor(`anonymous:${clientKeyOf(request)}`, 'auth.login-failed', `user:${username}`, '')
+          throw error
+        }
+      }
+      if (isFormPost(request)) {
+        try {
+          const result = await loginFlow()
+          auditFor(username, 'auth.login', `user:${username}`, '')
           if (sameOrigin) {
             response.writeHead(302, {
               location: portalUrl(request) ?? '/workspace',
-              'set-cookie': authCookies(result.token, username, ttlSeconds),
+              'set-cookie': authCookies(result.token, username, ttlSeconds, cookieSecure),
             })
             response.end()
           } else {
             sendPage(response, 200, '登录', successBody('登录', result.token, result.namespace, workspaceHref()),
-              { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+              { 'set-cookie': authCookies(result.token, username, ttlSeconds, cookieSecure) })
           }
         } catch (error) {
-          sendPage(response, 401, '登录', loginForm(friendlyError(error, 'login')))
+          sendPage(response, 401, '登录', loginForm(friendlyError(error, 'login'), ssoHref()))
         }
         return
       }
-      const result = await auth().login(username, password)
-      sendJson(response, 200, result, { 'set-cookie': authCookies(result.token, username, ttlSeconds) })
+      try {
+        const result = await loginFlow()
+        auditFor(username, 'auth.login', `user:${username}`, '')
+        sendJson(response, 200, result, { 'set-cookie': authCookies(result.token, username, ttlSeconds, cookieSecure) })
+      } catch (error) {
+        sendJson(response, 401, { error: error instanceof Error ? error.message : String(error) })
+      }
+      return
+    }
+    // ── C3 身份缝的 OIDC 入口（authMode=oidc 时由登录页链到这里） ──────────
+    if (request.method === 'GET' && url.pathname === '/api/auth/oidc/start') {
+      try {
+        const state = randomBytes(16).toString('hex')
+        const authorizeUrl = await auth().oidcAuthorizeUrl(state)
+        response.writeHead(302, { location: authorizeUrl })
+      } catch (error) {
+        sendJson(response, 503, { error: error instanceof Error ? error.message : String(error) })
+      }
+      response.end()
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/api/auth/oidc/callback') {
+      const code = url.searchParams.get('code') ?? ''
+      const state = url.searchParams.get('state') ?? ''
+      try {
+        const result = await auth().oidcExchange(code, state)
+        auditFor(result.namespace, 'auth.oidc-login', `user:${result.namespace}`, '')
+        const cookies = authCookies(result.token, result.namespace.replace(/^U-/, ''), ttlSeconds, cookieSecure)
+        if (sameOrigin) {
+          response.writeHead(302, { location: portalUrl(request) ?? '/workspace', 'set-cookie': cookies })
+        } else {
+          response.writeHead(302, { location: workspaceHref(), 'set-cookie': cookies })
+        }
+        response.end()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        sendPage(response, 401, '登录', loginForm(`统一身份登录失败：${message}`, ssoHref()))
+      }
+      return
+    }
+    // ── BYOK：登录用户存取自己的模型 API key（部署未启用 → fail-closed 400） ─
+    if (request.method === 'POST' && url.pathname === '/api/auth/apikey') {
+      const user = await auth().userForToken(bearerToken(request) ?? cookieToken(request))
+      if (user === null) {
+        sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      const body = await readBody(request)
+      const apiKey = typeof body.key === 'string' ? body.key : null
+      try {
+        await auth().setApiKey(bearerToken(request) ?? cookieToken(request) ?? '', apiKey)
+        auditFor(user.id, 'auth.apikey-set', `user:${user.username}`, apiKey === null || apiKey === '' ? 'cleared' : 'stored')
+        sendJson(response, 204, null)
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+      }
       return
     }
     if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
-      await auth().logout(bearerToken(request) ?? cookieToken(request))
+      const token = bearerToken(request) ?? cookieToken(request)
+      const user = await auth().userForToken(token)
+      await auth().logout(token)
+      if (user !== null) {
+        auditFor(user.id, 'auth.logout', `user:${user.username}`, '')
+      }
       sendJson(response, 204, null, { 'set-cookie': CLEAR_COOKIES })
       return
     }
@@ -886,7 +1046,7 @@ export function apply(ctx: Context, config: Config): void {
         sendJson(response, 401, { error: 'unauthorized' })
         return
       }
-      sendJson(response, 200, { ...user, workspaceMode: auth().workspaceMode() })
+      sendJson(response, 200, { ...user, workspaceMode: auth().workspaceMode(), authMode: auth().authMode() })
       return
     }
     // Portal into the agent console: the Alioth surfaces (workspace page,
@@ -1190,7 +1350,7 @@ export function apply(ctx: Context, config: Config): void {
       }
       response.writeHead(302, {
         location: portalUrl(request) ?? '/workspace',
-        'set-cookie': authCookies(token, user.username, ttlSeconds),
+        'set-cookie': authCookies(token, user.username, ttlSeconds, cookieSecure),
       })
       response.end()
       return
@@ -1248,7 +1408,7 @@ async function listVisiblePrototypes(
         return
       }
       if (request.method === 'GET' && url.pathname === '/login') {
-        sendPage(response, 200, '登录', loginForm(''))
+        sendPage(response, 200, '登录', loginForm('', ssoHref()))
         return
       }
       if (request.method === 'GET' && url.pathname === '/register') {
@@ -1345,7 +1505,7 @@ async function listVisiblePrototypes(
         kind: 'exact',
         path: '/login',
         handler: (_request, res) => {
-          sendPage(res, 200, '登录', loginForm(''))
+          sendPage(res, 200, '登录', loginForm('', ssoHref()))
         },
       }))
       webCtx.effect(() => web.register({

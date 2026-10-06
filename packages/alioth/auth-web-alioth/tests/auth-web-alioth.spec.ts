@@ -579,7 +579,9 @@ describe('B/S HTTP surface (real server)', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'carol', password: 'wrong-password' }),
     })
-    expect(response.status).toBe(400)
+    // 401 (not a 400): the request is well-formed, the credentials are wrong —
+    // and JSON clients now get a proper status instead of the old fallthrough.
+    expect(response.status).toBe(401)
     expect((await response.json() as { error: string }).error).toContain('invalid credentials')
   })
 
@@ -823,7 +825,7 @@ describe('auth API transport branches (real server)', () => {
       method: 'POST',
       body: 'username=carol&password=password-789',
     })
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(401)
     expect(JSON.parse(response.body)).toMatchObject({ error: expect.stringContaining('invalid credentials') })
   })
 
@@ -833,7 +835,7 @@ describe('auth API transport branches (real server)', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 42, password: [1, 2] }),
     })
-    expect(response.status).toBe(400)
+    expect(response.status).toBe(401)
     expect(await jsonError(response)).toContain('invalid credentials')
   })
 

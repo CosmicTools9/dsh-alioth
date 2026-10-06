@@ -41,6 +41,8 @@ export const GUARD_RULE_IDS = {
   turnBudget: 'turn-budget-exceeded',
   /** 单 turn 估算成本超限（需配价表）。 */
   turnCost: 'turn-cost-exceeded',
+  /** 账户月度成本预算超限（需权益缝给出配额 + 可得成本口径）。 */
+  accountBudget: 'account-budget-exceeded',
   /** 闭环证据追问。 */
   closureNudge: 'closure-evidence-nudge',
   /** 无 ns 可解析：显式降级而非猜测。 */

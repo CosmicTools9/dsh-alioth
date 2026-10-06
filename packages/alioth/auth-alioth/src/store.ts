@@ -36,8 +36,10 @@ export async function ensureAuthSchema(ctx: Context): Promise<void> {
       password_hash text NOT NULL,
       namespace text NOT NULL UNIQUE,
       role text NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+      api_key_enc text,
       created_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE ${AUTH_SCHEMA}.users ADD COLUMN IF NOT EXISTS api_key_enc text;
     CREATE TABLE IF NOT EXISTS ${AUTH_SCHEMA}.sessions (
       token_hash text PRIMARY KEY,
       user_id text NOT NULL REFERENCES ${AUTH_SCHEMA}.users(id) ON DELETE CASCADE,
@@ -151,4 +153,26 @@ export async function userForBoundSession(ctx: Context, sessionId: string): Prom
 
 export async function deleteExpiredSessions(ctx: Context): Promise<void> {
   await ctx.aliothEnv.sql(`DELETE FROM ${AUTH_SCHEMA}.sessions WHERE expires_at < now()`)
+}
+
+/** BYOK: the stored ciphertext for one user's model API key (null = none set). */
+export async function userApiKeyEnc(ctx: Context, userId: string): Promise<string | null> {
+  const result = await ctx.aliothEnv.sql<{ api_key_enc: string | null }>(
+    `SELECT api_key_enc FROM ${AUTH_SCHEMA}.users WHERE id = $1`,
+    [userId],
+  )
+  return result.rows[0]?.api_key_enc ?? null
+}
+
+export async function setUserApiKeyEnc(ctx: Context, userId: string, apiKeyEnc: string | null): Promise<void> {
+  await ctx.aliothEnv.sql(`UPDATE ${AUTH_SCHEMA}.users SET api_key_enc = $2 WHERE id = $1`, [userId, apiKeyEnc])
+}
+
+/** BYOK lookup by namespace or username (the account string the harness resolver publishes). */
+export async function userApiKeyEncByAccount(ctx: Context, account: string): Promise<string | null> {
+  const result = await ctx.aliothEnv.sql<{ api_key_enc: string | null }>(
+    `SELECT api_key_enc FROM ${AUTH_SCHEMA}.users WHERE namespace = $1 OR username = $1 LIMIT 1`,
+    [account],
+  )
+  return result.rows[0]?.api_key_enc ?? null
 }

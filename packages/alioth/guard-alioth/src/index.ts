@@ -33,6 +33,7 @@ import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { RetryBudget, type RetryDecision } from '@dsh-alioth/skill-alioth'
 import type { PriceTable, UsageSummary } from '@dsh-alioth/verify-alioth'
 import { SessionLedger, type TurnViolation } from './ledger.ts'
+import { AccountMeter, type MeteringSink } from './metering.ts'
 import { decideClosureNudge, type NudgeDecision } from './nudge.ts'
 import { GUARD_RULE_IDS, guardFeedback, type GuardRuleId } from './rules.ts'
 import { RunScopeResolver, WORKFLOW_SCOPE_TOOLS, type ActiveScope } from './scope.ts'
@@ -62,6 +63,18 @@ export const DEFAULT_ADAPTER = 'alioth-app.yaml'
 
 /** 降级证据表上限（bounded，避免长驻进程无界增长）。 */
 const DEGRADATION_LIMIT = 100
+
+/**
+ * 内置默认价表（cents / 1K tokens，DeepSeek 官方人民币牌价，缓存未命中口径）：
+ * deepseek-chat ¥2/1M 输入、¥8/1M 输出；deepseek-reasoner ¥4/1M、¥16/1M。
+ * 部署可用 `priceTable` 文件整体覆盖（给 `{}` 即显式关闭成本口径）。
+ */
+export const DEFAULT_PRICE_TABLE: PriceTable = {
+  'deepseek-chat': { centsPerInK: 0.2, centsPerOutK: 0.8 },
+  'deepseek-reasoner': { centsPerInK: 0.4, centsPerOutK: 1.6 },
+  'deepseek-v3': { centsPerInK: 0.2, centsPerOutK: 0.8 },
+  'deepseek-r1': { centsPerInK: 0.4, centsPerOutK: 1.6 },
+}
 
 export interface Config {
   /** Pre-Proc 产物树根；写沙箱的绝对路径按此判定。 */
@@ -120,8 +133,25 @@ export interface AliothGuardService {
   activeScope(sessionId: string): Promise<ActiveScope | null>
   /** 会话用量与成本口径（成本不可得时显式 `unavailable`）。 */
   usage(sessionId: string): UsageSummary
+  /**
+   * 账户计量视图（C2）：会话绑定账户时的计划/当月已落账成本/配额 + 本会话台账。
+   * 无账户（headless/未绑定）→ `null`。
+   */
+  accountUsage(sessionId: string): Promise<AccountUsageView | null>
   /** 已记录的降级证据（有界列表）。 */
   degradations(): readonly Degradation[]
+}
+
+/** 账户计量视图（`alioth_usage` 工具与运营面共用）。 */
+export interface AccountUsageView {
+  readonly account: string
+  readonly plan: 'L0' | 'L1'
+  /** 当月已落账成本（分）；账本存在无价桶时为 `null`（口径不可得，不以 0 冒充）。 */
+  readonly monthlyCostCents: number | null
+  /** 部署配置的月度预算（分）；未配置为 `null`（不判上限）。 */
+  readonly quotaCents: number | null
+  /** 本会话的台账汇总（与 `usage(sessionId)` 同口径）。 */
+  readonly session: UsageSummary
 }
 
 declare module '@deepseek-ai/cordis' {
@@ -180,15 +210,46 @@ export function apply(ctx: Context, config: Config): void {
     ...prices === undefined ? {} : { prices },
   })
 
+  // ── 账户计量（C2）：身份/落账面都是结构化查找（缺席即只算不落/不判） ──────
+  interface BillingMeterLike {
+    recordUsage(account: string, entries: readonly {
+      day: string; model: string; tokensIn: number; tokensOut: number; calls: number; costCents: number | null
+    }[]): Promise<void>
+    usageMonthly(account: string): Promise<{ costCents: number | null }>
+  }
+  interface AuthAccountLike {
+    accountForSession(sessionId: string): Promise<{
+      userId: string; username: string; namespace: string; role: 'admin' | 'user'
+      plan: 'L0' | 'L1'; monthlyCostCents: number | null
+    } | null>
+  }
+  function serviceOf<T>(name: string, probe: (value: unknown) => boolean): T | undefined {
+    try {
+      const value = (ctx.get as (name: string) => unknown).call(ctx, name)
+      return typeof value === 'object' && value !== null && probe(value) ? value as T : undefined
+    } catch {
+      return undefined
+    }
+  }
+  const billingMeter = serviceOf<BillingMeterLike>('aliothBilling', value =>
+    typeof (value as BillingMeterLike).recordUsage === 'function' && typeof (value as BillingMeterLike).usageMonthly === 'function')
+  const authAccount = serviceOf<AuthAccountLike>('aliothAuth', value =>
+    typeof (value as AuthAccountLike).accountForSession === 'function')
+  const meter = new AccountMeter({
+    ...prices === undefined ? {} : { prices },
+    ...billingMeter === undefined ? {} : { sink: billingMeter as MeteringSink },
+  })
+
   /**
-   * 价表（可选部署选择）：挂载期同步读一次小 JSON——成本上限必须从第一轮起生效，
-   * 若等异步 IO 回来再装配，窗口期内结束的 turn 会漏判。不可读/结构非法 → 降级留痕并置
-   * `undefined`：成本口径如实 `unavailable` 且**不判**上限（MUST NOT 以 0 冒充，也不静默吞掉配置错误）。
+   * 价表：默认用内置 DeepSeek 牌价（成本口径从第一轮起可得）；部署用
+   * `priceTable` 指向 JSON 文件整体覆盖——文件不可读/结构非法 → 降级留痕并置
+   * `undefined`：成本口径如实 `unavailable` 且**不判**上限（MUST NOT 以 0 冒充，
+   * 也不静默吞掉配置错误）。
    */
   function loadPrices(): PriceTable | undefined {
     const file = config.priceTable
     if (file === undefined) {
-      return undefined
+      return DEFAULT_PRICE_TABLE
     }
     try {
       const parsed: unknown = JSON.parse(readFileSync(path.resolve(file), 'utf8'))
@@ -260,12 +321,37 @@ export function apply(ctx: Context, config: Config): void {
       : `未完成项：${scope.namespace}/${scope.app} 的当前步骤 ${scope.stepId} 仍未通过`
   }
 
+  /** 账户上下文解析（auth 缺席/解析失败 ⇒ null——不猜身份）。 */
+  async function resolveAccountContext(sessionId: string): Promise<{
+    userId: string; username: string; namespace: string; role: 'admin' | 'user'
+    plan: 'L0' | 'L1'; monthlyCostCents: number | null
+  } | null> {
+    if (authAccount === undefined) return null
+    try {
+      return await authAccount.accountForSession(sessionId)
+    } catch {
+      return null
+    }
+  }
+
   const aliothGuard: AliothGuardService = {
     async whitelistSource(): Promise<WhitelistSourceReport> {
       return readWhitelistSource((await ctx.aliothEnv.ready()).modelDir)
     },
     activeScope: (sessionId: string) => resolver.activeScope(sessionId),
     usage: (sessionId: string) => ledger.usage(sessionId),
+    async accountUsage(sessionId: string): Promise<AccountUsageView | null> {
+      const account = await resolveAccountContext(sessionId)
+      if (account === null) return null
+      const monthly = await meter.monthCost(account.namespace)
+      return {
+        account: account.namespace,
+        plan: account.plan,
+        monthlyCostCents: monthly,
+        quotaCents: account.monthlyCostCents,
+        session: ledger.usage(sessionId),
+      }
+    },
     degradations: () => [...degradations],
   }
 
@@ -278,6 +364,17 @@ export function apply(ctx: Context, config: Config): void {
     }
     if (event.type === 'turn/start') {
       budgets.delete(sessionId)
+    }
+    // turn 收口即落账（C2）：把台账增量按 日×模型 汇进账户账本。失败只留痕，
+    // 不打断会话——落账是计量义务，不是执行前提。
+    if (event.type === 'turn/end') {
+      const pending = ledger.usageSlice(sessionId, meter.offsetOf(sessionId))
+      if (pending.length > 0) {
+        void meter.flush(sessionId, pending, event.time).catch(error =>
+          ctx.logger.warn(
+            `guard-alioth: 用量落账失败（${sessionId}）：${error instanceof Error ? error.message : String(error)}`,
+          ))
+      }
     }
   })
 
@@ -361,13 +458,41 @@ export function apply(ctx: Context, config: Config): void {
     return { kind: 'block', feedback: [{ type: 'text', text }] }
   })
 
-  // ── 执行前（步骤级）：turn 预算阻断与闭环证据追问 ────────────────────────
+  // ── 执行前（步骤级）：账户绑定/月度预算、turn 预算阻断、闭环证据追问 ─────
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     const sessionId = String(agent.id)
     const violation: TurnViolation | null = ledger.takeViolation(sessionId)
     if (violation !== null) {
       ctx.logger.warn(`guard-alioth: 阻断下一步（turn 预算）${violation.reason}`)
       return { kind: 'reject' }
+    }
+    // 账户月度预算（C2）：auth 缺席 / 无身份 / 部署未配配额 ⇒ 不判；成本口径
+    // 不可得（存在无价模型）⇒ 留降级证据不判——两者都绝不以 0 冒充。
+    const account = await resolveAccountContext(sessionId)
+    meter.setAccount(sessionId, account?.namespace ?? null)
+    if (account !== null && account.monthlyCostCents !== null) {
+      const budget = account.monthlyCostCents
+      const persisted = await meter.monthCost(account.namespace)
+      if (persisted === null) {
+        noteDegradation(
+          sessionId,
+          GUARD_RULE_IDS.accountBudget,
+          `账户 ${account.namespace} 的月度成本口径不可得（存在无价模型或无落账面）——不判预算`,
+        )
+      } else {
+        const inflight = meter.unflushedCost(sessionId, ledger.usageSlice(sessionId, meter.offsetOf(sessionId)))
+        if (inflight !== null && persisted + inflight > budget) {
+          const reason = guardFeedback({
+            ruleId: GUARD_RULE_IDS.accountBudget,
+            repairClass: 'not-fixable',
+            message: `账户 ${account.namespace} 本月估算成本 ${persisted + inflight} 分已超过月度预算 ${budget} 分`,
+            action: '停止继续调用模型；需要更高预算时由运营调整该账户的月度配额',
+            evidence: `persisted=${persisted} sessionInflight=${inflight} quota=${budget}`,
+          })
+          ctx.logger.warn(`guard-alioth: 阻断下一步（账户预算）${reason}`)
+          return { kind: 'reject' }
+        }
+      }
     }
     const decision: NudgeDecision = decideClosureNudge(
       nudgeEnabled,
@@ -408,6 +533,7 @@ function parseArguments(raw: string): unknown {
 }
 
 export { SessionLedger, type SessionLedgerOptions, type TurnLedger, type TurnViolation } from './ledger.ts'
+export { AccountMeter, type AccountMeterOptions, type MeterFlushEntry, type MeteringSink } from './metering.ts'
 export { decideClosureNudge, CLOSURE_NUDGE_TEXT, type NudgeDecision, type NudgeView } from './nudge.ts'
 export { GUARD_RULE_IDS, guardDenyReason, guardFeedback, type GuardRuleId } from './rules.ts'
 export { RunScopeResolver, WORKFLOW_SCOPE_TOOLS, type ActiveScope, type ScopeKey } from './scope.ts'

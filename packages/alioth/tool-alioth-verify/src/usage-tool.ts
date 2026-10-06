@@ -65,6 +65,7 @@ export function registerUsageTool(ctx: Context, options: { readonly priceTable?:
           reason: { type: 'string' },
           sessionId: { type: 'string' },
           priceTable: { type: 'string' },
+          account: { type: 'json' },
           summary: { type: 'json' },
         },
       },
@@ -80,7 +81,15 @@ export function registerUsageTool(ctx: Context, options: { readonly priceTable?:
         const costText = cost?.kind === 'estimated'
           ? `${String(cost.totalCents)}c`
           : `unavailable (${cost?.reason ?? 'no price table'})`
-        return [{ type: 'text', text: `usage: ${String(summary?.total?.calls ?? 0)} call(s), cost=${costText}` }]
+        const account = value.account as {
+          account?: string; plan?: string; monthlyCostCents?: number | null; quotaCents?: number | null
+        } | undefined
+        const accountText = account === undefined || account === null
+          ? ''
+          : ` · account ${String(account.account)} plan=${String(account.plan)} month=${
+            typeof account.monthlyCostCents === 'number' ? `${String(account.monthlyCostCents)}c` : 'unavailable'
+          }${typeof account.quotaCents === 'number' ? `/${String(account.quotaCents)}c` : ' (no quota)'}`
+        return [{ type: 'text', text: `usage: ${String(summary?.total?.calls ?? 0)} call(s), cost=${costText}${accountText}` }]
       },
     },
     async execute(args, exec) {
@@ -88,11 +97,20 @@ export function registerUsageTool(ctx: Context, options: { readonly priceTable?:
       const sessionId = sessionIdOf(exec, a.sessionId)
       const guard = guardOf(ctx)
       if (guard === undefined || typeof guard.usage !== 'function') {
-        return { available: false, reason: `${GUARD_ABSENT_REASON}——会话用量台账由守卫累积`, sessionId, summary: null }
+        return { available: false, reason: `${GUARD_ABSENT_REASON}——会话用量台账由守卫累积`, sessionId, account: null, summary: null }
       }
       const summary = guard.usage(sessionId)
+      // 账户计量视图（C2）：守卫提供即带上；无账户（headless/未绑定）→ null。
+      let account: ReturnType<typeof asJsonOutput> = null
+      if (typeof guard.accountUsage === 'function') {
+        try {
+          account = asJsonOutput(await guard.accountUsage(sessionId))
+        } catch (error) {
+          account = { error: error instanceof Error ? error.message : String(error) }
+        }
+      }
       if (options.priceTable === undefined) {
-        return { available: true, sessionId, priceTable: '', summary: asJsonOutput(summary) }
+        return { available: true, sessionId, priceTable: '', account, summary: asJsonOutput(summary) }
       }
       let repriced: UsageSummary
       try {
@@ -107,7 +125,7 @@ export function registerUsageTool(ctx: Context, options: { readonly priceTable?:
           },
         }
       }
-      return { available: true, sessionId, priceTable: options.priceTable, summary: asJsonOutput(repriced) }
+      return { available: true, sessionId, priceTable: options.priceTable, account, summary: asJsonOutput(repriced) }
     },
     presentCall: args => ({
       card: 'generic',

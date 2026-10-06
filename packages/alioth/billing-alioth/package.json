@@ -1,6 +1,6 @@
 {
   "name": "@dsh-alioth/billing-alioth",
-  "description": "Billing capability: ctx.aliothBilling service — subscription lifecycle, monthly bills, invoice requests (volatile memory provider; the real backend swaps in behind the same interface)",
+  "description": "Billing capability: ctx.aliothBilling service — commerce domain (orders/subscription/bills/invoices), entitlement decision point, account-keyed usage ledger, append-only audit; durable store in any DB-backed deployment, memory fallback",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -8,6 +8,7 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./store": "./src/store.ts",
     "./package.json": "./package.json"
   },
   "peerDependencies": {

@@ -33,6 +33,13 @@ export interface GuardServiceLike {
   whitelistSource(): Promise<GuardWhitelistSource>
   degradations(): readonly GuardDegradation[]
   usage?(sessionId: string): UsageSummary
+  /** 账户计量视图（C2 metering；守卫旧版/缺席 → undefined，调用方显式降级）。 */
+  accountUsage?(sessionId: string): Promise<{
+    readonly account: string
+    readonly plan: 'L0' | 'L1'
+    readonly monthlyCostCents: number | null
+    readonly quotaCents: number | null
+  } | null>
 }
 
 /** 读取可选的守卫服务；未装配 → `undefined`（调用方必须显式降级，不得编造）。 */

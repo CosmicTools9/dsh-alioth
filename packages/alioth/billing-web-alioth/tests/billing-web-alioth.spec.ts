@@ -272,7 +272,7 @@ describe('user center transport + failure branches (real services)', () => {
     }
   })
 
-  it('walks the subscription page through L0 → L1 → canceled', async () => {
+  it('walks the subscription page through L0 → L1 → canceling (period end) → resumed', async () => {
     const fresh = await call('/usercenter/subscription')
     expect(fresh.status).toBe(200)
     const freshHtml = await fresh.text()
@@ -296,10 +296,21 @@ describe('user center transport + failure branches (real services)', () => {
     expect(overviewHtml).toContain('生效中')
     expect(overviewHtml).toMatch(/下次续期<\/dt><dd>\d{4}-\d{2}-\d{2}<\/dd>/)
 
+    // Cancel is AT PERIOD END now: the page shows 取消中 (with the date), the
+    // overview keeps the entitlement live, and 重新订阅 resumes in place.
     const canceled = await call('/api/billing/cancel', { method: 'POST' })
     expect(canceled.status).toBe(200)
     expect(await canceled.json()).toEqual({ ok: true })
-    expect(await (await call('/usercenter')).text()).toContain('已取消')
+    const cancelingPage = await (await call('/usercenter/subscription')).text()
+    expect(cancelingPage).toContain('已申请取消')
+    expect(cancelingPage).toMatch(/期末生效/)
+    expect(cancelingPage).toContain('action="/api/billing/subscribe"')
+    const cancelingOverview = await (await call('/usercenter')).text()
+    expect(cancelingOverview).toContain('取消中（')
+    expect(cancelingOverview).toContain('L1 订阅版')
+
+    await call('/api/billing/subscribe', { method: 'POST' })
+    expect(await (await call('/usercenter')).text()).toContain('生效中')
   })
 
   it('renders unpaid / paid / empty bill states', async () => {

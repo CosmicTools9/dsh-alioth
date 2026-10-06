@@ -45,6 +45,15 @@
 - id: directory-picker
   disabled: true
 
+# The DeepSeek LLM route is REPLACED by our BYOK-aware provider (@dsh-alioth/
+# llm-alioth, same provider id deepseek-official + same settings namespace):
+# per-request key resolution prefers the signed-in account's own key before the
+# platform credential, so a multi-tenant deployment bills each account's usage
+# to its own key when it has one. The disabled row is a no-op skip in trees
+# whose base bundle has no llm-deepseek row (headless one-shots).
+- id: llm-deepseek
+  disabled: true
+
 # Right Sidebar: the harness Web terminal is NOT a product capability here.
 # Upstream runs it through the Session's subprocess provider with the execution
 # environment's system-user permissions — no Agent sandbox, no approval (Agent
@@ -113,6 +122,15 @@
       name: '@dsh-alioth/auth-alioth'
       config:
         mode: open
+        # 身份缝（C3）：'oidc' 打开 SSO relying party（对接 NS:Cosmic-Tools 的
+        # embedded SSO 等 OIDC IdP）；BYOK 需 ALIOTH_BYOK_SECRET。
+        authMode: !!js "process.env.ALIOTH_AUTH_IDP === 'oidc' ? 'oidc' : 'local'"
+        oidcIssuer: !!js "process.env.ALIOTH_OIDC_ISSUER"
+        oidcClientId: !!js "process.env.ALIOTH_OIDC_CLIENT_ID"
+        oidcClientSecret: !!js "process.env.ALIOTH_OIDC_CLIENT_SECRET"
+        oidcRedirectUri: !!js "process.env.ALIOTH_OIDC_REDIRECT_URI"
+        byok: !!js "process.env.ALIOTH_BYOK_SECRET !== undefined && process.env.ALIOTH_BYOK_SECRET !== ''"
+        byokSecret: !!js "process.env.ALIOTH_BYOK_SECRET ?? ''"
     - id: auth-web-alioth
       name: '@dsh-alioth/auth-web-alioth'
       config:
@@ -127,14 +145,28 @@
         databaseUrl: !!js "process.env.ALIOTH_DATABASE_URL"
         dataRoot: !!js "process.env.ALIOTH_DATA_ROOT"
 
+    # BYOK-aware DeepSeek route (replaces the disabled llm-deepseek row):
+    # per-request key = the account's own key (ctx.aliothAuth.apiKeyFor) first,
+    # then the platform credential (DEEPSEEK_API_KEY).
+    - id: llm-alioth
+      name: '@dsh-alioth/llm-alioth'
+      config: {}
+
     - id: billing-alioth
       name: '@dsh-alioth/billing-alioth'
       config:
         # L2 源码下载授权（商务对接开通，无自助通道）：username:YYYY-MM-DD 逗号分隔
         sourceLicenses: !!js "process.env.ALIOTH_SOURCE_LICENSES ?? ''"
+        # 计量/预算（C2）：各计划月度 LLM 成本预算（分）；未设 → 只计量不判上限
+        llmMonthlyCostCentsL0: !!js "process.env.ALIOTH_LLM_MONTHLY_COST_CENTS_L0 === undefined ? undefined : Number(process.env.ALIOTH_LLM_MONTHLY_COST_CENTS_L0)"
+        llmMonthlyCostCentsL1: !!js "process.env.ALIOTH_LLM_MONTHLY_COST_CENTS_L1 === undefined ? undefined : Number(process.env.ALIOTH_LLM_MONTHLY_COST_CENTS_L1)"
+        # 计费事件 webhook（可选，fire-and-forget）
+        notifyWebhookUrl: !!js "process.env.ALIOTH_NOTIFY_WEBHOOK ?? ''"
     - id: billing-web-alioth
       name: '@dsh-alioth/billing-web-alioth'
-      config: {}
+      config:
+        # 外部渠道结算回调验签密钥（ext-adapter 契约；空 = 回调端点关闭）
+        channelSecret: !!js "process.env.ALIOTH_BILLING_CHANNEL_SECRET ?? ''"
 
     - id: page-feedback
       name: '@deepseek-ai/dsh-page-feedback'

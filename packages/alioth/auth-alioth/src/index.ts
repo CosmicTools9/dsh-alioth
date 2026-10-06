@@ -24,8 +24,24 @@
  * Guard mode: `mode: 'enforce'` requires an authenticated, session-bound
  * identity (deployment override `ALIOTH_AUTH_MODE=enforce` for B/S
  * production); `mode: 'open'` (default) keeps headless/unauthenticated
- * deployments working. Bootstrap admin via `ALIOTH_ADMIN_USERNAME` /
- * `ALIOTH_ADMIN_PASSWORD` (created on first ready when set).
+ * deployments working.
+ *
+ * Identity seam (C3): credential verification sits behind two adapters —
+ * `local` (scrypt passwords, the default and the only path headless
+ * deployments need) and `oidc` (an OIDC relying party against a real IdP —
+ * e.g. the NS:Cosmic-Tools embedded SSO — bringing MFA / password reset /
+ * third-party login without this repo re-implementing any of it). Sessions,
+ * bindings, and namespace supply are carrier-independent and do not change
+ * with the adapter. The `isahl_auth` schema always belongs to the IdP's own
+ * runtime: this plugin consumes OIDC/API, never writes that schema.
+ *
+ * AccountContext (C5): `accountForSession` resolves a session ONCE into the
+ * structured context {userId, username, namespace, role, plan, quotas} that
+ * guard/billing/metering share, instead of each re-deriving identity.
+ *
+ * BYOK: users may store their own model API key (AES-256-GCM under
+ * `ALIOTH_BYOK_SECRET`); `apiKeyFor` is the seam the LLM provider reads per
+ * request. Disabled (fail-closed) unless the deployment opts in with a secret.
  * @module @dsh-alioth/auth-alioth
  */
 
@@ -40,9 +56,11 @@ import { defineTool, type ToolExecution, type ToolRunContext } from '@deepseek-a
 import { hashPassword, verifyPassword } from './password.ts'
 import {
   AUTH_SCHEMA, bindSession, bindSessionToUser, deleteExpiredSessions, deleteSession, ensureAuthSchema,
-  userForBoundSession,
+  setUserApiKeyEnc, userApiKeyEncByAccount, userForBoundSession,
   insertSession, insertUser, sessionByTokenHash, userById, userByNamespace, userByUsername,
 } from './store.ts'
+import { buildAuthorizeUrl, discoverOidc, exchangeCode, verifyIdToken, type OidcDiscovery } from './oidc.ts'
+import { openSecret, sealSecret } from './secretbox.ts'
 
 export { hashPassword, verifyPassword }
 
@@ -74,6 +92,29 @@ export interface Config {
   readonly preProcRoot?: string
   /** Workspace root for deployment artifacts; default ALIOTH_DEPLOY_ROOT ?? ~/.dsh-alioth/Deploy. */
   readonly deployRoot?: string
+  /**
+   * Identity adapter: 'local' (scrypt passwords, default) or 'oidc' (SSO
+   * relying party — local password login is then refused loud).
+   */
+  readonly authMode?: 'local' | 'oidc'
+  /** OIDC issuer base URL (discovery at `<issuer>/.well-known/openid-configuration`). */
+  readonly oidcIssuer?: string
+  /** OIDC client id registered at the IdP. */
+  readonly oidcClientId?: string
+  /** OIDC client secret (confidential client). */
+  readonly oidcClientSecret?: string
+  /** OIDC redirect URI (the carrier mounts `/api/auth/oidc/callback`). */
+  readonly oidcRedirectUri?: string
+  /** OIDC scopes; default `openid profile`. */
+  readonly oidcScope?: string
+  /**
+   * BYOK master switch: allow accounts to store their own model API key.
+   * Requires a key-encryption secret (env `ALIOTH_BYOK_SECRET` wins over
+   * {@link byokSecret}) — enabling without one fails loud at mount.
+   */
+  readonly byok?: boolean
+  /** BYOK key-encryption secret (env `ALIOTH_BYOK_SECRET` wins). */
+  readonly byokSecret?: string
 }
 
 /** Extract the U-<username> namespace from a Pre-Proc workspace path. */
@@ -125,6 +166,14 @@ export const Config: z<Config> = z.object({
   workspaceMode: z.union(['standard', 'unlimited'] as const).default('standard'),
   preProcRoot: z.string(),
   deployRoot: z.string(),
+  authMode: z.union(['local', 'oidc'] as const).default('local'),
+  oidcIssuer: z.string(),
+  oidcClientId: z.string(),
+  oidcClientSecret: z.string(),
+  oidcRedirectUri: z.string(),
+  oidcScope: z.string().default('openid profile'),
+  byok: z.boolean().default(false),
+  byokSecret: z.string().default(''),
 })
 
 /** One app entry inside a workspace. */
@@ -267,6 +316,42 @@ export function resolveWorkspaceMode(_configured?: Config['workspaceMode']): 'st
   return 'standard'
 }
 
+/**
+ * The structured account a session resolves into (C5): one resolution per
+ * request boundary, consumed by guard (budget enforcement), billing surfaces,
+ * and metering — instead of each re-deriving identity from raw rows.
+ */
+export interface AccountContext {
+  readonly userId: string
+  readonly username: string
+  readonly namespace: string
+  readonly role: 'admin' | 'user'
+  /** Effective billing plan (L1 while the subscription lives). */
+  readonly plan: 'L0' | 'L1'
+  /** Monthly LLM cost budget in cents; null = deployment configured none. */
+  readonly monthlyCostCents: number | null
+}
+
+/** Structural face of the billing capability (absent in trees without it). */
+interface BillingEntitlementLike {
+  planOf?(userId: string): Promise<'L0' | 'L1'>
+  entitlement(actor: { id: string; role: 'admin' | 'user' }, capability: string): Promise<{
+    readonly plan: 'L0' | 'L1'
+    readonly monthlyCostCents: number | null
+  }>
+}
+
+function billingOf(ctx: Context): BillingEntitlementLike | undefined {
+  try {
+    const value = (ctx.get as (name: string) => unknown).call(ctx, 'aliothBilling')
+    return typeof value === 'object' && value !== null && typeof (value as BillingEntitlementLike).entitlement === 'function'
+      ? value as BillingEntitlementLike
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export interface AliothAuthService {
   register(username: string, password: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }>
   login(username: string, password: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }>
@@ -280,6 +365,24 @@ export interface AliothAuthService {
   authorizeNamespace(exec: ToolExecution, namespace: string): Promise<boolean>
   bind(token: string, sessionId: string): Promise<void>
   userForSessionId(sessionId: string): Promise<{ namespace: string; role: 'admin' | 'user' } | null>
+  /** Effective identity adapter ('local' | 'oidc'). */
+  authMode(): 'local' | 'oidc'
+  /**
+   * Structured account for a session (C5): one resolution, briefly memoized —
+   * the shared {userId, username, namespace, role, plan, quota} every
+   * enforcement surface reads. null when the session carries no identity.
+   */
+  accountForSession(sessionId: string): Promise<AccountContext | null>
+  /** Username lookup (admin surfaces / operator tooling). */
+  userByUsername(username: string): Promise<{ id: string; username: string; namespace: string; role: 'admin' | 'user' } | null>
+  /** OIDC login start: the authorization redirect for one use-once state value. */
+  oidcAuthorizeUrl(state: string): Promise<string>
+  /** OIDC login finish: exchange + verify + JIT provision; returns a session token like login(). */
+  oidcExchange(code: string, state: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }>
+  /** BYOK: store/clear the caller's own model API key (fails loud when BYOK is disabled). */
+  setApiKey(token: string, apiKey: string | null): Promise<void>
+  /** BYOK: the model key for an account (namespace or username), or null — read per request by the LLM provider. */
+  apiKeyFor(account: string): Promise<string | null>
   /**
    * The app workspace a session is scoped to (`Pre-Proc/{ns}/Apps/{app}`), for
    * read-only console surfaces. `null` when the session is not in an app
@@ -349,6 +452,39 @@ export function apply(ctx: Context, config: Config): void {
   const roots = defaultRoots()
   const preProcRoot = path.resolve(config.preProcRoot ?? roots.preProc)
   const deployRoot = path.resolve(config.deployRoot ?? roots.deploy)
+
+  // ── identity seam (C3) configuration ───────────────────────────────────
+  const authMode: Config['authMode'] = config.authMode ?? 'local'
+  if (authMode === 'oidc') {
+    const missing = (['oidcIssuer', 'oidcClientId', 'oidcClientSecret', 'oidcRedirectUri'] as const)
+      .filter(field => config[field] === undefined || config[field] === '')
+    if (missing.length > 0) {
+      throw new Error(`auth-alioth: authMode=oidc requires ${missing.join(', ')}`)
+    }
+  }
+  /** OIDC discovery is fetched lazily and memoized (idp config rarely changes). */
+  let discovery: Promise<OidcDiscovery> | undefined
+  const oidcDiscovery = (): Promise<OidcDiscovery> => {
+    if (authMode !== 'oidc') {
+      return Promise.reject(new Error('aliothAuth: OIDC login is not enabled (authMode=local)'))
+    }
+    discovery ??= discoverOidc(config.oidcIssuer!)
+    return discovery
+  }
+  // Use-once state values for the authorization round-trip (CSRF guard).
+  const oidcStates = new Map<string, number>()
+  const OIDC_STATE_TTL_MS = 10 * 60 * 1000
+
+  // ── BYOK configuration ─────────────────────────────────────────────────
+  const byokEnabled = config.byok === true
+  const byokSecret = process.env.ALIOTH_BYOK_SECRET || (config.byokSecret === '' ? undefined : config.byokSecret)
+  if (byokEnabled && byokSecret === undefined) {
+    throw new Error('auth-alioth: byok=true requires a key-encryption secret (ALIOTH_BYOK_SECRET or config.byokSecret)')
+  }
+
+  // ── AccountContext (C5) ────────────────────────────────────────────────
+  const ACCOUNT_TTL_MS = 60_000
+  const accountMemo = new Map<string, { readonly value: AccountContext | null; readonly at: number }>()
 
   /**
    * Create the namespace's workspace dirs — the AliothStudio layout the
@@ -430,8 +566,11 @@ export function apply(ctx: Context, config: Config): void {
       return { token, namespace, role: user.role }
     },
 
-    /** Log in; returns a fresh session token. */
+    /** Log in; returns a fresh session token. Refused loud when the identity adapter is OIDC. */
     async login(username: string, password: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }> {
+      if (authMode === 'oidc') {
+        throw new Error('aliothAuth.login: password login is disabled (authMode=oidc) — use the SSO entry')
+      }
       const user = await userByUsername(ctx, username)
       if (user === null || !(await verifyPassword(password, user.passwordHash))) {
         throw new Error('aliothAuth.login: invalid credentials')
@@ -516,6 +655,134 @@ export function apply(ctx: Context, config: Config): void {
       if (namespace === null) return null
       const user = await userByNamespace(ctx, namespace)
       return user === null ? null : { namespace: user.namespace, role: user.role }
+    },
+
+    /** Effective identity adapter ('local' | 'oidc'). */
+    authMode(): 'local' | 'oidc' {
+      return authMode
+    },
+
+    /** Structured account for a session (see the interface) — one resolution, 60s memo. */
+    async accountForSession(sessionId: string): Promise<AccountContext | null> {
+      const cached = accountMemo.get(sessionId)
+      if (cached !== undefined && Date.now() - cached.at < ACCOUNT_TTL_MS) {
+        return cached.value
+      }
+      const identity = await aliothAuth.userForSessionId(sessionId)
+      let value: AccountContext | null = null
+      if (identity !== null) {
+        const row = await userByNamespace(ctx, identity.namespace)
+        if (row !== null) {
+          let plan: 'L0' | 'L1' = 'L0'
+          let monthlyCostCents: number | null = null
+          const billing = billingOf(ctx)
+          if (billing !== undefined) {
+            try {
+              // planOf when the mounted billing has it; the entitlement decision
+              // point carries both plan and quota otherwise.
+              plan = typeof billing.planOf === 'function' ? await billing.planOf(row.id) : 'L0'
+              const decision = await billing.entitlement({ id: row.id, role: row.role }, 'llm-budget')
+              plan = decision.plan
+              monthlyCostCents = decision.monthlyCostCents
+            } catch {
+              // Billing absent/unreachable: quota unknown — null, never 0-faked.
+              monthlyCostCents = null
+            }
+          }
+          value = {
+            userId: row.id,
+            username: row.username,
+            namespace: row.namespace,
+            role: row.role,
+            plan,
+            monthlyCostCents,
+          }
+        }
+      }
+      accountMemo.set(sessionId, { value, at: Date.now() })
+      return value
+    },
+
+    /** Username lookup (see the interface). */
+    async userByUsername(username: string) {
+      const user = await userByUsername(ctx, username)
+      return user === null ? null : { id: user.id, username: user.username, namespace: user.namespace, role: user.role }
+    },
+
+    /** OIDC login start: build the authorization redirect for one use-once state. */
+    async oidcAuthorizeUrl(state: string): Promise<string> {
+      if (state.trim() === '') throw new Error('aliothAuth.oidcAuthorizeUrl: state required')
+      oidcStates.set(state, Date.now() + OIDC_STATE_TTL_MS)
+      return buildAuthorizeUrl(await oidcDiscovery(), {
+        clientId: config.oidcClientId!,
+        redirectUri: config.oidcRedirectUri!,
+        scope: config.oidcScope ?? 'openid profile',
+        state,
+      })
+    },
+
+    /** OIDC login finish: exchange + verify + JIT provision (see the interface). */
+    async oidcExchange(code: string, state: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }> {
+      const issuedAt = oidcStates.get(state)
+      oidcStates.delete(state) // use-once, even on failure
+      if (issuedAt === undefined || issuedAt < Date.now()) {
+        throw new Error('aliothAuth.oidcExchange: unknown or expired state')
+      }
+      const { idToken } = await exchangeCode(await oidcDiscovery(), {
+        clientId: config.oidcClientId!,
+        clientSecret: config.oidcClientSecret!,
+        redirectUri: config.oidcRedirectUri!,
+        code,
+      })
+      const claims = await verifyIdToken(idToken, { discovery: await oidcDiscovery(), audience: config.oidcClientId! })
+      // Map the token's identity onto the local username contract
+      // (^[a-z0-9][a-z0-9-]{2,31}$ — namespaces derive from it).
+      const raw = claims.preferredUsername ?? claims.email?.split('@')[0] ?? null
+      if (raw === null) {
+        throw new Error('aliothAuth.oidcExchange: token carries no preferred_username/email to derive a username from')
+      }
+      const username = raw.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '').slice(0, 31)
+      if (!USERNAME_RE.test(username)) {
+        throw new Error(`aliothAuth.oidcExchange: cannot derive a valid local username from ${JSON.stringify(raw)}`)
+      }
+      let user = await userByUsername(ctx, username)
+      if (user === null) {
+        // JIT provision: same namespace/workspace supply as a local registration.
+        const password = randomBytes(24).toString('base64url')
+        const created = await aliothAuth.register(username, password)
+        user = await userByUsername(ctx, username)
+        if (user === null) {
+          throw new Error(`aliothAuth.oidcExchange: JIT provisioning failed for ${JSON.stringify(username)}`)
+        }
+        void created
+      }
+      const token = randomBytes(32).toString('hex')
+      const expiresAt = new Date(Date.now() + ttlSeconds * 1000)
+      await insertSession(ctx, { tokenHash: hashToken(token), userId: user.id, sessionId: null, expiresAt })
+      return { token, namespace: user.namespace, role: user.role }
+    },
+
+    /** BYOK: store/clear the caller's own model API key (see the interface). */
+    async setApiKey(token: string, apiKey: string | null): Promise<void> {
+      if (!byokEnabled) {
+        throw new Error('aliothAuth.setApiKey: BYOK is disabled on this deployment (no key-encryption secret)')
+      }
+      const session = await sessionByTokenHash(ctx, hashToken(token))
+      if (session === null || new Date(session.expiresAt).getTime() < Date.now()) {
+        throw new Error('aliothAuth.setApiKey: invalid or expired token')
+      }
+      const sealed = apiKey === null || apiKey === '' ? null : sealSecret(apiKey, byokSecret)
+      if (apiKey !== null && apiKey !== '' && sealed === null) {
+        throw new Error('aliothAuth.setApiKey: key encryption unavailable')
+      }
+      await setUserApiKeyEnc(ctx, session.userId, sealed)
+    },
+
+    /** BYOK: the model key for an account (see the interface). */
+    async apiKeyFor(account: string): Promise<string | null> {
+      if (!byokEnabled || account === '') return null
+      const sealed = await userApiKeyEncByAccount(ctx, account)
+      return openSecret(sealed, byokSecret)
     },
 
     /** Account for an id (see the interface). */
@@ -804,6 +1071,11 @@ export function apply(ctx: Context, config: Config): void {
   aliothAuth.logout = withReady(aliothAuth.logout)
   aliothAuth.bind = withReady(aliothAuth.bind)
   aliothAuth.userForSessionId = withReady(aliothAuth.userForSessionId)
+  aliothAuth.accountForSession = withReady(aliothAuth.accountForSession)
+  aliothAuth.userByUsername = withReady(aliothAuth.userByUsername)
+  aliothAuth.oidcExchange = withReady(aliothAuth.oidcExchange)
+  aliothAuth.setApiKey = withReady(aliothAuth.setApiKey)
+  aliothAuth.apiKeyFor = withReady(aliothAuth.apiKeyFor)
 
   // ── model surface: alioth_workspace_current ───────────────────────────
   // The B/S product rule "the model works inside the caller's workspace":

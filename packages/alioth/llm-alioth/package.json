@@ -1,0 +1,27 @@
+{
+  "name": "@dsh-alioth/llm-alioth",
+  "description": "BYOK-aware DeepSeek provider route: per-request key resolution prefers the signed-in account's own key (ctx.aliothAuth.apiKeyFor) before the platform credential; replaces the harness llm-deepseek row in the Alioth bundle",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./package.json": "./package.json"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.5-alpha.1",
+    "@deepseek-ai/dsh-client-connection": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-launch-environment": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-llm": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-llm-deepseek": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-llm-deepseek-api-key": "^0.2.1-alpha.1",
+    "@deepseek-ai/schemastery": "^3.18.5-alpha.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-connection": {
+      "optional": true
+    }
+  }
+}

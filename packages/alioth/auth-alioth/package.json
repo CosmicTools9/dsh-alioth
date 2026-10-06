@@ -1,6 +1,6 @@
 {
   "name": "@dsh-alioth/auth-alioth",
-  "description": "Auth capability plugin: ctx.aliothAuth service (register/login/sessions/namespace authorization) + tools/pre-execute and agent/pre-step guards",
+  "description": "Auth capability plugin: ctx.aliothAuth service (register/login, local+OIDC identity adapters, structured AccountContext, BYOK keys, sessions/namespace authorization) + tools/pre-execute and agent/pre-step guards",
   "version": "0.1.0",
   "license": "Apache-2.0",
   "private": true,
@@ -10,6 +10,8 @@
     ".": "./src/index.ts",
     "./password": "./src/password.ts",
     "./store": "./src/store.ts",
+    "./oidc": "./src/oidc.ts",
+    "./secretbox": "./src/secretbox.ts",
     "./package.json": "./package.json"
   },
   "dependencies": {

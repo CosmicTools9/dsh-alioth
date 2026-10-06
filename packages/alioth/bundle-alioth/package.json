@@ -20,6 +20,7 @@
     "@dsh-alioth/feedback-web-alioth": "workspace:*",
     "@dsh-alioth/guard-alioth": "workspace:*",
     "@dsh-alioth/landing-alioth": "workspace:*",
+    "@dsh-alioth/llm-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth-meta": "workspace:*",
     "@dsh-alioth/tool-alioth-orchestrator": "workspace:*",

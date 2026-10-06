@@ -86,6 +86,7 @@ function billingStandIn(): BillingStandIn {
         period: '2026-09',
         amountCents: 139900,
         status: 'paid',
+        orderId: null,
         createdAt: new Date(),
         paidAt: new Date(),
       }
@@ -99,6 +100,7 @@ function billingStandIn(): BillingStandIn {
         title,
         taxId: '',
         status: 'issued',
+        number: null,
         requestedAt: new Date(),
         issuedAt: new Date(),
       }
@@ -120,6 +122,7 @@ function invoice(overrides: Partial<Invoice> & { id: string }): Invoice {
     title: '杭州示例科技',
     taxId: '91330100MA27X00000',
     status: 'pending',
+    number: null,
     requestedAt: new Date('2026-09-01T00:00:00Z'),
     issuedAt: null,
     ...overrides,

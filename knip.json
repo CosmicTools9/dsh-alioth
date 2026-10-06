@@ -18,12 +18,12 @@
         "footprint"
       ],
       "ignoreDependencies": [
-        "@deepseek-ai/dsh",
         "@deepseek-ai/dsh-credentials-local",
+        "@deepseek-ai/dsh-launch-environment",
         "@deepseek-ai/dsh-llm-deepseek",
+        "@deepseek-ai/dsh-llm-deepseek-api-key",
         "@deepseek-ai/dsh-session-persistence-jsonl",
-        "@deepseek-ai/dsh-tool-todo",
-        "pg"
+        "@deepseek-ai/dsh-tool-todo"
       ]
     },
     "packages/alioth/bundle-alioth": {

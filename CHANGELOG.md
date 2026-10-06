@@ -5,6 +5,15 @@ this file records user-visible changes per release.
 
 ## [Unreleased]
 
+### Added
+- **商务域落地与单一权益缝（架构评审 C1–C6 全链实施）**：billing-alioth 从「过渡内存实现」升级为**持久化商务域**（`dsh_alioth_billing`：orders/subscriptions/bills/invoices/usage_daily/audit_log 六张表，PG + 内存双适配器——重启丢订阅/账单/发票的缺陷就此关闭）。新增：**订单生命周期**（pending→paid→fulfilled/cancelled/refunded，支付履约）、**期末取消**（`cancel` 置 `canceling` 保持权益至 `renewsAt`，续期执行方每 15 分钟扫到期订阅翻 `canceled` 并生成次期账单；`subscribe` 可撤销取消）、**退款/作废**（admin-only，账单订单联动）、**权益判定单一缝** `entitlement(actor, capability)`（source-download / llm-budget）、**账户计量账本**（`usage_daily` 账户×日×模型；缺价桶令当月成本 `null`，绝不以 0 冒充）、**append-only 审计**（认证/计费/管理/审批统一入缝）、**通知 webhook**（`ALIOTH_NOTIFY_WEBHOOK`，fire-and-forget）。
+- **身份缝（C3）**：auth-alioth 新增 `authMode: 'oidc'` 适配器——零依赖自实现 OIDC RP（discovery / 授权 URL / 换码 / JWKS 缓存 + RS256/ES256 验签、一次性 state），对接 NS:Cosmic-Tools 的 embedded SSO 等真实 IdP，JIT 开户落到本地用户契约；本地口令适配器保持默认。MFA/密码重置/三方登录由 IdP 承载，本仓不再各自缺失。
+- **AccountContext（C5）**：`accountForSession(sessionId)` 把会话一次解析成 `{userId, username, namespace, role, plan, monthlyCostCents}`（60s memo），guard/billing/计量共读，不再各自推导身份。
+- **账户计量与月度预算（C2）**：guard-alioth 的 `AccountMeter` 在 turn 收口把台账增量按 日×模型 落账；`agent/pre-step` 执行**账户月度预算**（配额来自权益缝；成本口径不可得 ⇒ 留降级证据不判，规则码 `account-budget-exceeded`）；guard 内置 DeepSeek 默认价表（部署 `priceTable` 文件可整体覆盖）；`alioth_usage` 新增账户计量视图。
+- **BYOK**：用户可存自己的模型 API key（AES-256-GCM under `ALIOTH_BYOK_SECRET`，未启用 fail-closed）；新插件 `llm-alioth` 替换基座 `llm-deepseek` 行（同 provider id + settings namespace），每请求 key 顺序 = 账户自持 key → 平台凭据。
+- **支付通道缝与运营面（C4）**：`applyChannelPayment` + `POST /api/billing/channel/<channel>/callback`（HMAC-SHA256 + 5 分钟窗口，密钥未配置即 503 fail-closed）——对接形状 = 上游 `EXTERNAL_INTEGRATION_SPEC` 的 L-EXT/L-ADP/L-MAP，wechat-pay 等适配器住 NS:Cosmic-Tools 的 `Ext-adapter/` 面（契约文档 `docs/specs/billing-channel-ext-adapter.md`）；billing-web 新增 admin 页（对账/订单/审计/L2 开通/退款作废）与 `pnpm run admin:grant`（管理员唯一授予通道）；auth-web 补齐 CSRF Origin 校验、登录限流、Secure cookie（https 公网 origin 自动启用）。
+
+### Changed
 ### Changed
 - **运行在 harness `0.2.1-alpha.1` 线上**：`@deepseek-ai/*` 声明范围（`^0.2.1-alpha.1`）与 vendor 层（`@deepseek-ai/cordis` `^4.0.5-alpha.1`、
   `schemastery` `^3.18.5-alpha.1`）随 sibling checkout 一起前进——`linkWorkspacePackages` 只在版本区间被 sibling 满足时才出 link，
