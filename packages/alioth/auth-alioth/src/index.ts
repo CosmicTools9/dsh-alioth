@@ -59,7 +59,7 @@ import {
   setUserApiKeyEnc, userApiKeyEncByAccount, userForBoundSession,
   insertSession, insertUser, sessionByTokenHash, userById, userByNamespace, userByUsername,
 } from './store.ts'
-import { buildAuthorizeUrl, discoverOidc, exchangeCode, verifyIdToken, type OidcDiscovery } from './oidc.ts'
+import { buildAuthorizeUrl, createPkcePair, discoverOidc, exchangeCode, verifyIdToken, type OidcDiscovery } from './oidc.ts'
 import { openSecret, sealSecret } from './secretbox.ts'
 
 export { hashPassword, verifyPassword }
@@ -471,8 +471,9 @@ export function apply(ctx: Context, config: Config): void {
     discovery ??= discoverOidc(config.oidcIssuer!)
     return discovery
   }
-  // Use-once state values for the authorization round-trip (CSRF guard).
-  const oidcStates = new Map<string, number>()
+  // Use-once state values for the authorization round-trip (CSRF guard),
+  // each carrying its PKCE verifier so the exchange can prove possession.
+  const oidcStates = new Map<string, { readonly expiresAt: number; readonly verifier: string }>()
   const OIDC_STATE_TTL_MS = 10 * 60 * 1000
 
   // ── BYOK configuration ─────────────────────────────────────────────────
@@ -709,23 +710,26 @@ export function apply(ctx: Context, config: Config): void {
       return user === null ? null : { id: user.id, username: user.username, namespace: user.namespace, role: user.role }
     },
 
-    /** OIDC login start: build the authorization redirect for one use-once state. */
+    /** OIDC login start: build the authorization redirect for one use-once state (PKCE S256). */
     async oidcAuthorizeUrl(state: string): Promise<string> {
       if (state.trim() === '') throw new Error('aliothAuth.oidcAuthorizeUrl: state required')
-      oidcStates.set(state, Date.now() + OIDC_STATE_TTL_MS)
+      const pkce = createPkcePair()
+      oidcStates.set(state, { expiresAt: Date.now() + OIDC_STATE_TTL_MS, verifier: pkce.verifier })
       return buildAuthorizeUrl(await oidcDiscovery(), {
         clientId: config.oidcClientId!,
         redirectUri: config.oidcRedirectUri!,
         scope: config.oidcScope ?? 'openid profile',
         state,
+        codeChallenge: pkce.challenge,
+        codeChallengeMethod: 'S256',
       })
     },
 
     /** OIDC login finish: exchange + verify + JIT provision (see the interface). */
     async oidcExchange(code: string, state: string): Promise<{ token: string; namespace: string; role: 'admin' | 'user' }> {
-      const issuedAt = oidcStates.get(state)
+      const issued = oidcStates.get(state)
       oidcStates.delete(state) // use-once, even on failure
-      if (issuedAt === undefined || issuedAt < Date.now()) {
+      if (issued === undefined || issued.expiresAt < Date.now()) {
         throw new Error('aliothAuth.oidcExchange: unknown or expired state')
       }
       const { idToken } = await exchangeCode(await oidcDiscovery(), {
@@ -733,6 +737,7 @@ export function apply(ctx: Context, config: Config): void {
         clientSecret: config.oidcClientSecret!,
         redirectUri: config.oidcRedirectUri!,
         code,
+        codeVerifier: issued.verifier,
       })
       const claims = await verifyIdToken(idToken, { discovery: await oidcDiscovery(), audience: config.oidcClientId! })
       // Map the token's identity onto the local username contract

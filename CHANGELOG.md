@@ -14,6 +14,7 @@ this file records user-visible changes per release.
 - **支付通道缝与运营面（C4）**：`applyChannelPayment` + `POST /api/billing/channel/<channel>/callback`（HMAC-SHA256 + 5 分钟窗口，密钥未配置即 503 fail-closed）——对接形状 = 上游 `EXTERNAL_INTEGRATION_SPEC` 的 L-EXT/L-ADP/L-MAP，wechat-pay 等适配器住 NS:Cosmic-Tools 的 `Ext-adapter/` 面（契约文档 `docs/specs/billing-channel-ext-adapter.md`）；billing-web 新增 admin 页（对账/订单/审计/L2 开通/退款作废）与 `pnpm run admin:grant`（管理员唯一授予通道）；auth-web 补齐 CSRF Origin 校验、登录限流、Secure cookie（https 公网 origin 自动启用）。
 
 ### Changed
+- **复检注记按真实缺口闭环（2026-10-07 第二轮）**：①发票恢复**管理员开具队列**（申请落 pending，admin 页/`issueInvoice` 开具赋收据级票号；「无超管」不变）；②退款改为**按剩余服务期折算**——服务窗口记在订单上，退款额 = ⌊金额×剩余/总期⌋ 落 `bills.refund_amount_cents`，服务随退款终止（billing 域规则支持注入时钟，折算可确定性测试）；③OIDC 适配器补 **PKCE S256**（verifier 随一次性 state、challenge 进授权 URL、换码携带，假 IdP 断言强制）；④计量月度 memo 收紧为 30s 且**落账即失效**（预算判定不吃旧数）；⑤billing 状态变更端点加**动作限流**（`ActionRateLimiter`，30 次/5min，超限 429，GET 不计）。
 ### Changed
 - **运行在 harness `0.2.1-alpha.1` 线上**：`@deepseek-ai/*` 声明范围（`^0.2.1-alpha.1`）与 vendor 层（`@deepseek-ai/cordis` `^4.0.5-alpha.1`、
   `schemastery` `^3.18.5-alpha.1`）随 sibling checkout 一起前进——`linkWorkspacePackages` 只在版本区间被 sibling 满足时才出 link，

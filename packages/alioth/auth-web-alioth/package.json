@@ -9,6 +9,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./lib/client.js",
+    "./throttle": "./src/throttle.ts",
     "./package.json": "./package.json"
   },
   "dsh": {

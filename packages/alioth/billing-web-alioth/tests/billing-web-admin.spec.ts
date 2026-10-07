@@ -164,6 +164,27 @@ describe('admin back-office', () => {
   })
 })
 
+describe('action rate limiting (billing state changes)', () => {
+  it('answers 429 once one account hammers state-changing endpoints, others unaffected', async () => {
+    const burst = `burst${Date.now() % 100000}`
+    const burstCookie = await register(burst)
+    const row = await ctx.aliothEnv.sql<{ id: string }>(`SELECT id FROM dsh_alioth_auth.users WHERE username = $1`, [burst])
+    const burstId = row.rows[0]!.id
+    // 默认窗口 30 次/5min：(IP, 账户) 每次动作计数，成功失败都算。
+    for (let index = 0; index < 30; index += 1) {
+      const response = await call(burstCookie, '/api/billing/subscribe', { method: 'POST' })
+      expect([200, 429]).toContain(response.status)
+    }
+    const limited = await call(burstCookie, '/api/billing/subscribe', { method: 'POST' })
+    expect(limited.status).toBe(429)
+    // GET 不计数。
+    expect((await call(burstCookie, '/api/billing/overview')).status).toBe(200)
+    // 另一账户正常操作不受牵连。
+    expect((await call(userCookie, '/api/billing/subscribe', { method: 'POST' })).status).toBe(200)
+    void burstId
+  })
+})
+
 describe('channel settlement callback (ext-adapter contract)', () => {
   it('is disabled without a secret (fail-closed 503)', async () => {
     // 本部署配置了密钥；关闭语义由另一组合（无密钥）覆盖——这里只验证

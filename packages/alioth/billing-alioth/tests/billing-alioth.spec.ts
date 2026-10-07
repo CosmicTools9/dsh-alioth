@@ -70,11 +70,12 @@ describe('billing capability (memory provider)', () => {
     expect(bills.find(bill => bill.period === nextPeriod)?.status).toBe('unpaid')
   })
 
-  it('pay → invoice request → duplicate/guard rails (self-service issuance)', async () => {
+  it('pay → invoice request lands in the admin queue → admin issues (receipt number)', async () => {
     const ctx = new Context()
     const plugin = await ctx.plugin(billing, {})
     const svc = ctx.aliothBilling
     const user = { id: 'u2', role: 'user' as const }
+    const admin = { id: 'op', role: 'admin' as const }
 
     await svc.subscribe(user.id)
     const bill = (await svc.bills(user.id))[0]!
@@ -93,17 +94,28 @@ describe('billing capability (memory provider)', () => {
     expect(orders[0]!.status).toBe('fulfilled')
     expect(orders[0]!.fulfilledAt).not.toBeNull()
 
+    // 申请进入管理员开具队列（无超管不变——queue 是 admin 面）。
     const invoice = await svc.requestInvoice(bill.id, user, '杭州示例科技', '91330100MA27X00000')
-    // Self-service: requesting issues directly — no admin queue exists.
-    expect(invoice.status).toBe('issued')
-    expect(invoice.issuedAt).not.toBeNull()
-    expect(invoice.number).toMatch(/^INV-\d{4}-\d{2}-[0-9a-f]{8}$/)
+    expect(invoice.status).toBe('pending')
+    expect(invoice.issuedAt).toBeNull()
+    expect(invoice.number).toBeNull()
     await expect(svc.requestInvoice(bill.id, user, '抬头', '')).rejects.toThrow(/已有发票申请/)
     await expect(svc.requestInvoice(bill.id, user, ' ', '')).rejects.toThrow(/抬头不能为空/)
 
-    // Queue is always empty (no super-admin); issue stays idempotent.
-    expect(await svc.pendingInvoices(user)).toHaveLength(0)
-    expect((await svc.issueInvoice(invoice.id, user)).status).toBe('issued')
+    // 队列只对 admin 可读，且带申请者与账单上下文。
+    await expect(svc.pendingInvoices(user)).rejects.toThrow(/admin only/)
+    const queue = await svc.pendingInvoices(admin)
+    expect(queue).toHaveLength(1)
+    expect(queue[0]).toMatchObject({ billId: bill.id, amountCents: 139900, period: currentPeriod() })
+
+    // 开具是 admin 动作：pending → issued（收据级票号），幂等。
+    await expect(svc.issueInvoice(invoice.id, user)).rejects.toThrow(/admin only/)
+    const issued = await svc.issueInvoice(invoice.id, admin)
+    expect(issued.status).toBe('issued')
+    expect(issued.number).toMatch(/^INV-\d{4}-\d{2}-[0-9a-f]{8}$/)
+    expect(issued.issuedAt).not.toBeNull()
+    expect((await svc.issueInvoice(invoice.id, admin)).status).toBe('issued') // idempotent
+    expect(await svc.pendingInvoices(admin)).toHaveLength(0)
     await plugin.dispose()
   })
 })
@@ -144,6 +156,33 @@ describe('refund / void / channel settlement (C4 payment seam)', () => {
     expect((await svc.orders(user.id))[0]!.status).toBe('fulfilled')
     // Second callback is an idempotent no-op, not an error.
     expect((await svc.applyChannelPayment('wechat-pay', bill.id, bill.amountCents, 'replay')).status).toBe('paid')
+  })
+
+  it('refund is PRO-RATED over the remaining service window (injected clock)', async () => {
+    let nowMs = Date.UTC(2026, 9, 1, 12, 0, 0)
+    const svc = billing.createMemoryBilling({ now: () => new Date(nowMs) })
+    const admin = { id: 'op', role: 'admin' as const }
+    const user = { id: 'u7', role: 'user' as const }
+    await svc.subscribe(user.id) // 服务窗口 = T0 .. T0+30d
+    const bill = (await svc.bills(user.id))[0]!
+    await svc.payBill(bill.id, user)
+
+    // 半程退款：剩余 15d / 30d → ⌊139900 / 2⌋；服务随退款终止。
+    nowMs += 15 * 24 * 3600 * 1000
+    const refunded = await svc.refundBill(bill.id, admin)
+    expect(refunded.status).toBe('refunded')
+    expect(refunded.refundAmountCents).toBe(69950)
+    expect((await svc.orders(user.id))[0]!.status).toBe('refunded')
+    expect((await svc.getSubscription(user.id))?.status).toBe('canceled')
+
+    // 重订 + 期末之后退款：剩余为 0 → 折算额为 0（不是全额，也不是猜的数）。
+    nowMs += 24 * 3600 * 1000
+    const resumed = await svc.subscribe(user.id)
+    const nextBill = (await svc.bills(user.id)).find(candidate => candidate.status === 'unpaid')!
+    await svc.payBill(nextBill.id, user)
+    nowMs = resumed.renewsAt.getTime() + 24 * 3600 * 1000 // 服务窗口已走完
+    const expired = await svc.refundBill(nextBill.id, admin)
+    expect(expired.refundAmountCents).toBe(0)
   })
 
   it('reconcile reports tallies and stuck orders (admin only)', async () => {

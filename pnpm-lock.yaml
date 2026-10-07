@@ -14560,6 +14560,9 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: ^3.18.5-alpha.1
         version: link:../../../../deepseek-harness/vendor/schemastery
+      '@dsh-alioth/auth-web-alioth':
+        specifier: workspace:*
+        version: link:../auth-web-alioth
       '@dsh-alioth/billing-alioth':
         specifier: workspace:*
         version: link:../billing-alioth

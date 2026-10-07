@@ -151,6 +151,8 @@ export interface Bill {
   orderId: string | null
   createdAt: Date
   paidAt: Date | null
+  /** 折算退款额（分）：refundBill 按剩余服务期折算后落账；未退款为 null。 */
+  refundAmountCents: number | null
 }
 
 export interface Invoice {
@@ -218,7 +220,7 @@ export interface ReconciliationReport {
 }
 
 /** Admin queue row: invoice + requestor + amount context. */
-export type PendingInvoice = Invoice & { username?: string; amountCents: number; period: string }
+export type PendingInvoice = Invoice & { username?: string | undefined; amountCents: number; period: string }
 
 export interface AliothBillingService {
   /** The user's subscription, null when on the free L0 tier. */
@@ -231,7 +233,7 @@ export interface AliothBillingService {
   orders(userId: string): Promise<Order[]>
   /** Mark a bill paid (manual 线下确认; the owner — or an admin). Fulfills the linked order. */
   payBill(billId: string, actor: BillingUser): Promise<Bill>
-  /** Admin: paid → refunded (the linked order follows). */
+  /** Admin: paid → refunded at the PRO-RATED amount for the remaining service window (the linked order follows). */
   refundBill(billId: string, actor: BillingUser): Promise<Bill>
   /** Admin: unpaid → void (cancellation settlement; the linked order is cancelled). */
   voidBill(billId: string, actor: BillingUser): Promise<Bill>
@@ -242,11 +244,11 @@ export interface AliothBillingService {
    */
   applyChannelPayment(channel: string, billReference: string, amountCents: number, note: string): Promise<Bill>
   invoices(userId: string): Promise<Invoice[]>
-  /** Request an invoice (发票抬头 + 纳税人识别号) for a PAID bill — one per bill, issued immediately. */
+  /** Request an invoice (发票抬头 + 纳税人识别号) for a PAID bill — one per bill; lands in the admin queue as `pending`. */
   requestInvoice(billId: string, actor: BillingUser, title: string, taxId: string): Promise<Invoice>
-  /** Admin queue: all pending invoices (requestor usernames when resolvable). */
+  /** Admin queue: pending invoice requests, oldest first (requestor usernames when resolvable). Admin-only. */
   pendingInvoices(actor: BillingUser): Promise<PendingInvoice[]>
-  /** Admin action: mark a pending invoice issued (assigns the receipt number). */
+  /** Admin action: issue a pending invoice from the queue (assigns the receipt number). Idempotent for already-issued rows. */
   issueInvoice(invoiceId: string, actor: BillingUser): Promise<Invoice>
   /** Admin: every order (the ops back-office view). */
   allOrders(actor: BillingUser): Promise<Order[]>
@@ -321,6 +323,8 @@ export interface BillingOptions {
   readonly notifyWebhookUrl?: string | undefined
   /** Where to surface background failures (renewals, notifications). */
   readonly onError?: ((message: string) => void) | undefined
+  /** Domain clock (tests inject a fixed one); defaults to the wall clock. */
+  readonly now?: (() => Date) | undefined
 }
 
 /**
@@ -332,6 +336,7 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
   const store = opts.store
   const licenses = opts.licenses
   const onError = opts.onError ?? (() => {})
+  const clock = opts.now ?? (() => new Date())
 
   const audit = async (actor: string, event: string, target = '', evidence = ''): Promise<void> => {
     try {
@@ -385,21 +390,34 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
     return until === undefined ? null : { userId, until, grantedBy: 'operator-config' }
   }
 
-  /** Create the period's order+bill pair (order is the commerce unit, bill its receivable). */
-  const materializePeriod = async (userId: string, period: string): Promise<void> => {
+  /**
+   * Create the period's order+bill pair (order is the commerce unit, bill its
+   * receivable). The service window the order covers is recorded ON the order —
+   * it is the basis the pro-rated refund reads later.
+   */
+  const materializePeriod = async (
+    userId: string,
+    period: string,
+    serviceStart: Date,
+    serviceEnd: Date,
+  ): Promise<void> => {
     const existing = await store.billForPeriod(userId, period)
-    if (existing !== null && existing.status !== 'void') {
+    // 活账单（未付/已付）挡住同账期重复开单；已退款/已作废的旧账单不算数——
+    // 退款终止了那笔服务，重新订阅要在同一账期拿到一张新的应收。
+    if (existing !== null && (existing.status === 'unpaid' || existing.status === 'paid')) {
       return
     }
     const orderId = randomUUID()
     const billId = randomUUID()
     await store.insertOrder({
       id: orderId, userId, kind: 'subscription-l1', amountCents: L1_AMOUNT_CENTS,
-      status: 'pending', billId, note: '', createdAt: new Date(), paidAt: null, fulfilledAt: null,
+      status: 'pending', billId, note: '', createdAt: clock(), paidAt: null, fulfilledAt: null,
+      serviceStart, serviceEnd,
     })
     await store.insertBill({
       id: billId, userId, period, amountCents: L1_AMOUNT_CENTS, status: 'unpaid',
-      orderId, createdAt: new Date(), paidAt: null,
+      orderId, createdAt: clock(), paidAt: null,
+      refundAmountCents: null,
     })
     await audit(userId, 'bill.created', `bill:${billId}`, JSON.stringify({ period, order: orderId }))
     notify('bill.created', { userId, period, billId, amountCents: L1_AMOUNT_CENTS })
@@ -449,7 +467,7 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
         // Idempotent while the subscription lives (no duplicate bill, no new period).
         return rowToSubscription(existing)
       }
-      const now = new Date()
+      const now = clock()
       const row: SubscriptionRow = {
         userId,
         plan: 'L1',
@@ -461,7 +479,7 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
       await store.upsertSubscription(row)
       await audit(userId, 'subscription.started', `user:${userId}`, JSON.stringify({ plan: 'L1' }))
       notify('subscription.started', { userId })
-      await materializePeriod(userId, currentPeriod(now))
+      await materializePeriod(userId, currentPeriod(now), now, row.renewsAt)
       return rowToSubscription(row)
     },
 
@@ -471,11 +489,11 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
       // 期末生效: entitlements stay live until renewsAt; the renewal executor
       // flips the row to 'canceled' when the period ends. This is what the UI
       // copy always said — the implementation now matches it.
-      await store.upsertSubscription({ ...row, status: 'canceling', canceledAt: row.canceledAt ?? new Date() })
+      await store.upsertSubscription({ ...row, status: 'canceling', canceledAt: row.canceledAt ?? clock() })
       await audit(userId, 'subscription.cancel-requested', `user:${userId}`, JSON.stringify({ until: row.renewsAt.toISOString() }))
     },
 
-    async runRenewals(now = new Date()) {
+    async runRenewals(now = clock()) {
       let renewed = 0
       let ended = 0
       for (const row of await store.subscriptionsDue(now)) {
@@ -485,7 +503,13 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
           ended += 1
           continue
         }
-        await materializePeriod(row.userId, currentPeriod(row.renewsAt))
+        // 次期服务窗口 = [到期点, 到期点+30d]——账单先出，服务照跑（信任续付）。
+        await materializePeriod(
+          row.userId,
+          currentPeriod(row.renewsAt),
+          row.renewsAt,
+          new Date(row.renewsAt.getTime() + PERIOD_MS),
+        )
         await store.upsertSubscription({ ...row, renewsAt: new Date(row.renewsAt.getTime() + PERIOD_MS) })
         renewed += 1
       }
@@ -533,12 +557,33 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
       const row = await store.billById(billId)
       if (row === null) throw new Error('aliothBilling.refundBill: bill not found')
       if (row.status !== 'paid') throw new Error('aliothBilling.refundBill: 仅已支付账单可退款')
-      const refunded = await store.setBillStatus(billId, 'refunded', row.paidAt)
+      // 退款 = 剩余服务期折算：窗口记在订单上（materializePeriod 落笔），
+      // 剩余 = max(0, serviceEnd − now)，折算额 = ⌊金额 × 剩余/总期⌋。
+      // legacy 订单无窗口 ⇒ 如实全额（不猜窗口）。
+      const order = row.orderId === null ? null : await store.orderById(row.orderId)
+      let refundCents = row.amountCents
+      let basis = 'no-service-window: full amount'
+      if (order?.serviceStart != null && order?.serviceEnd != null) {
+        const now = clock().getTime()
+        const totalMs = order.serviceEnd.getTime() - order.serviceStart.getTime()
+        const remainingMs = Math.max(0, order.serviceEnd.getTime() - now)
+        refundCents = totalMs > 0 ? Math.floor((row.amountCents * remainingMs) / totalMs) : 0
+        basis = `service ${order.serviceStart.toISOString()}..${order.serviceEnd.toISOString()}, remaining ${remainingMs}ms of ${totalMs}ms`
+      }
+      const refunded = await store.setBillStatus(billId, 'refunded', row.paidAt, refundCents)
       if (row.orderId !== null) {
         await store.setOrderStatus(row.orderId, 'refunded', row.paidAt, null)
       }
-      await audit(actor.id, 'bill.refunded', `bill:${billId}`, JSON.stringify({ amountCents: row.amountCents }))
-      notify('bill.refunded', { userId: row.userId, billId, amountCents: row.amountCents })
+      // 退款退的是剩余服务期 ⇒ 服务随退款终止（不是「退了钱还留着服务」）。
+      const sub = await store.getSubscription(row.userId)
+      if (sub !== null && sub.status !== 'canceled') {
+        await store.upsertSubscription({ ...sub, status: 'canceled', canceledAt: sub.canceledAt ?? clock() })
+        await audit(actor.id, 'subscription.ended', `user:${row.userId}`, 'refund')
+      }
+      await audit(actor.id, 'bill.refunded', `bill:${billId}`, JSON.stringify({
+        amountCents: row.amountCents, refundCents, basis,
+      }))
+      notify('bill.refunded', { userId: row.userId, billId, refundCents })
       return rowToBill(refunded ?? row)
     },
 
@@ -617,35 +662,47 @@ export function createBilling(opts: BillingOptions): AliothBillingService {
       if (await store.invoiceByBill(billId) !== null) {
         throw new Error('aliothBilling.requestInvoice: 该账单已有发票申请')
       }
-      // No super-admin review queue: requesting issues the invoice directly,
-      // with a receipt-level number (tax-control integration assigns real ones).
-      const id = randomUUID()
-      const number = invoiceNumberFor(bill.period, id)
+      // 申请进入管理员开具队列（无超管不变——queue 是 admin 面的，不是超管的）。
       const row: InvoiceRow = {
-        id, billId, userId: bill.userId,
+        id: randomUUID(), billId, userId: bill.userId,
         title: title.trim(), taxId: taxId.trim(),
-        status: 'issued', number, requestedAt: new Date(), issuedAt: new Date(),
+        status: 'pending', number: null, requestedAt: clock(), issuedAt: null,
       }
       await store.insertInvoice(row)
-      await audit(actor.id, 'invoice.issued', `invoice:${id}`, JSON.stringify({ billId, number }))
-      notify('invoice.issued', { userId: bill.userId, billId, number })
+      await audit(actor.id, 'invoice.requested', `invoice:${row.id}`, JSON.stringify({ billId, title: row.title }))
+      notify('invoice.requested', { userId: bill.userId, billId, invoiceId: row.id })
       return rowToInvoice(row)
     },
 
-    async pendingInvoices(_actor): Promise<PendingInvoice[]> {
-      // No admin review queue in the no-super-admin product: requests issue
-      // directly, so this queue is always empty.
-      return []
+    async pendingInvoices(actor): Promise<PendingInvoice[]> {
+      if (actor.role !== 'admin') throw new Error('aliothBilling.pendingInvoices: admin only')
+      // 开具队列：申请（pending）按申请时间正序，带申请者与账单上下文。
+      const pending = (await store.allInvoices()).filter(invoice => invoice.status === 'pending')
+      const rows: PendingInvoice[] = []
+      for (const invoice of pending) {
+        const bill = await store.billById(invoice.billId)
+        rows.push({
+          ...rowToInvoice(invoice),
+          username: await opts.resolveUsername?.(invoice.userId) ?? undefined,
+          amountCents: bill?.amountCents ?? 0,
+          period: bill?.period ?? '',
+        })
+      }
+      return rows.sort((a, b) => a.requestedAt.getTime() - b.requestedAt.getTime())
     },
 
-    async issueInvoice(invoiceId, _actor) {
-      // Idempotent self-service issuance (requests already issue directly).
+    async issueInvoice(invoiceId, actor) {
+      if (actor.role !== 'admin') throw new Error('aliothBilling.issueInvoice: admin only')
       const invoices = await store.allInvoices()
       const invoice = invoices.find(candidate => candidate.id === invoiceId)
       if (invoice === undefined) throw new Error('aliothBilling.issueInvoice: invoice not found')
       if (invoice.status === 'issued') return rowToInvoice(invoice) // idempotent
       const bill = await store.billById(invoice.billId)
-      const issued = await store.setInvoiceIssued(invoiceId, invoiceNumberFor(bill?.period ?? currentPeriod(), invoiceId))
+      const issued = await store.setInvoiceIssued(invoiceId, invoiceNumberFor(bill?.period ?? currentPeriod(clock()), invoiceId))
+      await audit(actor.id, 'invoice.issued', `invoice:${invoiceId}`, JSON.stringify({
+        number: issued?.number ?? null, billId: invoice.billId,
+      }))
+      notify('invoice.issued', { userId: invoice.userId, billId: invoice.billId, number: issued?.number ?? null })
       return rowToInvoice(issued ?? invoice)
     },
 
@@ -744,6 +801,7 @@ export interface MemoryBillingOptions {
   llmMonthlyCostCentsL1?: number | undefined
   notifyWebhookUrl?: string | undefined
   onError?: ((message: string) => void) | undefined
+  now?: (() => Date) | undefined
 }
 
 /**
@@ -761,6 +819,7 @@ export function createMemoryBilling(opts: MemoryBillingOptions = {}): AliothBill
     llmMonthlyCostCentsL1: opts.llmMonthlyCostCentsL1,
     notifyWebhookUrl: opts.notifyWebhookUrl,
     onError: opts.onError,
+    now: opts.now,
   })
 }
 

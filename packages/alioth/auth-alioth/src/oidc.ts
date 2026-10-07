@@ -10,7 +10,7 @@
  * @module @dsh-alioth/auth-alioth/oidc
  */
 
-import { createPublicKey, verify as cryptoVerify } from 'node:crypto'
+import { createHash, createPublicKey, randomBytes, verify as cryptoVerify } from 'node:crypto'
 
 /** The endpoints the RP needs, from `/.well-known/openid-configuration`. */
 export interface OidcDiscovery {
@@ -72,10 +72,25 @@ export async function discoverOidc(issuerUrl: string): Promise<OidcDiscovery> {
   return { issuer, authorizationEndpoint, tokenEndpoint, jwksUri }
 }
 
-/** Build the authorization redirect (response_type=code; PKCE is not required for confidential clients). */
+/**
+ * One PKCE (S256) pair: the verifier travels only in the token exchange, the
+ * challenge goes into the authorization redirect. Standard practice for every
+ * client — the authorization response can be intercepted regardless of how
+ * well the client secret is kept.
+ */
+export function createPkcePair(): { readonly verifier: string; readonly challenge: string } {
+  const verifier = randomBytes(32).toString('base64url')
+  const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url')
+  return { verifier, challenge }
+}
+
+/** Build the authorization redirect (response_type=code, PKCE S256). */
 export function buildAuthorizeUrl(
   discovery: OidcDiscovery,
-  options: { clientId: string; redirectUri: string; scope: string; state: string },
+  options: {
+    clientId: string; redirectUri: string; scope: string; state: string
+    codeChallenge?: string; codeChallengeMethod?: 'S256'
+  },
 ): string {
   const url = new URL(discovery.authorizationEndpoint)
   url.searchParams.set('response_type', 'code')
@@ -83,13 +98,17 @@ export function buildAuthorizeUrl(
   url.searchParams.set('redirect_uri', options.redirectUri)
   url.searchParams.set('scope', options.scope)
   url.searchParams.set('state', options.state)
+  if (options.codeChallenge !== undefined) {
+    url.searchParams.set('code_challenge', options.codeChallenge)
+    url.searchParams.set('code_challenge_method', options.codeChallengeMethod ?? 'S256')
+  }
   return url.toString()
 }
 
 /** Exchange the authorization code for tokens; only the ID token is kept. */
 export async function exchangeCode(
   discovery: OidcDiscovery,
-  options: { clientId: string; clientSecret: string; redirectUri: string; code: string },
+  options: { clientId: string; clientSecret: string; redirectUri: string; code: string; codeVerifier: string },
 ): Promise<{ idToken: string }> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -97,6 +116,7 @@ export async function exchangeCode(
     redirect_uri: options.redirectUri,
     client_id: options.clientId,
     client_secret: options.clientSecret,
+    code_verifier: options.codeVerifier,
   })
   const response = await fetch(discovery.tokenEndpoint, {
     method: 'POST',

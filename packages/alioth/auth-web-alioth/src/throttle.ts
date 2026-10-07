@@ -68,3 +68,37 @@ export function clientKeyOf(request: { headers: Record<string, unknown>; socket?
   }
   return request.socket?.remoteAddress ?? 'unknown'
 }
+
+/**
+ * 已认证动作限流（固定窗口）：登录后的状态变更端点（订阅/支付/发票/退款…）
+ * 按 `(账户, 来源 IP)` 计**每一次**动作（不分成败），窗口内超限 → 429。
+ * 与 {@link LoginThrottle}（只数失败）互补：这个挡的是脚本刷接口，不是爆破。
+ */
+export class ActionRateLimiter {
+  private readonly hits = new Map<string, readonly number[]>()
+  private readonly windowMs: number
+  private readonly maxActions: number
+  private readonly maxKeys: number
+
+  constructor(options: { windowMs?: number; maxActions?: number; maxKeys?: number } = {}) {
+    this.windowMs = options.windowMs ?? 5 * 60 * 1000
+    this.maxActions = options.maxActions ?? 30
+    this.maxKeys = options.maxKeys ?? 10_000
+  }
+
+  /** 记一次动作并判定：true = 放行，false = 窗口内已超限。 */
+  admit(key: string): boolean {
+    const now = Date.now()
+    const recent = (this.hits.get(key) ?? []).filter(time => now - time < this.windowMs)
+    if (recent.length >= this.maxActions) {
+      return false
+    }
+    recent.push(now)
+    if (this.hits.size >= this.maxKeys && !this.hits.has(key)) {
+      const oldest = this.hits.keys().next().value
+      if (oldest !== undefined) this.hits.delete(oldest)
+    }
+    this.hits.set(key, recent)
+    return true
+  }
+}

@@ -32,7 +32,7 @@ export interface MeteringSink {
 export interface AccountMeterOptions {
   readonly prices?: PriceTable
   readonly sink?: MeteringSink
-  /** 月度成本查询的 memo 时长（毫秒）；默认 60s。 */
+  /** 月度成本查询的 memo 时长（毫秒）；默认 30s（flush 落账后立即失效）。 */
   readonly monthMemoMs?: number
 }
 
@@ -109,6 +109,9 @@ export class AccountMeter {
       })
     }
     await sink.recordUsage(account, entries)
+    // 落账即失效该账户的月度 memo：预算判定永远站在落账后的口径上，
+    // 不吃 30s 窗口里的旧数。
+    this.monthMemo.delete(account)
     return entries.length
   }
 
@@ -127,7 +130,7 @@ export class AccountMeter {
     const sink = this.options.sink
     if (sink === undefined) return null
     const cached = this.monthMemo.get(account)
-    if (cached !== undefined && Date.now() - cached.at < (this.options.monthMemoMs ?? 60_000)) {
+    if (cached !== undefined && Date.now() - cached.at < (this.options.monthMemoMs ?? 30_000)) {
       return cached.cents
     }
     const month = await sink.usageMonthly(account)

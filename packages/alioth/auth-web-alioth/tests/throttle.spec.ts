@@ -2,7 +2,7 @@
  * 登录限流（throttle）单元语义：窗口计数、封禁、清零、有界表。
  */
 import { describe, expect, it } from 'vitest'
-import { LoginThrottle, clientKeyOf } from '../src/throttle.ts'
+import { ActionRateLimiter, LoginThrottle, clientKeyOf } from '../src/throttle.ts'
 
 describe('LoginThrottle', () => {
   it('allows up to maxFailures, then blocks within the window', () => {
@@ -53,5 +53,27 @@ describe('clientKeyOf', () => {
     expect(clientKeyOf({ headers: { 'x-forwarded-for': '203.0.113.7, 10.0.0.1' } })).toBe('203.0.113.7')
     expect(clientKeyOf({ headers: {}, socket: { remoteAddress: '127.0.0.1' } })).toBe('127.0.0.1')
     expect(clientKeyOf({ headers: {} })).toBe('unknown')
+  })
+})
+
+describe('ActionRateLimiter (authenticated action windows)', () => {
+  it('admits up to maxActions per window, then refuses every further action', () => {
+    const limiter = new ActionRateLimiter({ maxActions: 3, windowMs: 60_000 })
+    const key = 'ip1\u0000user-1'
+    expect(limiter.admit(key)).toBe(true)
+    expect(limiter.admit(key)).toBe(true)
+    expect(limiter.admit(key)).toBe(true)
+    expect(limiter.admit(key)).toBe(false)
+    // 另一账户不受牵连。
+    expect(limiter.admit('ip1\u0000user-2')).toBe(true)
+  })
+
+  it('forgets the window once it passes', async () => {
+    const limiter = new ActionRateLimiter({ maxActions: 1, windowMs: 40 })
+    const key = 'ip2\u0000user-1'
+    expect(limiter.admit(key)).toBe(true)
+    expect(limiter.admit(key)).toBe(false)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(limiter.admit(key)).toBe(true)
   })
 })

@@ -52,6 +52,8 @@ export interface BillRow {
   readonly orderId: string | null
   readonly createdAt: Date
   readonly paidAt: Date | null
+  /** 折算退款额（分）：refundBill 按剩余服务期折算后落账；未退款为 null。 */
+  readonly refundAmountCents: number | null
 }
 
 export interface OrderRow {
@@ -67,6 +69,9 @@ export interface OrderRow {
   readonly createdAt: Date
   readonly paidAt: Date | null
   readonly fulfilledAt: Date | null
+  /** 该订单覆盖的服务窗口（退款按剩余期折算的依据）；legacy 行为 null。 */
+  readonly serviceStart: Date | null
+  readonly serviceEnd: Date | null
 }
 
 export interface InvoiceRow {
@@ -135,7 +140,7 @@ export interface BillingStore {
   billById(id: string): Promise<BillRow | null>
   billsFor(userId: string): Promise<BillRow[]>
   billForPeriod(userId: string, period: string): Promise<BillRow | null>
-  setBillStatus(id: string, status: BillStatus, paidAt: Date | null): Promise<BillRow | null>
+  setBillStatus(id: string, status: BillStatus, paidAt: Date | null, refundAmountCents?: number | null): Promise<BillRow | null>
   allBills(): Promise<BillRow[]>
   // orders
   insertOrder(order: OrderRow): Promise<void>
@@ -217,6 +222,7 @@ export function toBill(row: unknown): BillRow | null {
     orderId: typeof record.order_id === 'string' ? record.order_id : null,
     createdAt,
     paidAt: asDate(record.paid_at),
+    refundAmountCents: record.refund_amount_cents === null || record.refund_amount_cents === undefined ? null : num(record.refund_amount_cents),
   }
 }
 
@@ -239,6 +245,8 @@ export function toOrder(row: unknown): OrderRow | null {
     createdAt,
     paidAt: asDate(record.paid_at),
     fulfilledAt: asDate(record.fulfilled_at),
+    serviceStart: asDate(record.service_start),
+    serviceEnd: asDate(record.service_end),
   }
 }
 
@@ -313,8 +321,10 @@ export async function ensureBillingSchema(sql: SqlFn): Promise<void> {
       status text NOT NULL CHECK (status IN ('unpaid', 'paid', 'void', 'refunded')),
       order_id text,
       created_at timestamptz NOT NULL DEFAULT now(),
-      paid_at timestamptz
+      paid_at timestamptz,
+      refund_amount_cents integer
     );
+    ALTER TABLE ${BILLING_SCHEMA}.bills ADD COLUMN IF NOT EXISTS refund_amount_cents integer;
     CREATE INDEX IF NOT EXISTS bills_user_idx ON ${BILLING_SCHEMA}.bills (user_id);
     CREATE TABLE IF NOT EXISTS ${BILLING_SCHEMA}.orders (
       id text PRIMARY KEY,
@@ -326,8 +336,12 @@ export async function ensureBillingSchema(sql: SqlFn): Promise<void> {
       note text NOT NULL DEFAULT '',
       created_at timestamptz NOT NULL DEFAULT now(),
       paid_at timestamptz,
-      fulfilled_at timestamptz
+      fulfilled_at timestamptz,
+      service_start timestamptz,
+      service_end timestamptz
     );
+    ALTER TABLE ${BILLING_SCHEMA}.orders ADD COLUMN IF NOT EXISTS service_start timestamptz;
+    ALTER TABLE ${BILLING_SCHEMA}.orders ADD COLUMN IF NOT EXISTS service_end timestamptz;
     CREATE INDEX IF NOT EXISTS orders_user_idx ON ${BILLING_SCHEMA}.orders (user_id);
     CREATE TABLE IF NOT EXISTS ${BILLING_SCHEMA}.invoices (
       id text PRIMARY KEY,
@@ -415,9 +429,9 @@ export function createPgBillingStore(sql: SqlFn): BillingStore {
 
     async insertBill(bill) {
       await sql(
-        `INSERT INTO ${BILLING_SCHEMA}.bills (id, user_id, period, amount_cents, status, order_id, created_at, paid_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [bill.id, bill.userId, bill.period, bill.amountCents, bill.status, bill.orderId, bill.createdAt.toISOString(), iso(bill.paidAt)],
+        `INSERT INTO ${BILLING_SCHEMA}.bills (id, user_id, period, amount_cents, status, order_id, created_at, paid_at, refund_amount_cents)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [bill.id, bill.userId, bill.period, bill.amountCents, bill.status, bill.orderId, bill.createdAt.toISOString(), iso(bill.paidAt), bill.refundAmountCents],
       )
     },
 
@@ -442,8 +456,11 @@ export function createPgBillingStore(sql: SqlFn): BillingStore {
       return toBill(result.rows[0])
     },
 
-    async setBillStatus(id, status, paidAt) {
-      await sql(`UPDATE ${BILLING_SCHEMA}.bills SET status = $2, paid_at = $3 WHERE id = $1`, [id, status, iso(paidAt)])
+    async setBillStatus(id, status, paidAt, refundAmountCents) {
+      await sql(
+        `UPDATE ${BILLING_SCHEMA}.bills SET status = $2, paid_at = $3${refundAmountCents === undefined ? '' : ', refund_amount_cents = $4'} WHERE id = $1`,
+        refundAmountCents === undefined ? [id, status, iso(paidAt)] : [id, status, iso(paidAt), refundAmountCents],
+      )
       const result = await sql(`SELECT * FROM ${BILLING_SCHEMA}.bills WHERE id = $1`, [id])
       return toBill(result.rows[0])
     },
@@ -455,10 +472,10 @@ export function createPgBillingStore(sql: SqlFn): BillingStore {
 
     async insertOrder(order) {
       await sql(
-        `INSERT INTO ${BILLING_SCHEMA}.orders (id, user_id, kind, amount_cents, status, bill_id, note, created_at, paid_at, fulfilled_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        `INSERT INTO ${BILLING_SCHEMA}.orders (id, user_id, kind, amount_cents, status, bill_id, note, created_at, paid_at, fulfilled_at, service_start, service_end)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [order.id, order.userId, order.kind, order.amountCents, order.status, order.billId, order.note,
-          order.createdAt.toISOString(), iso(order.paidAt), iso(order.fulfilledAt)],
+          order.createdAt.toISOString(), iso(order.paidAt), iso(order.fulfilledAt), iso(order.serviceStart), iso(order.serviceEnd)],
       )
     },
 
@@ -615,10 +632,15 @@ export function createMemoryBillingStore(): BillingStore {
       return sortDesc([...bills.values()].filter(bill => bill.userId === userId && bill.period === period),
         bill => bill.createdAt)[0] ?? null
     },
-    async setBillStatus(id, status, paidAt) {
+    async setBillStatus(id, status, paidAt, refundAmountCents) {
       const existing = bills.get(id)
       if (existing === undefined) return null
-      const updated: BillRow = { ...existing, status, paidAt: paidAt ?? existing.paidAt }
+      const updated: BillRow = {
+        ...existing,
+        status,
+        paidAt: paidAt ?? existing.paidAt,
+        refundAmountCents: refundAmountCents === undefined ? existing.refundAmountCents : refundAmountCents,
+      }
       bills.set(id, updated)
       return updated
     },

@@ -93,10 +93,11 @@ describe('postgres billing store', () => {
     await store.insertOrder({
       id: 'o1', userId: 'u1', kind: 'subscription-l1', amountCents: 139900, status: 'pending',
       billId: 'b1', note: '', createdAt: new Date(), paidAt: null, fulfilledAt: null,
+      serviceStart: new Date('2026-10-01T00:00:00.000Z'), serviceEnd: new Date('2026-10-31T00:00:00.000Z'),
     })
     await store.insertBill({
       id: 'b1', userId: 'u1', period: '2026-10', amountCents: 139900, status: 'unpaid',
-      orderId: 'o1', createdAt: new Date(), paidAt: null,
+      orderId: 'o1', createdAt: new Date(), paidAt: null, refundAmountCents: null,
     })
     const paid = await store.setBillStatus('b1', 'paid', new Date())
     expect(paid?.status).toBe('paid')
@@ -105,8 +106,9 @@ describe('postgres billing store', () => {
     expect(fulfilled?.fulfilledAt).not.toBeNull()
     expect((await store.billsFor('u1'))[0]?.status).toBe('paid')
     expect(await store.billForPeriod('u1', '2026-10')).not.toBeNull()
-    const refunded = await store.setBillStatus('b1', 'refunded', new Date())
+    const refunded = await store.setBillStatus('b1', 'refunded', new Date(), 69950)
     expect(refunded?.status).toBe('refunded')
+    expect(refunded?.refundAmountCents).toBe(69950)
   })
 
   it('assigns invoice numbers through the store round-trip', async () => {

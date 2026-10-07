@@ -16,6 +16,7 @@
  */
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { ActionRateLimiter, clientKeyOf } from '@dsh-alioth/auth-web-alioth/throttle'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -406,7 +407,7 @@ function invoicesBody(data: ViewData): string {
   return `<h1>发票</h1><p class="sub">已支付账单可申请开票（电子普票）；管理员在下方队列开具。</p>
 ${tabs('/invoices', user.role)}
 ${banners(data)}
-<div class="panel"><h2>申请发票</h2>
+<div class="panel"><h2>申请发票</h2><p class="note">提交后进入管理员开具队列，开具后此处显示票号。</p>
 ${paidBills.length === 0
     ? '<p class="note">暂无可开票账单 — 需已支付且未申请过发票的账单。</p>'
     : `<form class="grid" method="post" action="/api/billing/invoice">
@@ -491,6 +492,8 @@ export function apply(ctx: Context, config: Config): void {
   const icp = config.icp
   /** Ext-adapter 回调验签密钥（空 = 回调端点整体关闭，fail-closed）。 */
   const channelSecret = config.channelSecret ?? ''
+  /** 已认证动作限流：状态变更端点按 (来源 IP, 账户) 固定窗口计数。 */
+  const actions = new ActionRateLimiter()
 
   /** Resolve the cookie/bearer user, or null. */
   const authedUser = async (request: IncomingMessage): Promise<AuthedUser | null> => {
@@ -577,6 +580,11 @@ export function apply(ctx: Context, config: Config): void {
       }
       if (user === null) {
         sendJson(response, 401, { error: 'unauthorized' })
+        return
+      }
+      // 动作限流（每次计数，不分成败）：挡脚本刷接口，不挡正常操作。
+      if (!actions.admit(`${clientKeyOf(request)}\u0000${user.id}`)) {
+        sendJson(response, 429, { error: '操作过于频繁，请稍后再试' })
         return
       }
       const action = actionMatch[1]!

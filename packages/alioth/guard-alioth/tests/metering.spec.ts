@@ -53,21 +53,26 @@ describe('AccountMeter (unit)', () => {
     expect(meter.unflushedCost('s1', [])).toBe(0)
   })
 
-  it('memoizes monthCost per account', async () => {
+  it('memoizes monthCost per account and invalidates on flush', async () => {
     let reads = 0
     const sink: MeteringSink = {
       recordUsage: async () => {},
-      usageMonthly: async () => { reads += 1; return { costCents: 42 } },
+      usageMonthly: async () => { reads += 1; return { costCents: reads * 10 } },
     }
     const meter = new AccountMeter({ prices, sink })
-    expect(await meter.monthCost('U-ada')).toBe(42)
-    expect(await meter.monthCost('U-ada')).toBe(42)
+    expect(await meter.monthCost('U-ada')).toBe(10)
+    expect(await meter.monthCost('U-ada')).toBe(10) // memo 命中
     expect(reads).toBe(1)
     meter.resetMemo()
-    expect(await meter.monthCost('U-ada')).toBe(42)
+    expect(await meter.monthCost('U-ada')).toBe(20)
     expect(reads).toBe(2)
-    expect(await meter.monthCost('U-eve')).toBe(42)
+    expect(await meter.monthCost('U-eve')).toBe(30)
     expect(reads).toBe(3)
+    // 落账即失效：预算判定不吃 memo 窗口里的旧数。
+    meter.setAccount('s-flush', 'U-ada')
+    await meter.flush('s-flush', [event('deepseek-chat')], Date.now())
+    expect(await meter.monthCost('U-ada')).toBe(40)
+    expect(reads).toBe(4)
   })
 })
 

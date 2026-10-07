@@ -18,7 +18,7 @@ import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as auth from '../src/index.ts'
-import { clearJwksCache, verifyIdToken, discoverOidc, buildAuthorizeUrl, exchangeCode } from '../src/oidc.ts'
+import { clearJwksCache, verifyIdToken, discoverOidc, buildAuthorizeUrl, createPkcePair, exchangeCode } from '../src/oidc.ts'
 import { openSecret, sealSecret } from '../src/secretbox.ts'
 
 // ── 假 IdP（ES256） ────────────────────────────────────────────────────────
@@ -67,6 +67,12 @@ async function startIdp(): Promise<string> {
         const params = new URLSearchParams(body)
         if (params.get('code') !== 'good-code') {
           response.writeHead(400).end()
+          return
+        }
+        // PKCE S256：换码必须携带 code_verifier（测试替身即最小 IdP 契约）。
+        if ((params.get('code_verifier') ?? '').length < 43) {
+          response.writeHead(400, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: 'invalid_request', description: 'missing code_verifier' }))
           return
         }
         response.writeHead(200, { 'content-type': 'application/json' })
@@ -172,14 +178,18 @@ describe('oidc primitives (fake IdP, ES256)', () => {
     await expect(discoverOidc('http://127.0.0.1:1')).rejects.toThrow()
   })
 
-  it('builds an authorization URL carrying the use-once state', async () => {
+  it('builds an authorization URL carrying the use-once state and PKCE challenge', async () => {
     const discovery = await discoverOidc(idpBase)
+    const pkce = createPkcePair()
     const url = new URL(buildAuthorizeUrl(discovery, {
       clientId: CLIENT_ID, redirectUri: 'http://localhost/cb', scope: 'openid profile', state: 'st-1',
+      codeChallenge: pkce.challenge, codeChallengeMethod: 'S256',
     }))
     expect(url.pathname).toBe('/authorize')
     expect(url.searchParams.get('state')).toBe('st-1')
     expect(url.searchParams.get('client_id')).toBe(CLIENT_ID)
+    expect(url.searchParams.get('code_challenge')).toBe(pkce.challenge)
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
   })
 
   it('verifies a well-signed ID token and rejects expired / wrong-audience / foreign-key ones', async () => {
@@ -201,15 +211,23 @@ describe('oidc primitives (fake IdP, ES256)', () => {
     await expect(verifyIdToken(forged, { discovery, audience: CLIENT_ID })).rejects.toThrow(/signature verification failed/)
   })
 
-  it('exchanges the code at the token endpoint', async () => {
+  it('exchanges the code at the token endpoint (PKCE verifier required)', async () => {
     const discovery = await discoverOidc(idpBase)
     lastIdToken = () => signIdToken({ sub: 'u1', iss: idpBase, aud: CLIENT_ID, exp: Math.floor(Date.now() / 1000) + 600 })
+    const pkce = createPkcePair()
     const { idToken } = await exchangeCode(discovery, {
-      clientId: CLIENT_ID, clientSecret: 'client-secret', redirectUri: 'http://localhost/cb', code: 'good-code',
+      clientId: CLIENT_ID, clientSecret: 'client-secret', redirectUri: 'http://localhost/cb',
+      code: 'good-code', codeVerifier: pkce.verifier,
     })
     expect(idToken.split('.')).toHaveLength(3)
     await expect(exchangeCode(discovery, {
-      clientId: CLIENT_ID, clientSecret: 'client-secret', redirectUri: 'http://localhost/cb', code: 'bad-code',
+      clientId: CLIENT_ID, clientSecret: 'client-secret', redirectUri: 'http://localhost/cb',
+      code: 'bad-code', codeVerifier: pkce.verifier,
+    })).rejects.toThrow(/token endpoint answered 400/)
+    // 缺 verifier → IdP 拒绝（替身强制 PKCE）。
+    await expect(exchangeCode(discovery, {
+      clientId: CLIENT_ID, clientSecret: 'client-secret', redirectUri: 'http://localhost/cb',
+      code: 'good-code', codeVerifier: '',
     })).rejects.toThrow(/token endpoint answered 400/)
   })
 })

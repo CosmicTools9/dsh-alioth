@@ -187,7 +187,7 @@ describe('user center (web carrier)', () => {
     expect(html).toContain('name="theme-color"')
   })
 
-  it('full loop over the JSON API: subscribe → pay → invoice (issued on request)', async () => {
+  it('full loop over the JSON API: subscribe → pay → invoice request (pending) → admin issues', async () => {
     const api = (path: string, init: RequestInit = {}): Promise<Response> =>
       fetch(`${webBase()}${path}`, {
         ...init,
@@ -215,14 +215,21 @@ describe('user center (web carrier)', () => {
     })
     expect(invoice.status).toBe(200)
     const invBody = await invoice.json() as { id: string; status: string }
-    // Self-service: no admin review queue — requesting issues directly.
-    expect(invBody.status).toBe('issued')
+    // 申请进入管理员开具队列（pending）；开具由 admin 完成。
+    expect(invBody.status).toBe('pending')
 
     const dup = await api('/api/billing/invoice', {
       method: 'POST',
       body: JSON.stringify({ bill: billId, title: 'again', tax: '' }),
     })
     expect(dup.status).toBe(400)
+
+    // 普通用户不能开具；admin 开具后带收据级票号（见 billing-web-admin.spec）。
+    const forbidden = await api('/api/billing/issue', {
+      method: 'POST',
+      body: JSON.stringify({ invoice: invBody.id }),
+    })
+    expect(forbidden.status).toBe(400)
   })
 
   it('form posts redirect back with a notice banner', async () => {
@@ -247,9 +254,11 @@ describe('user center (web carrier)', () => {
     expect(invoices.status).toBe(200)
     const invoicesHtml = await invoices.text()
     expect(invoicesHtml).toContain('杭州示例科技')
-    expect(invoicesHtml).toContain('已开具')
-    // No super-admin: the issuance queue panel does not render.
-    expect(invoicesHtml).not.toContain('开具队列')
+    expect(invoicesHtml).toContain('待开具') // 申请在管理员队列里
+    expect(invoicesHtml).toContain('<td>—</td>') // 票号未定
+    // 无超管不变：非 admin 看不到开具队列面板（精确断言面板标题，
+    // 不误伤「进入管理员开具队列」的流程提示文案）。
+    expect(invoicesHtml).not.toContain('开具队列（管理员）')
   })
 })
 
@@ -351,7 +360,7 @@ describe('user center transport + failure branches (real services)', () => {
     const beforeHtml = await before.text()
     expect(beforeHtml).toContain('暂无可开票账单')
     expect(beforeHtml).toContain('暂无发票记录。')
-    expect(beforeHtml).not.toContain('开具队列')
+    expect(beforeHtml).not.toContain('开具队列（管理员）')
 
     await asInvoiceUser('/api/billing/subscribe', { method: 'POST' })
     const overview = await (await asInvoiceUser('/api/billing/overview')).json() as { bills: Array<{ id: string; status: string }> }
@@ -373,21 +382,20 @@ describe('user center transport + failure branches (real services)', () => {
       body: JSON.stringify({ bill: unpaidBill.id, title: '无税号公司', tax: '' }),
     })
     expect(requested.status).toBe(200)
-    const issuedId = ((await requested.json()) as { id: string }).id
+    const requestedId = ((await requested.json()) as { id: string }).id
 
     const afterHtml = await (await asInvoiceUser('/usercenter/invoices')).text()
     expect(afterHtml).toContain('无税号公司')
-    expect(afterHtml).toContain('已开具')
-    expect(afterHtml).toMatch(/<td>—<\/td>/)
+    expect(afterHtml).toContain('待开具')
+    expect(afterHtml).toMatch(/<td>—<\/td>/) // 票号未定
 
-    // Idempotent re-issue of the invoice just requested (the JSON twin).
-    const reissued = await asInvoiceUser('/api/billing/issue', {
+    // 开具是 admin 动作：普通用户调用被拒（queue 语义收口在服务面）。
+    const denied = await asInvoiceUser('/api/billing/issue', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ invoice: issuedId }),
+      body: JSON.stringify({ invoice: requestedId }),
     })
-    expect(reissued.status).toBe(200)
-    expect(await reissued.json()).toMatchObject({ id: issuedId, status: 'issued' })
+    expect(denied.status).toBe(400)
   })
 
   it('shows notice and error banners from the query feed', async () => {
