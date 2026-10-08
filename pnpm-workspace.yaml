@@ -40,7 +40,7 @@ overrides:
   # The nested 11.7.0 copy carried four advisories fixed in 11.11; the
   # workspace itself pins pnpm 12.6.0 via packageManager.
   pnpm: '12.6.0'
-  sharp: '>=0.35.4'
+  sharp: '>=0.35.5'
   yaml: '>=2.8.3'
   # Security floors raised 2026-09-30 from `pnpm audit --audit-level=moderate`
   # (11 high / 18 moderate after the harness moved to the 0.2.0-rc.2 line).
@@ -58,6 +58,25 @@ overrides:
   'brace-expansion@^1': '^1.1.21'
   'brace-expansion@^2': '^2.1.7'
   'brace-expansion@^5': '^5.0.12'
+  # Security floors raised 2026-10-08 from `pnpm audit --audit-level=moderate`
+  # (13 findings: 1 critical / 6 high / 3 moderate / 3 low — up from 2 findings on
+  # 2026-10-04, because every one of these advisories was published after that run,
+  # not because a dependency moved). Each path resolves through the harness sibling
+  # checkout or a plugin tree already owned here: `express` ←
+  # `@modelcontextprotocol/sdk` (proxy-addr, the critical), `apps/desktop`'s
+  # electron-builder chain (http-cache-semantics), `host/webserver` (compression),
+  # the vitest/vite chain (source-map-js), `tool-alioth-meta` →
+  # `@huggingface/transformers` (sharp), `env-alioth` (postcss-selector-parser) and
+  # the root `knip` (smol-toml). Scoped to each package's own major line; each value
+  # is the lowest release that clears its advisories.
+  'proxy-addr@^2': '^2.0.8'
+  'compression@^1': '^1.8.2'
+  'http-cache-semantics@^4': '^4.3.0'
+  'source-map-js@^1': '^1.2.2'
+  '@modelcontextprotocol/sdk@^1': '^1.31.0'
+  '@modelcontextprotocol/client@^2': '^2.2.0'
+  'postcss-selector-parser@^7': '^7.1.6'
+  'smol-toml@^1': '^1.9.0'
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
@@ -320,3 +339,10 @@ auditConfig:
     # 触发条件也窄：仅 v3/v5/v6 且显式传入 buf 时缺边界检查。
     # 真修在 harness 线（@fortune-sheet 升级或换 uuid 调用面）；那边修好前在此显式忽略并留痕。
     - GHSA-w5hq-g745-h8pq
+    # sprintf-js 1.1.3（moderate，DoS via unbounded precision specifiers）公告里
+    # patched 范围为空——修复版尚未发布，任何 floor 都只会把 `roarr` 链解析成不存在
+    # 的版本。消费路径同样是 harness 侧：apps/desktop 的 electron-builder →
+    # @electron/get → global-agent → roarr，以及本仓 tool-alioth-meta →
+    # @huggingface/transformers → onnxruntime-node → global-agent → roarr。
+    # 与 extract-zip 同处置：显式忽略留痕，上游发布修复版后撤除。
+    - GHSA-hp3w-g68c-fv3c
