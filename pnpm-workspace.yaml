@@ -77,6 +77,14 @@ overrides:
   '@modelcontextprotocol/client@^2': '^2.2.0'
   'postcss-selector-parser@^7': '^7.1.6'
   'smol-toml@^1': '^1.9.0'
+  # The two remaining LOW advisories, below the gate's moderate floor. dompurify
+  # (3.4.15 → ≥3.4.16, GHSA-p98j-92pf-mc4p + GHSA-6688-9rhm-gjv2) sits inside the
+  # declaring range (`^3.4.11` in the harness `ui-sidebar-documentpreview`), so it is
+  # floored above. katex 0.16.47 → ≥0.18.2 (GHSA-238p-pmpm-9mq7) is NOT: 0.x carets
+  # lock the minor, so a floor there would hand `micromark-extension-math` a version its
+  # declaration (`^0.16.47`) refuses — the same reason uuid stays ignored below. The
+  # repair belongs to the harness line's katex/micromark chain.
+  'dompurify@^3': '^3.4.16'
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
   '@google/genai': true
