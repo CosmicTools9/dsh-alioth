@@ -64,7 +64,13 @@ runs:
         # Only `pnpm-workspace.yaml` / `pnpm-lock.yaml` / a fixture and the
         # notices file changed there — no workspace manifest delta, so this
         # repo's lockfile still resolves every harness member unchanged.
-        ref: 7746e05690f6a89aeab8c9cf66db9f76e90a73d4
+        # 2026-10-08 (same day): advanced across the three spec repairs
+        # (`bf22e854f9`) — the trajectory mount case now awaits the locale plugin
+        # the artifact injects, the inspector case asserts the workspace's Vite
+        # 8.x line, and the disposed-drain case releases the lock its stub
+        # skipped (that open descriptor made `vitest run` exit non-zero with an
+        # unhandled error). Test files only; no manifest or lock delta.
+        ref: bf22e854f9c061e16ad6d2232c02803915bcc749
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
