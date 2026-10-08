@@ -1,8 +1,20 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import * as billing from '../src/index.ts'
 import { currentPeriod } from '../src/index.ts'
 import { createMemoryLicenseStore } from '../src/license-store.ts'
+
+/**
+ * Waits for an asynchronous condition, giving up after `timeoutMs`; webhook delivery is
+ * fire-and-forget, so a fixed sleep turns a slow CI runner into a failed assertion.
+ * @param condition - Predicate polled until it holds.
+ * @param timeoutMs - Deadline after which the following assertion decides the outcome.
+ */
+async function settled(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition() && Date.now() < deadline) await delay(5)
+}
 
 describe('billing capability (memory provider)', () => {
   it('subscribe → order + current-period bill materialized; idempotent re-subscribe', async () => {
@@ -284,7 +296,7 @@ describe('notifications (optional webhook)', () => {
       await svc.subscribe('u7')
       const bill = (await svc.bills('u7'))[0]!
       await svc.payBill(bill.id, { id: 'u7', role: 'user' })
-      await new Promise(resolve => setTimeout(resolve, 50))
+      await settled(() => received.length >= 3)
       expect(received.map(entry => entry.event)).toEqual(['subscription.started', 'bill.created', 'bill.paid'])
     } finally {
       server.close()
@@ -295,7 +307,7 @@ describe('notifications (optional webhook)', () => {
     const onError = vi.fn()
     const svc = billing.createMemoryBilling({ notifyWebhookUrl: 'http://127.0.0.1:9/nope', onError })
     await svc.subscribe('u8') // resolves without throwing
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await settled(() => onError.mock.calls.length > 0)
     expect(onError).toHaveBeenCalled()
   })
 })
