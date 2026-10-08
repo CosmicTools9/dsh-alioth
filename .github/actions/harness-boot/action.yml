@@ -58,7 +58,13 @@ runs:
         # regenerated) — no `package.json` / `pnpm-lock.yaml` delta, so the
         # lockfile stays as generated for `02a0004b4b` and the ref tracks the
         # local checkout again.
-        ref: 86806b28df5e5f4ab7b6b109db4f0912dd3a1cbe
+        # 2026-10-08 (same day): advanced again across the harness-side security
+        # floors (`7746e05690`: 106 audit findings across 29 transitive packages
+        # to 0, plus the two recorded expectations katex's class rename moves).
+        # Only `pnpm-workspace.yaml` / `pnpm-lock.yaml` / a fixture and the
+        # notices file changed there — no workspace manifest delta, so this
+        # repo's lockfile still resolves every harness member unchanged.
+        ref: 7746e05690f6a89aeab8c9cf66db9f76e90a73d4
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
