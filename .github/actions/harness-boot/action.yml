@@ -52,7 +52,13 @@ runs:
         # `pnpm-lock.yaml` was regenerated. Pin and lockfile MUST move
         # together — regenerate `pnpm-lock.yaml` against this revision in the
         # same commit, or the frozen install fails.
-        ref: 02a0004b4be0e4145fb4c5e858dd49981a3394db
+        # 2026-10-08: advanced to the harness Alioth HEAD across the three
+        # post-merge chores (Claude Code instruction symlinks removed, stale
+        # `src/invariant.ts` README rows dropped, runtime API catalog
+        # regenerated) — no `package.json` / `pnpm-lock.yaml` delta, so the
+        # lockfile stays as generated for `02a0004b4b` and the ref tracks the
+        # local checkout again.
+        ref: 86806b28df5e5f4ab7b6b109db4f0912dd3a1cbe
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
