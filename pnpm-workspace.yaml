@@ -363,3 +363,11 @@ auditConfig:
     # @huggingface/transformers → onnxruntime-node → global-agent → roarr。
     # 与 extract-zip 同处置：显式忽略留痕，上游发布修复版后撤除。
     - GHSA-hp3w-g68c-fv3c
+    # node-forge <=1.4.0（high，RSA PKCS#1 v1.5 签名验证接受多余嵌套
+    # DigestAlgorithm 元素）公告里 patched 范围为空——修复版尚未发布，任何
+    # floor 都无从谈起。唯一消费路径在 harness 侧：
+    # packages/host/webserver → selfsigned → node-forge，而 selfsigned 只用
+    # forge 生成自签证书，从不验证不受信输入的签名，暴露面是开发/内网
+    # webserver 的证书签发。随 dsh-v0.2.1-alpha.2 合并底（b84f323f8e）进入
+    # 本仓锁。显式忽略留痕，node-forge 发布修复版后撤除并改 floor。
+    - GHSA-86w9-cpqp-85rv
