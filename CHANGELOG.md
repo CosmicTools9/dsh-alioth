@@ -16,6 +16,11 @@ this file records user-visible changes per release.
 ### Changed
 - **复检注记按真实缺口闭环（2026-10-07 第二轮）**：①发票恢复**管理员开具队列**（申请落 pending，admin 页/`issueInvoice` 开具赋收据级票号；「无超管」不变）；②退款改为**按剩余服务期折算**——服务窗口记在订单上，退款额 = ⌊金额×剩余/总期⌋ 落 `bills.refund_amount_cents`，服务随退款终止（billing 域规则支持注入时钟，折算可确定性测试）；③OIDC 适配器补 **PKCE S256**（verifier 随一次性 state、challenge 进授权 URL、换码携带，假 IdP 断言强制）；④计量月度 memo 收紧为 30s 且**落账即失效**（预算判定不吃旧数）；⑤billing 状态变更端点加**动作限流**（`ActionRateLimiter`，30 次/5min，超限 429，GET 不计）。
 ### Changed
+- **运行在 harness `0.2.1-alpha.2` 合并底（`b84f323f8e`）上**：harness 全量 manifest 随上游 release 前进到
+  `0.2.1-alpha.2`，`apps/cli` importer 新增 8 个 experimental 成员依赖并升了 execa/`node-addon-require-builtin`/ws；
+  既有声明范围 `^0.2.1-alpha.1` 按同元组预发布递增继续命中（74 条 importer 的 vendor/link 全部保住，无 registry 回退），
+  本仓 lockfile 与 CI/Docker 引脚同 commit 前进。harness 侧验收：双面 typecheck、全量 vitest 41649 passed / 0 failed；
+  本仓验收：7 项检查链 + knip + 829 tests + 一次性库 smoke 全绿，dev console 实机一轮工具调用回复点出本账号命名空间。
 - **运行在 harness `0.2.1-alpha.1` 线上**：`@deepseek-ai/*` 声明范围（`^0.2.1-alpha.1`）与 vendor 层（`@deepseek-ai/cordis` `^4.0.5-alpha.1`、
   `schemastery` `^3.18.5-alpha.1`）随 sibling checkout 一起前进——`linkWorkspacePackages` 只在版本区间被 sibling 满足时才出 link，
   升版后旧的 `^0.2.0-rc.2`/`^4.0.4`/`^3.18.4` 一律静默回退 registry（members/examples 曾混装 registry dsh rc.2 + registry schemastery 3.18.4，

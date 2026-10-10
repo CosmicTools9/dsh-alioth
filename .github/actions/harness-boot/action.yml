@@ -70,7 +70,12 @@ runs:
         # 8.x line, and the disposed-drain case releases the lock its stub
         # skipped (that open descriptor made `vitest run` exit non-zero with an
         # unhandled error). Test files only; no manifest or lock delta.
-        ref: bf22e854f9c061e16ad6d2232c02803915bcc749
+        # 2026-10-10: advanced across the upstream `dsh-v0.2.1-alpha.2` merge
+        # (`b84f323f8e`). Harness manifests moved to `0.2.1-alpha.2` and
+        # `apps/cli` gained experimental members + dep bumps (execa ^10.0.1,
+        # node-addon-require-builtin ^0.1.9, ws 8.21.3), so this repo's
+        # lockfile was regenerated in the same commit as this pin.
+        ref: b84f323f8e2c231018c97e4125338983c35d8385
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
