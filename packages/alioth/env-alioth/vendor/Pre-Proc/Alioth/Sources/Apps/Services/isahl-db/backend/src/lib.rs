@@ -21,6 +21,8 @@ pub fn register_service_routes(cfg: &mut web::ServiceConfig) {
             .configure(identity_org::org_scheme::register)
             .configure(identity_org::handlers::subject_bridges::register)
             .configure(identity_org::handlers::org_levels::register)
-            .configure(identity_org::handlers::crud::register_subject_domain),
+            .configure(identity_org::handlers::crud::register_subject_domain)
+            // 值域办公室数据面（add-value-domain-office）：字典维护端点 /dict/*
+            .configure(dict::register),
     );
 }

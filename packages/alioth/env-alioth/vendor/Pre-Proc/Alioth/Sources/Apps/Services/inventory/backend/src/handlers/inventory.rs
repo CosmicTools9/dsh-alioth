@@ -50,7 +50,9 @@ async fn get_statistic(
 /// 查询参数（Option<i64> 可直接反序列化）
 #[derive(Debug, serde::Deserialize)]
 pub struct StockStatQueryParam {
+    #[serde(with = "common::serde_zuid::opt")]
     pub production_id: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub storage_id: Option<i64>,
 }
 

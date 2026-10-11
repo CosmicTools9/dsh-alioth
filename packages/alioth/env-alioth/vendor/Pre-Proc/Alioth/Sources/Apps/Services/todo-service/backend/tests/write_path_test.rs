@@ -1,4 +1,4 @@
-//! 写路径集成测试（真实测试库 `aliothstudio_test`）：生成仓储的 create/update 经 `crud::trigger` 通道。
+//! 写路径集成测试（真实测试库 `alioth_test`）：生成仓储的 create/update 经 `crud::trigger` 通道。
 //!
 //! 契约（`openspec/changes/regenerate-services-through-trigger-channel` 期 3，Alioth ns 覆盖）：
 //! ① `create` 经通道写入 `zc_id_stus-task`，系统管理列由通道注入；

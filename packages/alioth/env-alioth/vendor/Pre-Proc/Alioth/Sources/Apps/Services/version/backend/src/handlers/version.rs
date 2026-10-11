@@ -39,16 +39,20 @@ pub struct VersionResp {
 /// Alioth 版本创建请求（前端契约）
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateVersionReq {
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub version_number: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub previous_id: Option<i64>,
 }
 
 /// Alioth 版本更新请求（前端契约）
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateVersionReq {
+    #[serde(with = "common::serde_zuid::opt")]
     pub tpl_id: Option<i64>,
     pub version_number: Option<i64>,
+    #[serde(with = "common::serde_zuid::opt")]
     pub previous_id: Option<i64>,
 }
 

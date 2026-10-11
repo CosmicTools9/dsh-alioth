@@ -5,15 +5,8 @@
   "domain": "库存管理",
   "dtoDependencies": [],
   "dtoExposes": {
-    "queries": [
-      "statistics"
-    ],
-    "refs": [
-      "stock_stat",
-      "voucher",
-      "counting",
-      "storage_nest"
-    ]
+    "queries": ["statistics"],
+    "refs": ["stock_stat", "voucher", "counting", "storage_nest"]
   },
   "hasBackend": true,
   "hasFrontend": false,
@@ -161,10 +154,6 @@
           {
             "column": "qk_date",
             "json_path": "date"
-          },
-          {
-            "column": "qk_total",
-            "json_path": "total"
           },
           {
             "column": "qk_qty",
@@ -561,6 +550,102 @@
     {
       "endpoint": "CRUD /service/inventory/storage-nests",
       "purpose": "储元⇲储元 时空嵌套（行存在=置入，删除=取出）"
+    },
+    {
+      "endpoint": "GET /vouchers",
+      "purpose": "vouchers 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /vouchers",
+      "purpose": "vouchers 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /vouchers/{id}",
+      "purpose": "vouchers 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /vouchers/{id}",
+      "purpose": "vouchers 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /vouchers/{id}",
+      "purpose": "vouchers 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /vouchers/batch",
+      "purpose": "vouchers 批量删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /countings",
+      "purpose": "countings 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /countings",
+      "purpose": "countings 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /countings/{id}",
+      "purpose": "countings 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /countings/{id}",
+      "purpose": "countings 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /countings/{id}",
+      "purpose": "countings 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /countings/batch",
+      "purpose": "countings 批量删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /counting-details",
+      "purpose": "counting-details 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /counting-details",
+      "purpose": "counting-details 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /counting-details/{id}",
+      "purpose": "counting-details 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /counting-details/{id}",
+      "purpose": "counting-details 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /counting-details/{id}",
+      "purpose": "counting-details 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /counting-details/batch",
+      "purpose": "counting-details 批量删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /storage-nests",
+      "purpose": "storage-nests 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /storage-nests",
+      "purpose": "storage-nests 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /storage-nests/{id}",
+      "purpose": "storage-nests 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /storage-nests/{id}",
+      "purpose": "storage-nests 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /storage-nests/{id}",
+      "purpose": "storage-nests 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /storage-nests/batch",
+      "purpose": "storage-nests 批量删除（crud_routes 工厂展开）"
     }
   ],
   "subscribes": [],

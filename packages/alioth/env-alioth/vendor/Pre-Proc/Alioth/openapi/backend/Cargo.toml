@@ -1,3 +1,8 @@
+# alioth-service-openapi — 组合薄壳
+#
+# 实现单源 = Framework `openapi` 内核（模型数据链路基础设施；合规定位见
+# openspec/specs/framework-scope-boundary R1 ② 类 + R2「ns 后端 MUST 为组合薄壳」）。
+# 单源判定：change extract-ns-service-kernels-demand-openapi
 [package]
 name = "alioth-service-openapi"
 version.workspace = true
@@ -7,20 +12,7 @@ license.workspace = true
 
 [dependencies]
 actix-web = { workspace = true }
-sqlx = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-chrono = { workspace = true }
-thiserror = { workspace = true }
-async-trait = { workspace = true }
-tokio = { workspace = true }
-dotenvy = { workspace = true }
-common = { path = "../../../../Framework/backend/common" }
-crud = { path = "../../../../Framework/backend/crud" }
-ontology-binding = { path = "../../../../Framework/backend/ontology-binding" }
+openapi = { path = "../../../../Framework/backend/openapi" }
 
 [lib]
 path = "src/lib.rs"
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

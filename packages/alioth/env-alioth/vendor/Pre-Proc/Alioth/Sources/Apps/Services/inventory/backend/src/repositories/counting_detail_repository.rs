@@ -8,7 +8,7 @@
 //! - 溯源：**缺桥，已报缺**（§8.5.10「缺桥必须报缺，MUST NOT 借用他桥」）——模型无
 //!   「校准凭证 ↔ 盘点明细」桥：通用 `zc_id_statement_rr_reason` 本体零直插，其叶
 //!   `zc_id_order_rr_contract` 声明语义 = 关联-订单↔合约（写凭证/明细即越界借桥）。
-//!   申请单 = `Pre-Proc/WZ/model-center-requests.md` §R4（「事实↔前因」专叶）。专叶落地前
+//!   申请单 = `.planning/model-center-requests.md` §R4（「事实↔前因」专叶）。专叶落地前
 //!   明细↔凭证**无合法溯源落点**（写径不落行、读径取不到），不得借用他桥。
 //!
 //! 差异为 0 不生成凭证；UPDATE 明细不重复校准（校准事实已发生）。
@@ -219,7 +219,7 @@ impl
                 // 溯源：缺桥，已报缺（§8.5.10）——模型无「校准凭证 ↔ 盘点明细」桥，
                 // `zc_id_statement_rr_reason` 本体零直插、其叶 `zc_id_order_rr_contract`
                 // 声明语义 = 关联-订单↔合约（写凭证/明细即越界借桥）。故此处**不落任何桥行**；
-                // 申请单 = `Pre-Proc/WZ/model-center-requests.md` §R4。专叶落地前这条溯源不可用。
+                // 申请单 = `.planning/model-center-requests.md` §R4。专叶落地前这条溯源不可用。
             }
         }
 

@@ -3,17 +3,10 @@
   "namespace": "Alioth",
   "domain": "\u57fa\u7840\u8bbe\u65bd",
   "layer": 0,
-  "dtoDependencies": [
-    "isahl-db"
-  ],
+  "dtoDependencies": ["isahl-db"],
   "dtoExposes": {
-    "refs": [
-      "environment"
-    ],
-    "queries": [
-      "list_refs",
-      "get_refs"
-    ]
+    "refs": ["environment"],
+    "queries": ["list_refs", "get_refs"]
   },
   "backendCrate": "alioth-service-environment",
   "hasBackend": true,
@@ -75,6 +68,31 @@
       }
     ]
   },
-  "services": [],
+  "services": [
+    {
+      "endpoint": "GET /environments",
+      "purpose": "environments 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /environments",
+      "purpose": "environments 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /environments/{id}",
+      "purpose": "environments 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /environments/{id}",
+      "purpose": "environments 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /environments/{id}",
+      "purpose": "environments 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /environments/batch",
+      "purpose": "environments 批量删除（crud_routes 工厂展开）"
+    }
+  ],
   "aliothVersion": "0.7.0"
 }

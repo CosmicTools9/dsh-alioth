@@ -23,7 +23,7 @@ pub async fn setup_test_schema(pool: &PgPool) -> Result<(), Box<dyn std::error::
     if !db_name.contains("_test") {
         return Err(format!(
             "REFUSED: running integration test on non-test database '{}'. \
-             Set DATABASE_URL to aliothstudio_test before running tests.",
+             Set DATABASE_URL to alioth_test before running tests.",
             db_name,
         )
         .into());

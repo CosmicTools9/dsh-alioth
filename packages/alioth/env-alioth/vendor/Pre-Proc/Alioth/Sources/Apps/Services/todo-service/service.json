@@ -9,14 +9,35 @@
   "factors": [],
   "dtoDependencies": [],
   "dtoExposes": {
-    "queries": [
-      "list",
-      "detail"
-    ],
-    "refs": [
-      "Todo"
-    ]
+    "queries": ["list", "detail"],
+    "refs": ["Todo"]
   },
   "publishes": [],
+  "services": [
+    {
+      "endpoint": "GET /service/todos",
+      "purpose": "service/todos 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /service/todos",
+      "purpose": "service/todos 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /service/todos/{id}",
+      "purpose": "service/todos 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /service/todos/{id}",
+      "purpose": "service/todos 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /service/todos/{id}",
+      "purpose": "service/todos 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /service/todos/batch",
+      "purpose": "service/todos 批量删除（crud_routes 工厂展开）"
+    }
+  ],
   "subscribes": []
 }

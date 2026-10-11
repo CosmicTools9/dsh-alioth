@@ -9,7 +9,6 @@ sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
-rust_decimal = { workspace = true }
 async-trait = { workspace = true }
 common = { path = "../../../../../../../Framework/backend/common" }
 crud = { path = "../../../../../../../Framework/backend/crud" }

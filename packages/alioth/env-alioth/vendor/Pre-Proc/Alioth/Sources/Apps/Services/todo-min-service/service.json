@@ -9,14 +9,35 @@
   "factors": [],
   "dtoDependencies": [],
   "dtoExposes": {
-    "queries": [
-      "list",
-      "detail"
-    ],
-    "refs": [
-      "TodoMin"
-    ]
+    "queries": ["list", "detail"],
+    "refs": ["TodoMin"]
   },
   "publishes": [],
+  "services": [
+    {
+      "endpoint": "GET /service/todo-mins",
+      "purpose": "service/todo-mins 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /service/todo-mins",
+      "purpose": "service/todo-mins 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /service/todo-mins/{id}",
+      "purpose": "service/todo-mins 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /service/todo-mins/{id}",
+      "purpose": "service/todo-mins 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /service/todo-mins/{id}",
+      "purpose": "service/todo-mins 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /service/todo-mins/batch",
+      "purpose": "service/todo-mins 批量删除（crud_routes 工厂展开）"
+    }
+  ],
   "subscribes": []
 }

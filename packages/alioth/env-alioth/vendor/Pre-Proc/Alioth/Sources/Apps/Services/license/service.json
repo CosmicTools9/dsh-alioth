@@ -2,17 +2,10 @@
   "aliothVersion": "0.7.0",
   "backendCrate": "alioth-service-license",
   "domain": "基础设施",
-  "dtoDependencies": [
-    "isahl-db"
-  ],
+  "dtoDependencies": ["isahl-db"],
   "dtoExposes": {
-    "queries": [
-      "list_refs",
-      "get_refs"
-    ],
-    "refs": [
-      "license"
-    ]
+    "queries": ["list_refs", "get_refs"],
+    "refs": ["license"]
   },
   "hasBackend": true,
   "hasFrontend": false,
@@ -191,7 +184,32 @@
     "license.deleted",
     "license.expiring"
   ],
-  "services": [],
+  "services": [
+    {
+      "endpoint": "GET /licenses",
+      "purpose": "licenses 资源列表（crud_routes 工厂展开；框架 ListQuery 分页）"
+    },
+    {
+      "endpoint": "POST /licenses",
+      "purpose": "licenses 资源新建（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "GET /licenses/{id}",
+      "purpose": "licenses 单条查询（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "PUT /licenses/{id}",
+      "purpose": "licenses 更新（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /licenses/{id}",
+      "purpose": "licenses 删除（crud_routes 工厂展开）"
+    },
+    {
+      "endpoint": "DELETE /licenses/batch",
+      "purpose": "licenses 批量删除（crud_routes 工厂展开）"
+    }
+  ],
   "subscribes": [],
   "version": "0.1.0"
 }

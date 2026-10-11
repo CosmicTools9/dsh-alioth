@@ -293,7 +293,7 @@ async fn counting_detail_auto_calibrates_via_voucher() {
 
     // 回归守卫（§8.5.10「缺桥必须报缺，MUST NOT 借用他桥」）：借桥写径已移除，
     // 校准 MUST NOT 向 `zc_id_order_rr_contract`（声明语义=关联-订单↔合约）落任何行；
-    // 溯源申请单 = `Pre-Proc/WZ/model-center-requests.md` §R4（专叶就位前溯源不可用）。
+    // 溯源申请单 = `.planning/model-center-requests.md` §R4（专叶就位前溯源不可用）。
     let bridge_after: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM isahl."zc_id_order_rr_contract" WHERE deleted_at IS NULL"#,
     )

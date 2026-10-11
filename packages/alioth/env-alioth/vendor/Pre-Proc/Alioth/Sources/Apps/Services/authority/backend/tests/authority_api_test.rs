@@ -7,7 +7,7 @@
 //!
 //! ## 测试约定
 //! - `#[tokio::test]` + `PgPool::connect`（BACKEND_FRAMEWORK.md §5：禁 `#[sqlx::test]`）
-//! - 测试库为 `aliothstudio_test`，OS 用户 = `whoami`
+//! - 测试库为 `alioth_test`，OS 用户 = `whoami`
 //! - 通过 `wrap_fn` 注入 `i64` 扩展以满足 `require_auth`
 //! - 串行执行（Pre-Proc/Alioth/.cargo/config.toml test-threads=1），避免互相污染
 //!
