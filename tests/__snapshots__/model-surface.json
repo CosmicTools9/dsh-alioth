@@ -896,7 +896,7 @@
   },
   {
     "name": "alioth_sources_scaffold",
-    "description": "Deterministic backend Sources scaffold (mirror layout): per declared service writes Sources/Apps/Services/{id}/service.json (contract-validated; entities with coordinates from your semantic alignment) plus a mount-only backend crate shell (Cargo.toml + src/lib.rs), and the namespace workspace Cargo.toml (namespace root) joining the crates. Business/DTO code is NOT generated here — author it in gated workflow steps (alioth-service track); the shell only mounts the service scope. Refuses overwrite: an existing service.json or namespace Cargo.toml stops the scaffold (inspect first). Compiles only where the Framework crates resolve (AliothStudio checkout or provisioned content root).",
+    "description": "Deterministic backend Sources scaffold (mirror layout): per declared service writes Sources/Apps/Services/{id}/service.json (contract-validated; entities with coordinates from your semantic alignment) plus a mount-only backend crate shell (Cargo.toml + src/lib.rs), and the namespace workspace Cargo.toml (namespace root) joining the crates. Business/DTO code is NOT generated here — author it in gated workflow steps (alioth-service track); the shell only mounts the service scope. Refuses overwrite: an existing service.json or namespace Cargo.toml stops the scaffold (inspect first). Compiles only where the Framework crates resolve (AliothMeta checkout or provisioned content root).",
     "parameters": {
       "type": "object",
       "properties": {
@@ -1121,7 +1121,7 @@
   },
   {
     "name": "alioth_workspace_current",
-    "description": "Resolve the caller's own workspace: the namespace bound to the current session (U-<username>), the workspace mode, and the AliothStudio path structure (Pre-Proc/{namespace}/, Deploy/{namespace}/ — ensured to exist). Call this FIRST before any alioth_* call that takes a namespace and use the returned namespace verbatim — never guess or invent a namespace.",
+    "description": "Resolve the caller's own workspace: the namespace bound to the current session (U-<username>), the workspace mode, and the AliothMeta path structure (Pre-Proc/{namespace}/, Deploy/{namespace}/ — ensured to exist). Call this FIRST before any alioth_* call that takes a namespace and use the returned namespace verbatim — never guess or invent a namespace.",
     "parameters": {
       "type": "object",
       "properties": {}

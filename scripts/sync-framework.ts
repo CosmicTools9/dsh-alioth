@@ -2,11 +2,11 @@
  * Framework sync: AliothMeta is the SOURCE OF TRUTH for the framework code
  * dsh-alioth vendors (design references, prototype toolchain, build/check
  * scripts, skill adapters, Framework backend crates). This script copies the
- * declared file set from a AliothStudio checkout into env-alioth/vendor/,
+ * declared file set from an AliothMeta checkout into env-alioth/vendor/,
  * and re-applies the one recorded local patch (PROTOTYPE_TOOL_ROOT).
  *
- *   ALIOTH_STUDIO_ROOT=../AliothMeta pnpm run sync:framework           # sync
- *   ALIOTH_STUDIO_ROOT=../AliothMeta pnpm run sync:framework --check   # drift report only
+ *   ALIOTH_META_ROOT=../AliothMeta pnpm run sync:framework           # sync
+ *   ALIOTH_META_ROOT=../AliothMeta pnpm run sync:framework --check   # drift report only
  *
  * `--check` compares sha256 per synced file against the source and exits 1 on drift — the local
  * freshness gate (same discipline as `check:dicts --require-fresh`). Both modes
@@ -28,7 +28,7 @@ import { unreachableAdapterReferences } from './lib/adapter-references.ts'
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(SCRIPT_DIR, '..')
 const VENDOR = path.join(REPO_ROOT, 'packages', 'alioth', 'env-alioth', 'vendor')
-const STUDIO_ROOT = path.resolve(process.env.ALIOTH_STUDIO_ROOT ?? path.join(REPO_ROOT, '..', 'AliothMeta'))
+const META_ROOT = path.resolve(process.env.ALIOTH_META_ROOT ?? path.join(REPO_ROOT, '..', 'AliothMeta'))
 const CHECK_ONLY = process.argv.includes('--check')
 
 /** Declared sync set: upstream source → vendored destination (relative to VENDOR). */
@@ -264,8 +264,8 @@ function reapplyLocalPatches(): string[] {
 }
 
 function main(): number {
-  if (!existsSync(STUDIO_ROOT)) {
-    console.error(`sync-framework: upstream checkout not found at ${STUDIO_ROOT} — set ALIOTH_STUDIO_ROOT (the framework source of truth is the AliothMeta checkout)`)
+  if (!existsSync(META_ROOT)) {
+    console.error(`sync-framework: upstream checkout not found at ${META_ROOT} — set ALIOTH_META_ROOT (the framework source of truth is the AliothMeta checkout)`)
     return 1
   }
 
@@ -274,7 +274,7 @@ function main(): number {
   let copied = 0
   let checked = 0
   for (const entry of SYNC_SET) {
-    const source = path.join(STUDIO_ROOT, entry.source)
+    const source = path.join(META_ROOT, entry.source)
     if (!existsSync(source)) {
       if (EXTERNAL_SOURCES.has(entry.source)) {
         console.log(`framework-sync: external source not in this checkout (kept as vendored): ${entry.source}`)
@@ -327,7 +327,7 @@ function main(): number {
       // An external entry has no source in a clean snapshot; its vendored subtree is still owned
       // by this sync (it is what the adapters read), so it stays out of the prune set.
       ? existsSync(path.join(VENDOR, entry.dest))
-      : statSync(path.join(STUDIO_ROOT, entry.source)).isDirectory())
+      : statSync(path.join(META_ROOT, entry.source)).isDirectory())
     .map(entry => entry.dest)
   const stale = [...walkDestFiles(VENDOR)]
     .filter(relative => !produced.has(relative))
@@ -378,7 +378,7 @@ function main(): number {
 
   if (CHECK_ONLY) {
     if (drifted.length > 0) {
-      console.error(`framework-sync: ${drifted.length} file(s) drifted from the upstream checkout (${STUDIO_ROOT}):`)
+      console.error(`framework-sync: ${drifted.length} file(s) drifted from the upstream checkout (${META_ROOT}):`)
       for (const item of drifted.slice(0, 20)) console.error(`  - ${item}`)
       if (drifted.length > 20) console.error(`  … +${drifted.length - 20} more`)
       console.error('run `pnpm run sync:framework` to refresh')
@@ -411,7 +411,7 @@ function main(): number {
   }
 
   const patches = reapplyLocalPatches()
-  console.log(`framework-sync: synced ${copied} drifted file(s) of ${checked} (source: ${STUDIO_ROOT})`)
+  console.log(`framework-sync: synced ${copied} drifted file(s) of ${checked} (source: ${META_ROOT})`)
   if (stale.length > 0) {
     console.log(`framework-sync: pruned ${stale.length} stale file(s) SYNC_SET no longer produces`)
     for (const item of stale) console.log(`  - ${item}`)

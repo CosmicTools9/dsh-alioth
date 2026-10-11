@@ -174,7 +174,7 @@
     - id: feedback-web-alioth
       name: '@dsh-alioth/feedback-web-alioth'
       config:
-        # 14747 是 AliothStudio 自家 dev feedback server 的惯用端口；同机共存时错开。
+        # 14747 是 AliothMeta 自家 dev feedback server 的惯用端口；同机共存时错开。
         # 独立部署无冲突可直接用默认 14747。
         port: 14748
     - id: tool-feedback-alioth

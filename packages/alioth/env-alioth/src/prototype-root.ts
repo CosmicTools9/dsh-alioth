@@ -160,13 +160,13 @@ export function provisionPrototypeRoot(preProcRoot: string, contentRoot = path.d
   // 4) Minimal content-root workspace manifest: the vendored Framework and
   //    baseline-service crates inherit [workspace.package] from the upstream
   //    repo-root manifest — provision one so inheritance resolves without
-  //    the AliothStudio checkout. User namespace workspaces stay excluded.
+  //    the AliothMeta checkout. User namespace workspaces stay excluded.
   const rootManifest = path.join(resolvedContent, 'Cargo.toml')
   if (!existsSync(rootManifest)) {
     writeFileSync(
       rootManifest,
       '# Provisioned content-root workspace (dsh-alioth): resolves the vendored\n'
-      + '# Framework crates without the AliothStudio checkout.\n'
+      + '# Framework crates without the AliothMeta checkout.\n'
       + '[workspace]\n'
       + 'resolver = "2"\n'
       + 'members = ["Framework/backend/*", "Gateway/backend", "Pre-Proc/Alioth/Sources/Apps/Services/*/backend"]\n'

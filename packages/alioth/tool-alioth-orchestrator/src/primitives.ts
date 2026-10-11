@@ -752,7 +752,7 @@ export function buildPrimitives(
     // 7. Service API — contract validation already gated by app_write; verify.
     async serviceApi() {
       // 骨架落盘（对齐上游 `<ns>/Sources/Apps/Services/{service}/service.json` 布局）。
-      // 取值都有实例依据（AliothStudio Pre-Proc 的真实 service.json：`layer` 5/5 为 1、
+      // 取值都有实例依据（AliothMeta Pre-Proc 的真实 service.json：`layer` 5/5 为 1、
       // `backendCrate` = `<ns小写>-service-<id>`），未据之处如实置为「未产出」：
       // `hasBackend:false`（后端 crate 由 service 轨道编写，本管线不写）、
       // `ontology.entities:[]`（实体映射由本体阶段回填）、`domain` 缺省取 id（精化阶段替换）。

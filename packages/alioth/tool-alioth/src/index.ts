@@ -946,7 +946,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'Business/DTO code is NOT generated here — author it in gated workflow steps '
       + '(alioth-service track); the shell only mounts the service scope. Refuses overwrite: '
       + 'an existing service.json or namespace Cargo.toml stops the scaffold (inspect first). '
-      + 'Compiles only where the Framework crates resolve (AliothStudio checkout or provisioned '
+      + 'Compiles only where the Framework crates resolve (AliothMeta checkout or provisioned '
       + 'content root).',
     parameters: {
       namespace: {

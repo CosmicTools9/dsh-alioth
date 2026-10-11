@@ -330,7 +330,7 @@ ${active
 ${statusLine}</div>
 </div>
 ${sourceTier(data.source)}
-<p class="note">更高层级（L3 AliothStudio 私有化 ¥499,999）由原厂商务对接，详见首页。</p>`
+<p class="note">更高层级（L3 AliothMeta 私有化 ¥499,999）由原厂商务对接，详见首页。</p>`
 }
 
 /** Day precision is all the operator's `until` promises; render it that way. */

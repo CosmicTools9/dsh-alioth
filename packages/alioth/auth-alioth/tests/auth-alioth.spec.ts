@@ -241,7 +241,7 @@ describe('namespace authorization guard', () => {
 })
 
 describe('workspace (namespace = user workspace)', () => {
-  it('creates the AliothStudio workspace dirs at registration', async () => {
+  it('creates the AliothMeta workspace dirs at registration', async () => {
     // carol is a fresh user; her namespace dirs must exist under both roots.
     const result = await ctx.aliothAuth.register('carol', 'password-123')
     expect(result.namespace).toBe('U-carol')

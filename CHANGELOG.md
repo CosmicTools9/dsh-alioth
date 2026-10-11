@@ -144,7 +144,7 @@ this file records user-visible changes per release.
   reaches the model.
 - The adapter tool mapping covers the whole tool vocabulary the shipped
   adapters declare, with manual paths documented where no harness tool exists.
-- Vendored framework re-synced to the current AliothStudio line (adapters moved
+- Vendored framework re-synced to the current AliothMeta line (adapters moved
   under `Meta/backend/app-agent/skill-adapters`; new gate programs and the eval
   toolchain synced). Adapter gate scripts *and* their non-script references are
   now checked for reachability at sync time and in CI.
@@ -185,7 +185,7 @@ this file records user-visible changes per release.
   references, real coordinate dictionaries (`entity-validate`).
 - PTC orchestrator `alioth_app_create`: deterministic validate → entity → app →
   verify pipeline, atomic failure, every step through `ctx.tools.execute`.
-- 9-stage AppAgent state machine aligned with the ACTIVE AliothStudio Meta line.
+- 9-stage AppAgent state machine aligned with the ACTIVE AliothMeta Meta line.
 - B/S delivery: `auth-alioth` (registration/login, scrypt, token sessions,
   `U-<username>` namespace isolation, admin/user roles, `tools/pre-execute` guard).
 - Docker delivery: runnable container (node:24.19-slim + PGDG PostgreSQL 18 +

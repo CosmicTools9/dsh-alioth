@@ -284,7 +284,7 @@ const FRAMEWORK_DEP_LEVELS = '../../../../../../../'
  * The namespace workspace `Sources/{ns}/Cargo.toml` (mount-only shell).
  * Members = one crate per service; workspace deps pinned to the versions the
  * upstream namespace workspaces use. Compiles only where the Framework crates
- * resolve (AliothStudio checkout or a provisioned content root).
+ * resolve (AliothMeta checkout or a provisioned content root).
  */
 export function generateNamespaceWorkspace(namespace: string, serviceIds: readonly string[]): string {
   const members = serviceIds.map(id => `    "Sources/Apps/Services/${id}/backend",`)

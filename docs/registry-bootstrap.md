@@ -81,7 +81,7 @@ collections=986 fields=31759 model_version=10.0.34 auth_schema_tables=2
   （已锚定的字节仍然受校验，绝不静默当作通过）。
 - `check:vendor` 的 **sha256 清单（`PROVENANCE.json`）已于 2026-09-24 退役**：它把"本就不提交的文件"记进账本，
   干净克隆上必报 `manifest entry without file`；vendor 变更还得手工改一个派生文件。现在它只校验
-  LICENSE / NOTICE 合规；新鲜度交给 `sync:framework --check`（对 AliothStudio 源码）与 `check:dicts`（对模型源）。
+  LICENSE / NOTICE 合规；新鲜度交给 `sync:framework --check`（对 AliothMeta 源码）与 `check:dicts`（对模型源）。
 
 ## 6. 操作手册
 

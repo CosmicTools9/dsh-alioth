@@ -1,8 +1,8 @@
 /**
- * Unified data contracts with AliothStudio Meta's AppAgent.
+ * Unified data contracts with AliothMeta Meta's AppAgent.
  *
  * The source of truth is the ACTIVE `Meta/backend/app-agent` pipeline
- * (AliothStudio), NOT the frozen vendor copy. Alignment note (2026-09-03,
+ * (AliothMeta), NOT the frozen vendor copy. Alignment note (2026-09-03,
  * dialog-loop refactor): Meta demolished the old session state machine
  * (orchestrator/state torn out, sessions converged into a dialog loop where
  * turn state is message-derived — no business state enum survives). The

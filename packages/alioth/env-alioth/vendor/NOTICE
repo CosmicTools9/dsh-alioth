@@ -31,9 +31,11 @@ subsequently mirrored at github:CosmicTools9/Alioth), licensed Apache-2.0:
   Framework/frontend/components/utilities.json — utility registry
 
 The .agents design assets and Framework utilities.json are consumed from the
-AliothStudio working checkout (same authors, The Alioth Authors) to complete
-the prototype chain the build scripts require; hashes are pinned in
-PROVENANCE.json. Gateway runtime state (`Gateway/backend/data/`, the local
+AliothMeta working checkout (same authors, The Alioth Authors) to complete
+the prototype chain the build scripts require. (The per-file sha256 manifest
+`PROVENANCE.json` was retired on 2026-09-24 — freshness against that checkout
+is `pnpm run sync:framework --check`, the compliance gate is `pnpm run check:vendor`.)
+Gateway runtime state (`Gateway/backend/data/`, the local
 file-storage root upstream gitignores) is deliberately NOT vendored.
  
 Copyright for the vendored artifacts is held by The Alioth Authors.

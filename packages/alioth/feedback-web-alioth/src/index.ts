@@ -1,10 +1,10 @@
 /**
  * `@dsh-alioth/feedback-web-alioth` — the feedback CARRIER: a standalone
- * node:http server (default 127.0.0.1:14747, the AliothStudio convention)
+ * node:http server (default 127.0.0.1:14747, the AliothMeta convention)
  * exposing the annotation API over the `ctx.pageFeedback` capability, the
  * long-poll watch seam, and the bookmarklet overlay.
  *
- * Trust boundary (ported from the AliothStudio original):
+ * Trust boundary (ported from the AliothMeta original):
  * - Browser writes (POST sessions/annotations) require an Origin header
  *   hitting the allowlist (Config.allowedOrigins; defaults cover the local
  *   GUI origin). `Origin: null` (file:// prototypes) is opt-in via
@@ -25,7 +25,7 @@ export const name = 'feedback-web-alioth'
 export const inject = ['pageFeedback']
 
 export interface Config {
-  /** Feedback server port (AliothStudio convention: 14747). */
+  /** Feedback server port (AliothMeta convention: 14747). */
   port?: number
   /** Bind address; loopback by default. */
   host?: string

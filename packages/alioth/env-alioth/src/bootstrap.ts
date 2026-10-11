@@ -26,7 +26,7 @@ const REGISTRY_SCHEMA = 'isahl_meta'
 const STAMP_SCHEMA = 'dsh_alioth'
 /**
  * The Alioth model's data space. A database carrying regular tables here holds the
- * model itself (its business tables, e.g. the AppCreator/AliothStudio sample), so it
+ * model itself (its business tables, e.g. the AppCreator/AliothMeta sample), so it
  * is NOT a valid target for this plugin's registry: `isahl_meta` is a name the model
  * also owns, and co-locating the two put this plugin's tables inside the model's
  * database (the "same database, different schema" convention, retired 2026-09-24).

@@ -7,7 +7,7 @@
  * Model: single shared workspace, namespace-isolated users. Each user owns a
  * namespace (`U-<username>`) inside the shared preProcRoot / registry; the
  * namespace's workspace dirs (`Pre-Proc/{namespace}/`, `Deploy/{namespace}/`
- * — the AliothStudio layout) are created automatically at registration.
+ * — the AliothMeta layout) are created automatically at registration.
  * All alioth_* tools with a `namespace` parameter are guarded at the
  * `tools/pre-execute` waterfall, and in enforce mode every agent step of an
  * unbound session is rejected at `agent/pre-step` (before any model call).
@@ -88,7 +88,7 @@ export interface Config {
    * namespace. Env override ALIOTH_WORKSPACE_MODE=unlimited wins.
    */
   readonly workspaceMode?: 'standard' | 'unlimited'
-  /** Workspace root for app artifacts; default ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (deployment-owned, never the AliothStudio checkout). */
+  /** Workspace root for app artifacts; default ALIOTH_PRE_PROC_ROOT ?? ~/.dsh-alioth/Pre-Proc (deployment-owned, never the AliothMeta checkout). */
   readonly preProcRoot?: string
   /** Workspace root for deployment artifacts; default ALIOTH_DEPLOY_ROOT ?? ~/.dsh-alioth/Deploy. */
   readonly deployRoot?: string
@@ -190,7 +190,7 @@ export interface WorkspaceApp {
   readonly declaredCode?: string
 }
 
-/** One namespace workspace: the AliothStudio layout (`Pre-Proc/{ns}/`, `Deploy/{ns}/`). */
+/** One namespace workspace: the AliothMeta layout (`Pre-Proc/{ns}/`, `Deploy/{ns}/`). */
 export interface WorkspaceView {
   readonly namespace: string
   readonly preProcPath: string
@@ -297,7 +297,7 @@ async function listWorkspaceApps(preProcRoot: string, namespace: string): Promis
 }
 
 /** Default workspace roots — deployment-owned, decoupled from any
- * AliothStudio checkout (integrate by setting ALIOTH_PRE_PROC_ROOT). */
+ * AliothMeta checkout (integrate by setting ALIOTH_PRE_PROC_ROOT). */
 function defaultRoots(): { preProc: string; deploy: string } {
   return {
     preProc: process.env.ALIOTH_PRE_PROC_ROOT ?? path.join(homedir(), '.dsh-alioth', 'Pre-Proc'),
@@ -397,7 +397,7 @@ export interface AliothAuthService {
   /**
    * Create a custom workspace (unlimited mode only): validates the namespace
    * (U- prefix is reserved for user workspaces), auto-creates the
-   * AliothStudio path structure, returns the workspace view.
+   * AliothMeta path structure, returns the workspace view.
    */
   createWorkspace(namespace: string): Promise<WorkspaceView>
   /**
@@ -488,7 +488,7 @@ export function apply(ctx: Context, config: Config): void {
   const accountMemo = new Map<string, { readonly value: AccountContext | null; readonly at: number }>()
 
   /**
-   * Create the namespace's workspace dirs — the AliothStudio layout the
+   * Create the namespace's workspace dirs — the AliothMeta layout the
    * B/S surface promises: Pre-Proc/{namespace}/ (app artifacts) and
    * Deploy/{namespace}/ (deployment artifacts), plus the default app
    * workspace so a fresh account can start working immediately. Idempotent;
@@ -558,7 +558,7 @@ export function apply(ctx: Context, config: Config): void {
         role: 'user' as const,
       }
       await insertUser(ctx, user)
-      // 自动为用户创建同名 namespace 工作区（AliothStudio 路径结构）：
+      // 自动为用户创建同名 namespace 工作区（AliothMeta 路径结构）：
       // Pre-Proc/{namespace}/ 与 Deploy/{namespace}/，幂等。
       await ensureWorkspace(user.namespace)
       const token = randomBytes(32).toString('hex')
@@ -817,7 +817,7 @@ export function apply(ctx: Context, config: Config): void {
      * Create a custom workspace — only in unlimited mode (标准模式禁用
      * 自定义工作区). The namespace must match the Alioth contract; the
      * `U-` prefix is reserved for per-user workspaces. Auto-creates the
-     * AliothStudio path structure and returns the fresh workspace view.
+     * AliothMeta path structure and returns the fresh workspace view.
      */
     async createWorkspace(namespace: string): Promise<WorkspaceView> {
       if (resolveWorkspaceMode(config.workspaceMode) !== 'unlimited') {
@@ -1092,7 +1092,7 @@ export function apply(ctx: Context, config: Config): void {
     name: 'alioth_workspace_current',
     description:
       'Resolve the caller\'s own workspace: the namespace bound to the current session '
-      + '(U-<username>), the workspace mode, and the AliothStudio path structure '
+      + '(U-<username>), the workspace mode, and the AliothMeta path structure '
       + '(Pre-Proc/{namespace}/, Deploy/{namespace}/ — ensured to exist). Call this FIRST '
       + 'before any alioth_* call that takes a namespace and use the returned namespace '
       + 'verbatim — never guess or invent a namespace.',

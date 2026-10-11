@@ -201,7 +201,7 @@ footer {
   <header class="hero">
     <h1>对话，<em>即企业应用</em>。</h1>
     <p>Alioth AppCreator 把一句自然语言变成可运行的企业应用——确定性九阶段流水线，
-       产物通过契约校验，直接导入 AliothStudio。</p>
+       产物通过契约校验，直接导入 AliothMeta。</p>
     <a class="btn primary" href="/register">立即开始</a>
     <a class="btn" href="/login">已有账号登录</a>
   </header>

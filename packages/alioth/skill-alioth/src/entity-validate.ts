@@ -5,7 +5,7 @@
  * and FK local keys against real dictionary snapshots (`coordinates.json`,
  * `fk-index.json`) generated offline from the model repo and the vendored registry
  * sidecar (the model release's own `isahl_meta-registry.sql` dump), the same pattern as
- * AliothStudio's own `fk_index.rs`. Pure: registry data is injected, so tests
+ * AliothMeta's own `fk_index.rs`. Pure: registry data is injected, so tests
  * and the future write tool share one model.
  * @module @dsh-alioth/skill-alioth/entity-validate
  */

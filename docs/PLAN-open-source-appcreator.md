@@ -6,10 +6,10 @@
 > 逐文件清单 `vendor/PROVENANCE.json` 已于 2026-09-24 退役（见 `docs/builtin-retirement.md`），本表不再作为现状判据。
 
 > **核心事实**（2026-08-18 确认）：
-> - AliothStudio 从未开源；`CosmicTools9/AppCreator` 将停止维护
+> - AliothMeta 从未开源；`CosmicTools9/AppCreator` 将停止维护
 > - dsh-alioth **内置冻结模型工件**——全新机器首次安装零网络
 > - 模型演进 = 发布新版插件；不再假设任何未来 GitHub 上游
-> - 产物格式与 AliothStudio/Gateway 兼容（纯消费者，无上游写）
+> - 产物格式与 AliothMeta/Gateway 兼容（纯消费者，无上游写）
 
 ## vendor 集（定稿，~10.7MB，全量保留）
 

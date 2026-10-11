@@ -98,9 +98,9 @@ RUN pnpm --filter '@dsh-alioth/env-alioth' deploy --legacy --prod /app/runtime-e
 # ── runtime stage: slim, no toolchain ──
 FROM node:24.20-slim AS runtime
 # bun — the declared prototype-gate runtime (distribution dependency).
-# bun pinned to the AliothStudio stack version (prototype gates must match).
+# bun pinned to the AliothMeta stack version (prototype gates must match).
 RUN npm install -g bun@1.4.2 --silent
-# PostgreSQL 18.6 via PGDG — aligned with the AliothStudio stack (Homebrew 18.6)
+# PostgreSQL 18.6 via PGDG — aligned with the AliothMeta stack (Homebrew 18.6)
 # and with the host deployments. This is THE database the container uses:
 # env-alioth takes it through ALIOTH_DATABASE_URL (set by docker-entry.sh).
 RUN apt-get update && apt-get install -y --no-install-recommends locales curl ca-certificates gnupg \
