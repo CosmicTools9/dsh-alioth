@@ -54,9 +54,9 @@ macro_rules! post_json {
 async fn test_user(pool: &PgPool) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'rt-test', 'rt-test', 'rt@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'rt-test', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
@@ -177,6 +177,7 @@ async fn validate_endpoint_accepts_and_rejects() {
 
 #[tokio::test]
 async fn initiate_creates_chain_with_entity_binding_and_condition() {
+    let _serial = common::serial_lock().lock().await;
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
     test_user(&pool).await;
@@ -300,6 +301,7 @@ async fn initiate_creates_chain_with_entity_binding_and_condition() {
 
 #[tokio::test]
 async fn restore_republishes_snapshot_and_rejects_legacy() {
+    let _serial = common::serial_lock().lock().await;
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
     test_user(&pool).await;
@@ -367,6 +369,7 @@ async fn restore_republishes_snapshot_and_rejects_legacy() {
 
 #[tokio::test]
 async fn entity_created_auto_initiates_bound_flow() {
+    let _serial = common::serial_lock().lock().await;
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
     test_user(&pool).await;
@@ -435,6 +438,7 @@ async fn entity_created_auto_initiates_bound_flow() {
 
 #[tokio::test]
 async fn reaching_end_materializes_conclusion_statement() {
+    let _serial = common::serial_lock().lock().await;
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
     test_user(&pool).await;
@@ -546,6 +550,7 @@ async fn reaching_end_materializes_conclusion_statement() {
 
 #[tokio::test]
 async fn cc_node_publishes_event_on_advance() {
+    let _serial = common::serial_lock().lock().await;
     let pool = connect_test_db().await;
     setup_test_schema(&pool).await.unwrap();
     test_user(&pool).await;

@@ -54,8 +54,8 @@ async fn reset_user(pool: &PgPool, status: &str) {
         .await
         .ok();
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, status, created_at, updated_at) \
-         VALUES ($1, $2, $3, NOW(), NOW())",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, created_at, updated_at) \
+         VALUES ($1, $2, $3::isahl_auth.auth_user_status, NOW(), NOW())",
     )
     .bind(USER_ID)
     .bind(format!("identity-auto-approve-{USER_ID}"))
@@ -66,7 +66,7 @@ async fn reset_user(pool: &PgPool, status: &str) {
 }
 
 async fn status_of(pool: &PgPool) -> String {
-    sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+    sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
         .bind(USER_ID)
         .fetch_one(pool)
         .await

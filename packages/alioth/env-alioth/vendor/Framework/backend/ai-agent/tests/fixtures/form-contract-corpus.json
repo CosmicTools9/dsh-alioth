@@ -1,0 +1,577 @@
+{
+  "generatedBy": "scripts/gen-form-contract-corpus.ts",
+  "note": "TS(Zod) 与 Rust 契约解释器的一致性语料；由 Zod 侧产出、Rust 侧逐条复现",
+  "cases": [
+    {
+      "name": "all-valid",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "T-1",
+        "qty": 5,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": true,
+      "expectParity": true
+    },
+    {
+      "name": "required-missing",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "qty": 5,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "wrong-type",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "T-1",
+        "qty": "five",
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "enum-out-of-set",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "T-1",
+        "qty": 5,
+        "status": "other",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "minlength-violated",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "",
+        "qty": 5,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "maxlength-violated",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "qty": 5,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "number-below-min",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "T-1",
+        "qty": -1,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "number-above-max",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "T-1",
+        "qty": 101,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "pattern-violated",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "T-1",
+        "qty": 5,
+        "status": "draft",
+        "code": "abc"
+      },
+      "expectedOk": false,
+      "expectParity": true
+    },
+    {
+      "name": "multibyte-length-ok",
+      "contract": {
+        "fields": [
+          {
+            "name": "transNo",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "maxLength": 32
+          },
+          {
+            "name": "qty",
+            "type": "integer",
+            "required": true,
+            "minimum": 0,
+            "maximum": 100
+          },
+          {
+            "name": "status",
+            "type": "string",
+            "required": true,
+            "enum": [
+              "draft",
+              "approved"
+            ]
+          },
+          {
+            "name": "occurredAt",
+            "type": "string",
+            "required": false
+          },
+          {
+            "name": "code",
+            "type": "string",
+            "required": true,
+            "pattern": "^[A-Z]+$"
+          }
+        ]
+      },
+      "values": {
+        "transNo": "张三",
+        "qty": 5,
+        "status": "draft",
+        "code": "ABC"
+      },
+      "expectedOk": true,
+      "expectParity": true
+    },
+    {
+      "name": "refine-not-derivable",
+      "contract": {
+        "fields": [
+          {
+            "name": "amount",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "nonPortable": true
+          }
+        ]
+      },
+      "values": {
+        "amount": "0"
+      },
+      "expectedOk": false,
+      "expectParity": false,
+      "expectedUncovered": [
+        "amount"
+      ]
+    },
+    {
+      "name": "refine-zero-but-uncovered",
+      "contract": {
+        "fields": [
+          {
+            "name": "amount",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "nonPortable": true
+          }
+        ]
+      },
+      "values": {
+        "amount": "5"
+      },
+      "expectedOk": true,
+      "expectParity": false,
+      "expectedUncovered": [
+        "amount"
+      ]
+    },
+    {
+      "name": "dto-metadata-carried",
+      "contract": {
+        "fields": [
+          {
+            "name": "counterpartyId",
+            "type": "string",
+            "required": true,
+            "minLength": 1,
+            "dto": {
+              "kind": "m2o",
+              "endpoint": "/service/isahl-db/subjects",
+              "labelField": "notice"
+            }
+          },
+          {
+            "name": "weight",
+            "type": "string",
+            "required": true,
+            "dto": {
+              "kind": "scalar",
+              "unitOptions": [
+                {
+                  "value": "kg",
+                  "label": "kg"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "values": {
+        "counterpartyId": "c1",
+        "weight": "12"
+      },
+      "expectedOk": true,
+      "expectParity": true
+    }
+  ]
+}

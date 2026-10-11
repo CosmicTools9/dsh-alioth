@@ -97,5 +97,5 @@ pub use reference::{
 pub use repository::{AliothRepository, SubtableRouter};
 pub use schema_handler::schema_routes;
 pub use schema_repository::{AliothLeaf, Binding, SchemaRepository};
-pub use search::KeywordSearchable;
+pub use search::search_predicate;
 pub use sort::Sort;

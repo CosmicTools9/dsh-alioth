@@ -15,8 +15,7 @@ use sqlx::{PgPool, Row};
 use webauthn_rs::prelude::*;
 
 use super::jwt::{
-    decode_token_any, encode_access_token, encode_refresh_token, set_access_cookie,
-    set_refresh_cookie, Claims,
+    encode_access_token, encode_refresh_token, set_access_cookie, set_refresh_cookie, Claims,
 };
 use super::login::AuthError;
 use super::session::{CreateSessionRequest, SessionManager};
@@ -137,32 +136,12 @@ fn bad_request(error: &str) -> HttpResponse {
     })
 }
 
-/// 从请求中提取并校验已登录用户 ID（复用 profile 的 token 解析模式）
+/// 从请求中提取并校验已登录用户 ID。
+///
+/// 单一实现（delta `auth`「各处理器 MUST NOT 自行内联提取」）：委托 SSO 统一入口
+/// `crate::auth::extract_user_id`（= `extract_user_id_with_source` → `common::csrf::resolve_credential`）。
 fn extract_user_id(req: &HttpRequest, state: &AuthState) -> Result<i64, HttpResponse> {
-    let token = req
-        .cookie("access_token")
-        .map(|c| c.value().to_string())
-        .or_else(|| {
-            req.headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|a| a.strip_prefix("Bearer ").map(|t| t.to_string()))
-        });
-
-    let token = match token {
-        Some(t) => t,
-        None => return Err(unauthorized("No authentication token")),
-    };
-
-    let claims = match decode_token_any(&token, &state.verification_keys()) {
-        Ok(c) => c,
-        Err(_) => return Err(unauthorized("Invalid or expired token")),
-    };
-
-    claims
-        .sub
-        .parse::<i64>()
-        .map_err(|_| unauthorized("Invalid user ID in token"))
+    crate::auth::extract_user_id(req, state)
 }
 
 /// 依据请求推导 Webauthn 实例（RP ID 取 SSO_DOMAIN 或请求 host；origin 取请求 scheme+host）
@@ -259,13 +238,23 @@ async fn delete_challenge(pool: &PgPool, challenge: &str) -> Result<(), sqlx::Er
     Ok(())
 }
 
+/// 按 email 解析**唯一**候选账号（复用 `auth::identifier` 的候选解析唯一实现；
+/// 0 匹配 / 多匹配 → None ⇒ 调用方 fail-closed，MUST NOT 任取一行）。
 async fn lookup_user_by_email(pool: &PgPool, email: &str) -> Result<Option<i64>, sqlx::Error> {
-    let id: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE lower(email) = lower($1)")
-            .bind(email)
-            .fetch_optional(pool)
-            .await?;
-    Ok(id)
+    let ids = crate::auth::identifier::resolve_candidate_ids(
+        pool,
+        crate::auth::identifier::IdentifierColumn::Email,
+        &email.trim().to_lowercase(),
+    )
+    .await?;
+    match ids.len() {
+        1 => Ok(Some(ids[0])),
+        n if n > 1 => {
+            log::warn!("WebAuthn: email 命中 {} 个账号，MUST NOT 任取一行", n);
+            Ok(None)
+        }
+        _ => Ok(None),
+    }
 }
 
 /// 加载用户凭据（kind + 序列化 blob）
@@ -1019,12 +1008,14 @@ async fn issue_session_and_tokens(
     });
 
     let response = set_access_cookie(response, &access_token, state.jwt_access_expiry_secs, None);
-    set_refresh_cookie(
+    let response = set_refresh_cookie(
         response,
         &refresh_token,
         state.jwt_refresh_expiry_secs,
         None,
-    )
+    );
+    // 与密码登录同批契约：签发 CSRF（scope 命名 = 请求头 x-auth-cookie-scope）
+    super::jwt::attach_csrf_cookie(response, common::csrf::cookie_scope(req).as_deref())
 }
 
 /// 路由注册

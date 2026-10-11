@@ -50,8 +50,10 @@ pub struct BalanceListQuery {
     #[serde(flatten)]
     pub base: crud::ListQuery,
     /// 货（production）过滤
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub production_id: Option<i64>,
     /// 储元（storage）过滤
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub storage_id: Option<i64>,
 }
 

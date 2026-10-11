@@ -102,6 +102,21 @@ file_sha256() {
     printf '%s' "$out"
 }
 
+# file_sha256_stdin —— stdin 的 sha256（十六进制小写）；缺工具/计算失败 → 非 0 退出（与 file_md5 同形）
+# 为什么与 file_sha256 并存：`status` 的 env-vs-file 一致性比对里，env 值**不是文件**（只存在于变量中）。
+file_sha256_stdin() {
+    local tool
+    if ! tool="$(digest_sha_tool_name)"; then
+        echo "file_sha256_stdin: 缺摘要工具（sha256sum 或 shasum）" >&2
+        return 3
+    fi
+    if [ "$tool" = "sha256sum" ]; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
 # files_md5_digest <dir> —— 目录内全部文件的确定性摘要。
 # 算法：对每个文件取 "<md5>  <相对路径>"（路径内的换行转义为字面 \n），按字节序排序后整体再摘要。
 # 遍历用 find -print0 + read -d ''（空格/换行安全的文件名）；定序用 LC_ALL=C sort（POSIX）。

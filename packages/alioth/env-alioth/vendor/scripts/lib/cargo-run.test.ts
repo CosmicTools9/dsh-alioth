@@ -9,7 +9,9 @@
  * 守卫语义（本测试逐条固化）：
  *   ① 编译期间源码变过 ⇒ 首轮结论不可信 ⇒ **自动重跑一次**，返回重跑结论；
  *   ② 源码未变 ⇒ **不重跑**（真实失败不得被重跑掩盖），原样返回其退出码；
- *   ③ 重跑期间源码仍在变 ⇒ 明确提示「结论仅供参照」。
+ *   ③ 重跑期间源码仍在变 ⇒ 明确提示「结论仅供参照」；
+ *   ④ 通用入口 `run_guarded`（`test-all.sh` 全量测试路径形态）与 cargo 专用入口同语义，
+ *      且在调用方带 `set -e`（真实入口 cargo-check.sh / test-all.sh 的形态）时仍完成重跑判定。
  *
  * 用 PATH 前置的假 `cargo` 驱动（不触发真实编译），指纹根用 CARGO_RUN_FP_DIRS 收到夹具目录。
  */
@@ -81,18 +83,30 @@ function makeHarness(mode: 'drift-then-ok' | 'always-fail' | 'drift-always'): Ha
 }
 
 /** 在夹具环境里跑守卫（bash + PATH 前置假 cargo + 指纹根收窄到夹具 + PROJECT_ROOT 收窄到夹具） */
-function runGuard(h: Harness): { rc: number; stderr: string; invocations: number } {
+function runGuard(
+  h: Harness,
+  opts: { entry?: string; sourceOnlyCargoRun?: boolean } = {},
+): { rc: number; stderr: string; invocations: number } {
+  const entry = opts.entry ?? 'cargo_run_guarded check -p fake';
+  // sourceOnlyCargoRun：只 source cargo-run.sh —— 验证守卫自补 src-fingerprint（调用方无需显式 source）
+  const sources = opts.sourceOnlyCargoRun
+    ? [`source "${REPO_ROOT}/scripts/lib/cargo-run.sh"`]
+    : [
+        `source "${REPO_ROOT}/scripts/lib/src-fingerprint.sh"`,
+        `source "${REPO_ROOT}/scripts/lib/cargo-run.sh"`,
+      ];
   const script = [
-    'set -uo pipefail',
+    // 真实入口形态：cargo-check.sh / test-all.sh 均带 errexit —— 守卫 MUST 在此形态下
+    // 仍完成「重跑一次」判定（旧实现裸执行首轮失败会让 shell 在 rc=$? 前退出）。
+    'set -euo pipefail',
     // PROJECT_ROOT 指向夹具（而非仓库）：守卫的 `cargo_ensure_source_config` 以
     // `${PROJECT_ROOT}/.cargo/config.toml` 判定是否走择源路径——指向仓库时该判定随
     // 「仓库是否已有该（未跟踪）文件」而变，测试即非 hermetic。
     `export PROJECT_ROOT="${h.dir}"`,
     `export CARGO_RUN_FP_DIRS="${h.dir}/src"`,
     `export CARGO_TARGET_DIR="${h.dir}/target"`,
-    `source "${REPO_ROOT}/scripts/lib/src-fingerprint.sh"`,
-    `source "${REPO_ROOT}/scripts/lib/cargo-run.sh"`,
-    'cargo_run_guarded check -p fake',
+    ...sources,
+    entry,
   ].join('\n');
   const proc = Bun.spawnSync(['bash', '-c', script], {
     env: { ...process.env, PATH: `${join(h.dir, 'bin')}:${process.env.PATH ?? ''}` },
@@ -139,6 +153,20 @@ describe('cargo-run 漂移守卫', () => {
       expect(r.invocations).toBe(2); // 有界：只重跑一次
       expect(r.rc).toBe(1);
       expect(r.stderr).toContain('重跑期间源码仍在变化');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  test('通用入口 run_guarded（全量测试路径形态）→ 同守卫语义', () => {
+    const h = makeHarness('drift-then-ok');
+    try {
+      // 只 source cargo-run.sh：通用入口 + 守卫自补 src-fingerprint + errexit 调用方，三者一次覆盖
+      const r = runGuard(h, { entry: 'run_guarded cargo test -p fake', sourceOnlyCargoRun: true });
+      expect(r.invocations).toBe(2); // 首轮 + 重跑（set -e 下仍触发）
+      expect(r.rc).toBe(0);
+      expect(r.stderr).toContain('编译期间源码发生变化');
+      expect(r.stderr).toContain('重跑完成');
     } finally {
       h.cleanup();
     }

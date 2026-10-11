@@ -248,8 +248,17 @@ pub async fn download_file(
         .ok_or_else(|| AliothError::Unauthorized("missing user context".into()))?;
     let namespace = extract_namespace(&req)?;
     let file_id = path.into_inner();
+    // `?inline=1` ⇒ 内联渲染（`Content-Disposition: inline`）：前端「点击预览」直接新页签
+    // 导航该 URL（Cookie 鉴权、浏览器内联播放/渲染）。缺省仍 `attachment` ⇒ 既有调用方与
+    // 下载语义不变（用户裁决 2026-10-08「点击后不应该是预览吗」）。
+    let disposition = if query_flag(req.query_string(), "inline") {
+        "inline"
+    } else {
+        "attachment"
+    };
 
-    // 行级授权：未授权/不存在 → 404（防枚举）
+    // 读面行级谓词（`ROW_AUTH_READ`）：创建者 / 显式 ak_* 授权 / 未声明限制的行（外部身份上传）
+    // ⇒ 平台可见（用户裁决 2026-10-08「平台要看到全部的」）；未授权/不存在 → 404（防枚举）
     let meta = state
         .service
         .get_metadata(file_id, Some(user_id))
@@ -327,7 +336,7 @@ pub async fn download_file(
             resp.insert_header((
                 actix_web::http::header::CONTENT_DISPOSITION,
                 format!(
-                    "attachment; filename*=UTF-8''{}",
+                    "{disposition}; filename*=UTF-8''{}",
                     rfc5987_encode(&result.filename)
                 ),
             ));
@@ -352,7 +361,7 @@ pub async fn download_file(
             resp.insert_header((
                 actix_web::http::header::CONTENT_DISPOSITION,
                 format!(
-                    "attachment; filename*=UTF-8''{}",
+                    "{disposition}; filename*=UTF-8''{}",
                     rfc5987_encode(&result.filename)
                 ),
             ));
@@ -382,6 +391,7 @@ pub async fn presigned_file(
     let namespace = extract_namespace(&req)?;
     let file_id = path.into_inner();
 
+    // 预签名 = 读面（与下载同谓词）
     let meta = state
         .service
         .get_metadata(file_id, Some(user_id))
@@ -416,11 +426,10 @@ pub async fn update_file(
         .ok_or_else(|| AliothError::Unauthorized("missing user context".into()))?;
     let namespace = extract_namespace(&req)?;
     let file_id = path.into_inner();
-
     // 行级授权 + namespace 链校验（与 delete 同口径）
     let meta = state
         .service
-        .get_metadata(file_id, Some(user_id))
+        .get_metadata_owned(file_id, user_id)
         .await?
         .ok_or_else(|| AliothError::NotFound(format!("文件不存在: {file_id}")))?;
     verify_namespace(&namespace, meta.storage_path.as_deref())?;
@@ -588,7 +597,7 @@ pub async fn delete_file(
 
     let meta = state
         .service
-        .get_metadata(file_id, Some(user_id))
+        .get_metadata_owned(file_id, user_id)
         .await?
         .ok_or_else(|| AliothError::NotFound(format!("文件不存在: {file_id}")))?;
     verify_namespace(&namespace, meta.storage_path.as_deref())?;
@@ -643,6 +652,16 @@ fn parse_id_list(raw: &str) -> Option<Vec<i64>> {
     } else {
         Some(ids)
     }
+}
+
+/// 查询串布尔旗标（`?inline=1` / `?inline` 视为真；`inline=0` / `inline=false` 为假）。
+fn query_flag(query: &str, key: &str) -> bool {
+    query.split('&').any(|kv| {
+        let mut it = kv.splitn(2, '=');
+        let k = it.next().unwrap_or("");
+        let v = it.next();
+        k == key && v.map(|v| v != "0" && v != "false").unwrap_or(true)
+    })
 }
 
 /// RFC 5987 文件名编码（非 ASCII 与保留字百分号转义，供 Content-Disposition）。

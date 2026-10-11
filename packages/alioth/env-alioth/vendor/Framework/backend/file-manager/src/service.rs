@@ -269,6 +269,12 @@ impl FileService {
 
     /// 软删 + 磁盘清理（best effort：字节删除失败不阻断 DB 软删）。
     pub async fn delete(&self, file_id: i64, deleted_by_id: Option<i64>) -> Result<(), FileError> {
+        // 纵深防御：带操作者即要求「仅创建者」写面授权（读面放宽不传导到删除）。
+        if let Some(uid) = deleted_by_id {
+            if self.repo.find_by_id_owned(file_id, uid).await?.is_none() {
+                return Err(FileError::NotFound(file_id));
+            }
+        }
         let (scheme, path) = self
             .repo
             .resolve_storage_path(file_id)
@@ -430,13 +436,26 @@ impl FileService {
             .ok_or(FileError::NotFound(file_id))
     }
 
-    /// 文件元数据（带行级授权过滤；`user=None` 内部调用不过滤）。
+    /// 文件元数据——**读面**行级谓词（`ROW_AUTH_READ`）：创建者 / 显式 `ak_*` 授权 /
+    /// **未声明限制的行**（外部身份上传，三列全空）⇒ 平台可见（用户裁决 2026-10-08
+    /// 「平台要看到全部的」）。`user=None` ⇒ 内部调用不过滤。
     pub async fn get_metadata(
         &self,
         file_id: i64,
         user: Option<i64>,
     ) -> Result<Option<FileRecord>, FileError> {
         self.repo.find_by_id(file_id, user).await
+    }
+
+    /// 文件元数据——**写面**行级谓词（`ROW_AUTH_WRITE`）：创建者或显式 `ak_*` 授权者
+    /// （**不含**读面的「三列全空即开放」）。
+    /// 删除 / 改写端点 MUST 用本取径做前置（读面放宽不得传导到破坏性操作）。
+    pub async fn get_metadata_owned(
+        &self,
+        file_id: i64,
+        user: i64,
+    ) -> Result<Option<FileRecord>, FileError> {
+        self.repo.find_by_id_owned(file_id, user).await
     }
 
     /// 列表（带行级授权过滤 + namespace 隔离 + 本体维度过滤），返回 `(records, total)`。
@@ -490,6 +509,7 @@ impl FileService {
 
     /// 存储键：`{namespace}/{table_kind}/{file_id}/{filename}`（文件名段经
     /// [`key_safe_filename`] 净化——原名不从键承载，见该函数文档）。
+    /// 实现委托模块级 [`storage_key`]（单一实现：Service 与外部写件方共用）。
     fn storage_key(
         &self,
         namespace: &str,
@@ -497,14 +517,24 @@ impl FileService {
         file_id: i64,
         filename: &str,
     ) -> String {
-        format!(
-            "{}/{}/{}/{}",
-            namespace,
-            kind.path_segment(),
-            file_id,
-            key_safe_filename(filename)
-        )
+        storage_key(namespace, kind, file_id, filename)
     }
+}
+
+/// 存储键 **单一实现**：`{namespace}/{kind}/{file_id}/{filename}`。
+///
+/// 读端契约见 [`crate::repository`] 的 `resolve_kind`——它取 path 的**第 2 段**作 kind，
+/// 并以 `{ns}/%` 前缀做列表/行授权过滤 ⇒ 任何写件方 MUST 用本函数生成键，
+/// MUST NOT 自拼（否则平台侧「解不出 kind / 扫不到行 / 找不到字节」）。
+/// 外部写件方（如门户 OpenActivity 的上传链）经本函数复用，无需构造 [`FileService`]。
+pub fn storage_key(namespace: &str, kind: FileTableKind, file_id: i64, filename: &str) -> String {
+    format!(
+        "{}/{}/{}/{}",
+        namespace,
+        kind.path_segment(),
+        file_id,
+        key_safe_filename(filename)
+    )
 }
 
 /// 存储键文件名段净化：**原名是元数据**（存文件行 `notice`，下载文件名/界面展示用），
@@ -555,26 +585,103 @@ pub fn content_type_for(filename: &str) -> &'static str {
         "pdf" => "application/pdf",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "heic" => "image/heic",
+        "heif" => "image/heif",
+        "tif" | "tiff" => "image/tiff",
+        // 视频族（下载/预览内容类型；缺项会退化为 application/octet-stream ⇒ 浏览器只能下载，
+        // 前端 blob 预览（lib/attachment-preview）也因类型而下载——用户报「视频点击后是下载的」的根因）
+        "mp4" => "video/mp4",
+        // `.mov` 按 `video/mp4` 供：Chrome/Edge 的内联播放清单**不含 `video/quicktime`** ⇒ 直开只
+        // 会下载（用户实测：绕车视频点了仍下载）；MOV 与 MP4 同属 ISO-BMFF 容器 ⇒ 按 mp4 提供即可
+        // 内联播放（可播性由内部编码决定：H.264/HEVC ✓，ProRes ✗ 会报播放错误而非下载）。
+        "mov" => "video/mp4",
+        "webm" => "video/webm",
+        // 同理：Chrome 不认 `video/x-matroska` ⇒ 按 WebM 供（Matroska 即 WebM 的基底容器）。
+        "mkv" => "video/webm",
+        "avi" => "video/x-msvideo",
+        "m4v" => "video/x-m4v",
+        "mpg" | "mpeg" => "video/mpeg",
+        "3gp" => "video/3gpp",
+        "wmv" => "video/x-ms-wmv",
         "doc" => "application/msword",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "xls" => "application/vnd.ms-excel",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.12",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "zip" => "application/zip",
         "txt" => "text/plain",
+        "csv" => "text/csv",
+        "md" | "markdown" => "text/markdown",
+        "json" => "application/json",
+        "yaml" | "yml" => "text/yaml",
+        "xml" => "application/xml",
+        "log" => "text/plain",
         _ => "application/octet-stream",
     }
 }
 
 /// 二进制 magic bytes 校验（静态字节签名，非结构化格式解析——NO_REGEX 合规）。
-/// txt 免检；pdf/png/jpg 固定头；doc/xls 为 OLE 复合文档；docx/xlsx/zip 为 ZIP 容器。
+/// txt 免检；pdf/png/jpg 固定头；doc/xls/ppt 为 OLE 复合文档；docx/xlsx/xlsm/ods/pptx/zip 为 ZIP 容器。
 pub fn validate_magic(ext: &str, data: &[u8]) -> bool {
     match ext {
         "pdf" => data.starts_with(b"%PDF-"),
         "png" => data.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]),
         "jpg" | "jpeg" => data.starts_with(&[0xFF, 0xD8, 0xFF]),
-        "zip" | "docx" | "xlsx" => data.starts_with(b"PK\x03\x04"),
-        "doc" | "xls" => data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1]),
+        "zip" | "docx" | "xlsx" | "xlsm" | "ods" | "pptx" => data.starts_with(b"PK\x03\x04"),
+        "doc" | "xls" | "ppt" => {
+            data.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+        }
         "txt" => true,
         _ => true, // 白名单外扩展名由调用方（kind 白名单）拦截
+    }
+}
+
+#[cfg(test)]
+mod content_type_tests {
+    use super::{content_type_for, validate_magic};
+
+    /// 下载/预览内容类型：视频族 MUST 非 `octet-stream`——用户报「视频点击后是下载的」即因缺项
+    /// 退化为 octet-stream（前端 blob 预览随类型走 ⇒ 只能下载）。
+    #[test]
+    fn video_and_image_extensions_have_real_content_types() {
+        for (name, expect) in [
+            ("a.mp4", "video/mp4"),
+            ("a.mov", "video/mp4"),
+            ("a.webm", "video/webm"),
+            ("a.mkv", "video/webm"),
+            ("a.avi", "video/x-msvideo"),
+            ("a.gif", "image/gif"),
+            ("a.webp", "image/webp"),
+            ("a.heic", "image/heic"),
+            ("a.tiff", "image/tiff"),
+            ("a.csv", "text/csv"),
+            ("a.json", "application/json"),
+            (
+                "a.pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            ),
+        ] {
+            assert_eq!(content_type_for(name), expect, "{name} 内容类型");
+        }
+        assert_eq!(content_type_for("a.unknownext"), "application/octet-stream");
+    }
+
+    /// Office 容器 magic：pptx/xlsm/ods = ZIP 头、ppt = OLE 头（此前落 `_ => true` 免检兜底）。
+    #[test]
+    fn office_magic_is_enforced() {
+        let zip = b"PK\x03\x04rest";
+        let ole = [0xD0u8, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+        assert!(validate_magic("pptx", zip));
+        assert!(validate_magic("xlsm", zip));
+        assert!(validate_magic("ods", zip));
+        assert!(validate_magic("ppt", &ole));
+        assert!(!validate_magic("pptx", b"not-a-zip"));
+        assert!(!validate_magic("ppt", b"not-ole"));
     }
 }

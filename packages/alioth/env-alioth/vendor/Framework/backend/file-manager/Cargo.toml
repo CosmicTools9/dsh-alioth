@@ -15,7 +15,6 @@ s3 = ["dep:aws-sdk-s3", "dep:aws-config"]
 [dependencies]
 sqlx = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["fs"] }
 sha2 = { workspace = true }

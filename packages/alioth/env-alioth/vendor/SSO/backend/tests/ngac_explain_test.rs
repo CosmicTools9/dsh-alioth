@@ -19,6 +19,9 @@ struct Seed {
     admin_ua: i64,
     fk_policy_class: i64,
     oa: i64,
+    /// 本测试专属集合级资源类型（`{rt}:0`）；cleanup 与 decide 请求 MUST 用它，
+    /// MUST NOT 用跨测试共享的字面量（见 seed 注释）。
+    rt: String,
     #[allow(dead_code)] // 测试断言按需读取
     read_ar: i64,
     delete_ar: i64,
@@ -50,21 +53,29 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
     .expect("policy class");
 
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING"#,
     )
-    .bind(email)
     .bind(&username)
     .execute(pool)
     .await
     .ok();
     let admin: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email=$1 LIMIT 1")
-            .bind(email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username=$1 LIMIT 1")
+            .bind(&username)
             .fetch_one(pool)
             .await
             .expect("admin user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(admin)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
 
     sqlx::query(
         r#"INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class, created_at, updated_at)
@@ -75,9 +86,14 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
     .execute(pool)
     .await
     .ok();
+    // 策略类内取 admin UA：o_name='admin' 在各策略类下各有一行（idx 为 (o_name, fk_policy_class)
+    // 偏唯一），无 pc 过滤的 LIMIT 1 会取到他类行 → 后续「父属性与当前属性须同属一个策略类」
+    // 校验 400（test_ancestor_write_integrity）。
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");
@@ -91,19 +107,24 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
     .await
     .ok();
 
-    // OA: engineers:0
+    // OA: {rt}:0（**资源类型按测试唯一**：5 个测试并行，共用 `engineers:0` 时任一测试的
+    // cleanup 会删掉该 OA 及其上的 prohibition/association ⇒ 同级列表断言非确定性红）
+    let rt = format!("engineers_{username}");
     sqlx::query(
         r#"INSERT INTO isahl_auth.ngac_object_attribute (o_name, fk_policy_class, resource_type, fk_resource, created_at, updated_at)
-           VALUES ('engineers-oa', $1, 'engineers', 0, NOW(), NOW())
+           VALUES ($1, $2, $3, 0, NOW(), NOW())
            ON CONFLICT (resource_type, fk_resource) DO UPDATE SET deleted_at = NULL"#,
     )
+    .bind(format!("{rt}-oa"))
     .bind(pc)
+    .bind(&rt)
     .execute(pool)
     .await
     .ok();
     let oa: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type='engineers' AND fk_resource=0 LIMIT 1",
+        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type=$1 AND fk_resource=0 LIMIT 1",
     )
+    .bind(&rt)
     .fetch_one(pool)
     .await
     .expect("OA");
@@ -144,6 +165,7 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
         admin_ua,
         fk_policy_class: pc,
         oa,
+        rt,
         read_ar: ars[0],
         delete_ar: ars[1],
         admin_ar: ars[2],
@@ -189,17 +211,30 @@ fn decide_req(
     req
 }
 
-async fn cleanup(pool: &PgPool, email: &str, oa_id: i64) {
+async fn cleanup(pool: &PgPool, email: &str, s: &Seed) {
+    let oa_id = s.oa;
+    let rt = s.rt.clone();
+    // 子行按 username 句柄定位（由 email 派生，1:1）；邮箱行按 email（唯一存储）删；主行最后删——入边 FK 不阻断
+    let username = email
+        .split('@')
+        .next()
+        .unwrap_or("ngac_admin")
+        .replace('-', "_");
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email=$1)",
+         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE username=$1)",
     )
-    .bind(email)
+    .bind(&username)
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email=$1")
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email=$1")
         .bind(email)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username=$1")
+        .bind(&username)
         .execute(pool)
         .await
         .ok();
@@ -214,11 +249,13 @@ async fn cleanup(pool: &PgPool, email: &str, oa_id: i64) {
         .await
         .ok();
     // 删除测试创建的 OA（含关联规则），避免污染共享测试库（uq_ngac_oa_resource）
-    sqlx::query("DELETE FROM isahl_auth.ngac_object_attribute WHERE id = $1")
-        .bind(oa_id)
-        .execute(pool)
-        .await
-        .ok();
+    sqlx::query(
+        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type = $1 AND fk_resource = 0",
+    )
+    .bind(&rt)
+    .execute(pool)
+    .await
+    .ok();
 }
 
 #[tokio::test]
@@ -251,7 +288,7 @@ async fn test_prohibition_crud() {
             .uri("/api/admin/ngac/prohibitions")
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .set_json(json!({
-                "o_name": "no-delete-engineers",
+                "o_name": format!("no-delete-{}", s.rt),
                 "fk_user_attribute": s.admin_ua,
                 "fk_object_attribute": s.oa,
                 "ak_access_rights": [s.delete_ar],
@@ -326,7 +363,7 @@ async fn test_prohibition_crud() {
         resp.status()
     );
 
-    cleanup(&pool, email, s.oa).await;
+    cleanup(&pool, email, &s).await;
 }
 
 #[tokio::test]
@@ -362,7 +399,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
                 &claims,
                 json!({
                     "user_id": s.admin,
-                    "resource": "engineers:0",
+                    "resource": format!("{}:0", s.rt),
                     "action": "read"
                 }),
             ),
@@ -384,7 +421,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .set_json(json!({
                 "user_id": s.admin,
-                "resource": "engineers:0",
+                "resource": format!("{}:0", s.rt),
                 "action": "read"
             }))
             .to_request(),
@@ -418,7 +455,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
                 &claims,
                 json!({
                     "user_id": s.admin,
-                    "resource": "engineers:0",
+                    "resource": format!("{}:0", s.rt),
                     "action": "delete"
                 }),
             ),
@@ -434,7 +471,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
             .insert_header(("Authorization", format!("Bearer {}", token)))
             .set_json(json!({
                 "user_id": s.admin,
-                "resource": "engineers:0",
+                "resource": format!("{}:0", s.rt),
                 "action": "delete"
             }))
             .to_request(),
@@ -463,7 +500,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
                 &claims,
                 json!({
                     "user_id": s.admin,
-                    "resource": "engineers:0",
+                    "resource": format!("{}:0", s.rt),
                     "action": "read"
                 }),
             ),
@@ -489,7 +526,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
                 &claims,
                 json!({
                     "user_id": s.admin,
-                    "resource": "engineers:0",
+                    "resource": format!("{}:0", s.rt),
                     "action": "read"
                 }),
             ),
@@ -510,7 +547,7 @@ async fn test_explain_matches_decide_and_soft_delete_oa() {
         .await
         .ok();
 
-    cleanup(&pool, email, s.oa).await;
+    cleanup(&pool, email, &s).await;
 }
 
 #[tokio::test]
@@ -535,21 +572,29 @@ async fn test_explain_rejects_non_admin() {
     )
     .await;
 
-    // 普通用户（无 admin UA）
+    // 普通用户（无 admin UA）；username = 原 name；邮箱唯一存储 = auth_user_emails
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), 'ngac_regular', 'ngac_regular', 'ngac-regular@test.local', 'active', true, NOW(), NOW())
-           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES (isahl.gen_next_zuid(), 'ngac_regular', 'active', true, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING"#,
     )
     .execute(&pool)
     .await
     .ok();
     let regular: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email='ngac-regular@test.local' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username='ngac_regular' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .expect("regular user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'ngac-regular@test.local', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(regular)
+    .execute(&pool)
+    .await
+    .ok();
     let regular_token = admin_token(&pool, regular, "ngac-regular@test.local").await;
 
     // 非管理员 explain → 401/403（策略路径属敏感信息，禁止泄露）
@@ -560,7 +605,7 @@ async fn test_explain_rejects_non_admin() {
             .insert_header(("Authorization", format!("Bearer {}", regular_token)))
             .set_json(json!({
                 "user_id": regular,
-                "resource": "engineers:0",
+                "resource": format!("{}:0", s.rt),
                 "action": "read"
             }))
             .to_request(),
@@ -579,7 +624,7 @@ async fn test_explain_rejects_non_admin() {
             .uri("/api/ngac/decide/explain")
             .set_json(json!({
                 "user_id": s.admin,
-                "resource": "engineers:0",
+                "resource": format!("{}:0", s.rt),
                 "action": "read"
             }))
             .to_request(),
@@ -590,11 +635,15 @@ async fn test_explain_rejects_non_admin() {
         "no-token explain must be rejected"
     );
 
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email='ngac-regular@test.local'")
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email='ngac-regular@test.local'")
         .execute(&pool)
         .await
         .ok();
-    cleanup(&pool, email, s.oa).await;
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username='ngac_regular'")
+        .execute(&pool)
+        .await
+        .ok();
+    cleanup(&pool, email, &s).await;
 }
 
 #[tokio::test]
@@ -779,7 +828,7 @@ async fn test_ancestor_write_integrity() {
         .execute(&pool)
         .await
         .ok();
-    cleanup(&pool, email, s.oa).await;
+    cleanup(&pool, email, &s).await;
 }
 
 #[tokio::test]
@@ -912,5 +961,5 @@ async fn test_ancestor_diamond_dag_allowed() {
         .execute(&pool)
         .await
         .ok();
-    cleanup(&pool, email, s.oa).await;
+    cleanup(&pool, email, &s).await;
 }

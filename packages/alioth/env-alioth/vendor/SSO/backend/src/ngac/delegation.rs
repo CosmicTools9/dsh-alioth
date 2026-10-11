@@ -308,10 +308,10 @@ pub async fn list_delegatees(
         Err(resp) => return resp,
     };
     let rows: Result<Vec<(i64, String)>, sqlx::Error> = sqlx::query_as(
-        "SELECT id, COALESCE(NULLIF(BTRIM(name), ''), username, id::text) \
+        "SELECT id, COALESCE(NULLIF(BTRIM(display_name), ''), username, id::text) \
          FROM isahl_auth.auth_users \
-         WHERE is_active = true AND id <> $1 AND COALESCE(user_type, '') <> 'system' \
-         ORDER BY name, id LIMIT 500",
+         WHERE is_active = true AND id <> $1 AND COALESCE(user_type::text, '') <> 'system' \
+         ORDER BY display_name, id LIMIT 500",
     )
     .bind(user_id)
     .fetch_all(pool.get_ref())

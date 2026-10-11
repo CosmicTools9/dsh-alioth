@@ -10,10 +10,14 @@
  *   - `scripts/ego-safe-eval.ts`（`--emit-preamble` 直接打印本块）
  *   - `scripts/visual-verify.ts`（capture / element / warmup / probe 脚本前置本块）
  *
- * 文本内出现的 `gotoUrl` / `js` / `cdp` / `cliLog` 均为 heredoc 运行时预载的 helper。
+ * 文本内出现的 `gotoUrl` / `js` / `cdp` / `cliLog` 均为 heredoc 运行时预载的 helper；
+ * `stdin` 代际（Linux 线：facade-only，无 flat helper）由 `egoCompatPrelude()` 在运行期补齐。
  */
+import { egoCompatPrelude } from './ego-cli';
+
 export function egoSafePreamble(defaultJsTimeoutMs = 8000): string {
-  return `// ═══ ego-safe preamble ═══
+  return `${egoCompatPrelude()}
+// ═══ ego-safe preamble ═══
 // withWatchdog: 有界等待原语——被包住的调用在 timeout 内未返回即失败，绝不无限挂起
 async function withWatchdog(promise, timeoutMs, message) {
   const { promise: guard, reject } = Promise.withResolvers();

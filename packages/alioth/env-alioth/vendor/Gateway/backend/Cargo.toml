@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# 裁决（2026-09-27）：本 crate 自身不消费 openssl API；声明 openssl-sys vendored 只为在本 workspace
+# 构建图中钉住 vendored feature（lettre native-tls / vendored webauthn-rs-core 两个实际消费者的
+# 静态链接保障，裁决见根 Cargo.toml workspace.dependencies 注释）。
 openssl-sys = { version = "0.9.117", features = ["vendored"] }
 actix-web = "4.13"
 actix-multipart = "0.8"
@@ -61,6 +64,7 @@ actix-cors = { workspace = true }
 # OAuth2/OIDC
 reqwest = { workspace = true, features = ["json", "stream"] }
 urlencoding = { workspace = true }
+url = { workspace = true }
 
 # NGAC contract (解耦 Gateway ↔ SSO 编译依赖)
 ngac-contract = { path = "../../Framework/backend/ngac-contract" }
@@ -94,12 +98,17 @@ audit-writer = { path = "../../Framework/backend/audit-writer" }
 # NGAC 主体/组织/身份共享内核（岗位任职桥写归口，M226/ADR A-3）
 identity-org = { path = "../../Framework/backend/identity-org" }
 outbound-client = { path = "../../Framework/backend/outbound-client" }
+# OpenAPI 计费聚合单源（`openapi-billing`）：发起收款端 `openapi::payment` 的权威金额来源
+# （与 SSO admin 计费报表共用同一份计价 SQL；change `add-openapi-payment-channel`）。
+openapi-billing = { path = "../../Framework/backend/openapi-billing" }
+# 微信支付协议面（平台共享适配器，≥2 ns 复用）：下单签名/验签/流水写径/自愈建表。
+# 依赖方向「消费方 → 适配器」为明示允许（适配器 MUST NOT 反向依赖 Gateway）。
+wechat-pay-adapter = { path = "../../Ext-adapter/wechat-pay/backend" }
 i18n = { path = "../../Framework/backend/i18n" }
 llm = { path = "../../Framework/backend/llm" }
 doc-recognition = { path = "../../Framework/backend/doc-recognition" }
 ai-agent = { path = "../../Framework/backend/ai-agent" }
 version = { path = "../../Framework/backend/version" }
-quality = { path = "../../Framework/backend/quality" }
 encoding = { path = "../../Framework/backend/encoding" }
 system-config = { path = "../../Framework/backend/system-config" }
 crud = { path = "../../Framework/backend/crud" }
@@ -116,14 +125,6 @@ ontology-binding = { path = "../../Framework/backend/ontology-binding" }
 framework-scheduler = { path = "../../Framework/backend/scheduler" }
 gateway-sso = { path = "../../SSO/backend", optional = true }
 
-# Cosmic-Tools factors
-# SE factors
-# AVIC-CAASEC factors
-# Cosmic-Tools bv-local（上门服务订单管理：服务项目/服务人员/预约/服务订单/微信支付结算）
-
-# 代码智能域：仓库分支/版本标签的 CRUD 数据面（zc_id_cate-ver_branch / zc_id_cons-date-tags）
-wechat-pay-adapter = { path = "../../Ext-adapter/wechat-pay/backend", optional = true }
-
 [dev-dependencies]
 actix-rt = { workspace = true }
 tempfile = { workspace = true }
@@ -132,13 +133,6 @@ sqlx = { workspace = true, features = ["postgres", "runtime-tokio", "chrono", "u
 [features]
 # preproc-proxy：Pre-Proc 未认证透明反代（/preproc/*、/api/pre_proc/*）——dev 形态默认开启；
 # 生产构建（scripts/build-ns.sh --no-default-features）不含 → 生产二进制无此路由（404）。
-# Cosmic-Tools：复用 Alioth 通用 service 组（inventory/demand/approval 等）+ 自有 ct-git service
-# SE namespace（研发预算管理）：5 个服务 crate（build.rs 按 service.json 自动注册路由）
-
-# Individual factor crate features
-
-# SE factor features
-# AVIC-CAASEC factor features
 sso = ["gateway-sso"]
 # E2E 测试专用：启用 PEP 的 E2E_TEST_MODE 认证绕过分支（仅测试环境构建）。
 # 生产/常规 release 构建不启用此 feature → 认证绕过代码不被编译。

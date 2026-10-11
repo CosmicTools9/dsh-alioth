@@ -83,6 +83,13 @@ pub trait AliothDbEntity:
         name.trim_matches('"')
     }
 
+    /// 关键词检索列声明（物理列名，可带表别名前缀，如 `"notice"` / `"s.code"`）。
+    ///
+    /// 声明（非空）后，泛型列表读径自动消费 `ListQuery.search`（`?search=`）：
+    /// 对声明列做 `col::text ILIKE '%<转义>%'` 的 OR 组合（转义与谓词单源 = `crate::search`）。
+    /// 默认空 = 不可检索——读径 SQL 与历史逐字一致（零回归）。
+    const SEARCH_COLUMNS: &'static [&'static str] = &[];
+
     /// DTO 字段名 → SQL 列名映射表
     /// 当前端 filter_field 使用 DTO 字段名（如 ck_cate_biz）而 SQL 列名含连字符（"ck_cate-biz"）时使用。
     fn column_renames() -> Vec<(&'static str, &'static str)> {

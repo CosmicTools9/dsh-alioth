@@ -11,4 +11,3 @@ sqlx = { workspace = true }
 ontology-binding = { path = "../ontology-binding" }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

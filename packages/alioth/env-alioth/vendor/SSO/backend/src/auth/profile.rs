@@ -46,6 +46,11 @@ pub async fn update_profile(
         }
     };
 
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
+
     let user_id: i64 = match claims.sub.parse() {
         Ok(id) => id,
         Err(_) => {
@@ -58,11 +63,11 @@ pub async fn update_profile(
     // 构建动态 UPDATE — 仅更新提供的字段；占位符按实际绑定序顺排
     // （修复：原固定 $1/$2/$3 与条件绑定错位——单字段提交必 500，
     // 路由双前缀修复前该路径不可达故从未暴露）
+    // 显示名唯一落点 = `display_name`（`name` 为 DTO 兼容字段，同源写入；
+    // 二者同时给出时以 `display_name` 为准，避免同列重复赋值）
+    let display_name_value: Option<&String> = body.display_name.as_ref().or(body.name.as_ref());
     let mut set_clauses: Vec<String> = Vec::new();
-    if body.name.is_some() {
-        set_clauses.push(format!("name = ${}", set_clauses.len() + 1));
-    }
-    if body.display_name.is_some() {
+    if display_name_value.is_some() {
         set_clauses.push(format!("display_name = ${}", set_clauses.len() + 1));
     }
 
@@ -80,10 +85,7 @@ pub async fn update_profile(
     );
 
     let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
-    if let Some(name) = &body.name {
-        query = query.bind(name);
-    }
-    if let Some(display_name) = &body.display_name {
+    if let Some(display_name) = display_name_value {
         query = query.bind(display_name);
     }
     query = query.bind(user_id);

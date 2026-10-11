@@ -280,6 +280,12 @@ async fn cleanup(pool: &PgPool, user_id: i64, ua_ids: &[i64], oa_ids: &[i64]) {
             .await
             .ok();
     }
+    // auth_user_emails 入边 FK 无 ON DELETE CASCADE：先删邮箱行再删账号
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_id)
         .execute(pool)
@@ -295,19 +301,28 @@ async fn me_returns_permission_matrix_from_associations() {
     let ast = test_auth_state();
 
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'perm_user', 'perm_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'perm_user', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'perm_user@alioth.test' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'perm_user' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+         VALUES ($1, 'perm_user@alioth.test', TRUE, NOW(), NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
     let pc_id = default_policy_class(&pool).await;
 
     // 有效关联：engineers → read + create
@@ -398,19 +413,28 @@ async fn me_permissions_empty_for_user_without_relations() {
     let ast = test_auth_state();
 
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'perm_none', 'perm_none@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'perm_none', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'perm_none@alioth.test' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'perm_none' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+         VALUES ($1, 'perm_none@alioth.test', TRUE, NOW(), NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
 
     let app = test::init_service(
         App::new()
@@ -459,19 +483,28 @@ async fn me_matrix_subtracts_prohibition() {
     let ast = test_auth_state();
 
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'perm_proh', 'perm_proh@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'perm_proh', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'perm_proh@alioth.test' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'perm_proh' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+         VALUES ($1, 'perm_proh@alioth.test', TRUE, NOW(), NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
     let pc_id = default_policy_class(&pool).await;
 
     // 关联：engineers → read + create + delete
@@ -558,4 +591,147 @@ async fn me_matrix_subtracts_prohibition() {
         .await
         .ok();
     cleanup(&pool, user_id, &[ua], &[oa]).await;
+}
+
+/// `/auth/me` 权限矩阵的条件求值面（change tasks 1.3）：
+/// ① 注入同源 rhai 求值器（`resource` / `action` / `user_id` 取**本行真值**）；
+/// ② OA 闭包名按**行内 OA** 精确构造（原实现以「集合级 OA 名全集」充当每行闭包
+/// ⇒ v2 `object_attr_in` 过匹配：条件指向别的资源类型的 OA 也会满足 = 放行方向）。
+#[tokio::test]
+async fn me_matrix_evaluates_rhai_and_per_row_closure() {
+    let pool = connect().await;
+    common::setup_schema(&pool).await.expect("schema");
+    ensure_ngac(&pool).await;
+    let ast = test_auth_state();
+
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'cond_user', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .ok();
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'cond_user' LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+         VALUES ($1, 'cond_user@alioth.test', TRUE, NOW(), NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
+    let pc_id = default_policy_class(&pool).await;
+
+    // ① rhai 命中：resource / action / user_id 三变量均取本行真值 ⇒ 授予 read
+    let (ua_a, oa_a, _) = grant_relation(
+        &pool,
+        user_id,
+        pc_id,
+        &unique("cond_hit"),
+        "invoices-x",
+        &["read"],
+        None,
+        Some(&serde_json::json!({
+            "rhai": format!(
+                "resource == \"invoices-x:0\" && action == \"read\" && user_id == {}",
+                user_id
+            )
+        })),
+    )
+    .await;
+    // ② rhai 未命中（action 不符）⇒ 不授予
+    let (ua_b, oa_b, _) = grant_relation(
+        &pool,
+        user_id,
+        pc_id,
+        &unique("cond_miss"),
+        "reports-x",
+        &["read"],
+        None,
+        Some(&serde_json::json!({ "rhai": "action == \"delete\"" })),
+    )
+    .await;
+    // ③ 过匹配收口：条件指向**另一**资源类型的集合 OA（不在本行闭包）⇒ 不授予
+    let (ua_c, oa_c, _) = grant_relation(
+        &pool,
+        user_id,
+        pc_id,
+        &unique("cond_other"),
+        "audits-x",
+        &["read"],
+        None,
+        Some(&serde_json::json!({ "object_attr_in": ["oa_ledgers-x"] })),
+    )
+    .await;
+    // ④ 自身闭包命中（闭包含自身）⇒ 授予
+    let (ua_d, oa_d, _) = grant_relation(
+        &pool,
+        user_id,
+        pc_id,
+        &unique("cond_self"),
+        "ledgers-x",
+        &["read"],
+        None,
+        Some(&serde_json::json!({ "object_attr_in": ["oa_ledgers-x"] })),
+    )
+    .await;
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(ast.clone()))
+            .configure(gateway_sso::auth::login::configure),
+    )
+    .await;
+
+    let token = mint_token(&ast, user_id, "cond_user@alioth.test");
+    let req = test::TestRequest::get()
+        .uri("/me")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .to_request();
+    let body: serde_json::Value = test::read_body_json(test::call_service(&app, req).await).await;
+    let perms = &body["user"]["permissions"];
+
+    let actions_of = |rt: &str| -> Vec<String> {
+        perms[rt]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(
+        actions_of("invoices-x").contains(&"read".to_string()),
+        "rhai 命中 MUST 授予：{perms}"
+    );
+    assert!(
+        perms["reports-x"].is_null(),
+        "rhai 未命中 MUST NOT 授予：{perms}"
+    );
+    assert!(
+        perms["audits-x"].is_null(),
+        "条件指向非本行 OA 闭包 MUST NOT 授予（过匹配收口）：{perms}"
+    );
+    assert!(
+        actions_of("ledgers-x").contains(&"read".to_string()),
+        "自身闭包命中 MUST 授予：{perms}"
+    );
+
+    cleanup(
+        &pool,
+        user_id,
+        &[ua_a, ua_b, ua_c, ua_d],
+        &[oa_a, oa_b, oa_c, oa_d],
+    )
+    .await;
 }

@@ -2,6 +2,8 @@
 
 > 本协议为 AliothStudio 所有 Track 2 前端校准提供统一的截图评分标准。
 > 各技能（alioth-design / alioth-block）按上下文适配参考源、评分权重和截图清单。
+>
+> **平台前提**：截图链路 = `scripts/visual-verify.ts` → `ego-browser`。两条 host 线（macOS app runtime / Linux 上游 ego-lite rootless host）**同引擎**（ego 自带 Chromium + CDP；非 ego 引擎被门禁 `check-browser-tool-unification.ts` 全仓禁止），消费方统一经适配层 `scripts/lib/ego-cli.{ts,sh}` + `egoCompatPrelude()` ⇒ 两线均可执行本协议。例外 = 社区 fork `iagogfe/ego-lite-linux` v0.2.0（备选线、已非活体）：无 flat helpers ⇒ 探活失败、只落 `*-report.degraded.json`，该线 MUST 指向 macOS 侧 ego。判据与配方 = `.agents/skills/ego-browser/SKILL.md` §平台差异：Linux。
 
 ## 1. 核心工作流
 
@@ -34,6 +36,20 @@
 total = layout * 0.25 + typography * 0.15 + color * 0.15
       + responsive * 0.10 + interactive * 0.15 + content * 0.20
 ```
+
+### 2.1 两套口径：`smoke-test`（自动）与 `manual`（人工）
+
+同一份报告里 `evaluation_method` 区分两种口径，**分数不可互比**：
+
+| 口径 | 触发 | 维度分来源 | 含义 |
+| --- | --- | --- | --- |
+| `smoke-test` | `bun scripts/visual-verify.ts verify <proto.html>`（自动冒烟） | 机械信号派生（`scripts/lib/layout-signals.ts` 的 `dimensionsFrom`） | 只证明「无控制台硬错误 + 无窄屏劣化」，工具自标 `Info: 非真实视觉评估` |
+| `manual` | 上表 6 维人工打分（`verify --score N` 写入该分） | 本协议 §3 细则逐维打分 | 真实视觉评估 |
+
+`smoke-test` 的维度分口径（MUST NOT 再用固定值编造）：
+
+- `Layout` ← 各档 `realOverlap` 最大值、`Typography` ← 各档 `vstack` 最大值、`Responsive` ← 窄档劣化违规数（每档 −10）。
+- 无机械信号支撑的维度（`Color` / `Interactive` / `Content`）记 `null`＝**未测量**，报告 MUST NOT 出现无信号支撑的固定分；门禁的维度阈值计算天然跳过 `null`（`typeof d.score === 'number' ? d.score : Infinity`）。人工 `manual` 口径仍 MUST 为全部 6 维给分。
 
 ## 3. 评分细则
 
@@ -96,6 +112,13 @@ const s = window.getComputedStyle(el);
 | 65-89  | 1 个断点布局偏移               |
 | 40-64  | 2 个断点出问题                 |
 | 0-39   | 完全不响应或某个断点内容不可读 |
+
+> **机械判据（自动口径 `smoke-test` 的 Responsive 语义，先于人工打分）**：Responsive 的机械含义是**窄档（tablet/mobile）相对桌面档（1440）的劣化量**，而非绝对计数——
+> `Δvstack = max(0, 窄档 vstack − desktop vstack)`，`Δvstack >= 3` 或 `ΔrealOverlap >= 1` 记一次违规。
+> 取 Δ 的原因：密集表格在桌面档本身即有竖排属设计取舍（实测 3 例），绝对阈值误伤；实测干净页三档全 0、破版页窄档 +8~+12。
+> 命中 ⇒ Responsive 每档 −10 分、总分同降，总分 < 90 即 `verify` 退出码 1（`check-visual-verify.ts` 判 FAIL）。
+> 存量原型经 `scripts/check/.visual-layout-baseline.txt` 只拦新增（命中且在基线 → WARN 待治）；报告缺 `viewport_metrics`（旧报告）按 WARN 兼容。
+> 判据依据与信号定义见 `docs/specs/DESIGN_VISUAL_QA_SPEC.md` §4.4.1。
 
 ### Interactive 交互态（0-100）
 
@@ -286,6 +309,13 @@ bun scripts/visual-verify.ts capture <url> --out <dir> --close
 
 ## 10. 自动化工具
 
+> **现状（2026-10-09 实测，本节事实基准）**：`scripts/visual-verify.ts` 的**实际子命令只有**
+> `ensure` / `capture <url> --out <dir>` / `element <url> --path <css> --out <dir>` / `report` / `verify <proto.html>`；
+> 实际旗标 = `--auto-verify --crop --ego-server-name --expect-gone --help --name --ns --out --path --profile --run-pid --score --screenshots --state --type --version`。
+> 因此本节 §10.2 / §10.3 / §10.4 描述的三项能力（`--regions`；`--extract-only` + `--impl-url`；`extract` + `compare` + `--selectors`）
+> **尚未实装**（源码零命中）⇒ 读作**目标形态**，MUST NOT 当可执行入口。
+> **当前可用形态**：原型侧 = `verify`（ego 真实采集 + 自动评分，产 `*-report.json`）；**实现侧** = `capture <impl-url> --out <dir>` 三视口截图 + 人工并排（判据未实装）。
+
 ### 10.1 场景驱动截图计划（scripts/visual-verify.ts）
 
 取代固定 7 帧，改为按 Module/Block 分别定义截图帧，确保不同执行者截取相同状态：
@@ -304,6 +334,9 @@ bun scripts/visual-verify.ts \
 每帧标注 `P0/P1/P2` 优先级和对应的评估维度。P0 帧为必截图，P1/P2 根据场景可用性选取。
 
 ### 10.2 区域加权像素叠加对比（scripts/visual-verify.ts --regions）
+
+> ⚠️ **未实装**（2026-10-09 实测）：下述命令/旗标在 `scripts/visual-verify.ts` 中不存在 ⇒ 目标形态；当前替代 = `capture` 三视口截图 + 人工并排。
+
 
 按 UI 区域（Sidebar/Content/Footer）分别评估像素偏差，避免整体高分掩盖局部问题：
 
@@ -330,6 +363,9 @@ bun scripts/visual-verify.ts baseline.png current.png \
 
 ### 10.3 CSS 变量一致性检查（scripts/visual-verify.ts）
 
+> ⚠️ **未实装**（2026-10-09 实测）：下述命令/旗标在 `scripts/visual-verify.ts` 中不存在 ⇒ 目标形态；当前替代 = `capture` 三视口截图 + 人工并排。
+
+
 从原型提取 CSS 变量声明值，通过 ego-browser 获取实现页面 computed 值，逐项对比：
 
 ```bash
@@ -349,6 +385,9 @@ HSL 值按分量加权对比（H 权重 0.1，S/L 权重 0.45），Delta E < 2 �
 匹配率 ≥ 95% 通过。
 
 ### 10.4 元素级布局比对（scripts/visual-verify.ts）
+
+> ⚠️ **未实装**（2026-10-09 实测）：下述命令/旗标在 `scripts/visual-verify.ts` 中不存在 ⇒ 目标形态；当前替代 = `capture` 三视口截图 + 人工并排。
+
 
 传统像素叠加对比只能告诉你"有差异"，无法告诉你"哪个元素偏了"。元素级布局比对通过 ego-browser 直接从浏览器提取每个 DOM 元素的 `getBoundingClientRect()`，逐元素对比位置和尺寸：
 
@@ -429,6 +468,12 @@ bun scripts/visual-verify.ts compare \
 
 ### 10.6 工具组合评分公式
 
+> **现状（2026-10-09 实测）**：下式的前两项分量**未实装**（无 `--regions`，亦无 CSS 变量比对入口）。
+> **实装形态**（`visual-verify verify` 产出）为：`base_score = 90`，按自动信号扣分（`hard_errors` / `babel_errors` /
+> `narrow_violations` / `layout signals: vstack·overlap·hOverflow·clipped`），`dimensions` 自动给出
+> Layout / Typography / Responsive 三项，Color / Interactive / Content 为 `null`（需人工补判 ⇒ 见 §8/§9 与 `--score` 通道）。
+> 下表按**目标形态**保留。
+
 最终视觉验证分数由三项自动化指标 + 人工修正分加权组成：
 
 ```
@@ -437,8 +482,8 @@ auto_score = regional_pixel_score * 0.40 + css_var_match_pct * 0.20 + 6_dimensio
 
 | 分量           | 权重 | 工具                                 | 阈值  |
 | -------------- | ---- | ------------------------------------ | ----- |
-| 像素区域加权分 | 0.40 | `scripts/visual-verify.ts --regions` | ≥ 95  |
-| CSS 变量匹配率 | 0.20 | `scripts/visual-verify.ts`           | ≥ 95% |
+| 像素区域加权分 | 0.40 | `scripts/visual-verify.ts --regions`（**未实装**） | ≥ 95  |
+| CSS 变量匹配率 | 0.20 | `scripts/visual-verify.ts`（**未实装**）           | ≥ 95% |
 | 6 维度人工评分 | 0.40 | 评审者按评分细则打分                 | ≥ 90  |
 
 `auto_score` ≥ 90 判定 PASS。任一项低于阈值（像素 < 90 / CSS < 80 / 人工 < 80）直接 FAIL。

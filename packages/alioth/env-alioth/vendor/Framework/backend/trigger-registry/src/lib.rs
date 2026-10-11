@@ -164,6 +164,21 @@ pub enum SideEffect {
         sql: String,
         params: Vec<Value>,
     },
+    /// 行级 NGAC 对象属性（OA）幂等注册 —— **数据面单源**。
+    ///
+    /// 执行面 = `common::ngac_grants::ensure_resource_oa(_tx)`（NGAC_SPEC §2.2.5
+    /// 「资源级授权写入单源」）；触发器 MUST 产本变种，MUST NOT 自拼 OA 写入 SQL
+    /// （门禁 `scripts/check/check-ngac-grant-single-source.ts`）。
+    /// 语义同单源：`o_name` = `{resource_type}-{resource_id}`、`(resource_type, fk_resource)`
+    /// 唯一 ⇒ 幂等；已存在（含软删占位行）⇒ 零写入、不复活。
+    EnsureResourceOa {
+        /// 资源类型（业务表名，落 `ngac_object_attribute.resource_type`）。
+        resource_type: String,
+        /// 资源行 id（落 `fk_resource`）。
+        resource_id: i64,
+        /// 业务可读标识（`notice → code → 回退 {resource_type}-{resource_id}`）；`None` ⇒ NULL。
+        resource_identifier: Option<String>,
+    },
 }
 
 /// Trait for all database triggers

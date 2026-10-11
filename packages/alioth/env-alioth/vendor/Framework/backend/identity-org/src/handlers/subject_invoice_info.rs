@@ -29,9 +29,9 @@ pub fn register(cfg: &mut web::ServiceConfig) {
 #[derive(Debug, Serialize)]
 pub struct SubjectInvoiceInfo {
     /// 主体 id（投影归属，zuid 字符串）
-    #[serde(with = "i64_string")]
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
-    #[serde(with = "i64_string")]
+    #[serde(with = "common::serde_zuid")]
     pub subject_id: i64,
     /// 公司名称（主体 notice）
     pub company_name: String,
@@ -45,14 +45,6 @@ pub struct SubjectInvoiceInfo {
     pub bank_name: Option<String>,
     /// 银行账号（最近 subj-bank 行 o_number）
     pub account: Option<String>,
-}
-
-mod i64_string {
-    use serde::Serializer;
-
-    pub fn serialize<S: Serializer>(v: &i64, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&v.to_string())
-    }
 }
 
 async fn ensure_subject(pool: &PgPool, subject_id: i64) -> Result<(), ApiError> {

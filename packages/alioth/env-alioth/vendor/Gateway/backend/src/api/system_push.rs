@@ -18,8 +18,9 @@ use common::messaging::{AlertLevel, MessagingService};
 /// 系统站内信通知请求。
 #[derive(Debug, Deserialize)]
 pub struct SystemNotificationRequest {
-    /// 目标用户 ID；为 None 时广播给所有在线用户。
-    pub user_id: Option<u64>,
+    /// 目标用户 ID（id 语义 = bigint/i64，JSON 走字符串形态）；为 None 时广播给所有在线用户。
+    #[serde(default, with = "common::serde_zuid::opt")]
+    pub user_id: Option<i64>,
     pub title: String,
     pub content: String,
     #[serde(default)]
@@ -131,6 +132,9 @@ pub async fn send_system_notification(
     };
 
     if let Some(uid) = req.user_id {
+        // id 语义为 bigint(i64)；MessagingService 目标参数为 u64 ⇒ 单点受检转换（拒绝非正 id）
+        let uid = u64::try_from(uid)
+            .map_err(|_| actix_web::error::ErrorBadRequest("user_id MUST be a positive id"))?;
         service
             .send_system_notification(uid, &req.title, &req.content)
             .await

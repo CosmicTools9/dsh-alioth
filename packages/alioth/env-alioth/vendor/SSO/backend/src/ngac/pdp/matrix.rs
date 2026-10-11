@@ -21,15 +21,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use serde::Serialize;
 
 use super::*;
 use crate::ngac::pip::PostgresPip;
-
-/// (UA, OA) 精确对 → association 规则集（`ak_access_rights` + `conditions`）。
-type AssocIndex = HashMap<(i64, i64), Vec<(Vec<i64>, Option<serde_json::Value>)>>;
-/// (UA, OA) 精确对 → prohibition 规则集（`is_active` + `ak_access_rights` + `conditions`）。
-type ProhibIndex = HashMap<(i64, i64), Vec<(bool, Vec<i64>, Option<serde_json::Value>)>>;
 
 /// 矩阵端点错误：区分 404（PC 不存在）与 500（加载/DB 失败）。
 #[derive(Debug)]
@@ -195,7 +191,7 @@ impl Pdp {
         pc_id: i64,
     ) -> Result<PolicyMatrix, MatrixError> {
         self.ensure_policy_loaded(pip).await?;
-        let version = self.policy_version.load(Ordering::Acquire);
+        let version = ngac_host::Evaluator::global().version();
 
         {
             let cache = MATRIX_CACHE.lock().unwrap();
@@ -225,7 +221,7 @@ impl Pdp {
 /// 祖先闭包：从节点出发沿 `ancestor_ids`（直接父边）迭代求可达集，按 id 升序。
 /// 与 pip 的 `WITH RECURSIVE ... ORDER BY id` 同一可达集与同一遍历顺序
 /// （`decide.rs` 的 `decide_access`/`explain_access` 即按该序早停）。
-pub(super) fn ancestor_closure(attr_id: i64, ancestors: &HashMap<i64, Vec<i64>>) -> Vec<i64> {
+pub(crate) fn ancestor_closure(attr_id: i64, ancestors: &HashMap<i64, Vec<i64>>) -> Vec<i64> {
     let mut seen: HashSet<i64> = HashSet::new();
     let mut stack: Vec<i64> = vec![attr_id];
     while let Some(id) = stack.pop() {
@@ -301,11 +297,8 @@ async fn build_policy_matrix(
     .fetch_all(pool)
     .await?;
 
-    // 3.5 展示名：一次批量 meta_collections 查询覆盖全部 resource_type
-    //     （禁止 N+1；查询失败静默降级至内置映射/o_name——display.rs）
-    let rt_set: std::collections::HashSet<String> =
-        oa_rows.iter().map(|r| r.resource_type.clone()).collect();
-    let meta_names = crate::ngac::display::meta_display_names(pool, &rt_set).await;
+    // 3.5 展示名：链 2（`isahl_meta` 查询）已删（2026-09-29，容器边界）⇒ 空 map，链 3 承担
+    let meta_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let display_of = |row: &OaRow| {
         crate::ngac::display::resolve_display_name(
             row.fk_resource,
@@ -333,6 +326,16 @@ async fn build_policy_matrix(
         direct_map.entry((ua_id, oa_id)).or_default().extend(rights);
     }
 
+    // 4.5 创建者派生（derive-creator-grants-from-lifecycle）：实例锚点 × 创建者活 UA 集
+    // （共享实现 = common::ngac_org::creator_ua_ids_by_instance_oa，同源纪律）。
+    let creator_ua_by_oa: HashMap<i64, std::collections::HashSet<i64>> =
+        ngac_host::creator_ua_ids_by_instance_oa(pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (k, v.into_iter().collect()))
+            .collect();
+
     // 5. access right 词表（图快照内全量；按 id 稳定排序）
     let pg = pdp.policy_graph();
     let mut access_rights: Vec<MatrixAccessRight> = pg
@@ -347,6 +350,18 @@ async fn build_policy_matrix(
     let ar_names: HashMap<i64, String> = access_rights
         .iter()
         .map(|a| (a.id, a.o_name.clone()))
+        .collect();
+    // 创建者派生 rights 集（derive-creator-grants-from-lifecycle）：按词表名对
+    // common::ngac_grants::RIGHTS_CREATOR 解析 ⇒ 与派生层单源对账（无二次字面集）。
+    let creator_right_ids: std::collections::HashSet<i64> = access_rights
+        .iter()
+        .filter(|a| ngac_host::RIGHTS_CREATOR.contains(&a.o_name.as_str()))
+        .map(|a| a.id)
+        .collect();
+    let creator_right_names: Vec<String> = access_rights
+        .iter()
+        .filter(|a| creator_right_ids.contains(&a.id))
+        .map(|a| a.o_name.clone())
         .collect();
     let ua_names: HashMap<i64, String> = uas.iter().map(|u| (u.id, u.o_name.clone())).collect();
 
@@ -426,26 +441,71 @@ async fn build_policy_matrix(
     // OA 成边，实测单 UA 6k+ 条）下，逐对全扫是 O(UA × OA × rights × 闭包² × 关联数)，
     // 实测 6k OA 时 >8 分钟；索引后每对为 O(匹配规则数)。
     // 克隆 `ak_access_rights` / `conditions` 最小字段——DashMap 守卫不跨迭持续持。
-    let mut assoc_index: AssocIndex = HashMap::new();
-    for e in pg.associations.iter() {
-        let a = e.value();
-        assoc_index
-            .entry((a.fk_user_attribute, a.fk_object_attribute))
-            .or_default()
-            .push((a.ak_access_rights.clone(), a.conditions.clone()));
+    // 索引化求值原语（indexed-evaluation-primitive）：索引构建与 (UA, OA) 对求值的
+    // 唯一实现 = ngac-decision crate（替代原先本文件自建的 assoc/prohib 索引 + 合并循环）。
+    let indexed = ngac_decision::IndexedPolicyGraph::from(&pg);
+
+    // 分级（密级）上限预取（NGAC_SPEC §2.7）：与 `decide_access` / RLS 列表同一判据
+    // （`common::ngac_org::label_clearance_denies_rule`）的批量形式。DTO 无独立密级维度 ⇒
+    // 命中时该 cell 以 **denied** 呈现（effective/direct 归入 denied），与 decide 的 Deny 一致；
+    // 非白名单资源类型 / 无标签 ⇒ 不介入（行为与未启用一致）。四张映射均小、各一次取全。
+    let label_whitelist: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT jsonb_array_elements_text(c.scope->'resource_types') \
+           FROM isahl_auth.org_policy_class c \
+          WHERE c.deleted_at IS NULL AND c.state = 'active' AND c.scope IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .collect();
+    let mut label_ranks: HashMap<String, i32> = HashMap::new();
+    let mut oa_label_code: HashMap<i64, String> = HashMap::new();
+    let mut ua_clearance: HashMap<i64, i32> = HashMap::new();
+    if !label_whitelist.is_empty() {
+        for (code, rank) in sqlx::query_as::<_, (String, i32)>(
+            "SELECT code, rank FROM isahl_auth.org_policy_label \
+              WHERE deleted_at IS NULL AND is_active",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        {
+            label_ranks.insert(code, rank);
+        }
+        for (id, code) in sqlx::query_as::<_, (i64, String)>(
+            "SELECT id, property ->> 'label' FROM isahl_auth.ngac_object_attribute \
+              WHERE deleted_at IS NULL AND property ->> 'label' IS NOT NULL",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        {
+            oa_label_code.insert(id, code);
+        }
+        for (id, rank) in sqlx::query_as::<_, (i64, i32)>(
+            "SELECT ua.id, l.rank FROM isahl_auth.ngac_user_attribute ua \
+               JOIN isahl_auth.org_policy_label l \
+                 ON l.code = (ua.property ->> 'clearance') AND l.deleted_at IS NULL AND l.is_active \
+              WHERE ua.deleted_at IS NULL",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        {
+            ua_clearance.insert(id, rank);
+        }
     }
-    let mut prohib_index: ProhibIndex = HashMap::new();
-    for e in pg.prohibitions.iter() {
-        let p = e.value();
-        prohib_index
-            .entry((p.fk_user_attribute, p.fk_object_attribute))
-            .or_default()
-            .push((
-                p.is_active,
-                p.ak_access_rights.clone(),
-                p.conditions.clone(),
-            ));
-    }
+    // OA → 资源类型（cell 循环只持有 OA id；分组对象携带 resource_type）
+    let oa_type: HashMap<i64, String> = object_groups
+        .iter()
+        .flat_map(|g| {
+            g.collection_oa
+                .iter()
+                .map(|o| (o.id, g.resource_type.clone()))
+                .chain(g.instances.iter().map(|i| (i.id, g.resource_type.clone())))
+        })
+        .collect();
 
     let mut cells: Vec<MatrixCell> = Vec::new();
     for ua in &uas {
@@ -464,7 +524,11 @@ async fn build_policy_matrix(
                     .iter()
                     .filter_map(|id| oa_names.get(id).cloned())
                     .collect(),
+                rhai_eval: None,
             };
+            let creator_pair = creator_ua_by_oa
+                .get(&oa.id)
+                .is_some_and(|set| set.contains(&ua.id));
             let mut direct: Vec<String> = Vec::new();
             if let Some(right_ids) = direct_map.get(&(ua.id, oa.id)) {
                 let mut names: Vec<String> = right_ids
@@ -475,45 +539,50 @@ async fn build_policy_matrix(
                 names.dedup();
                 direct = names;
             }
+            // 创建者派生 = 精确对（创建者 UA × 实例锚点）授权 ⇒ 并入 direct 呈现
+            if creator_pair {
+                direct.extend(creator_right_names.iter().cloned());
+                direct.sort();
+                direct.dedup();
+            }
 
             let mut effective: Vec<String> = Vec::new();
             let mut denied: Vec<String> = Vec::new();
             for ar in &access_rights {
-                // deny-overrides 全扫描（与 decide_access 同语义）：任一 (ua,oa) 对
-                // Deny → denied；否则任一 Permit → effective；顺序不影响结果。
-                let mut saw_deny = false;
-                let mut saw_permit = false;
-                for &ua_c in &ua_closure {
-                    for &oa_c in oa_closures.get(&oa.id).expect("oa closure present") {
-                        // 与 evaluate_pair_in 同序同判：先 prohibition（deny），后 association（permit）
-                        if let Some(list) = prohib_index.get(&(ua_c, oa_c)) {
-                            if list.iter().any(|(active, rights, cond)| {
-                                *active
-                                    && rights.contains(&ar.id)
-                                    && crate::ngac::pdp::evaluate_conditions(cond, &ctx)
-                            }) {
-                                saw_deny = true;
-                                break;
-                            }
-                        }
-                        if let Some(list) = assoc_index.get(&(ua_c, oa_c)) {
-                            if list.iter().any(|(rights, cond)| {
-                                rights.contains(&ar.id)
-                                    && crate::ngac::pdp::evaluate_conditions(cond, &ctx)
-                            }) {
-                                saw_permit = true;
-                                break;
-                            }
-                        }
-                    }
-                    if saw_deny || saw_permit {
-                        break;
-                    }
-                }
+                // deny-overrides 合并走唯一实现（ngac-decision 索引原语）：任一 (ua,oa) 对
+                // Deny → denied；否则任一 Permit → effective；Deny 短路（不构建轨迹）。
+                let pair_decision =
+                    indexed.evaluate_decision(&ua_closure, oa_closure, &ar.o_name, &ctx, false);
+                let saw_deny = pair_decision == ngac_decision::Decision::Deny;
+                let saw_permit = pair_decision == ngac_decision::Decision::Permit;
+                // 派生命中与物理 Permit 同层；saw_deny（prohibition）优先 ⇒ deny-overrides 保序
+                let creator_hit = creator_pair && creator_right_ids.contains(&ar.id);
                 if saw_deny {
                     denied.push(ar.o_name.clone());
-                } else if saw_permit {
+                } else if saw_permit || creator_hit {
                     effective.push(ar.o_name.clone());
+                }
+            }
+
+            // 分级（密级）上限（NGAC_SPEC §2.7）：白名单资源类型上 clearance < 标签 ⇒ 该 cell
+            // 授权整体按 deny 呈现（effective/direct 归入 denied）。
+            if let Some(rt) = oa_type.get(&oa.id) {
+                if label_whitelist.contains(rt) {
+                    let res_rank = oa_label_code
+                        .get(&oa.id)
+                        .and_then(|c| label_ranks.get(c))
+                        .copied();
+                    let subj_rank = ua_closure
+                        .iter()
+                        .filter_map(|id| ua_clearance.get(id))
+                        .copied()
+                        .max();
+                    if ngac_host::label_clearance_denies_rule(true, res_rank, subj_rank) {
+                        denied.append(&mut effective);
+                        denied.append(&mut direct);
+                        denied.sort();
+                        denied.dedup();
+                    }
                 }
             }
 

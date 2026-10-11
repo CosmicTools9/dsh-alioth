@@ -144,24 +144,35 @@ async fn ensure_sso_admin_policy(pool: &PgPool) -> i64 {
 
 async fn create_user(pool: &PgPool, email: &str, password: &str) -> i64 {
     let password_hash = hash_password(password).expect("hash_password should succeed");
+    // name/email 冗余列已下线：username 为唯一身份基点，email 唯一存储 = auth_user_emails
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.auth_users (name, username, email, password_hash, status, is_active, created_at, updated_at)
-        VALUES ($1, $1, $2, $3, 'active', true, NOW(), NOW())
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO isahl_auth.auth_users (username, password_hash, status, is_active, created_at, updated_at)
+        VALUES ($1, $2, 'active', true, NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
         "#,
     )
-    .bind(email)
     .bind(email)
     .bind(password_hash)
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .expect("user should exist")
+    let user_id: i64 =
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(email)
+            .fetch_one(pool)
+            .await
+            .expect("user should exist");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 async fn assign_admin_ua(pool: &PgPool, user_id: i64) {
@@ -192,9 +203,11 @@ fn admin_token(state: &AuthState, user_id: i64) -> String {
 }
 
 async fn cleanup_user(pool: &PgPool, email: &str) {
+    // 子行先行——入边 FK 无 ON DELETE CASCADE；本夹具 username 即 email 句柄，
+    // 用户行按 username 收口（auth_users.email 冗余列已下线，MUST NOT 再读）
     sqlx::query(
         "DELETE FROM isahl_auth.sso_sessions \
-         WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+         WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE username = $1)",
     )
     .bind(email)
     .execute(pool)
@@ -202,7 +215,7 @@ async fn cleanup_user(pool: &PgPool, email: &str) {
     .ok();
     sqlx::query(
         "DELETE FROM isahl_auth.refresh_tokens \
-         WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+         WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE username = $1)",
     )
     .bind(email)
     .execute(pool)
@@ -210,13 +223,21 @@ async fn cleanup_user(pool: &PgPool, email: &str) {
     .ok();
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE username = $1)",
     )
     .bind(email)
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
+    sqlx::query(
+        "DELETE FROM isahl_auth.auth_user_emails \
+         WHERE email = $1 OR fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE username = $1)",
+    )
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = $1")
         .bind(email)
         .execute(pool)
         .await
@@ -377,7 +398,7 @@ async fn test_zchat_password_grant_binds_session_and_iss_aud() {
     .await;
 
     let req = test::TestRequest::post()
-        .uri("/auth/auth/zchat")
+        .uri("/auth/zchat")
         .set_json(json!({
             "grant_type": "password",
             "username": email,
@@ -465,7 +486,7 @@ async fn test_zchat_refresh_grant_validation() {
 
     // 1) 有效 refresh + 活动会话 → 200
     let req = test::TestRequest::post()
-        .uri("/auth/auth/zchat")
+        .uri("/auth/zchat")
         .set_json(json!({"grant_type": "refresh_token", "refresh_token": valid_refresh}))
         .to_request();
     let resp = test::call_service(&app, req).await;
@@ -475,7 +496,7 @@ async fn test_zchat_refresh_grant_validation() {
     let expired = jwt::encode_refresh_token(&claims, &auth_state.jwt_private_key, -3600)
         .expect("encode expired refresh token");
     let req = test::TestRequest::post()
-        .uri("/auth/auth/zchat")
+        .uri("/auth/zchat")
         .set_json(json!({"grant_type": "refresh_token", "refresh_token": expired}))
         .to_request();
     let resp = test::call_service(&app, req).await;
@@ -488,7 +509,7 @@ async fn test_zchat_refresh_grant_validation() {
         .await
         .expect("revoke refresh token");
     let req = test::TestRequest::post()
-        .uri("/auth/auth/zchat")
+        .uri("/auth/zchat")
         .set_json(json!({"grant_type": "refresh_token", "refresh_token": valid_refresh}))
         .to_request();
     let resp = test::call_service(&app, req).await;
@@ -513,7 +534,7 @@ async fn test_zchat_refresh_grant_validation() {
         .await
         .expect("revoke session");
     let req = test::TestRequest::post()
-        .uri("/auth/auth/zchat")
+        .uri("/auth/zchat")
         .set_json(json!({"grant_type": "refresh_token", "refresh_token": valid_refresh2}))
         .to_request();
     let resp = test::call_service(&app, req).await;

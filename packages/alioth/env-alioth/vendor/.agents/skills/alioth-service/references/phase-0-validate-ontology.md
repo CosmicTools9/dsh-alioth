@@ -38,7 +38,7 @@ target/debug/ontology-mapping ontology-stale --ns {ns} --scene {scene}
 - 脚本退出码 `0`（新鲜）→ 继续进入 Phase 0-1
 - 退出码 `1`（过时）→ **必须先重新运行 alioth-ontology**，禁止跳过
 
-> 如果在 `alioth-build` pipeline 中执行，此步骤由 `factor_dev` 阶段的 `preflight-track.sh` 自动处理（详见 `alioth-design` SKILL.md）。
+> 如果在 `alioth-build` pipeline 中执行，此步骤由 `factor_dev` 阶段的产物链承接；原 `preflight-track.sh` 已退役（脚本不存在，勿再引用）。
 
 ### 0-1: 读取 MappingOutput JSON
 

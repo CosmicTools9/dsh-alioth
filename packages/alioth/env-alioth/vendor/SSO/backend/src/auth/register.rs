@@ -38,37 +38,27 @@ pub struct RegisterResponse {
     pub approval_instance_id: Option<String>,
 }
 
-/// 注册通道描述符（add-dual-register-channels）：通道即身份语义——身份类型、
-/// 审批事件/实例 code、绑定审批流程、文案语义均由通道决定。
+/// 注册通道描述符（add-dual-register-channels）：通道即身份语义——身份类型由通道决定；
+/// 审批事件/实例 code、绑定流程、事件叶表与文案模板四要素 MUST 取自
+/// `common::registration_approval` 映射表（wire-registration-approval-closure D3；
+/// MUST NOT 在本文件复制字面值——Gateway 启动自检按同一表决定断链重建目标）。
 pub struct RegisterChannel {
     /// 身份类型（auth_users.user_type）
     pub kind: &'static str,
-    /// 审批事件与实例 code（Gateway 激活链匹配键）
-    pub event_code: &'static str,
-    /// 绑定审批流程（zc_id_process.code）
-    pub flow_code: &'static str,
-    /// 事件 notice 文案（{} 为账号占位）
-    pub notice_tpl: &'static str,
-    /// 事件 comments 文案
-    pub comments_tpl: &'static str,
+    /// 审批通道规格（event_code / flow_code / leaf_table / notice、comments 模板）
+    pub spec: &'static common::registration_approval::ApprovalChannelSpec,
 }
 
 /// 内部通道（Gateway 注册页）：访问授权审批，FLOW-AUTHORIZATION（现状语义）
 pub const INTERNAL_CHANNEL: RegisterChannel = RegisterChannel {
     kind: "standard",
-    event_code: "user-register-approval",
-    flow_code: "FLOW-AUTHORIZATION",
-    notice_tpl: "用户 {} 访问授权审批",
-    comments_tpl: "访问授权审批：申请人 {}",
+    spec: &common::registration_approval::INTERNAL_REGISTRATION_CHANNEL,
 };
 
 /// 外部主体通道（OpenActivity 门户）：外部主体入驻审批，独立流程
 pub const EXTERNAL_CHANNEL: RegisterChannel = RegisterChannel {
     kind: "external",
-    event_code: "external-subject-register-approval",
-    flow_code: "FLOW-EXTERNAL-SUBJECT",
-    notice_tpl: "外部主体 {} 入驻审批",
-    comments_tpl: "外部主体入驻审批：申请人 {}",
+    spec: &common::registration_approval::EXTERNAL_SUBJECT_CHANNEL,
 };
 
 /// Error response
@@ -160,12 +150,12 @@ async fn register_core(
         }
     }
 
-    // username 唯一性（INSERT 时 name=username，name/username 均 UNIQUE）。
+    // username 唯一性（唯一身份基点；username 唯一索引保证幂等锚点）。
     // add-register-approval-closure：被驳回/禁用用户（status IN disabled/rejected）
     // 重新注册 → 复用原用户行（重置密码 + 重建审批），不再返回 409；
     // 其余冲突保持 409。
     let existing_username = sqlx::query_as::<_, (i64, String)>(
-        r#"SELECT id, status FROM isahl_auth.auth_users WHERE username = $1 OR name = $1"#,
+        r#"SELECT id, status::text FROM isahl_auth.auth_users WHERE username = $1"#,
     )
     .bind(&username)
     .fetch_optional(pool.get_ref())
@@ -210,19 +200,10 @@ async fn register_core(
         actix_web::error::ErrorInternalServerError("Failed to create user")
     })?;
 
-    // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
-    // 本函数两处 zc_id_oper-approve INSERT 共用一次解析（循环/多处 → 循环外一次求得）。
-    let (dk_scene, dk_factor, dk_function) =
-        ontology_binding::resolve(pool.get_ref(), ("JE", "FTA", "↓_EZ"))
-            .await
-            .map_err(|e| {
-                log::error!("Failed to resolve dk coords: {}", e);
-                actix_web::error::ErrorInternalServerError("Failed to resolve dk coords")
-            })?;
-
     // 新用户 INSERT 或复用用户重置（add-register-approval-closure）：
-    // 复用 = 被驳回/禁用用户重新注册——重置密码/邮箱/状态为 pending_approval，
-    // 旧审批实例保留审计；其余字段（entity 绑定等）不动。
+    // 复用 = 被驳回/禁用用户重新注册——重置密码/状态为 pending_approval（邮箱经
+    // auth_user_emails 重写，见末尾 upsert），旧审批实例保留审计；
+    // 其余字段（entity 绑定等）不动。
     // 新用户 id 不再由进程内 snowflake 显式生成（G5，fix-sso-auth-gaps）——
     // 由表默认 isahl.gen_next_zuid() 生成（ensure 自愈保证 default 在位），
     // 消除多实例同毫秒碰撞与时钟回拨风险。
@@ -230,14 +211,13 @@ async fn register_core(
         sqlx::query_as::<_, (i64,)>(
             r#"
             UPDATE isahl_auth.auth_users
-            SET password_hash = $1, email = $2, status = 'pending_approval',
+            SET password_hash = $1, status = 'pending_approval',
                 updated_at = NOW()
-            WHERE id = $3
+            WHERE id = $2
             RETURNING id
             "#,
         )
         .bind(&password_hash)
-        .bind(email.as_deref())
         .bind(old_id)
         .fetch_one(&mut *tx)
         .await
@@ -249,13 +229,12 @@ async fn register_core(
     } else {
         sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO isahl_auth.auth_users (name, username, email, password_hash, status, created_at, updated_at, user_type)
-            VALUES ($1, $1, $2, $3, 'pending_approval', NOW(), NOW(), $4)
+            INSERT INTO isahl_auth.auth_users (username, password_hash, status, created_at, updated_at, user_type)
+            VALUES ($1, $2, 'pending_approval', NOW(), NOW(), $3::isahl_auth.auth_user_type)
             RETURNING id
             "#,
         )
         .bind(&username)
-        .bind(email.as_deref())
         .bind(&password_hash)
         .bind(channel.kind)
         .fetch_one(&mut *tx)
@@ -266,278 +245,25 @@ async fn register_core(
         })?
     };
 
-    // 审批事件（zc_id_even-approve/authorization 叶表）：comments 仅人类可读文本摘要
-    // （comments-text-semantics 规约：写侧 MUST NOT JSON）；申请人归属经
-    // oper-approve.fk_subject 模型列承载（fix-register-approval-activation-chain D1）。
-    // 「实现·实例」绑 FLOW-AUTHORIZATION 模板（与 approvals/apply 一致，fix-approval-event-adaptive-write）——
-    // fk_process=流程 id、tpl_id=approve 节点事件模板 id。`_f_/_t_` 类列仅对带
-    // dk_function 的行由 lifecycle 触发器派生（ALIOTH_ONTOLOGY_SPEC §4.3）——
-    // 审批事件/操作行无 dk_function：操作行由 seed/组件显式赋值（'实现'/'范例'），
-    // 载体行无消费方（非业务数据）保持 NULL，两者均不触发派生。
-    // 模板缺失降级 NULL 不阻断注册（Gateway seed 组件启动自愈 + 一致性回填）。
-    let approval_notice = channel.notice_tpl.replace("{}", &username);
-    let approval_comments = channel.comments_tpl.replace("{}", &username);
-    // user UA 注册默认指派（fix-approval-endpoint-gates）：对齐 SSO 005 seed
-    // 「普通用户 (注册默认)」语义——注册即有基础身份（零业务资源；PEP 对
-    // approvals:0 create 的自助申请放行依赖 user UA 关联）。
-    let user_ua_id: Option<i64> = sqlx::query_scalar(
-        r#"SELECT id FROM isahl_auth.ngac_user_attribute
-           WHERE o_name = 'user' AND deleted_at IS NULL LIMIT 1"#,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    if let Some(ua_id) = user_ua_id {
-        let _ = sqlx::query(
-            r#"INSERT INTO isahl_auth.ngac_user_rr_attribute (fk_user, fk_user_attribute, o_name)
-               VALUES ($1, $2, 'user')
-               ON CONFLICT (fk_user, fk_user_attribute)
-               DO UPDATE SET deleted_at = NULL, updated_at = NOW()"#,
-        )
-        .bind(user_id)
-        .bind(ua_id)
-        .execute(&mut *tx)
-        .await;
-    }
+    // user UA 注册默认指派（approval-endpoint-gates::user-ua-on-registration）——唯一实现
+    // = common::registration_approval::ensure_user_ua（对齐 SSO 005 seed「普通用户 (注册默认)」
+    // 语义：注册即有基础身份，零业务资源；PEP 对 approvals:0 create 的自助申请放行依赖
+    // user UA 关联）。best-effort：失败不阻断注册（原语义）。
+    let _ = common::registration_approval::ensure_user_ua(&mut tx, user_id).await;
 
-    let flow_binding: Option<(i64, Option<i64>)> = sqlx::query_as(
-        r#"
-        SELECT p.id,
-               (SELECT rro.ref_right FROM isahl.zc_id_process_rr_operation rro
-                WHERE rro.ref_left = p.id AND rro.code = 'approve'
-                  AND rro.deleted_at IS NULL LIMIT 1)
-        FROM isahl.zc_id_process p
-        WHERE p.code = $1 AND p.deleted_at IS NULL
-        LIMIT 1
-        "#,
-    )
-    .bind(channel.flow_code)
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    // SLA 时长绑定（add-register-approval-closure 缺口 2）：72h 时长维度行，
-    // 缺省 NULL（seed 组件启动预置 + 一致性回填）；超时自动驳回由 SLA 监控处理。
-    let sla_duration_id: Option<i64> = sqlx::query_scalar(
-        r#"SELECT id FROM isahl."zc_id_scal-duration"
-           WHERE o_number = '72h' AND deleted_at IS NULL LIMIT 1"#,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .ok()
-    .flatten();
-    // 审批事件（绑 FLOW-AUTHORIZATION）。
-    // 写入目标表自适应（fix-approval-event-adaptive-write）：`zc_id_appr-authorization`
-    // 叶表并非所有 namespace 存在——存在写叶表（继承 even-approve），否则写
-    // even-approve 主表，保证无叶表的 namespace 注册主链路不因 SQL 报错回滚。
-    // 叶表存在性检测：失败（schema/权限错误）不静默当无叶表——写主表 even-approve
-    // （总是存在，注册主链路不阻断）并告警（fix-approval-event-adaptive-write 契约）。
-    let leaf_table_exists: bool = match sqlx::query_scalar(
-        "SELECT to_regclass('isahl.\"zc_id_appr-authorization\"') IS NOT NULL",
-    )
-    .fetch_one(&mut *tx)
-    .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            log::warn!("register: 检测 authorization 叶表失败（降级写 even-approve 主表）: {e}");
-            false
-        }
-    };
-    let event_id: i64 = if leaf_table_exists {
-        // 坐标三元组（§6.12 声明即必须）：审批叶表继承 even-approve 坐标 JC/FTA/↑_NA
-        let (leaf_dk_scene, leaf_dk_factor, leaf_dk_function) =
-            ontology_binding::resolve(pool.get_ref(), ("JC", "FTA", "↑_NA"))
-                .await
-                .map_err(|e| {
-                    log::error!("Failed to resolve appr-authorization dk coords: {}", e);
-                    actix_web::error::ErrorInternalServerError("Failed to resolve dk coords")
-                })?;
-        sqlx::query_scalar(
-            r#"
-            INSERT INTO isahl."zc_id_appr-authorization" (
-                created_by_id, updated_by_id, notice, code, comments,
-                tpl_id, qk_sla, created_at, updated_at,
-                dk_scene, dk_factor, dk_function
-            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
-            RETURNING id
-            "#,
-        )
-        .bind(user_id)
-        .bind(&approval_notice)
-        .bind(channel.event_code)
-        .bind(&approval_comments)
-        .bind(flow_binding.as_ref().and_then(|(_, tpl)| *tpl))
-        .bind(sla_duration_id)
-        .bind(leaf_dk_scene)
-        .bind(leaf_dk_factor)
-        .bind(leaf_dk_function)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| {
-            log::error!("Database error creating approval event: {}", e);
-            actix_web::error::ErrorInternalServerError("Failed to create approval")
-        })?
-    } else {
-        // 坐标三元组（§6.12 声明即必须）：审批叶表族坐标 = JC/FTA/↑_NA
-        // （落点与上方同表——register 行语义 = 访问授权审批，叶表 appr-authorization）
-        let (ev_dk_scene, ev_dk_factor, ev_dk_function) =
-            ontology_binding::resolve(pool.get_ref(), ("JC", "FTA", "↑_NA"))
-                .await
-                .map_err(|e| {
-                    log::error!("Failed to resolve appr-authorization dk coords: {}", e);
-                    actix_web::error::ErrorInternalServerError("Failed to resolve dk coords")
-                })?;
-        sqlx::query_scalar(
-            r#"
-            INSERT INTO isahl."zc_id_appr-authorization" (
-                created_by_id, updated_by_id, notice, code, comments,
-                tpl_id, qk_sla, created_at, updated_at,
-                dk_scene, dk_factor, dk_function
-            ) VALUES ($1, $1, $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8, $9)
-            RETURNING id
-            "#,
-        )
-        .bind(user_id)
-        .bind(&approval_notice)
-        .bind(channel.event_code)
-        .bind(&approval_comments)
-        .bind(flow_binding.as_ref().and_then(|(_, tpl)| *tpl))
-        .bind(sla_duration_id)
-        .bind(ev_dk_scene)
-        .bind(ev_dk_factor)
-        .bind(ev_dk_function)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(|e| {
-            log::error!("Database error creating approval event: {}", e);
-            actix_web::error::ErrorInternalServerError("Failed to create approval")
-        })?
-    };
-
-    // fk_process 列已物理移除（2026-08-30 remove-event-fk-process-pollution D3 写侧）：
-    // 事件↔FLOW-AUTHORIZATION 归属经桥链——'register-context' 上下文 oper 行
-    // （每流程复用一行）+ process_rr_operation 归属桥 + rr_event 模板桥
-    if let Some((flow_id, _)) = flow_binding {
-        let ctx_oper: Option<i64> = sqlx::query_scalar(
-            r#"SELECT rro.ref_right FROM isahl.zc_id_process_rr_operation rro
-               JOIN isahl."zc_id_oper-approve" oa ON oa.id = rro.ref_right
-                 AND oa.deleted_at IS NULL AND oa.notice = 'register-context'
-               WHERE rro.ref_left = $1 AND rro.deleted_at IS NULL LIMIT 1"#,
-        )
-        .bind(flow_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(|e| {
-            log::error!("Database error resolving register context: {}", e);
-            actix_web::error::ErrorInternalServerError("Failed to create approval")
-        })?;
-        let ctx_oper: i64 = match ctx_oper {
-            Some(v) => v,
-            None => {
-                let new_id: i64 = sqlx::query_scalar(
-                    r#"INSERT INTO isahl."zc_id_oper-approve"
-                           (notice, created_by_id, dk_scene, dk_factor, dk_function)
-                       VALUES ('register-context', $1, $2, $3, $4) RETURNING id"#,
-                )
-                .bind(user_id)
-                .bind(dk_scene)
-                .bind(dk_factor)
-                .bind(dk_function)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(|e| {
-                    log::error!("Database error creating register context: {}", e);
-                    actix_web::error::ErrorInternalServerError("Failed to create approval")
-                })?;
-                sqlx::query(
-                    "INSERT INTO isahl.zc_id_process_rr_operation (id, ref_left, ref_right, created_by_id)
-                     VALUES (isahl.gen_next_uid(372), $1, $2, $3)",
-                )
-                .bind(flow_id)
-                .bind(new_id)
-                .bind(user_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| {
-                    log::error!("Database error linking register context: {}", e);
-                    actix_web::error::ErrorInternalServerError("Failed to create approval")
-                })?;
-                new_id
-            }
-        };
-        sqlx::query(
-            "INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-             VALUES (isahl.gen_next_uid(267), $1, $2, $3)",
-        )
-        .bind(ctx_oper)
-        .bind(event_id)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            log::error!("Database error bridging approval event: {}", e);
-            actix_web::error::ErrorInternalServerError("Failed to create approval")
-        })?;
-    }
-
-    // 审批实例（zc_id_oper-approve）：fk_operator = 首个 admin（审批工作区按 operator 可见）；
-    // 无 admin（bootstrap 阶段）→ NULL，由管理面后补。
-    let admin_id: Option<i64> = sqlx::query_scalar(
-        r#"
-        SELECT ur.fk_user FROM isahl_auth.ngac_user_rr_attribute ur
-        JOIN isahl_auth.ngac_user_attribute ua ON ua.id = ur.fk_user_attribute
-        WHERE ua.o_name = 'admin' AND ur.deleted_at IS NULL AND ua.deleted_at IS NULL
-          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-        ORDER BY ur.id LIMIT 1
-        "#,
-    )
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| {
-        log::error!("Database error resolving approver: {}", e);
-        actix_web::error::ErrorInternalServerError("Failed to create approval")
-    })?
-    .flatten();
-
-    let instance_id: i64 = sqlx::query_scalar(
-        r#"
-        INSERT INTO isahl."zc_id_oper-approve" (
-            notice, code, fk_subject, fk_operator, created_by_id, created_at, updated_at,
-            dk_scene, dk_factor, dk_function
-        ) VALUES ($1, $2, $3, $4, $3, NOW(), NOW(), $5, $6, $7)
-        RETURNING id
-        "#,
-    )
-    .bind(&approval_notice)
-    .bind(channel.event_code)
-    .bind(user_id)
-    .bind(admin_id)
-    .bind(dk_scene)
-    .bind(dk_factor)
-    .bind(dk_function)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(|e| {
-        log::error!("Database error creating approval instance: {}", e);
-        actix_web::error::ErrorInternalServerError("Failed to create approval")
-    })?;
-
-    // 实例↔事件关联（fk_approve 列已物理移除）→ operation_rr_event 桥
-    sqlx::query(
-        "INSERT INTO isahl.zc_id_operation_rr_event (id, ref_left, ref_right, created_by_id)
-         VALUES (isahl.gen_next_uid(267), $1, $2, $3)",
-    )
-    .bind(instance_id)
-    .bind(event_id)
-    .bind(user_id)
-    .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        log::error!("Database error linking approval instance: {}", e);
-        actix_web::error::ErrorInternalServerError("Failed to create approval")
-    })?;
+    // 受理序列（审批事件 + register-context 上下文操作行 + 归属桥 + 模板桥 +
+    // oper-approve 实例）单一实现 = `common::registration_approval::intake`
+    // （wire-registration-approval-closure D2）：事件落 `channel.spec.leaf_table`、
+    // 实例 fk_operator = 首个 admin / fk_subject = 申请人、坐标与桥链形状逐字保持；
+    // 本端点只保留身份侧私有写入（auth_users upsert/复用、user UA、会话与邮箱）。
+    let instance_id =
+        common::registration_approval::intake(&mut tx, channel.spec, user_id, &username)
+            .await
+            .map_err(|e| {
+                log::error!("Database error creating approval intake: {}", e);
+                actix_web::error::ErrorInternalServerError("Failed to create approval")
+            })?
+            .instance_id;
 
     tx.commit().await.map_err(|e| {
         log::error!("Database error committing registration: {}", e);
@@ -591,11 +317,22 @@ async fn register_core(
             actix_web::error::ErrorInternalServerError("Failed to create session")
         })?;
 
-    // 邮箱写入 auth_user_emails（1:N；首个为主邮箱并镜像 auth_users.email）
+    // 邮箱写入 auth_user_emails（1:N 唯一存储；注册邮箱回主位——重注册换邮箱时
+    // 旧主邮箱降级保留，读径按 is_primary DESC, id 取主邮箱）
     if let Some(e) = &email {
         let _ = sqlx::query(
+            "UPDATE isahl_auth.auth_user_emails SET is_primary = FALSE, updated_at = NOW() \
+             WHERE fk_user = $1 AND deleted_at IS NULL AND is_primary AND email <> $2",
+        )
+        .bind(user_id)
+        .bind(e)
+        .execute(pool.get_ref())
+        .await;
+        let _ = sqlx::query(
             "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, verified, created_at, updated_at) \
-             VALUES ($1, $2, TRUE, FALSE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+             VALUES ($1, $2, TRUE, FALSE, NOW(), NOW()) \
+             ON CONFLICT (fk_user, email) WHERE deleted_at IS NULL \
+             DO UPDATE SET is_primary = TRUE, updated_at = NOW()",
         )
         .bind(user_id)
         .bind(e)
@@ -618,11 +355,16 @@ async fn register_core(
         auth_state.jwt_refresh_expiry_secs,
         None,
     );
-    Ok(jwt::set_access_cookie(
+    let response = jwt::set_access_cookie(
         response,
         &temp_token,
         // temp token 固定 24h（identity 流程），cookie 跟随 token 实际寿命
         24 * 3600,
         None,
+    );
+    // 注册即建立临时会话（identity 流程）：与令牌同批签发 CSRF
+    Ok(jwt::attach_csrf_cookie(
+        response,
+        common::csrf::cookie_scope(&req).as_deref(),
     ))
 }

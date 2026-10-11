@@ -19,6 +19,20 @@ use gateway_sso::ngac::pip::PostgresPip;
 use gateway_sso::ngac::Pip;
 use serde_json::json;
 use sqlx::PgPool;
+use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
+
+/// 文件级串行化（**本文件刻意的共享场景夹具**）。
+///
+/// 4 个测试共用两个集合级 OA（`cogtest`/424242 与 `cogme`/0——资源名出现在 decide/list 断言里），
+/// 而 cleanup 按 OA id 删除 ⇒ 并行执行时一方删掉共享 OA 会令另一方的 decide/list 断言随机失败
+///（实测：全量套件下 `assignment_expires_at_write_path` 652 行非确定性红，单跑绿）。
+/// 共享场景是设计选择（同一 scenario 的多切面），故串行而非改名。
+static SERIAL_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn lock_serial() -> MutexGuard<'static, ()> {
+    SERIAL_LOCK.lock().await
+}
 
 async fn connect() -> PgPool {
     ::common::testing::connect_test_db().await
@@ -55,22 +69,31 @@ const COG_CAT_CODE: &str = "COG-TEST-CAT";
 
 async fn seed_cognition_user(pool: &PgPool, suffix: &str) -> Fixture {
     let email = format!("cog_derived_{}@alioth.test", suffix);
+    let username = format!("cog_derived_{}", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&email)
-    .bind(format!("cog_derived_{}", suffix))
+    .bind(&username)
     .execute(pool)
     .await
     .expect("insert user");
     let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&username)
             .fetch_one(pool)
             .await
             .expect("fetch user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&email)
+    .execute(pool)
+    .await
+    .ok();
 
     // 前置清理：重跑残留（旧任职/标签链，code 不唯一导致累积）
     let _ = sqlx::query(
@@ -225,6 +248,10 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .bind(f.employee_id)
         .execute(pool)
         .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(f.user_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(f.user_id)
         .execute(pool)
@@ -250,6 +277,7 @@ async fn cleanup_cognition_uas(pool: &PgPool, names: &[String]) {
 
 #[tokio::test]
 async fn pip_effective_set_includes_derived_uas_and_ensure_is_idempotent() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed_cognition_user(&pool, "t1").await;
     let pos_name = format!("position:{}", COG_CAT_CODE);
@@ -299,6 +327,7 @@ async fn pip_effective_set_includes_derived_uas_and_ensure_is_idempotent() {
 /// decide + RLS 列表：view: UA 绑 association → 持有者放行；任职软删 → 撤销
 #[tokio::test]
 async fn derived_view_ua_grants_decide_and_list_until_employment_ends() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed_cognition_user(&pool, "t2").await;
     let view_name = format!("view:{}", f.tag_code);
@@ -445,6 +474,7 @@ async fn derived_view_ua_grants_decide_and_list_until_employment_ends() {
 /// /auth/me permissions 矩阵并入派生授权
 #[tokio::test]
 async fn me_permissions_matrix_includes_derived_grant() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed_cognition_user(&pool, "t3").await;
     let view_name = format!("view:{}", f.tag_code);
@@ -552,6 +582,7 @@ async fn me_permissions_matrix_includes_derived_grant() {
 /// expires_at 写路径（add-ngac-assignment-expires-at）：API 落库，缺省保持 NULL
 #[tokio::test]
 async fn assignment_expires_at_write_path() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed_cognition_user(&pool, "t4").await;
     let pos_name = format!("position:{}", COG_CAT_CODE);
@@ -577,22 +608,31 @@ async fn assignment_expires_at_write_path() {
 
     // 非认知用户 B 作为指派对象（避免与派生混淆）
     let email_b = format!("cog_exp_{}@alioth.test", f.tag_code);
+    let username_b = format!("cog_exp_{}", f.tag_code);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&email_b)
-    .bind(format!("cog_exp_{}", f.tag_code))
+    .bind(&username_b)
     .execute(&pool)
     .await
     .expect("insert user b");
     let user_b: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email_b)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&username_b)
             .fetch_one(&pool)
             .await
             .expect("fetch user b");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_b)
+    .bind(&email_b)
+    .execute(&pool)
+    .await
+    .ok();
     // 前置清理：历史运行残留指派（幂等重跑）
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
         .bind(user_b)
@@ -666,10 +706,137 @@ async fn assignment_expires_at_write_path() {
     .bind(vec![pos_ua, view_ua])
     .execute(&pool)
     .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_b)
+        .execute(&pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_b)
         .execute(&pool)
         .await;
     cleanup_cognition_uas(&pool, &[pos_name]).await;
+    cleanup(&pool, &f).await;
+}
+
+/// 指派级 `conditions` 写径键集契约（`wire-ngac-zero-consumer-faces`）：仅时间窗键可落库——
+/// 越界键（`rhai` / 未知键）⇒ 400 且零落库；合法时间窗 ⇒ 201 原样往返。与 `effective_ua_ids`
+/// 的解析谓词（求值侧见 `common/tests/permissions_runtime_test.rs::assignment_conditions_gate_effective_ua_set`）
+/// 合并即完整契约。
+#[tokio::test]
+async fn assignment_conditions_write_path_enforces_time_window_keyset() {
+    let _guard = lock_serial().await;
+    let pool = connect().await;
+    let f = seed_cognition_user(&pool, "t5cond").await;
+
+    let username_b = format!("cond_assign_{}", f.tag_code);
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at) \
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW()) ON CONFLICT (username) DO NOTHING",
+    )
+    .bind(&username_b)
+    .execute(&pool)
+    .await
+    .expect("insert user b");
+    let user_b: i64 =
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&username_b)
+            .fetch_one(&pool)
+            .await
+            .expect("user b");
+    let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
+        .bind(user_b)
+        .execute(&pool)
+        .await;
+
+    let ua_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE deleted_at IS NULL ORDER BY id LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("any UA");
+
+    let ast = common::test_auth_state();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(ast.clone()))
+            .service(
+                web::scope("/api/admin/ngac/pip")
+                    .configure(gateway_sso::ngac::pip::configure_routes),
+            ),
+    )
+    .await;
+    let token = mint_token(&ast, f.user_id, &f.email);
+    let uri = format!("/api/admin/ngac/pip/users/{user_b}/attributes");
+
+    // ① 解析点不可求值键（`rhai`）⇒ 400（MUST NOT 接受后静默失效）
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&uri)
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .set_json(json!({ "fk_user_attribute": ua_id, "conditions": { "rhai": "true" } }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 400, "rhai 条件 MUST 400");
+
+    // ② §2.4 键集外键 ⇒ 400
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&uri)
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .set_json(json!({ "fk_user_attribute": ua_id, "conditions": { "bogus": 1 } }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 400, "未知键 MUST 400");
+
+    // ③ 合法时间窗 ⇒ 201 且原样落库
+    let cond = json!({ "not_before": "2020-01-01T00:00:00Z", "not_after": "2999-01-01T00:00:00Z" });
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::post()
+            .uri(&uri)
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .set_json(json!({ "fk_user_attribute": ua_id, "conditions": cond }))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status(), 201, "合法时间窗条件 MUST 201");
+    let stored: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT conditions FROM isahl_auth.ngac_user_rr_attribute \
+         WHERE fk_user = $1 AND fk_user_attribute = $2 AND deleted_at IS NULL LIMIT 1",
+    )
+    .bind(user_b)
+    .bind(ua_id)
+    .fetch_one(&pool)
+    .await
+    .expect("stored conditions");
+    assert_eq!(stored, Some(cond), "合法条件 MUST 原样落库");
+
+    // ④ 越界两次均零落库
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1",
+    )
+    .bind(user_b)
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(n, 1, "仅合法条件落库一次（越界键 MUST NOT 落库）");
+
+    let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
+        .bind(user_b)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_b)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
+        .bind(user_b)
+        .execute(&pool)
+        .await;
     cleanup(&pool, &f).await;
 }

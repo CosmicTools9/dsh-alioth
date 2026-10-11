@@ -5,9 +5,15 @@
 
 set -euo pipefail
 # ── 路径定位（不依赖 CWD） ─────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-LIB_DIR="${SCRIPT_DIR}"
+# 本库自身锚点用**局部**变量：MUST NOT 覆盖调用方的 SCRIPT_DIR/PROJECT_ROOT。
+# 语义基准 = **仓根**（本库内部一律走 `${PROJECT_ROOT}/Framework|Meta|scripts|logs`），
+# 调用方（scripts/pre|prod/start.sh）已把 PROJECT_ROOT 设为仓根 ⇒ 此处只在其未设时兜底。
+# 原实现无条件覆盖（`PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"` = <repo>/scripts）⇒
+# 调用方后续 `${PROJECT_ROOT}/scripts/lib/...` 解析成 scripts/scripts/...，pre/prod 启动链整条从死
+# （实测 scripts/pre/start.sh --help 在第一处 source 即 404）。
+EC_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$EC_LIB_DIR"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "${EC_LIB_DIR}/../.." && pwd)}"
 
 # ── 颜色（被 source 后也生效） ─────────────────────────────
 GREEN='\033[0;32m'
@@ -77,10 +83,10 @@ build_all_backends() {
     sccache_enable_if_available "env-common build_all_backends"
     log "构建所有后端服务（release 模式）..."
     # 本步 cd 落点 = Framework/backend，但该目录**没有** Cargo.toml/workspace 根 ⇒ cargo 上溯到
-    # 仓库根 workspace ⇒ 实际编译**平台面全量**（Framework + Ext-adapter + SSO + Gateway lib +
+    # 仓库根 workspace ⇒ 实际编译**平台面全量**（Framework + SSO + Gateway lib +
     # OpenActivity），产物落用途 check。命名如实反映实际编译集：ns 二进制与组合根 gateway-host
     # 均不在此步（见下方 build-ns.sh）。
-    log "root workspace（Framework + Ext-adapter + SSO + Gateway lib + OpenActivity）..."
+    log "root workspace（Framework + SSO + Gateway lib + OpenActivity）..."
     (cd "${PROJECT_ROOT}/Framework/backend" && env CARGO_TARGET_DIR="$(bash "${PROJECT_ROOT}/scripts/cargo-target.sh" check)" cargo build --workspace --release) || {
         err "root workspace 构建失败（包含 Framework / SSO / Gateway lib / OpenActivity）"
         exit 1
@@ -123,7 +129,20 @@ build_all_frontends() {
         exit 1
     }
     log "Gateway/frontend..."
-    (cd "${PROJECT_ROOT}/Gateway/frontend" && pnpm build) || {
+    # Gateway shell 是多 namespace 模板：vite.config 的 requireVitePort 要求 VITE_PORT（槽位 FE），
+    # 非 production 时 requireViteNamespace 还要求 VITE_NAMESPACE ⇒ 裸 `pnpm build` 必失败
+    # （实测 2026-09-27：`VITE_PORT 未设置或非法（当前 ""）`，pre/prod --build 整链因此断）。
+    # 槽位唯一事实源 = Deploy/ports.conf（经 ns-ports.sh，与 dev 同槽位）；NODE_ENV=production
+    # 与发布用途一致（并免去模板身份校验）。
+    # shellcheck source=ns-name.sh
+    source "${LIB_DIR}/ns-name.sh" 2>/dev/null || true
+    # shellcheck source=ns-ports.sh
+    source "${LIB_DIR}/ns-ports.sh" 2>/dev/null || true
+    local _ns _fe
+    _ns="$(ns_canon "${NS:-${NAMESPACE:-alioth}}" 2>/dev/null || echo "${NS:-${NAMESPACE:-alioth}}")"
+    _fe="$(ns_port "$_ns" fe 2>/dev/null || true)"
+    (cd "${PROJECT_ROOT}/Gateway/frontend" && \
+        NODE_ENV=production VITE_PORT="${_fe:-${VITE_PORT:-41717}}" VITE_NAMESPACE="$_ns" pnpm build) || {
         err "Gateway/frontend 构建失败"
         exit 1
     }

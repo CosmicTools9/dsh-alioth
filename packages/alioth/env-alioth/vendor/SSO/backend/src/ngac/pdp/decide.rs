@@ -2,6 +2,8 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use sqlx::PgPool;
 use std::collections::HashMap;
 
+use chrono::Utc;
+
 use super::*;
 
 use crate::ngac::pip::{Pip, PostgresPip};
@@ -23,7 +25,7 @@ pub async fn check_access(
     let decision = decide_access(pool.get_ref(), req.user_id, &req.resource, &req.action).await;
     let permitted = decision == Decision::Permit;
     let reason = match decision {
-        Decision::Deny => "Access explicitly denied by prohibition".to_string(),
+        Decision::Deny => "Access explicitly denied by prohibition or label ceiling".to_string(),
         Decision::Permit => "Access granted".to_string(),
         Decision::NotApplicable => "No matching access right found".to_string(),
     };
@@ -36,7 +38,11 @@ pub async fn check_access(
         &req_http,
     );
 
-    HttpResponse::Ok().json(PdpCheckResponse { permitted, reason })
+    HttpResponse::Ok().json(PdpCheckResponse {
+        permitted,
+        reason,
+        obligations: Vec::new(),
+    })
 }
 
 /// 批量决策——逐项委托 `decide_access`（唯一语义源）。
@@ -61,11 +67,17 @@ pub async fn check_access_batch(
             decide_access(pool.get_ref(), req.user_id, &check.resource, &check.action).await;
         let permitted = decision == Decision::Permit;
         let reason = match decision {
-            Decision::Deny => "Access explicitly denied by prohibition".to_string(),
+            Decision::Deny => {
+                "Access explicitly denied by prohibition or label ceiling".to_string()
+            }
             Decision::Permit => "Access granted".to_string(),
             Decision::NotApplicable => "No matching access right found".to_string(),
         };
-        results.push(PdpCheckResponse { permitted, reason });
+        results.push(PdpCheckResponse {
+            permitted,
+            reason,
+            obligations: Vec::new(),
+        });
     }
 
     HttpResponse::Ok().json(PdpCheckBatchResponse { results })
@@ -101,66 +113,44 @@ pub(crate) async fn decide_access(
         }
     };
 
-    let pip = PostgresPip::new(pool.clone());
-    let pdp = Pdp::global();
-    if let Err(e) = pdp.ensure_policy_loaded(&pip).await {
-        log::error!("decide_access: failed to load policy from database: {}", e);
-        return Decision::Deny;
-    }
-
-    // 关键：bootrap 阶段（首次部署未配置任何策略）默认放行，避免首个管理员被锁在 NGAC 之外。
-    if !pdp.policy_graph().has_associations() {
+    // 决策唯一实现 = `ngac_host::Evaluator`（openspec extract-ngac-decision-host）：
+    // 输入装配（密级上限 → bootstrap → UA/OA 闭包 → creator 派生）+ 合并 + 决策序
+    // 全量委托；`decide_detailed` 一并返回装配真值（义务上下文单源，MUST NOT 二次查询）。
+    // 失败（DB / 策略加载）⇒ fail-closed `Deny`（与旧行为一致）。
+    let (decision, inputs) = match ngac_host::Evaluator::global()
+        .decide_detailed(pool, user_id, resource_type, fk_resource, action)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("decide_access: NGAC decide failed: {}", e);
+            return Decision::Deny;
+        }
+    };
+    // pre 义务判决参与（NGAC_SPEC §2.6 / add-ngac-pre-obligations）：仅终态 Permit 时叠加，
+    // 命中保留算子 `deny` 的义务 ⇒ Deny；零 `phase='pre'` 行 ⇒ EXISTS 短路零成本；fail-safe。
+    if decision == Decision::Permit
+        && crate::ngac::obligation::evaluate_pre_obligation_denies(
+            pool,
+            &crate::ngac::obligation::ObligationEvalContext {
+                user_id,
+                resource,
+                action,
+                decision: "Permit",
+                subject_attributes: &inputs.ua_names,
+                object_attributes: &inputs.oa_names,
+            },
+        )
+        .await
+    {
         log::info!(
-            "decide_access: bootstrap phase — no NGAC associations, permitting user={} resource={}",
+            "decide_access: pre-obligation deny — user={} resource={}",
             user_id,
             resource
         );
-        return Decision::Permit;
+        return Decision::Deny;
     }
-
-    let user_attrs = match pip.get_all_user_attributes_with_inheritance(user_id).await {
-        Ok(attrs) => attrs,
-        Err(e) => {
-            log::error!("decide_access: failed to get user attributes: {}", e);
-            return Decision::Deny;
-        }
-    };
-    let object_attrs = match pip
-        .get_all_object_attributes_with_inheritance(resource_type, fk_resource)
-        .await
-    {
-        Ok(attrs) => attrs,
-        Err(e) => {
-            log::error!("decide_access: failed to get object attributes: {}", e);
-            return Decision::Deny;
-        }
-    };
-
-    // Admin 治理豁免改为**遍历后兜底**（fix-ngac-decision-consistency）：仅在
-    // 全对遍历无匹配（NotApplicable）时 Permit——admin 绕过的是「无策略」而非
-    // 显式 prohibition；prohibition 对 admin 同样生效（彻底 deny-overrides，
-    // decide/explain/matrix 三方一致）。与 list.rs admin 全量可见（§6.2）保持
-    // 既有分工：列表可见性豁免不变，单条决策 prohibition 优先。
-    let is_admin = user_attrs.iter().any(|a| a.o_name == "admin");
-
-    let ctx = ConditionContext {
-        now: Utc::now(),
-        user_ua_names: user_attrs
-            .iter()
-            .map(|a| a.o_name.clone())
-            .collect::<Vec<_>>(),
-        oa_closure_names: object_attrs
-            .iter()
-            .map(|a| a.o_name.clone())
-            .collect::<Vec<_>>(),
-    };
-    // 合并走唯一实现（`evaluate_merge_in`：deny-overrides + admin 遍历后兜底，
-    // NGAC_SPEC §2.5）——顺带消除逐对 ArcSwap 快照（旧实现每对 load 一次）；
-    let pg = pdp.policy_graph();
-    let ua_ids: Vec<i64> = user_attrs.iter().map(|a| a.id).collect();
-    let oa_ids: Vec<i64> = object_attrs.iter().map(|a| a.id).collect();
-    pdp.evaluate_merge_in(&pg, &ua_ids, &oa_ids, action, &ctx, is_admin)
-        .0
+    decision
 }
 
 /// 可达性解释：参与决策的属性节点。
@@ -230,6 +220,16 @@ pub(crate) async fn explain_access(
         Err(_) => return deny("Invalid resource ID format. Expected integer."),
     };
 
+    // 分级（密级）上限（NGAC_SPEC §2.7）：与 `decide_access` 同位置（**bootstrap 短路之前**）同判据，
+    // 否则 explain 会在真实决策 Deny 时报可授权。
+    match ngac_host::label_clearance_denies(pool, resource_type, fk_resource, user_id).await {
+        Ok(true) => {
+            return deny("Denied by label ceiling: subject clearance below resource label");
+        }
+        Ok(false) => {}
+        Err(e) => log::warn!("explain_access: label ceiling unavailable, skipping: {e}"),
+    }
+
     let pip = PostgresPip::new(pool.clone());
     let pdp = Pdp::global();
     if let Err(e) = pdp.ensure_policy_loaded(&pip).await {
@@ -237,7 +237,7 @@ pub(crate) async fn explain_access(
         return deny("Failed to load policy");
     }
 
-    if !pdp.policy_graph().has_associations() {
+    if pdp.policy_graph().bootstrap_empty() {
         return ExplainResponse {
             permitted: true,
             outcome: "permit".to_string(),
@@ -248,7 +248,10 @@ pub(crate) async fn explain_access(
         };
     }
 
-    let user_attrs = match pip.get_all_user_attributes_with_inheritance(user_id).await {
+    let user_attrs = match pip
+        .get_resource_scoped_user_attributes(user_id, resource_type, fk_resource)
+        .await
+    {
         Ok(attrs) => attrs,
         Err(e) => {
             log::error!("explain_access: failed to get user attributes: {}", e);
@@ -276,10 +279,18 @@ pub(crate) async fn explain_access(
             .iter()
             .map(|a| a.o_name.clone())
             .collect::<Vec<_>>(),
+        // 切片 B：`explain` 与真决策**同源消费**（同参数 `user_id`/`resource`/`action`）——
+        // 否则「explain 说 Permit 而真决策 Deny」的 introspect 分叉（§2.7 同族要求）。
+        rhai_eval: Some(ngac_host::rhai_condition_evaluator(
+            user_id,
+            resource.to_string(),
+            action.to_string(),
+        )),
     };
     // 合并走唯一实现（`evaluate_merge_in`，NGAC_SPEC §2.5）——明细含全部参与求值的
     // (UA, OA) 对与规则轨迹（不早停），steps 由明细生成；outcome 与真实决策必然一致。
-    let is_admin = user_attrs.iter().any(|a| a.o_name == "admin");
+    let is_admin =
+        ngac_host::attr_names_include_admin(user_attrs.iter().map(|a| a.o_name.as_str()));
     let pg = pdp.policy_graph();
     let ua_ids: Vec<i64> = user_attrs.iter().map(|a| a.id).collect();
     let oa_ids: Vec<i64> = object_attrs.iter().map(|a| a.id).collect();
@@ -314,9 +325,35 @@ pub(crate) async fn explain_access(
             });
         }
     }
+    // 创建者授权派生（derive-creator-grants-from-lifecycle）：与 decide_access 同序——仅翻转
+    // NotApplicable ⇒ Permit（Deny 不可覆盖）；explain 语义 = reason 标注 creator-derived
+    //（无物理关联行可引，ADDED 规约）。
+    let creator_derived = merged == Decision::NotApplicable
+        && ngac_host::creator_derived_permits(pool, user_id, fk_resource, action)
+            .await
+            .unwrap_or(false);
     // Admin 治理豁免 = 遍历后兜底（仅 NotApplicable 时放行）——已在 evaluate_merge_in 内
     // 与 decide_access 同源；此处仅把决策映射为 explain 的 outcome/reason 文案。
     let admin_exempted = merged == Decision::Permit && is_admin && !steps.iter().any(|s| s.matched);
+    // pre 义务判决参与（NGAC_SPEC §2.6 / add-ngac-pre-obligations）：与 decide_access 同口径——
+    // 终态放行（Permit，或 creator 派生翻转的 NotApplicable）时叠加；命中保留算子 `deny` ⇒ Deny。
+    let effective_permit =
+        merged == Decision::Permit || (merged == Decision::NotApplicable && creator_derived);
+    let subj_names: Vec<String> = user_attrs.iter().map(|a| a.o_name.clone()).collect();
+    let oa_names: Vec<String> = object_attrs.iter().map(|a| a.o_name.clone()).collect();
+    let pre_denied = effective_permit
+        && crate::ngac::obligation::evaluate_pre_obligation_denies(
+            pool,
+            &crate::ngac::obligation::ObligationEvalContext {
+                user_id,
+                resource,
+                action,
+                decision: "Permit",
+                subject_attributes: &subj_names,
+                object_attributes: &oa_names,
+            },
+        )
+        .await;
     let (permitted, outcome, reason) = match merged {
         Decision::Permit if admin_exempted => (
             true,
@@ -333,7 +370,18 @@ pub(crate) async fn explain_access(
             "deny",
             "Access denied by matched prohibition".to_string(),
         ),
+        Decision::NotApplicable if creator_derived => (
+            true,
+            "permit",
+            "Creator-derived grant (derived at decision time)".to_string(),
+        ),
         Decision::NotApplicable => (false, "not_applicable", "No matching policy".to_string()),
+    };
+    // pre 义务可否决：覆盖上面算出的放行结果（与 decide_access 一致）。
+    let (permitted, outcome, reason) = if pre_denied {
+        (false, "deny", "Access denied by pre-obligation".to_string())
+    } else {
+        (permitted, outcome, reason)
     };
     ExplainResponse {
         permitted,
@@ -476,10 +524,22 @@ pub async fn ngac_decide(
     let decision = decide_access(pool.get_ref(), req.user_id, &req.resource, &req.action).await;
     let permitted = decision == Decision::Permit;
     let reason = match decision {
-        Decision::Deny => "Access explicitly denied by prohibition".to_string(),
+        Decision::Deny => "Access explicitly denied by prohibition or label ceiling".to_string(),
         Decision::Permit => "Access granted".to_string(),
         Decision::NotApplicable => "No matching access right found".to_string(),
     };
+
+    // 义务随判决下发（wire-obligations-into-pep-audit / §2.6）：零配置面短路（EXISTS
+    // 单查）；有配置才构建求值上下文（UA 名集 = PIP 同源解析、OA 名集 = 闭包单源）——
+    // PEP 审计行据此落 `obligations_triggered`，与 SSO 决策审计同源对称。
+    let obligations = super::evaluate_response_obligations(
+        pool.get_ref(),
+        req.user_id,
+        &req.resource,
+        &req.action,
+        &decision,
+    )
+    .await;
 
     // 将决策异步写入审计事件表（fire-and-forget），打通 EPP 管道。
     audit_decision(
@@ -491,5 +551,9 @@ pub async fn ngac_decide(
         &req_http,
     );
 
-    HttpResponse::Ok().json(ngac_contract::PdpCheckResponse { permitted, reason })
+    HttpResponse::Ok().json(ngac_contract::PdpCheckResponse {
+        permitted,
+        reason,
+        obligations,
+    })
 }

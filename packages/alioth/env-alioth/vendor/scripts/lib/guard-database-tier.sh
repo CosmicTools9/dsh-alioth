@@ -22,6 +22,13 @@ guard_database_tier() {
     local component="${2:-?}"
     local env_file="${3:-?}"
 
+    # 仓库根（`BASH_SOURCE` 锚定，**MUST NOT** 依赖调用方 cwd）——dev 分支的 ns env 枚举用。
+    # 为什么：原实现写 `../../Deploy/*.env`（相对 cwd），从仓库根调用（如 restart-gateway.sh
+    # 的 `cd "$PROJECT_ROOT"` 后调用）解析到仓外 ⇒ 合法集退化为 {aliothstudio_dev}，契约要求的
+    # per-ns 绑定反被判违规（fix-ns-package-env-db-binding 实测 A/B：同 URL 双 cwd 结论相反）。
+    local _guard_root
+    _guard_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)"
+
     # ── Skip when no DATABASE_URL (e.g. server-less tools) ──
     if [[ -z "${DATABASE_URL:-}" ]]; then
         echo "[guard] ${component}: DATABASE_URL not set, skipping tier check"
@@ -42,7 +49,7 @@ guard_database_tier() {
     case "$mode" in
         dev)
             expected_dbs+=("aliothstudio_dev")
-            for ns_env in ../../Deploy/*/.env; do
+            for ns_env in "${_guard_root}"/Deploy/*/.env; do
                 [[ -f "$ns_env" ]] || continue
                 local ns_db
                 ns_db="$(grep -E '^DATABASE_URL=' "$ns_env" | head -1 | cut -d= -f2-)"
@@ -52,9 +59,39 @@ guard_database_tier() {
                 [[ -n "$ns_db" ]] && expected_dbs+=("$ns_db")
             done
             ;;
-        pre)  expected_dbs+=("aliothstudio_pre")  ;;
+        pre)
+            # 平台 pre 库 + **ns pre 库**（`{ns}_pre`，层映射唯一实现 = scripts/db/lib/ns-db-name.sh）：
+            # per-ns pre 层（strengthen-pre-env-and-promotion-gate 方案 A）下，ns 组件在 pre 层
+            # 绑定的是自己的 pre 库而非平台库；不收 ns pre 名会把合法 pre 启动判成跨层污染。
+            expected_dbs+=("aliothstudio_pre")
+            if [[ -n "${NAMESPACE:-}" ]]; then
+                local _guard_lib_dir ns_pre_db
+                _guard_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+                if [[ -f "${_guard_lib_dir}/../db/lib/ns-db-name.sh" ]]; then
+                    # shellcheck source=scripts/db/lib/ns-db-name.sh
+                    source "${_guard_lib_dir}/../db/lib/ns-db-name.sh"
+                    ns_pre_db="$(ns_name_to_db "${NAMESPACE}" pre 2>/dev/null || true)"
+                    [[ -n "$ns_pre_db" ]] && expected_dbs+=("$ns_pre_db")
+                fi
+            fi
+            ;;
         prod) expected_dbs+=("aliothstudio")      ;;
-        test) expected_dbs+=("aliothstudio_test") ;;
+        test)
+            # 平台测试库 + **ns 测试库**（`{ns}_test`，层映射唯一实现 = scripts/db/lib/ns-db-name.sh）：
+            # per-ns 测试库隔离（enforce-ns-isolation-across-axes）下，ns 组件测试绑定自身测试库；
+            # 只认 aliothstudio_test 会把合法 ns 测试运行判成跨层污染。
+            expected_dbs+=("aliothstudio_test")
+            if [[ -n "${NAMESPACE:-}" ]]; then
+                local _guard_t_lib ns_test_db
+                _guard_t_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+                if [[ -f "${_guard_t_lib}/../db/lib/ns-db-name.sh" ]]; then
+                    # shellcheck source=scripts/db/lib/ns-db-name.sh
+                    source "${_guard_t_lib}/../db/lib/ns-db-name.sh"
+                    ns_test_db="$(ns_name_to_db "${NAMESPACE}" test 2>/dev/null || true)"
+                    [[ -n "$ns_test_db" ]] && expected_dbs+=("$ns_test_db")
+                fi
+            fi
+            ;;
         *)
             echo "[guard] ${component}: unknown launch mode '${mode}', skipping tier check" >&2
             return 0

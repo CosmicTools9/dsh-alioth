@@ -14,9 +14,18 @@
 #   reason=$(binary_stale_reason "$BIN" \
 #       "file:$ROOT/Cargo.toml" "file:$ROOT/Cargo.lock" \
 #       "rust-tree:$ROOT/Gateway/backend" "rust-tree:$ROOT/SSO/backend" \
-#       "rust-tree:$ROOT/Framework/backend" \
+#       "rust-tree:$ROOT/Framework/backend" "rust-tree:$ROOT/Gateway/host/src" \
 #       "ns-sources:$ROOT/Pre-Proc/$NS/Sources")
 #   [ -n "$reason" ] && echo "旧二进制：$reason"
+#
+# ⚠️ `.rs` 构建输入树 MUST 全量列举（域窄于构建输入 ⇒ 陈旧二进制；ENVIRONMENT_SPEC §3.4）：
+#   `Gateway/backend`、`SSO/backend`、`Framework/backend`、**`Gateway/host/src`**
+#   —— 末者 = ns 宿主 bin 的唯一 bin 源（各 ns `gateway-host/Cargo.toml` 以
+#   `path = "../../../Gateway/host/src/main.rs"` 复用平台模板，ns 仓无 `src/`；
+#   change fix-dev-binary-freshness-host-tree 补齐）。新增 bin 源树 ⇒ 同一次变更内
+#   同时入「启动判据 + WATCH_DIRS」；门禁 = `scripts/check/check-dev-freshness-closure.ts`。
+#   平台 `Gateway/host/build.rs` 与 `Cargo.{toml,lock}` **不属** ns 宿主构建输入
+#   （ns 侧有自持实例化副本，已由 `file:` 覆盖）。
 #
 # spec 语法：
 #   file:<path>        单文件比对（Cargo.toml / Cargo.lock / build.rs…）

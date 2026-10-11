@@ -6,17 +6,25 @@
  * 基线约定：`scripts/check/baselines/*.json` 登记存量违规指纹，门禁只阻断**基线之外的新增**。
  */
 import { existsSync, readdirSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename } from "node:path";
+import { mountedNs } from "./ns-mounts.ts";
+import { join, relative, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { isRecord } from "./type-guards";
 import { gatewaySourcesKindDir } from "./preproc-layout.mjs";
+import { UNRESOLVED_DSN, repoRoleOf, resolveRepoDbUrl } from "./repo-role";
 import {
   readBaselineText,
   repoRoot,
   writeBaseline as guardedWriteBaseline,
 } from "../check/lib/baseline-store";
 
-export interface Violation { ns: string; file: string; rule: string; detail: string }
+export interface Violation {
+  ns: string;
+  file: string;
+  rule: string;
+  detail: string;
+}
 
 export interface Baseline {
   path: string;
@@ -28,10 +36,18 @@ export function isArtifactDir(name: string): boolean {
   return !name.startsWith(".") && !name.endsWith(".bak");
 }
 
+/**
+ * 挂载的 ns 名枚举（**symlink-aware**）。
+ *
+ * 缺陷史（2026-09-29 修）：原实现用 `Dirent.isDirectory()`，而 `Pre-Proc/{ns}` 是指向 ns 仓的**符号链接**
+ * ⇒ 平台档位下恒返回 `[]`，全部调用方静默空转（`capability-catalog` 因此报「未知 namespace」，
+ * `check-block-json` / `check-composition` 等枚举面为 0）。判据面**单一实现** = `ns-mounts.mountedNs`
+ * （其文档已记录同一坑：isDirectory 对 symlink 恒 false）。
+ */
 export function listNamespaces(root: string): string[] {
-  return readdirSync(join(root, "Pre-Proc"), { withFileTypes: true })
-    .filter((e) => e.isDirectory() && isArtifactDir(e.name))
-    .map((e) => e.name)
+  return mountedNs(root)
+    .map((dir) => basename(dir))
+    .filter(isArtifactDir)
     .sort();
 }
 
@@ -47,13 +63,19 @@ export function kindRoots(root: string, ns: string, kind: string): string[] {
 export function unitIds(root: string, ns: string, kind: string): Set<string> {
   const ids = new Set<string>();
   for (const r of kindRoots(root, ns, kind)) {
-    for (const e of readdirSync(r, { withFileTypes: true })) if (e.isDirectory() && isArtifactDir(e.name)) ids.add(e.name);
+    for (const e of readdirSync(r, { withFileTypes: true }))
+      if (e.isDirectory() && isArtifactDir(e.name)) ids.add(e.name);
   }
   return ids;
 }
 
 /** 某类单元的 `<id>/<file>` 绝对路径清单 */
-export function unitFiles(root: string, ns: string, kind: string, file: string): string[] {
+export function unitFiles(
+  root: string,
+  ns: string,
+  kind: string,
+  file: string,
+): string[] {
   const out: string[] = [];
   for (const r of kindRoots(root, ns, kind)) {
     for (const e of readdirSync(r, { withFileTypes: true })) {
@@ -66,7 +88,11 @@ export function unitFiles(root: string, ns: string, kind: string, file: string):
 }
 
 /** 由同 ns 原型产物推导 `prototypeVersion`（`b-v{N}.html` 取最大 N；仅有 `llm-tsx` 源 → `v1`；无痕迹 → undefined） */
-export function derivePrototypeVersion(root: string, ns: string, blockId: string): string | undefined {
+export function derivePrototypeVersion(
+  root: string,
+  ns: string,
+  blockId: string,
+): string | undefined {
   const bases = [
     `Pre-Proc/${ns}/Prototypes/Blocks/${blockId}`,
     `Pre-Proc/${ns}/Prototypes/Apps/Blocks/${blockId}`,
@@ -82,14 +108,20 @@ export function derivePrototypeVersion(root: string, ns: string, blockId: string
   }
   const htmls = names.filter((n) => /^b-v\d+\.html$/.test(n));
   if (htmls.length > 0) {
-    const maxN = Math.max(...htmls.map((n) => Number(n.match(/b-v(\d+)/)?.[1] ?? 0)));
+    const maxN = Math.max(
+      ...htmls.map((n) => Number(n.match(/b-v(\d+)/)?.[1] ?? 0)),
+    );
     return `v${maxN}`; // 规范格式（BLOCK_SCHEMA §1：prototypeVersion="v{N}" 指向 b-v{N}.html）
   }
   return names.includes("llm-tsx") ? "v1" : undefined;
 }
 
 /** 该块在 Prototypes/ 下是否有任何痕迹（构建产物或 `llm-tsx` 源） */
-export function hasPrototypeTraces(root: string, ns: string, blockId: string): boolean {
+export function hasPrototypeTraces(
+  root: string,
+  ns: string,
+  blockId: string,
+): boolean {
   return derivePrototypeVersion(root, ns, blockId) !== undefined;
 }
 
@@ -102,26 +134,47 @@ export function loadBaseline(path: string): Baseline {
   if (text === null) return { path, entries: new Set() };
   try {
     const raw = JSON.parse(text) as { violations?: unknown };
-    const list = Array.isArray(raw.violations) ? (raw.violations as string[]) : [];
+    const list = Array.isArray(raw.violations)
+      ? (raw.violations as string[])
+      : [];
     return { path, entries: new Set(list) };
   } catch {
     return { path, entries: new Set() };
   }
 }
 
-export function writeBaseline(path: string, violations: Violation[], note: string): void {
+export function writeBaseline(
+  path: string,
+  violations: Violation[],
+  note: string,
+): void {
   // 经唯一入口写入（INV-1：写入方身份 = **进程所在仓**，不是目标路径所在仓；
   // ns 仓写共享面会被拒绝，见 scripts/check/lib/baseline-store.ts）。
-  guardedWriteBaseline(repoRoot(), path, JSON.stringify({
-    updated_at: new Date().toISOString(),
-    note,
-    violations: [...violations.map(fingerprint)].sort(),
-  }, null, 2) + "\n");
+  guardedWriteBaseline(
+    repoRoot(),
+    path,
+    JSON.stringify(
+      {
+        updated_at: new Date().toISOString(),
+        note,
+        violations: [...violations.map(fingerprint)].sort(),
+      },
+      null,
+      2,
+    ) + "\n",
+  );
 }
 
 export function summarize(violations: Violation[]): string {
-  const byRule = violations.reduce<Record<string, number>>((acc, v) => { acc[v.rule] = (acc[v.rule] ?? 0) + 1; return acc; }, {});
-  return Object.entries(byRule).map(([k, n]) => `${k}=${n}`).join(" ") || "无";
+  const byRule = violations.reduce<Record<string, number>>((acc, v) => {
+    acc[v.rule] = (acc[v.rule] ?? 0) + 1;
+    return acc;
+  }, {});
+  return (
+    Object.entries(byRule)
+      .map(([k, n]) => `${k}=${n}`)
+      .join(" ") || "无"
+  );
 }
 
 export function relPath(root: string, p: string): string {
@@ -157,20 +210,59 @@ export class DimensionCodesUnavailableError extends Error {
 // 注入 DSN ⇒ 单次实测 ~0.4s，且**尊重调用方传入的 `DATABASE_URL`**（不可连即快速失败，
 // 负例可复现）；未设或为密文时回落到仓内 dev 库约定（与 check-block-json 同默认）。
 function schemaInfoBinary(root: string): string | null {
-  const t = spawnSync("bash", [join(root, "scripts/cargo-target.sh"), "meta"], {
-    encoding: "utf-8",
-  }).stdout?.trim();
-  if (!t) return null;
-  for (const p of [join(t, "release/schema-info"), join(t, "debug/schema-info")]) {
-    if (existsSync(p)) return p;
+  const targetDir = (cwd: string): string | null =>
+    spawnSync("bash", [join(cwd, "scripts/cargo-target.sh"), "meta"], {
+      encoding: "utf-8",
+      cwd,
+    }).stdout?.trim() || null;
+  const candidates: string[] = [];
+  const viaCwd = targetDir(root);
+  if (viaCwd) candidates.push(viaCwd);
+  // worktree 场景（2026-09-25 实测）：worktree 内 `scripts`/`Meta` 指向并行战役的**平台克隆**，
+  // 其 `Meta/backend/target` 无 schema-info 二进制 ⇒ block-json / composition 等门禁在 worktree
+  // 内一律「驳回·人在回路」。回落主 checkout（`git rev-parse --git-common-dir` 的父目录）的
+  // Meta target：主 checkout 的 `Meta` 链接指向真实平台仓，二进制齐备。
+  const common =
+    spawnSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd: root,
+        encoding: "utf-8",
+      },
+    ).stdout?.trim() ||
+    spawnSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd: root,
+      encoding: "utf-8",
+    }).stdout?.trim();
+  if (common) {
+    const mainRoot = dirname(resolve(root, common));
+    const viaMain = mainRoot === root ? null : targetDir(mainRoot);
+    if (viaMain) candidates.push(viaMain);
+  }
+  for (const dir of [...new Set(candidates)]) {
+    for (const p of [
+      join(dir, "release/schema-info"),
+      join(dir, "debug/schema-info"),
+    ]) {
+      if (existsSync(p)) return p;
+    }
   }
   return null;
 }
 
-/** 只读 DSN：显式 `DATABASE_URL`（须为真 DSN；`enc:` 密文不算）> 仓内 dev 库约定。 */
-function schemaInfoDsn(): string {
+/**
+ * 只读 DSN：显式 `DATABASE_URL`（须为真 DSN；`enc:` 密文不算）> 仓角色通道（单一实现 =
+ * `db-url-resolve.sh`）。ns 仓解析不到本 ns env ⇒ 返回哨兵 DSN（**快速失败**，MUST NOT 回落平台
+ * 共享库缺省——以平台库作 ns 面判定面属错误判定）；平台仓保持「组件 `.mise.toml` > 平台 dev 缺省」。
+ */
+function schemaInfoDsn(root: string): string {
   const env = process.env.DATABASE_URL ?? "";
-  return env.startsWith("postgres") ? env : "postgres://isahl@localhost:5432/aliothstudio_dev";
+  if (env.startsWith("postgres")) return env;
+  const resolved = resolveRepoDbUrl(root);
+  if (resolved.url !== null) return resolved.url;
+  if (repoRoleOf(root) === "ns") return UNRESOLVED_DSN;
+  return "postgres://isahl@localhost:5432/aliothstudio_dev";
 }
 
 /** 直呼 `schema-info` 执行任意子命令（不经 mise）；失败原因走返回值，由调用方决定驳回文案。 */
@@ -183,26 +275,54 @@ export function schemaInfoRun(
   if (!bin) {
     return {
       ok: false,
-      detail: "schema-info 二进制缺失（cd Meta/backend && cargo build --bin schema-info）",
+      detail:
+        "schema-info 二进制缺失（cd Meta/backend && cargo build --bin schema-info）",
     };
   }
-  const r = spawnSync(bin, args as string[], {
-    encoding: "utf-8",
-    timeout: timeoutMs,
-    env: { ...process.env, DATABASE_URL: schemaInfoDsn() },
-  });
-  if (r.status !== 0) {
-    const tail =
-      `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").filter(Boolean).slice(-1)[0] ?? "";
+  const dsn = schemaInfoDsn(root);
+  if (dsn === UNRESOLVED_DSN) {
     return {
       ok: false,
       detail:
-        r.status === null
-          ? `schema-info 超时（${timeoutMs}ms）`
-          : `schema-info 退出码 ${r.status}${tail ? `：${tail.slice(0, 160)}` : ""}`,
+        "本 ns DB 未配置（Deploy/{ns}/.env 缺 DATABASE_URL）——判据输入不可得；MUST NOT 以平台共享库替代（请在 ns 仓配置包 env）",
     };
   }
-  return { ok: true, stdout: r.stdout.toString() };
+  const r = spawnSync(bin, args as string[], {
+    // `encoding: "buffer"` + 显式 maxBuffer（2026-10-11 实测根因）：
+    //  · Bun 默认 maxBuffer ≈ 1MB ⇒ `raw-sql` 大结果（Fields 步实测 10.4MB）触发 ENOBUFS，
+    //    子进程被 SIGTERM、`status === null`，旧映射把它误报成「超时（timeoutMs）」；
+    //  · `encoding:"utf-8"` 还会在输出含非法 UTF-8 字节时抛 i/o error（并发写者/异常打印），
+    //    故解码交宽内容器 TextDecoder（fatal:false）。
+    maxBuffer: 256 * 1024 * 1024,
+    encoding: "buffer",
+    timeout: timeoutMs,
+    env: { ...process.env, DATABASE_URL: dsn },
+  });
+  if (r.status !== 0) {
+    const err = "error" in r ? r.error : undefined;
+    const code =
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      typeof err.code === "string"
+        ? err.code
+        : "";
+    const outText = new TextDecoder().decode(r.stdout ?? new Uint8Array());
+    const errText = new TextDecoder().decode(r.stderr ?? new Uint8Array());
+    const tail =
+      `${outText}${errText}`.trim().split("\n").filter(Boolean).slice(-1)[0] ??
+      "";
+    const detail =
+      code === "ETIMEDOUT"
+        ? `schema-info 超时（${timeoutMs}ms）`
+        : code !== ""
+          ? `schema-info spawn 失败（${code}${err?.message ? `：${err.message.slice(0, 140)}` : ""}）`
+          : r.signal !== null
+            ? `schema-info 被信号 ${r.signal} 终止（status=null）`
+            : `schema-info 退出码 ${r.status}${tail ? `：${tail.slice(0, 160)}` : ""}`;
+    return { ok: false, detail };
+  }
+  return { ok: true, stdout: new TextDecoder().decode(r.stdout) };
 }
 
 /** 直呼 `schema-info raw-sql` 执行只读 SQL；失败原因走返回值，由调用方决定驳回文案（禁静默降级）。 */
@@ -210,13 +330,17 @@ export function schemaInfoRawSql(
   root: string,
   sql: string,
   timeoutMs = 8_000,
-): { ok: true; rows: Record<string, unknown>[] } | { ok: false; detail: string } {
+):
+  | { ok: true; rows: Record<string, unknown>[] }
+  | { ok: false; detail: string } {
   const run = schemaInfoRun(root, ["raw-sql", sql], timeoutMs);
   if (!run.ok) return run;
   try {
     const parsed: unknown = JSON.parse(run.stdout);
     const rows =
-      isRecord(parsed) && Array.isArray(parsed.rows) ? parsed.rows.filter(isRecord) : [];
+      isRecord(parsed) && Array.isArray(parsed.rows)
+        ? parsed.rows.filter(isRecord)
+        : [];
     return { ok: true, rows };
   } catch {
     return { ok: false, detail: "schema-info 输出非 JSON（无法解析查询结果）" };
@@ -226,13 +350,18 @@ export function schemaInfoRawSql(
 /** DB 维度码集（isahl.zc_id_{dim}）；不可得即抛 DimensionCodesUnavailableError（禁降级放行） */
 export function dbDimensionCodes(root: string, dim: string): Set<string> {
   const subject = `DB 维度码 isahl.zc_id_${dim}`;
-  const probe = schemaInfoRawSql(root, `SELECT code FROM isahl.zc_id_${dim} ORDER BY code`);
-  if (!probe.ok) throw new DimensionCodesUnavailableError(subject, probe.detail);
+  const probe = schemaInfoRawSql(
+    root,
+    `SELECT code FROM isahl.zc_id_${dim} ORDER BY code`,
+  );
+  if (!probe.ok)
+    throw new DimensionCodesUnavailableError(subject, probe.detail);
   const codes = new Set<string>();
   for (const row of probe.rows) {
     const code = String(row.code ?? "").trim();
     if (code !== "") codes.add(code);
   }
-  if (codes.size === 0) throw new DimensionCodesUnavailableError(subject, "查询结果零行");
+  if (codes.size === 0)
+    throw new DimensionCodesUnavailableError(subject, "查询结果零行");
   return codes;
 }

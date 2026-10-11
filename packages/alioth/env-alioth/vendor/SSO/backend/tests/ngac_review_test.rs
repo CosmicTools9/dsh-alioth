@@ -18,6 +18,21 @@ use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Cl
 use gateway_sso::auth::AuthState;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
+
+/// 文件级串行化（**本文件刻意的共享场景夹具**）。
+///
+/// 5 个测试共用同一套 `rvx-*` 场景：UA 层级 `rvx-admin → rvx-operator`、集合级 OA `rvxmod:0`、
+/// prohibition `rvx-no-delete`，且这些**名字本身出现在断言语义里**（`o_name == "rvx-admin"`、
+/// `resource_type == "rvxmod"`、`?resource_type=rvxmod`）。而 `cleanup(pool)` 按全局前缀清空
+/// ⇒ 并行执行必然互相清空（实测非确定性红：5 处断言随机失败，且因锁等待单文件耗时 2147s）。
+/// 共享场景是设计选择（同一 scenario 的多个切面），故串行而非改名。
+static SERIAL_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn lock_serial() -> MutexGuard<'static, ()> {
+    SERIAL_LOCK.lock().await
+}
 
 struct Seed {
     admin_user: i64,
@@ -38,32 +53,47 @@ fn test_auth_state() -> AuthState {
 async fn ensure_user(pool: &PgPool, email: &str) -> i64 {
     let username = email.split('@').next().unwrap_or("rvx").replace('-', "_");
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING"#,
     )
-    .bind(email)
     .bind(&username)
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email=$1 LIMIT 1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .expect("test user")
+    let user_id: i64 =
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username=$1 LIMIT 1")
+            .bind(&username)
+            .fetch_one(pool)
+            .await
+            .expect("test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 /// 清理全部 rvx-* 测试数据（起点 + 终点各调用一次）。
 async fn cleanup(pool: &PgPool) {
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email LIKE 'rvx-%@test.local')",
+         WHERE fk_user IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email LIKE 'rvx-%@test.local')",
     )
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email LIKE 'rvx-%@test.local'")
+    // 邮箱行（唯一存储）先行；主行按 username（由同一 email 派生，1:1 句柄）删——入边 FK 不阻断
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email LIKE 'rvx-%@test.local'")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username LIKE 'rvx\\_%'")
         .execute(pool)
         .await
         .ok();
@@ -126,8 +156,12 @@ async fn seed(pool: &PgPool) -> Seed {
     .await
     .ok();
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        // 必须按策略类过滤：`o_name='admin'` 在每个策略类下各有一行；无过滤器时 LIMIT 1 可能取到
+        // 他测试残留的、他类 admin UA ⇒ 绑定到错类 UA 使 require_admin 的 NGAC 判定 Deny（非确定性 403）。
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");
@@ -274,6 +308,7 @@ async fn admin_token(_pool: &PgPool, admin: i64, email: &str) -> String {
 
 #[tokio::test]
 async fn review_user_three_state_and_assignments() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -355,6 +390,7 @@ async fn review_user_three_state_and_assignments() {
 /// admin 用户对无匹配策略的资源集 MUST 计入 allowed（而非 omission）。
 #[tokio::test]
 async fn review_admin_user_includes_traversal_fallback() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -396,6 +432,7 @@ async fn review_admin_user_includes_traversal_fallback() {
 
 #[tokio::test]
 async fn review_user_not_found_returns_404() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -424,6 +461,7 @@ async fn review_user_not_found_returns_404() {
 
 #[tokio::test]
 async fn review_resource_missing_type_returns_400() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -452,6 +490,7 @@ async fn review_resource_missing_type_returns_400() {
 
 #[tokio::test]
 async fn review_user_consistent_with_explain() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -535,6 +574,7 @@ async fn review_user_consistent_with_explain() {
 
 #[tokio::test]
 async fn review_resource_holders_sparse_with_users() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;

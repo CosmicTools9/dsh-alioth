@@ -14,9 +14,7 @@
 //! 管理面不报错）——best-effort，展示名非授权语义。
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
-
-use sqlx::PgPool;
+use std::collections::HashMap;
 
 /// 内置资源域映射（链 3）：`resource_type →` 人可读展示名。
 ///
@@ -194,36 +192,6 @@ pub const BUILTIN_RESOURCE_TYPE_DISPLAY: &[(&str, &str)] = &[
     ("waybill", "订单-陆运委托"),
     ("waybills", "订单-运输服务"),
 ];
-
-/// 链 2：批量解析 `resource_type → meta_collections.name`。
-///
-/// 单条 `WHERE table_name = ANY($1)` 查询覆盖全部入参类型；查询失败
-/// （权限/连接）`log::warn` 后返回空 map（静默降级，不 panic 不报错）。
-pub async fn meta_display_names(
-    pool: &PgPool,
-    resource_types: &HashSet<String>,
-) -> HashMap<String, String> {
-    if resource_types.is_empty() {
-        return HashMap::new();
-    }
-    let types: Vec<&str> = resource_types.iter().map(String::as_str).collect();
-    let rows: Result<Vec<(String, String)>, _> = sqlx::query_as(
-        "SELECT table_name, name FROM isahl_meta.meta_collections WHERE table_name = ANY($1)",
-    )
-    .bind(&types)
-    .fetch_all(pool)
-    .await;
-    match rows {
-        Ok(rows) => rows.into_iter().collect(),
-        Err(e) => {
-            log::warn!(
-                "meta_display_names: meta_collections 查询失败，降级至内置映射/fallback: {}",
-                e
-            );
-            HashMap::new()
-        }
-    }
-}
 
 /// 链 3：内置资源域映射命中。查询前做连字符归一（`-` → `_`）——
 /// 存量 seed 存在 `outgo-payments` 与 `outgo_payments` 双命名，归一后同映射。
@@ -1034,8 +1002,16 @@ mod tests {
     // resolve_module：按 NAMESPACE 过滤资源归属（2026-08-21 跨 ns 标签修复）
     // ========================================================================
 
+    /// `resolve_module` 消费进程级 `NAMESPACE` env——这组用例互相 set/remove 该变量，
+    /// 并行执行时互相污染（实测：测试集变化改变调度后，AVIC 用例读到 WZ 用例写入的
+    /// 值）。串行化守卫消除该既有竞态（与生产逻辑无关，纯测试隔离修复）。
+    static NAMESPACE_ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn resolve_module_wz_does_not_get_avic_label() {
+        let _guard = NAMESPACE_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         // WZ 内嵌 SSO：approval_*/products 映射表有多 ns 条目（生成器修复后），
         // WZ 下必须命中 WZ 条目而非 AVIC（实证缺陷：WZ 矩阵把审批列标成
         // 「AVIC-CAASEC·审批流程」）
@@ -1063,6 +1039,9 @@ mod tests {
 
     #[test]
     fn resolve_module_avic_gets_avic_label() {
+        let _guard = NAMESPACE_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         std::env::set_var("NAMESPACE", "AVIC-CAASEC");
         let a = resolve_module("approval_actions").expect("AVIC 下 approval_actions 应归属");
         assert_eq!(a.namespace, "AVIC-CAASEC");
@@ -1074,13 +1053,20 @@ mod tests {
 
     #[test]
     fn resolve_module_without_namespace_falls_back_to_first_match() {
+        let _guard = NAMESPACE_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         // 独立 SSO（无 NAMESPACE env）：回退旧行为（首个命中）
         std::env::remove_var("NAMESPACE");
         let a = resolve_module("approval_actions").expect("无 NAMESPACE 时应回退");
         assert_eq!(a.namespace, "AVIC-CAASEC");
     }
+
     #[test]
     fn module_resolution_hit_and_miss() {
+        let _guard = NAMESPACE_ENV_MUTEX
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         // 命中：业务资源带模块归属 + 连字符归一
         let m = resolve_module("outgo_payments").expect("outgo_payments 应有模块归属");
         assert_eq!(
@@ -1117,46 +1103,20 @@ mod tests {
         assert_eq!(resolve_resource_type_display("unknown", &map), "unknown");
     }
 
-    // ========================================================================
-    // meta_collections 批量查询 + 降级
-    // ========================================================================
-
-    async fn test_pool() -> sqlx::PgPool {
-        let url = std::env::var("DATABASE_URL")
-            .or_else(|_| std::env::var("SSO_TEST_DATABASE_URL"))
-            .unwrap_or_else(|_| {
-                let user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
-                format!("postgres://{}@localhost:5432/aliothstudio_test", user)
-            });
-        sqlx::PgPool::connect(&url)
-            .await
-            .expect("无法连接测试库，请先运行 `bash scripts/db/reset-db.sh --test`")
-    }
-
-    #[tokio::test]
-    async fn meta_display_names_batch_resolves_known_types() {
-        let pool = test_pool().await;
-        let types: HashSet<String> = [
-            "zc_id_agreement".to_string(),
-            "definitely_not_a_table_xyz".to_string(),
-        ]
-        .into_iter()
-        .collect();
-        let map = meta_display_names(&pool, &types).await;
-        // 已知业务表命中（seed 视图存在时）；未知类型不出现
-        if let Some(name) = map.get("zc_id_agreement") {
-            assert!(!name.is_empty());
-        }
-        assert!(!map.contains_key("definitely_not_a_table_xyz"));
-    }
-
-    #[tokio::test]
-    async fn meta_display_names_degrades_silently_on_db_failure() {
-        // 不可达地址：查询失败必须返回空 map（log::warn 降级，不 panic）
-        let pool = sqlx::PgPool::connect_lazy("postgres://127.0.0.1:1/none")
-            .expect("lazy connect never dials");
-        let types: HashSet<String> = ["sso_admin".to_string()].into_iter().collect();
-        let map = meta_display_names(&pool, &types).await;
-        assert!(map.is_empty());
+    /// 链 2（`isahl_meta.meta_collections` 查询）已于 2026-09-29 删除：SSO 连接池指向
+    /// auth/ns 库，`isahl_meta` 不在其库内 ⇒ 该查询**恒失败**并降级为空 map（等于从未生效）。
+    /// 展示名现由链 3（内置资源域映射）承担——本用例固化该事实。
+    #[test]
+    fn display_name_resolves_via_chain3_after_chain2_removal() {
+        let empty = HashMap::new();
+        assert_eq!(
+            resolve_display_name(None, None, "sso_admin", &empty, "fallback_o_name"),
+            "SSO 管理",
+        );
+        // 未命中也必须非空（链 4 fallback）
+        assert_eq!(
+            resolve_display_name(None, None, "totally_unknown_xyz", &empty, "fallback_o_name"),
+            "fallback_o_name",
+        );
     }
 }

@@ -11,7 +11,6 @@ use lettre::{
     AsyncTransport, Message, Tokio1Executor,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::{Arc, RwLock};
 
@@ -143,39 +142,30 @@ impl SmtpEmailService {
             }
         }
 
-        let row = sqlx::query_as::<_, (Value, Value)>(
-            r#"
-            SELECT settings, enc_fields
-            FROM isahl."zc_id_prot-email_config"
-            WHERE (settings->>'public')::boolean IS NOT FALSE
-              AND deleted_at IS NULL
-            ORDER BY id
-            LIMIT 1
-            "#,
+        // 生效行经唯一解析点（enabled 门 + is_default 决胜 NULLS LAST；凭证字符串值已过注入解密器）
+        let active = crate::config_resolution::resolve_active(
+            &self.pool,
+            crate::config_resolution::ConfigFamily::Email,
+            &|s| (self.decryptor)(s),
         )
-        .fetch_optional(&self.pool)
         .await
         .map_err(|e| AliothError::Internal(format!("Failed to load email config: {}", e)))?;
 
-        let (config, password) = match row {
-            Some((settings, enc_fields)) => {
-                let cfg: EmailConfig = serde_json::from_value(settings).map_err(|e| {
+        let (config, password) = match active {
+            Some(cfg) => {
+                let typed: EmailConfig = serde_json::from_value(cfg.settings).map_err(|e| {
                     AliothError::Internal(format!("Invalid email settings JSON: {}", e))
                 })?;
 
-                let enc_obj = enc_fields.as_object().ok_or_else(|| {
-                    AliothError::Internal("enc_fields is not a JSON object".to_string())
-                })?;
-
-                let password_enc = enc_obj
+                let password = cfg
+                    .credentials
                     .get("password")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| {
                         AliothError::Internal("Password not found in enc_fields".to_string())
-                    })?;
-
-                let password = (self.decryptor)(password_enc);
-                (cfg, password)
+                    })?
+                    .to_string();
+                (typed, password)
             }
             None => {
                 return Err(AliothError::NotFound("email_config".to_string()));
@@ -193,40 +183,6 @@ impl SmtpEmailService {
         }
 
         Ok((config, password))
-    }
-
-    fn build_mailer(
-        &self,
-        cfg: &EmailConfig,
-        password: &str,
-    ) -> Result<AsyncSmtpTransport<Tokio1Executor>> {
-        let creds = Credentials::new(cfg.username.clone(), password.to_string());
-
-        let mailer = if cfg.use_tls {
-            // TLS 模式按端口选：465 = 隐式 TLS（连接即握手）；587/25 = STARTTLS。
-            // 二者不可互换——对 465 用 starttls_relay 会在 TLS 阶段失败（企业邮 465/SSL 即此情形）。
-            let builder = match smtp_tls_mode(cfg.smtp_port) {
-                SmtpTlsMode::Implicit => {
-                    AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.smtp_host)
-                }
-                SmtpTlsMode::Starttls => {
-                    AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.smtp_host)
-                }
-            };
-            builder
-                .map_err(|e| AliothError::External {
-                    subsystem: "SMTP".to_string(),
-                    message: format!("Invalid SMTP host: {}", e),
-                })?
-                .port(cfg.smtp_port)
-                .credentials(creds)
-        } else {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.smtp_host)
-                .port(cfg.smtp_port)
-                .credentials(creds)
-        };
-
-        Ok(mailer.build())
     }
 
     fn build_message(
@@ -258,13 +214,58 @@ impl SmtpEmailService {
     }
 }
 
+/// 按配置构造 SMTP mailer（send 与探测共用）。
+///
+/// TLS 模式按端口选：465 = 隐式 TLS（连接即握手）；587/25 = STARTTLS。
+/// 二者不可互换——对 465 用 `starttls_relay` 会在 TLS 阶段失败（企业邮 465/SSL 即此情形）。
+fn build_mailer(cfg: &EmailConfig, password: &str) -> Result<AsyncSmtpTransport<Tokio1Executor>> {
+    let creds = Credentials::new(cfg.username.clone(), password.to_string());
+
+    let mailer = if cfg.use_tls {
+        let builder = match smtp_tls_mode(cfg.smtp_port) {
+            SmtpTlsMode::Implicit => AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.smtp_host),
+            SmtpTlsMode::Starttls => {
+                AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.smtp_host)
+            }
+        };
+        builder
+            .map_err(|e| AliothError::External {
+                subsystem: "SMTP".to_string(),
+                message: format!("Invalid SMTP host: {}", e),
+            })?
+            .port(cfg.smtp_port)
+            .credentials(creds)
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.smtp_host)
+            .port(cfg.smtp_port)
+            .credentials(creds)
+    };
+
+    Ok(mailer.build())
+}
+
+/// SMTP 连通性探测（构造 mailer 后 `test_connection`；**不发送邮件**）。
+///
+/// 供 system-config「测试连接」seam 的 email 探测器使用；错误以 `Err(String)` 返回。
+pub async fn probe_connection(
+    cfg: &EmailConfig,
+    password: &str,
+) -> std::result::Result<(), String> {
+    let mailer = build_mailer(cfg, password).map_err(|e| e.to_string())?;
+    mailer
+        .test_connection()
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[async_trait]
 impl EmailService for SmtpEmailService {
     async fn send(&self, to: &str, subject: &str, body: &str) -> Result<()> {
         let (cfg, password) = self.load_config().await?;
         let email =
             self.build_message(&cfg, to, subject, ContentType::TEXT_PLAIN, body.to_string())?;
-        let mailer = self.build_mailer(&cfg, &password)?;
+        let mailer = build_mailer(&cfg, &password)?;
 
         mailer
             .send(email)
@@ -281,7 +282,7 @@ impl EmailService for SmtpEmailService {
         let (cfg, password) = self.load_config().await?;
         let email =
             self.build_message(&cfg, to, subject, ContentType::TEXT_HTML, html.to_string())?;
-        let mailer = self.build_mailer(&cfg, &password)?;
+        let mailer = build_mailer(&cfg, &password)?;
 
         mailer
             .send(email)
@@ -323,5 +324,23 @@ mod tests {
         assert_eq!(cfg.smtp_port, 587);
         assert!(cfg.use_tls);
         assert_eq!(smtp_tls_mode(cfg.smtp_port), SmtpTlsMode::Starttls);
+    }
+
+    /// 探测：坏主机 MUST 快速失败（拒连 → Err），且不发送邮件。
+    #[tokio::test]
+    async fn probe_connection_fails_fast_on_bad_host() {
+        let cfg = EmailConfig {
+            smtp_host: "127.0.0.1".to_string(),
+            smtp_port: 1,
+            username: "probe@test.local".to_string(),
+            from_address: None,
+            from_name: None,
+            use_tls: false,
+            timeout_seconds: 5,
+        };
+        let err = probe_connection(&cfg, "x")
+            .await
+            .expect_err("拒连 MUST 返回 Err");
+        assert!(!err.is_empty());
     }
 }

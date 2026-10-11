@@ -12,7 +12,7 @@
 //! - **与物理表解耦**：只提供 `SystemConfigRepository` trait，不绑定具体表名和 schema
 //! - **Schema 驱动**：预定义各分类的字段 Schema，前端可基于 Schema 动态渲染表单
 //! - **敏感数据加密**：credentials 中的敏感字段自动 AES-256-GCM 加密存储，前缀标记 `enc:`
-//! - **安全返回**：对外 API 返回脱敏数据，内部服务可通过 `get_full_config` 获取解密值
+//! - **安全返回**：对外 API 返回脱敏数据；运行期消费经 `common::config_resolution` 解析生效配置（含凭证解密，change fix-config-effective-resolution）
 //! - **泛型 Service**：`SystemConfigService<R>` 接受任意实现了 `SystemConfigRepository` 的类型
 //!
 //! # 使用方式
@@ -29,28 +29,33 @@
 //! struct MyRepo { pool: PgPool }
 //! #[async_trait]
 //! impl SystemConfigRepository for MyRepo {
-//!     async fn insert(&self, req: &CreateSystemConfigRequest) -> Result<SystemConfig, sqlx::Error> { ... }
+//!     async fn insert(&self, req: &CreateSystemConfigRequest, actor_id: Option<i64>) -> Result<SystemConfig, sqlx::Error> { ... }
 //!     async fn find_by_id(&self, id: i64) -> Result<Option<SystemConfig>, sqlx::Error> { ... }
 //!     async fn list(&self, limit: i64, offset: i64) -> Result<Vec<SystemConfig>, sqlx::Error> { ... }
-//!     async fn update(&self, id: i64, req: &UpdateSystemConfigRequest) -> Result<Option<SystemConfig>, sqlx::Error> { ... }
+//!     async fn update(&self, id: i64, req: &UpdateSystemConfigRequest, actor_id: Option<i64>) -> Result<Option<SystemConfig>, sqlx::Error> { ... }
 //!     async fn soft_delete(&self, id: i64) -> Result<u64, sqlx::Error> { ... }
 //!     async fn find_by_code(&self, code: &str) -> Result<Option<SystemConfig>, sqlx::Error> { ... }
 //! }
 //!
-//! // 3. 注册路由
-//! let repo = MyRepo { pool };
-//! app.configure(|cfg| configure_routes(repo, cfg));
+//! // 3. 注册路由（pool 用于审计/探测取行；probes 注入各类别连通性探测实现；
+//! //    二者均注册为 scope 内 app_data）
+//! let repo = MyRepo { pool: pool.clone() };
+//! let probes = system_config::probe::ProbeRegistry::new().with("email", MyEmailProbe);
+//! app.configure(|cfg| configure_routes(repo, pool, probes, cfg));
 //!
 //! ```
 
 pub mod crypto;
 pub mod handlers;
 pub mod models;
+pub mod operation;
+pub mod probe;
 pub mod repository;
 pub mod schema;
 pub mod service;
 
 pub use handlers::configure_routes;
 pub use models::*;
+pub use probe::{ProbeOutcome, ProbeRegistry, ProviderProbe};
 pub use repository::SystemConfigRepository;
 pub use service::{SystemConfigError, SystemConfigService};

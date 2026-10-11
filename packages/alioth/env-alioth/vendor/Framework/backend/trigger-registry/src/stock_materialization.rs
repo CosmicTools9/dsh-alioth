@@ -4,6 +4,11 @@
 //! 本模块提供库函数，由业务 Service 在写路径上显式调用（方案：显式调用，
 //! 不依赖触发器注册；框架内部亦可复用）。
 //!
+//! ## 凭证守卫原语
+//!
+//! `apply_guarded_voucher_tx` / `ensure_voucher_idempotency`（守卫参数 `__code`/`__min`/`__max`、
+//! 链尾余额边界判定、幂等索引自愈）语义唯一正本 = `openspec/specs/stock-materialization-guard`。
+//!
 //! ## 时空伴随规范（严格）
 //!
 //! 库存是时空伴随的统计值：
@@ -1643,14 +1648,33 @@ pub const VOUCHER_IDEMPOTENCY_INDEXES: &[&str] = &[
     "uq_zc_id_stat-com-voucher_code_active",
 ];
 
+/// INVALID 残留清理 DDL（与 `VOUCHER_IDEMPOTENCY_DDL` 一一对应）。
+///
+/// 为什么是静态常量而非 `format!` 拼名：sqlx 0.9 的 `raw_sql` 参数 trait `SqlSafeStr` 只对
+/// `&'static str` 实现（`&String` / `&str` 运行期值均不满足）⇒ 动态字符串无法编译通过；
+/// 静态常量同时消除注入面。
+pub const VOUCHER_IDEMPOTENCY_INVALID_DROP_DDL: &[&str] = &[
+    r#"DROP INDEX IF EXISTS isahl."uq_zc_id_stat-tsp-voucher_code_active""#,
+    r#"DROP INDEX IF EXISTS isahl."uq_zc_id_stat-com-voucher_code_active""#,
+];
+
 /// 凭证幂等唯一索引 DDL（编译期常量——AssertSqlSafe 审计标注放行，仿 MV_INVENTORY_DDL）
 ///
 /// 部分唯一索引：`(code) WHERE deleted_at IS NULL`——同 code 未删除凭证唯一，
 /// 并发重放/重提由 DB 硬拦截，配合守卫原语 code 幂等检查形成双保险。
+///
+/// **MUST 用 `CONCURRENTLY`**：目标表是 PG **继承父表**（`zc_id_stat-com-voucher` /
+/// `-tsp-voucher`），非并发建索引取 ShareLock 会**波及继承子表** ⇒ 与在线业务写（子表
+/// `UPDATE` / `INSERT` / `DELETE`）必然死锁。2026-09-13~28 的 PG 日志实测 **1688 条**
+/// 「检测到死锁」，其中 `CREATE UNIQUE INDEX` 出现 **75 次**为绝对主角
+/// （对 `DELETE FROM` 41 / `UPDATE …sto-voucher` 7）。`CONCURRENTLY` 只取轻量锁，不阻塞并发写。
+///
+/// **约束**：`CONCURRENTLY` 不能在事务块内执行 ⇒ 本 DDL 只在**启动期 autocommit 单语句**
+/// 上下文（`ensure_voucher_idempotency(pool)`）执行；MUST NOT 在业务事务内执行。
 pub const VOUCHER_IDEMPOTENCY_DDL: &[&str] = &[
-    r#"CREATE UNIQUE INDEX IF NOT EXISTS "uq_zc_id_stat-tsp-voucher_code_active"
+    r#"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "uq_zc_id_stat-tsp-voucher_code_active"
        ON isahl."zc_id_stat-tsp-voucher" (code) WHERE deleted_at IS NULL"#,
-    r#"CREATE UNIQUE INDEX IF NOT EXISTS "uq_zc_id_stat-com-voucher_code_active"
+    r#"CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "uq_zc_id_stat-com-voucher_code_active"
        ON isahl."zc_id_stat-com-voucher" (code) WHERE deleted_at IS NULL"#,
 ];
 
@@ -1658,21 +1682,31 @@ pub const VOUCHER_IDEMPOTENCY_DDL: &[&str] = &[
 /// 缺失 → 执行内嵌幂等 DDL；DDL 失败 warn 降级返回 Ok（索引缺失仅弱化并发兜底，
 /// 不阻断启动——业务判定仍由守卫原语边界校验兜底）。
 pub async fn ensure_voucher_idempotency(pool: &PgPool) -> Result<(), String> {
-    for (ddl, index_name) in VOUCHER_IDEMPOTENCY_DDL
+    for ((ddl, drop_ddl), index_name) in VOUCHER_IDEMPOTENCY_DDL
         .iter()
+        .zip(VOUCHER_IDEMPOTENCY_INVALID_DROP_DDL.iter())
         .zip(VOUCHER_IDEMPOTENCY_INDEXES.iter())
     {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'isahl' AND indexname = $1)",
+        // 探测含**有效性**：`CONCURRENTLY` 中途失败会留下 INVALID 索引，而 `IF NOT EXISTS`
+        // 会跳过它 ⇒ 必须显式识别并先 DROP，否则该索引永远修不好（唯一约束长期缺位）。
+        let valid: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_index i \
+             JOIN pg_class c ON c.oid = i.indexrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'isahl' AND c.relname = $1 AND i.indisvalid)",
         )
         .bind(index_name)
         .fetch_one(pool)
         .await
         .map_err(|e| format!("voucher 幂等索引自检失败: {e}"))?;
-        if exists {
+        if valid {
             continue;
         }
-        match sqlx::query(sqlx::AssertSqlSafe(*ddl)).execute(pool).await {
+        // INVALID 残留（或表重建后的同名残留）先清，再走 `CONCURRENTLY` 建（静态 DDL，零注入面）。
+        let _ = sqlx::raw_sql(*drop_ddl).execute(pool).await;
+        // **MUST 用 `raw_sql`（simple query protocol）**：`CONCURRENTLY` 在 extended protocol 的
+        // 隐式事务内会被 PG 拒绝（`CREATE INDEX CONCURRENTLY cannot run inside a transaction block`）。
+        match sqlx::raw_sql(*ddl).execute(pool).await {
             Ok(_) => log::info!("voucher 幂等唯一索引已自愈创建: {index_name}"),
             Err(e) => log::warn!("voucher 幂等唯一索引创建失败（降级继续）: {e}"),
         }
@@ -1683,20 +1717,41 @@ pub async fn ensure_voucher_idempotency(pool: &PgPool) -> Result<(), String> {
 /// 进程级惰性自愈标志：仅 ensure 成功后置位（失败 warn 降级、下次写路径重试）。
 static VOUCHER_IDEMPOTENCY_ENSURED: AtomicBool = AtomicBool::new(false);
 
-/// 连接内变体：在调用方事务内执行幂等唯一索引自愈（`ensure_voucher_idempotency`
-/// 的 conn 版本——守卫原语只持有事务连接，不持有 pool）。
+/// 连接内**只读探测**（守卫原语只持有事务连接，不持有 pool）：
+/// 索引齐全且有效 ⇒ 置位进程级标志并 `Ok`；缺失/无效 ⇒ `Err`（调用方 `warn` 降级继续）。
 ///
-/// 注意：若外层事务随后回滚，索引随之消失且本进程内不再重试（标志已置位）——
-/// 该窗口退化为 Gateway 启动自愈兜底，与既有语义等价（D6 已声明）。
+/// **MUST NOT 在本函数（业务事务内）执行 DDL**（2026-09-29 实证，替代原「连接内变体」写法）：
+/// ① 目标表是 PG **继承父表**（`zc_id_stat-com-voucher` / `-tsp-voucher`）⇒
+///    `CREATE UNIQUE INDEX` 取的 ShareLock **波及继承子表**，与并发子表写
+///    （`UPDATE`/`INSERT`/`DELETE`）**必然死锁** —— PG 日志实测 1688 条「检测到死锁」中
+///    `CREATE UNIQUE INDEX` 出现 **75 次**为绝对主角；
+/// ② DDL 是**事务性**的 ⇒ 外层业务事务回滚会连带回滚索引创建 ⇒ 索引建不上、标志不置位
+///    ⇒ 下一次写路径重试 ⇒ **反复死锁**。
+///
+/// 补建**唯一通道** = 启动期 `ensure_voucher_idempotency(pool)`（autocommit 单语句 +
+/// `CONCURRENTLY`，不取排他锁）。运行期探测到缺失仅告警不阻断：缺失会弱化并发兜底
+/// （`ON CONFLICT (code)` 可能报 42P10），恢复方式 = 重启 Gateway 触发启动期自愈。
 pub async fn ensure_voucher_idempotency_tx(conn: &mut sqlx::PgConnection) -> Result<(), String> {
     if VOUCHER_IDEMPOTENCY_ENSURED.load(Ordering::Relaxed) {
         return Ok(());
     }
-    for ddl in VOUCHER_IDEMPOTENCY_DDL {
-        sqlx::query(sqlx::AssertSqlSafe(*ddl))
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| format!("voucher idempotency ddl: {e}"))?;
+    for index_name in VOUCHER_IDEMPOTENCY_INDEXES {
+        let valid: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_index i \
+             JOIN pg_class c ON c.oid = i.indexrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'isahl' AND c.relname = $1 AND i.indisvalid)",
+        )
+        .bind(index_name)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| format!("voucher 幂等索引探测失败: {e}"))?;
+        if !valid {
+            return Err(format!(
+                "voucher 幂等唯一索引缺失或无效: {index_name}（补建通道 = 启动期 \
+                 ensure_voucher_idempotency；MUST NOT 在业务事务内建——继承父表 DDL 会与子表写死锁、且随事务回滚）"
+            ));
+        }
     }
     VOUCHER_IDEMPOTENCY_ENSURED.store(true, Ordering::Relaxed);
     Ok(())

@@ -1,6 +1,6 @@
 name: alioth-gui
 description: "前端业务代码开发 — 类型 → API hooks → 页面组件 → 路由 → 视觉验证"
-version: "2.1"
+version: "2.3"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
@@ -27,7 +27,7 @@ tracks:
         gates:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/frontend/src/pages/*.tsx"
       - id: "1.4"
-        instruction: "Track 3 — 路由集成：App.tsx + ModuleLayout + i18n + theme.css。本步 MUST 同时补齐前端工程骨架（缺失才写，禁止覆盖已存在文件）：(A) package.json — 参照 Pre-Proc/WZ/Sources/Apps/Blocks/outgo-payment/frontend/package.json 的结构与依赖版本（react ^19.2.8、react-dom ^19.2.8、@tanstack/react-query ^5.101.4、jotai ^2.20.2、lucide-react、tailwind-merge、zod、react-router、single-spa、@alioth/{api,components,hooks,i18n,types} 均为 workspace:*；devDependencies 含 typescript、@types/react、@types/react-dom、vite、@vitejs/plugin-react、@alioth/config），name 用 @alioth/{module}-frontend，scripts.lint = tsc --noEmit；(B) tsconfig.json — compilerOptions.moduleResolution MUST 为 \"bundler\"（TS 7 已移除 node/node10 值，写 node 会触发 TS5108 门禁失败），其余选项参照 Framework/frontend/config/typescript/tsconfig.base.json（module ESNext、jsx react-jsx、strict、noEmit、isolatedModules、skipLibCheck、allowImportingTsExtensions、resolveJsonModule、include [\"src\"]）。完成后再写 App.tsx/ModuleLayout/i18n/theme.css。"
+        instruction: "Track 3 — 路由集成：App.tsx + ModuleLayout + i18n + theme.css。本步 MUST 同时补齐前端工程骨架（缺失才写，禁止覆盖已存在文件）：(A) package.json — 参照 Pre-Proc/WZ/Sources/Apps/Blocks/outgo-payment/frontend/package.json 的结构与依赖版本（react ^19.2.8、react-dom ^19.2.8、@tanstack/react-query ^5.101.4、jotai ^2.20.2、lucide-react、tailwind-merge、zod、react-router、single-spa、@alioth/{api,components,hooks,i18n,types} 先按 workspace:* 占位（随后由 ns-frontend-workspace.ts link --write 换轨为 link:<Framework>/frontend/<pkg>）；devDependencies 含 typescript、@types/react、@types/react-dom、vite、@vitejs/plugin-react、@alioth/config），name 用 @alioth/{module}-frontend，scripts.lint = tsc --noEmit；(B) tsconfig.json — compilerOptions.moduleResolution MUST 为 \"bundler\"（TS 7 已移除 node/node10 值，写 node 会触发 TS5108 门禁失败），其余选项参照 Framework/frontend/config/typescript/tsconfig.base.json（module ESNext、jsx react-jsx、strict、noEmit、isolatedModules、skipLibCheck、allowImportingTsExtensions、resolveJsonModule、include [\"src\"]）。完成后再写 App.tsx/ModuleLayout/i18n/theme.css。另（MUST — ADR D-045/D-046/D-047）：本前端目录为新落盘或改名时，MUST 登记 App 归属与平台 workspace 成员——bun scripts/ns/sync-app-block-ownership.ts {ns} --write → bun scripts/ns/ns-frontend-workspace.ts sync --write（+ link --write 换轨）→ ns 仓根 pnpm install --no-frozen-lockfile；MUST NOT 在本前端目录内执行 pnpm install（第二依赖 store）；登记链与禁止形态见 skill://alioth-gui §前端依赖供给与 App 隔离，判据门禁见步骤 1.6。"
         tools: [read_file, write_file, patch_file, file_diff, lint_file, openspec_status, http_get, web_search]
         schema: {type: object, required: [routing_integration]}
         gates:
@@ -55,5 +55,12 @@ tracks:
           - program: "bash"
             args: ["scripts/check/check-namespace-frontend.sh"]
             timeout_sec: 120
+          - program: "bun"
+            args: ["scripts/check/check-app-frontend-isolation.ts", "--fail", "--ns", "{ns}"]
+            timeout_sec: 120
 source:
-  content_sha256: 60b18c6e4799de1b8758e48742701fb93c11e70b0c7abb47ec3c240d329a0adf
+  content_sha256: 2510cb0581b2c61695ff8d432eeab68ca3b0b9397928fe4b3974e742e35331de
+  # 2026-10-11 重记：SKILL.md §OpenActivity 行改门禁归属（`check-activity-shell-sync.ts` 不存在 ⇒ 指向壳资产
+  #   activity-shell.tsx + `shell-scroll-ownership` 门禁）——change fix-stale-skill-refs；typed Track/Step 未变
+  # 2026-10-05 重记：SKILL.md 供给通道段改 ns 仓自持安装面（唯一通道 + 自愈单一实现 ns-fe-install.sh）——migrate-dev-selfheal-to-ns-store
+  # 2026-10-05 重记：SKILL.md 供给链改 ns 自持安装面（sync/link/ns 仓根 install）——move-ns-frontend-assembly-to-ns

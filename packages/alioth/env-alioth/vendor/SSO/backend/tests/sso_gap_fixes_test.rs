@@ -85,20 +85,29 @@ async fn ensure_ngac(pool: &PgPool) {
 
 /// 创建并绑定一个 admin 用户，返回 user_id。
 async fn ensure_admin(pool: &PgPool) -> i64 {
+    // 唯一身份基点 = username；email 唯一存储 = auth_user_emails（name/email 冗余列已下线）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'admin_gap', 'admin_gap', 'admin_gap@test.local', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'admin_gap', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(pool)
     .await
     .ok();
     let admin: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'admin_gap@test.local' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'admin_gap' LIMIT 1",
     )
     .fetch_one(pool)
     .await
     .expect("admin user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'admin_gap@test.local', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(admin)
+    .execute(pool)
+    .await
+    .ok();
 
     // policy class id 动态查询（o_name='default'），不可硬编码 1
     let pc_id: i64 = sqlx::query_scalar(
@@ -142,27 +151,38 @@ async fn notification_preferences_roundtrip() {
     common::setup_schema(&pool).await.expect("schema");
     let ast = test_auth_state();
 
-    // 准备一个测试用户
+    // 准备一个测试用户（唯一身份基点 = username；email 唯一存储 = auth_user_emails）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'np_user', 'np_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'np_user', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'np_user@alioth.test' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'np_user' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'np_user@alioth.test', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
 
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .configure(gateway_sso::auth::notification_preferences::configure_routes),
+            .service(
+                web::scope("/auth")
+                    .configure(gateway_sso::auth::notification_preferences::configure_routes),
+            ),
     )
     .await;
 
@@ -213,6 +233,12 @@ async fn notification_preferences_roundtrip() {
     let stored = stored.expect("notification_preferences should be stored");
     assert_eq!(stored["approval_enabled"], json!(true));
 
+    // 子行（邮箱）先行——auth_user_emails 入边 FK 无 ON DELETE CASCADE
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_id)
         .execute(&pool)
@@ -229,21 +255,29 @@ async fn scim_requires_authentication() {
     common::setup_schema(&pool).await.expect("schema");
     let ast = test_auth_state();
 
-    // 准备一个用户（用于合法令牌）
+    // 准备一个用户（用于合法令牌；唯一身份基点 = username，email 唯一存储 = auth_user_emails）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'scim_user', 'scim_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'scim_user', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'scim_user@alioth.test' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'scim_user' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'scim_user@alioth.test', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
 
     let app = test::init_service(
         App::new()
@@ -276,6 +310,12 @@ async fn scim_requires_authentication() {
         "SCIM with valid token should pass middleware"
     );
 
+    // 子行（邮箱）先行——auth_user_emails 入边 FK 无 ON DELETE CASCADE
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_id)
         .execute(&pool)
@@ -402,7 +442,11 @@ async fn idp_admin_crud() {
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = 'admin_gap@test.local'")
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email = 'admin_gap@test.local'")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = 'admin_gap'")
         .execute(&pool)
         .await
         .ok();
@@ -519,19 +563,27 @@ async fn pep_enforces_admin_and_audit_resources() {
 
     // admin 用户：绑定 admin UA（005 seed 的 admin UA 已关联 sso_admin/sso_audit OA，019）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
-         VALUES (isahl.gen_next_zuid(), 'pep_admin', 'pep_admin', 'pep_admin@test.local', 'active', true, NOW(), NOW()) \
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at) \
+         VALUES (isahl.gen_next_zuid(), 'pep_admin', 'active', true, NOW(), NOW()) \
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let admin_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'pep_admin@test.local' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'pep_admin' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .expect("admin user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'pep_admin@test.local', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(admin_id)
+    .execute(&pool)
+    .await
+    .ok();
     let admin_ua_id: i64 = sqlx::query_scalar(
         "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = 'admin' AND deleted_at IS NULL LIMIT 1",
     )
@@ -550,19 +602,27 @@ async fn pep_enforces_admin_and_audit_resources() {
 
     // 普通用户：仅默认 user UA（无 sso_admin/sso_audit 关联）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
-         VALUES (isahl.gen_next_zuid(), 'pep_regular', 'pep_regular', 'pep_regular@test.local', 'active', true, NOW(), NOW()) \
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at) \
+         VALUES (isahl.gen_next_zuid(), 'pep_regular', 'active', true, NOW(), NOW()) \
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let regular_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'pep_regular@test.local' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'pep_regular' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .expect("regular user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'pep_regular@test.local', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(regular_id)
+    .execute(&pool)
+    .await
+    .ok();
 
     let app = test::init_service(
         App::new()

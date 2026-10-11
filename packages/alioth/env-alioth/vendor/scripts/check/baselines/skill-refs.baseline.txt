@@ -1,0 +1,3 @@
+# 基线（ratchet，只减不增）：每行一键，`#` 起始为注释
+# rule_reference: openspec/specs/skill-ref-integrity/spec.md
+

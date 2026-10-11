@@ -15,11 +15,9 @@ pub struct ExemplarEfficiency {
     #[serde(with = "common::serde_zuid")]
     pub exemplar_id: i64,
     pub exemplar_name: String,
-    #[serde(with = "common::serde_zuid")]
+    // 计数字段非 id 语义 ⇒ 线上为数字（前端 `executionCount/completedCount/inFlightCount: number`）
     pub execution_count: i64,
-    #[serde(with = "common::serde_zuid")]
     pub completed_count: i64,
-    #[serde(with = "common::serde_zuid")]
     pub in_flight_count: i64,
     pub avg_duration_ms: f64,
     pub p50_duration_ms: f64,
@@ -34,7 +32,7 @@ pub struct NodeDuration {
     pub p95_ms: f64,
     pub p99_ms: f64,
     pub max_ms: f64,
-    #[serde(with = "common::serde_zuid")]
+    /// 样本数非 id 语义 ⇒ 线上为数字（前端 `sampleCount: number`）
     pub sample_count: i64,
 }
 
@@ -42,7 +40,7 @@ pub struct NodeDuration {
 #[serde(rename_all = "camelCase")]
 pub struct ApproverWorkload {
     pub approver_name: String,
-    #[serde(with = "common::serde_zuid")]
+    /// 待办数非 id 语义 ⇒ 线上为数字（前端 `pendingCount: number`）
     pub pending_count: i64,
     pub daily_avg: f64,
     pub avg_duration_ms: f64,
@@ -55,7 +53,8 @@ pub struct Bottleneck {
     pub instance_id: i64,
     pub flow_name: String,
     pub current_node: String,
-    #[serde(with = "common::serde_zuid")]
+    /// SLA 时长（小时，非 id 语义）⇒ 线上为数字，规约 `approval-analytics-api` 的
+    /// `slaHours: 24` 即此形
     pub sla_hours: i64,
     pub elapsed_hours: f64,
     pub exceeded_hours: f64,

@@ -1,0 +1,28 @@
+# openapi — 模型数据链路基础设施内核（框架面）
+#
+# 合规依据：openspec/specs/framework-scope-boundary R1 ② 类（Alioth 模型数据链路基础设施），
+# 登记于 scripts/check/.framework-crate-justification-baseline.tsv。
+# 单源判定：change extract-ns-service-kernels-demand-openapi（原 Alioth 与 WZ 各持一份实现，
+# 除内核文档头一行外逐字相同；ns 侧改为组合薄壳）。
+#
+# 依赖面按**实际使用**声明（usage-driven）：原 ns manifest 的 dotenvy / rust_decimal / thiserror
+# 在本 crate 源码与测试中零命中，故不带（dotenvy 属原 manifest 的死声明）。
+[package]
+name = "openapi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+actix-web = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+common = { path = "../common" }
+crud = { path = "../crud" }
+ontology-binding = { path = "../ontology-binding" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

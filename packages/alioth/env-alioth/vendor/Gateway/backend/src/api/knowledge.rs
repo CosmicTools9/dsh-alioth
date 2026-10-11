@@ -12,42 +12,28 @@
 //! 表名只来自本文件常量注册表（不接受用户输入表名）；关键词/实体 id 一律绑定参数。
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use common::scoped_search::{search_scoped, ScopeTable, ScopedRequest};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
-use crate::api::chat_sessions::adapters::db_llm_config::DbLlmConfigAdapter;
-use crate::api::chat_sessions::ports::LlmConfigPort;
+use crate::api::chat_sessions::turn;
 use crate::api::knowledge_expand;
 
-/// 静态域检索 SQL（编译期固化：表名是字面量，正文单一来源）
-macro_rules! knowledge_search_sql {
-    ($t:literal) => {
-        concat!(
-            "SELECT id, code, notice, comments FROM isahl.\"",
-            $t,
-            "\" \
-             WHERE deleted_at IS NULL \
-               AND EXISTS (SELECT 1 FROM unnest($1::text[]) AS term \
-                            WHERE notice ILIKE '%' || term || '%' \
-                               OR code ILIKE '%' || term || '%' \
-                               OR comments ILIKE '%' || term || '%') \
-             LIMIT $2"
-        )
-    };
-}
-
-/// 静态域 scope → 叶表 → 检索 SQL（仅登记**有写入方**的域：`zc_id_document` 全仓无生产者，不登记）。
-const STATIC_SCOPES: [(&str, &str, &str); 2] = [
-    (
-        "docu-accounting",
-        "zc_id_docu-accounting",
-        knowledge_search_sql!("zc_id_docu-accounting"),
-    ),
-    (
-        "file-document",
-        "zc_id_file-document",
-        knowledge_search_sql!("zc_id_file-document"),
-    ),
+/// 静态域 scope → 叶表注册表（表名/列名均为编译期字面量；匹配 notice/code/comments）。
+/// 仅登记**有写入方**的域：`zc_id_document` 全仓无生产者，不登记。
+const STATIC_SCOPES: &[ScopeTable] = &[
+    ScopeTable {
+        scope: "docu-accounting",
+        table: "zc_id_docu-accounting",
+        columns: &["notice", "code", "comments"],
+        level_column: None,
+    },
+    ScopeTable {
+        scope: "file-document",
+        table: "zc_id_file-document",
+        columns: &["notice", "code", "comments"],
+        level_column: None,
+    },
 ];
 
 /// 关系驱动的条文引用检索 SQL（编译期固化）
@@ -127,22 +113,6 @@ pub struct KnowledgeResp {
     pub total: usize,
 }
 
-/// scope 列表 → (叶表, 检索 SQL)（未知 scope 忽略；空列表 = 全部登记域）。
-fn resolve_static_scope_sqls(scopes: &[String]) -> Vec<(&'static str, &'static str)> {
-    if scopes.is_empty() {
-        return STATIC_SCOPES.iter().map(|(_, t, sql)| (*t, *sql)).collect();
-    }
-    scopes
-        .iter()
-        .filter_map(|scope| {
-            STATIC_SCOPES
-                .iter()
-                .find(|(name, _, _)| name == scope)
-                .map(|(_, t, sql)| (*t, *sql))
-        })
-        .collect()
-}
-
 /// entity → 关系路由（关系表 / 目标表 / 关系名 / 编译期 SQL）。
 fn resolve_relation(entity: &str) -> Option<&'static RelationRoute> {
     RELATIONS.iter().find(|r| r.entity == entity)
@@ -175,16 +145,12 @@ pub async fn knowledge_search(
     }
     let max_results = body.max_results.unwrap_or(5).clamp(1, 20) as i64;
     let scopes = body.scopes.as_deref().unwrap_or(&[]);
-    let table_sqls = resolve_static_scope_sqls(scopes);
 
     // 查询扩展（阶段一）：LLM 每次请求加载一次；仅对**首个关键词**扩展（主查询词），
     // 其余关键词原样参与——把单请求 LLM 调用限制在 ≤1 次（延迟与成本有界）。
     // 不可用 ⇒ 空扩展（降级为原词检索）。
     let locale = request_locale(&req);
-    let llm = match DbLlmConfigAdapter::new(pool.get_ref().clone())
-        .load_service()
-        .await
-    {
+    let llm = match turn::load_llm(pool.get_ref()).await {
         Ok(service) => Some(service),
         Err(e) => {
             common::telemetry::warn!("knowledge expand degraded: llm config unavailable: {}", e);
@@ -196,58 +162,53 @@ pub async fn knowledge_search(
         Some(service) => knowledge_expand::expand_keywords(service, &primary, &locale).await,
         None => Vec::new(),
     };
-    // 每个关键词的检索词表（有界）：主词 = 原词 ∪ 扩展词；其余词 = 自身。
-    // 请求级预算（design D2）：所有词表累计 MUST ≤ QUERY_MAX_TERMS。
+    // 检索词表（有界并集）：主词 = 原词 ∪ 扩展词；其余词 = 自身。
+    // 请求级预算（design D2）：全部词累计 MUST ≤ QUERY_MAX_TERMS。
     let mut budget = knowledge_expand::QUERY_MAX_TERMS;
-    let term_sets: Vec<Vec<String>> = body
-        .keywords
-        .iter()
-        .map(|keyword| {
-            let set = if keyword == &primary {
-                knowledge_expand::merge_terms(std::slice::from_ref(keyword), &expansions)
-            } else {
-                knowledge_expand::merge_terms(std::slice::from_ref(keyword), &[])
-            };
-            let set: Vec<String> = set.into_iter().take(budget).collect();
-            budget = budget.saturating_sub(set.len());
-            set
+    let mut terms: Vec<String> = Vec::new();
+    for keyword in &body.keywords {
+        let set = if keyword == &primary {
+            knowledge_expand::merge_terms(std::slice::from_ref(keyword), &expansions)
+        } else {
+            knowledge_expand::merge_terms(std::slice::from_ref(keyword), &[])
+        };
+        let set: Vec<String> = set.into_iter().take(budget).collect();
+        budget = budget.saturating_sub(set.len());
+        terms.extend(set);
+    }
+
+    // 检索/排序/分页/转义单源；词一律参数绑定（表名/列名来自编译期注册表）。
+    let page = search_scoped(
+        pool.get_ref(),
+        STATIC_SCOPES,
+        &ScopedRequest {
+            keywords: &terms,
+            scopes,
+            level: None,
+            limit: max_results,
+            offset: 0,
+        },
+    )
+    .await
+    .map_err(|e| actix_web::error::ErrorInternalServerError(format!("knowledge search: {e}")))?;
+
+    let hits: Vec<KnowledgeHit> = page
+        .hits
+        .into_iter()
+        .map(|hit| KnowledgeHit {
+            id: hit.id,
+            code: hit.code,
+            title: hit.title,
+            snippet: hit.body,
+            source_table: hit.source_table.to_string(),
+            relation: None,
+            via_chain: None,
         })
         .collect();
-
-    let mut hits: Vec<KnowledgeHit> = Vec::new();
-    'outer: for (table, sql) in &table_sqls {
-        // 词表形态：原词 ∪ 扩展词（有界）；表名与 SQL 均来自编译期常量注册表，词一律参数绑定。
-        for terms in &term_sets {
-            let rows =
-                sqlx::query_as::<_, (i64, Option<String>, Option<String>, Option<String>)>(*sql)
-                    .bind(terms)
-                    .bind(max_results)
-                    .fetch_all(pool.get_ref())
-                    .await
-                    .map_err(|e| {
-                        actix_web::error::ErrorInternalServerError(format!("knowledge search: {e}"))
-                    })?;
-            for (id, code, notice, comments) in rows {
-                if hits.iter().any(|hit| hit.id == id) {
-                    continue;
-                }
-                hits.push(KnowledgeHit {
-                    id,
-                    code,
-                    title: notice,
-                    snippet: comments,
-                    source_table: table.to_string(),
-                    relation: None,
-                    via_chain: None,
-                });
-                if hits.len() >= max_results as usize {
-                    break 'outer;
-                }
-            }
-        }
-    }
-    let total = hits.len();
-    Ok(HttpResponse::Ok().json(KnowledgeResp { hits, total }))
+    Ok(HttpResponse::Ok().json(KnowledgeResp {
+        hits,
+        total: page.total as usize,
+    }))
 }
 
 /// POST /api/knowledge/relations — 关系驱动的实体引用条文检索（有界多跳）。
@@ -627,12 +588,13 @@ mod db_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use common::scoped_search::resolve_scopes;
 
     fn scoped_tables(scopes: &[&str]) -> Vec<&'static str> {
         let owned: Vec<String> = scopes.iter().map(|s| (*s).to_string()).collect();
-        resolve_static_scope_sqls(&owned)
+        resolve_scopes(STATIC_SCOPES, &owned)
             .into_iter()
-            .map(|(table, _)| table)
+            .map(|t| t.table)
             .collect()
     }
 

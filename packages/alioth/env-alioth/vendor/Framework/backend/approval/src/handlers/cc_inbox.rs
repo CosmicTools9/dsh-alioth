@@ -13,9 +13,9 @@ use sqlx::PgPool;
 /// 抄送我的列表
 pub async fn cc_mine(pool: web::Data<PgPool>, req: HttpRequest) -> Result<HttpResponse, ApiError> {
     let user_id = context::require_auth(&req)?;
-    // 当前用户可解析身份（name/username 用于 engineer 匹配）
+    // 当前用户可解析身份（username/显示名用于 engineer 匹配）
     let me: Option<(String, String)> = sqlx::query_as::<_, (String, String)>(
-        r#"SELECT COALESCE(u.username,''), COALESCE(u.name,'') FROM isahl_auth.auth_users u
+        r#"SELECT COALESCE(u.username,''), COALESCE(u.display_name, u.username, '') FROM isahl_auth.auth_users u
            WHERE u.id = $1 AND u.is_active = TRUE"#,
     )
     .bind(user_id)

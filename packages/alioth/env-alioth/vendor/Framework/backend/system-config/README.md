@@ -17,7 +17,7 @@ AliothStudio 系统配置公共组件（Backend）。
 - **与物理表解耦**：只定义 `SystemConfigRepository` trait，不绑定具体表名和 schema。Gateway / Meta 各自实现并映射到各自的物理表。
 - **Schema 驱动**：预定义各分类的字段 Schema，前端可基于 Schema 动态渲染表单
 - **敏感数据加密**：credentials 中的敏感字段自动 AES-256-GCM 加密存储，前缀标记 `enc:`
-- **安全返回**：对外 API 返回脱敏数据（`SystemConfigSafeResponse`），内部服务通过 `get_full_config` 获取解密值
+- **安全返回**：对外 API 返回脱敏数据（`SystemConfigSafeResponse`）；运行期消费经 `common::config_resolution` 解析生效配置（含凭证解密，change fix-config-effective-resolution）
 - **泛型 Service**：`SystemConfigService<R>` 接受任意实现了 `SystemConfigRepository` 的类型
 
 ## 使用方式
@@ -44,10 +44,10 @@ struct MyRepo {
 
 #[async_trait]
 impl SystemConfigRepository for MyRepo {
-    async fn insert(&self, req: &CreateSystemConfigRequest) -> Result<SystemConfig, Error> { ... }
+    async fn insert(&self, req: &CreateSystemConfigRequest, actor_id: Option<i64>) -> Result<SystemConfig, Error> { ... }
     async fn find_by_id(&self, id: i64) -> Result<Option<SystemConfig>, Error> { ... }
     async fn list(&self, limit: i64, offset: i64) -> Result<Vec<SystemConfig>, Error> { ... }
-    async fn update(&self, id: i64, req: &UpdateSystemConfigRequest) -> Result<Option<SystemConfig>, Error> { ... }
+    async fn update(&self, id: i64, req: &UpdateSystemConfigRequest, actor_id: Option<i64>) -> Result<Option<SystemConfig>, Error> { ... }
     async fn soft_delete(&self, id: i64) -> Result<u64, Error> { ... }
     async fn find_by_code(&self, code: &str) -> Result<Option<SystemConfig>, Error> { ... }
 }
@@ -58,8 +58,9 @@ impl SystemConfigRepository for MyRepo {
 ```rust
 use alioth_system_config::configure_routes;
 
-let repo = MyRepo::new(pool);
-app.configure(|cfg| configure_routes(repo, cfg));
+let repo = MyRepo::new(pool.clone());
+let probes = system_config::probe::ProbeRegistry::new(); // 各类别探测器由宿主注入
+app.configure(|cfg| configure_routes(repo, pool, probes, cfg));
 ```
 
 路由前缀：`/system-config`

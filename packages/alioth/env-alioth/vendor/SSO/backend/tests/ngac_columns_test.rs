@@ -15,41 +15,46 @@ use sqlx::PgPool;
 async fn seed_column_policies(pool: &PgPool, user_id: i64, resource_type: &str, rights: &[&str]) {
     // 测试用户（fk_user 外键）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
     .bind(user_id)
-    .bind(format!("col-tester-{}", user_id))
     .bind(format!("col-test-{}", user_id))
     .execute(pool)
     .await
     .unwrap();
-    // policy class（default）
-    let pc: i64 = match sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_policy_class WHERE o_name='default-col-test'",
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap()
-    {
-        Some(id) => id,
-        None => sqlx::query_scalar(
-            "INSERT INTO isahl_auth.ngac_policy_class (o_name) VALUES ('default-col-test') RETURNING id",
-        )
-        .fetch_one(pool)
-        .await
-        .unwrap(),
-    };
+    // policy class（**按 user_id 唯一**：同文件 4 个测试并行，共享名字会在
+    // `ngac_policy_class_o_name_key` 上互撞 ⇒ 非确定性红，实测 39/117 行随机 panic）
+    let pc_name = format!("default-col-test-{user_id}");
+    let pc: i64 =
+        match sqlx::query_scalar("SELECT id FROM isahl_auth.ngac_policy_class WHERE o_name=$1")
+            .bind(&pc_name)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+        {
+            Some(id) => id,
+            None => sqlx::query_scalar(
+                "INSERT INTO isahl_auth.ngac_policy_class (o_name) VALUES ($1) RETURNING id",
+            )
+            .bind(&pc_name)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        };
+    let ua_name = format!("col-tester-{user_id}");
     let ua: i64 = match sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='col-tester'",
+        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name=$1 AND deleted_at IS NULL",
     )
+    .bind(&ua_name)
     .fetch_optional(pool)
     .await
     .unwrap()
     {
         Some(id) => id,
         None => sqlx::query_scalar(
-            "INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class) VALUES ('col-tester', $1) RETURNING id",
+            "INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class) VALUES ($1, $2) RETURNING id",
         )
+        .bind(&ua_name)
         .bind(pc)
         .fetch_one(pool)
         .await
@@ -118,23 +123,37 @@ async fn seed_column_policies(pool: &PgPool, user_id: i64, resource_type: &str, 
     .unwrap();
 }
 
-/// 清理测试播种数据
-async fn cleanup_column_policies(pool: &PgPool) {
-    sqlx::query("DELETE FROM isahl_auth.ngac_association WHERE fk_user_attribute IN (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='col-tester')")
-        .execute(pool).await.unwrap();
-    sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user_attribute IN (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='col-tester')")
-        .execute(pool).await.unwrap();
-    sqlx::query("DELETE FROM isahl_auth.ngac_object_attribute WHERE o_name LIKE '%-collection' AND fk_resource=0 AND resource_type LIKE 'coltest-%'")
-        .execute(pool).await.unwrap();
-    sqlx::query("DELETE FROM isahl_auth.ngac_user_attribute WHERE o_name='col-tester'")
+/// 清理测试播种数据（**按 user_id + resource_type 限定**：旧实现用全局名字/通配
+/// （'col-tester'、'col-test-%'）⇒ 并行测试互相清空对方夹具，实测非确定性红）。
+async fn cleanup_column_policies(pool: &PgPool, user_id: i64, resource_type: &str) {
+    let ua_name = format!("col-tester-{user_id}");
+    for sql in [
+        "DELETE FROM isahl_auth.ngac_association WHERE fk_user_attribute IN \
+         (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name=$1)",
+        "DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user_attribute IN \
+         (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name=$1)",
+    ] {
+        sqlx::query(sql).bind(&ua_name).execute(pool).await.unwrap();
+    }
+    sqlx::query(
+        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type=$1 AND fk_resource=0",
+    )
+    .bind(resource_type)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("DELETE FROM isahl_auth.ngac_user_attribute WHERE o_name=$1")
+        .bind(&ua_name)
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM isahl_auth.ngac_policy_class WHERE o_name='default-col-test'")
+    sqlx::query("DELETE FROM isahl_auth.ngac_policy_class WHERE o_name=$1")
+        .bind(format!("default-col-test-{user_id}"))
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username LIKE 'col-test-%'")
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = $1")
+        .bind(format!("col-test-{user_id}"))
         .execute(pool)
         .await
         .unwrap();
@@ -219,7 +238,7 @@ async fn columns_specific_read_right_returns_column() {
     );
     assert!(!columns.contains(&"secret".to_string()), "不应含未授权列");
 
-    cleanup_column_policies(&pool).await;
+    cleanup_column_policies(&pool, user_id, rt).await;
 }
 
 #[tokio::test]
@@ -236,7 +255,7 @@ async fn columns_wildcard_read_returns_all() {
         cols
     );
 
-    cleanup_column_policies(&pool).await;
+    cleanup_column_policies(&pool, user_id, rt).await;
 }
 
 #[tokio::test]

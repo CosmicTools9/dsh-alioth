@@ -43,24 +43,55 @@ use serde::{Deserialize, Serialize};
 
 use self::jwt::{decode_token_any, Claims};
 
+/// 公开前缀（`/auth/*`、`/api/auth/*`）下 **cookie 鉴权**端点的统一 CSRF 自检（design.md §4「自检面」）。
+///
+/// 这些端点在 `RequireAuth` 的 public 名单内（登录/注册/刷新/回调等），全局门不会对其执行 ⇒
+/// **各 handler MUST 在自身鉴权成功之后**调用本函数：`Some(resp)` ⇒ 短路返回该 403。
+///
+/// 无凭据可解析（未登录 / 首次登录）⇒ `None`（**不得**因「浏览器带着旧 cookie 去登录」而误伤登录
+/// 入口——登录 CSRF 不在本 change 语义面：请求尚无已认证会话可被冒用）。
+/// 开关/安全方法/豁免面（refresh、logout）由 `csrf_gate` 内部判定。
+pub(crate) fn csrf_self_check(req: &HttpRequest) -> Option<HttpResponse> {
+    let (_, source) = common::csrf::resolve_credential(req)?;
+    common::csrf::csrf_gate(req, source)
+}
+
 /// 从请求中解析当前 JWT 用户 id。
 ///
 /// 与 `webauthn::extract_user_id` 语义一致（接收 `&AuthState`），作为 SSO 内提取
 /// 当前用户的统一入口；调用方需自行处理返回 `Err(HttpResponse)` 的提前返回。
 pub(crate) fn extract_user_id(req: &HttpRequest, state: &AuthState) -> Result<i64, HttpResponse> {
-    let token = req
-        .cookie("access_token")
-        .map(|c| c.value().to_string())
-        .or_else(|| {
-            req.headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|a| a.strip_prefix("Bearer "))
-                .map(|t| t.to_string())
-        });
+    let (id, _source) = extract_user_id_with_source(req, state)?;
+    // CSRF 自检（design.md §4「自检面」）：本函数是**公开前缀**（`/auth/*`）下 cookie 鉴权端点的
+    // 统一入口（webauthn / portal / social 等），这些端点不在 `RequireAuth` 受保护面内 ⇒ 门在此执行。
+    // 无凭据（未登录）或安全方法、豁免面由 `csrf_gate` 内部判定 ⇒ 不误伤登录入口。
+    if let Some(resp) = csrf_self_check(req) {
+        return Err(resp);
+    }
+    Ok(id)
+}
 
-    let token = match token {
-        Some(t) => t,
+/// 提取访问令牌并给出**产出该令牌的提取分支**对应的凭据来源（CSRF 判据唯一输入，
+/// design.md §3「实际完成鉴权的凭据来源」——MUST NOT 另立「存在某 cookie 即 Cookie」
+/// 类启发式）。
+///
+/// **单一实现**（spec-audit F1 根因）：委托 `common::csrf::resolve_credential`，顺序 =
+/// `auth` capability「访问令牌提取优先级」（scoped cookie → Bearer → 环境 cookie）。
+/// 本仓此前的第二份顺序（cookie → Bearer、无 scope）已删除——它与 `RequireAuth` 走
+/// `jwt::extract_token`（经 common，scope 化）本就冲突，同一应用两条鉴权链优先级不同。
+pub(crate) fn extract_token_with_source(
+    req: &HttpRequest,
+) -> Option<(String, common::csrf::CredentialSource)> {
+    common::csrf::resolve_credential(req)
+}
+
+/// [`extract_user_id`] 的带来源形态（CSRF 插入点用；与基函数同一提取/验签链路）。
+pub(crate) fn extract_user_id_with_source(
+    req: &HttpRequest,
+    state: &AuthState,
+) -> Result<(i64, common::csrf::CredentialSource), HttpResponse> {
+    let (token, source) = match extract_token_with_source(req) {
+        Some(v) => v,
         None => {
             return Err(HttpResponse::Unauthorized()
                 .json(serde_json::json!({ "error": "No authentication token" })));
@@ -76,7 +107,7 @@ pub(crate) fn extract_user_id(req: &HttpRequest, state: &AuthState) -> Result<i6
     };
 
     match claims.sub.parse::<i64>() {
-        Ok(id) => Ok(id),
+        Ok(id) => Ok((id, source)),
         Err(_) => Err(HttpResponse::Unauthorized()
             .json(serde_json::json!({ "error": "Invalid user ID in token" }))),
     }

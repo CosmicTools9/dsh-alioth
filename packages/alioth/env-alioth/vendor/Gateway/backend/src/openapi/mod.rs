@@ -1,11 +1,14 @@
 //! OpenAPI 文档端点（openapi-external-access）
 //!
 //! - `GET /api/openapi.json` — OAS3 文档（须认证：L1 API Key / 服务令牌 /
-//!   自然人令牌；无免认证公开端点）。文档从 `Pre-Proc/{ns}/openapi.json`
-//!   静态读取（由 `scripts/openapi-generate.ts` 生成）。
-//! - `GET /api/openapi/` — Swagger UI playground（须认证，同文档端点）。
-//!   前端内嵌 swagger-ui（CDN），`url` 指向 `/api/openapi.json`，
-//!   授权用 `Authorization: Bearer`（服务令牌自动从 localStorage 读取）。
+//!   自然人令牌；无免认证公开端点）。文档从 **ns 基目录**下的 `openapi.json`
+//!   静态读取（基目录判定单源 = `crate::paths::resolve_ns_base_dir`，与 host
+//!   `load_extensions` 同函数；产物由 `scripts/openapi-generate.ts` 生成，
+//!   生成逻辑单源 `scripts/lib/openapi-doc.ts`，发布包内路径 = `Deploy/{ns}/openapi.json`）。
+//! - `GET /api/openapi/` — 内嵌 **离线 playground**（须认证，同文档端点）。
+//!   单文件 HTML 经 `include_str!` 编译进二进制（零 CDN、零外网依赖）；
+//!   前端 `fetch /api/openapi.json` 按服务段分组渲染，Bearer 令牌取自 localStorage，
+//!   支持 try-it 同源调用。
 //!
 //! 安全：两个端点均在 `/api` scope 内，经 NgacEnforcer PEP 认证；
 //! scope 校验对文档端点豁免（`read:openapi` 由 openapi.json 元数据标注，
@@ -13,117 +16,140 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 
+/// 离线 playground（单文件；无外部资源引用——门禁/规约见 openapi-external-access
+/// :: oas3-doc-offline-playground）。
+const PLAYGROUND_HTML: &str = include_str!("playground.html");
+
+pub mod governance;
 pub mod idempotency;
 pub mod metering;
 pub mod outbound_admin;
+pub mod payment;
+pub mod projection;
 
-/// 返回 OAS3 文档 JSON。
-pub async fn get_openapi_json(_req: HttpRequest) -> HttpResponse {
+/// 过滤结果缓存：(产物 mtime 毫秒, 投影指纹, 过滤后 body)——避免每请求重解析大产物。
+static FILTERED_DOC_CACHE: std::sync::LazyLock<std::sync::RwLock<Option<(u64, String, String)>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
+
+/// 返回 OAS3 文档 JSON（按产品投影集裁剪；`info.description` 追加生效口径行）。
+///
+/// 规约：`openapi-external-access :: product-projection-wiring`——投影集为空 ⇒ 全量候选
+/// （文档与接线前逐字一致）；判定单源 = `projection::ProductProjection`（与 PEP 同源消费）。
+pub async fn get_openapi_json(_req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> HttpResponse {
     let namespace = std::env::var("NAMESPACE").unwrap_or_default();
-    // resolve_preproc_path 同款探测：Deploy/{ns} → Pre-Proc/{ns} → 相对探测
-    let base = resolve_openapi_base(&namespace);
+    // ns 基目录判定单源 = paths::resolve_ns_base_dir（DEPLOY_PATH 即 base、不再二次拼接
+    // namespace；与 host load_extensions 同函数）——修复旧实现 DEPLOY_PATH 双拼
+    // （产出 Deploy/{ns}/{ns}/openapi.json ⇒ 生产形态恒 404）。
+    let base = crate::paths::resolve_ns_base_dir(&namespace);
     let path = std::path::Path::new(&base).join("openapi.json");
-    match std::fs::read_to_string(&path) {
-        Ok(doc) => HttpResponse::Ok()
-            .content_type("application/json")
-            .body(doc),
+    let doc_text = match std::fs::read_to_string(&path) {
+        Ok(doc) => doc,
         Err(e) => {
             log::error!("openapi.json not found at {}: {}", path.display(), e);
-            HttpResponse::NotFound().json(serde_json::json!({
+            return HttpResponse::NotFound().json(serde_json::json!({
                 "error": "OPENAPI_NOT_FOUND",
                 "message": "Run `bun scripts/openapi-generate.ts --ns <namespace>` first",
-            }))
+            }));
+        }
+    };
+
+    let mtime_ms = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let projection = projection::global_cache().get(pool.get_ref()).await;
+    let fingerprint = format!(
+        "{}|{}",
+        projection.is_full(),
+        projection.prefixes().join(",")
+    );
+    if let Ok(guard) = FILTERED_DOC_CACHE.read() {
+        if let Some((cached_mtime, cached_fp, body)) = guard.as_ref() {
+            if *cached_mtime == mtime_ms && cached_fp == &fingerprint {
+                return HttpResponse::Ok()
+                    .content_type("application/json")
+                    .body(body.clone());
+            }
         }
     }
+
+    let mut doc: serde_json::Value = match serde_json::from_str(&doc_text) {
+        Ok(v) => v,
+        Err(e) => {
+            // 产物异常：原样返回（文档端点 MUST NOT 因裁剪面失败而不可用）
+            log::error!("openapi.json parse failed at {}: {}", path.display(), e);
+            return HttpResponse::Ok()
+                .content_type("application/json")
+                .body(doc_text);
+        }
+    };
+    if !projection.is_full() {
+        let visible = projection.filter_doc(&mut doc);
+        log::debug!(
+            "openapi.json: product projection applied ({} visible paths, {} prefixes)",
+            visible,
+            projection.prefix_count()
+        );
+    }
+    append_status_line(&mut doc, &projection.status_line());
+    let body = serde_json::to_string(&doc).unwrap_or(doc_text);
+    if let Ok(mut guard) = FILTERED_DOC_CACHE.write() {
+        *guard = Some((mtime_ms, fingerprint, body.clone()));
+    }
+    HttpResponse::Ok()
+        .content_type("application/json")
+        .body(body)
 }
 
-/// 返回 Swagger UI playground（HTML）。
+/// 在 `info.description` 追加生效口径行（MUST 声明；幂等——重复追加前先剥离旧行）。
+fn append_status_line(doc: &mut serde_json::Value, line: &str) {
+    let Some(info) = doc.get_mut("info").and_then(|v| v.as_object_mut()) else {
+        return;
+    };
+    let current = info
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let base = current
+        .lines()
+        .filter(|l| !l.starts_with("产品投影") && !l.starts_with("无产品投影"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let merged = if base.trim().is_empty() {
+        line.to_string()
+    } else {
+        format!("{}\n{}", base.trim_end(), line)
+    };
+    info.insert("description".to_string(), serde_json::Value::String(merged));
+}
+
+/// 产品投影状态（管理面只读视图；PDP 资源 `openapi_admin:0`）——
+/// 文档/授权面生效口径的唯一权威来源（reuses `projection` 缓存，零额外查询）。
+pub async fn get_projection_status(pool: web::Data<sqlx::PgPool>) -> HttpResponse {
+    let projection = projection::global_cache().get(pool.get_ref()).await;
+    HttpResponse::Ok().json(serde_json::json!({
+        "full": projection.is_full(),
+        "prefixes": projection.prefixes(),
+        "status_line": projection.status_line(),
+    }))
+}
+
+/// 返回离线 playground（HTML；单文件内嵌，MUST NOT 引用外部 CDN）。
 pub async fn get_swagger_ui(_req: HttpRequest) -> HttpResponse {
-    let html = r#"<!DOCTYPE html>
-<html lang="zh">
-<head>
-  <meta charset="UTF-8">
-  <title>AliothStudio OpenAPI Playground</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
-  <style>
-    body { margin: 0; font-family: -apple-system, sans-serif; }
-    #topbar {
-      padding: 10px 20px; background: #1a1a2e; color: #fff;
-      display: flex; align-items: center; gap: 12px;
-    }
-    #topbar h1 { font-size: 16px; margin: 0; flex: 1; }
-    #topbar input { padding: 6px 10px; border-radius: 4px; border: none; width: 320px; }
-    #topbar button { padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; }
-    .hint { padding: 6px 20px; background: #fffbe6; font-size: 12px; color: #614700; }
-  </style>
-</head>
-<body>
-  <div id="topbar">
-    <h1>AliothStudio OpenAPI Playground</h1>
-    <input id="token" type="password" placeholder="Bearer token（服务令牌 / API Key 兑换）" />
-    <button onclick="applyToken()">应用 Token</button>
-  </div>
-  <div class="hint">
-    获取令牌：<code>POST /api/auth/token</code>（client_credentials，body:
-    <code>grant_type=client_credentials&amp;client_id=...&amp;client_secret=...</code>）
-    或 <code>POST /api/auth/authenticate</code>（Authorization: Bearer ak_xxx）。
-    令牌输入后点「应用 Token」，即可调试下方端点；scope 不足返回 403。
-  </div>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script>
-    function applyToken() {
-      const t = document.getElementById('token').value.trim();
-      localStorage.setItem('openapi_token', t);
-      location.reload();
-    }
-    const token = localStorage.getItem('openapi_token') || '';
-    if (token) { document.getElementById('token').value = token; }
-    window.ui = SwaggerUIBundle({
-      url: '/api/openapi.json',
-      dom_id: '#swagger-ui',
-      deepLinking: true,
-      presets: [SwaggerUIBundle.presets.apis],
-      requestInterceptor: (req) => {
-        if (token) {
-          req.headers['Authorization'] = 'Bearer ' + token;
-        }
-        return req;
-      },
-    });
-  </script>
-</body>
-</html>"#;
-    HttpResponse::Ok().content_type("text/html").body(html)
-}
-
-/// 探测 openapi.json 基础目录（与 main.rs resolve_preproc_path 同优先级）。
-fn resolve_openapi_base(namespace: &str) -> String {
-    if let Ok(dep) = std::env::var("DEPLOY_PATH") {
-        if !dep.is_empty() {
-            return format!("{}/{}", dep.trim_end_matches('/'), namespace);
-        }
-    }
-    if let Ok(pp) = std::env::var("PREPROC_APPS_PATH") {
-        if !pp.is_empty() {
-            return format!("{}/{}", pp.trim_end_matches('/'), namespace);
-        }
-    }
-    // 自动探测：Pre-Proc/{ns}
-    for cand in ["Pre-Proc", "../Pre-Proc", "../../Pre-Proc"] {
-        let p = format!("{}/{}", cand, namespace);
-        if std::path::Path::new(&p).exists() {
-            return p;
-        }
-    }
-    format!("Pre-Proc/{}", namespace)
+    HttpResponse::Ok()
+        .content_type("text/html")
+        .body(PLAYGROUND_HTML)
 }
 
 /// 注册 OpenAPI 路由（在 /api scope 内，经 PEP 认证）。
 ///
 /// 授权模型（refactor-openapi-admin-ngac-pdp）：PEP 统一决策——
 /// usage 系列 → `openapi_analytics:0`，scope-catalog / outbound → `openapi_admin:0`
-/// （map_resource 特判 + 迁移 029 OA 种子）；handler 内不再做任何 admin 检查。
+/// （map_resource 特判 + OA 种子 seed-ngac-07-openapi-admin-analytics-oas.sql）；
+/// handler 内不再做任何 admin 检查。
 pub fn configure_routes(cfg: &mut web::ServiceConfig, pool: sqlx::PgPool) {
     cfg.route("/openapi.json", web::get().to(get_openapi_json))
         .route("/openapi/", web::get().to(get_swagger_ui))
@@ -134,6 +160,24 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig, pool: sqlx::PgPool) {
             web::get().to(get_outbound_usage_report),
         )
         .route("/openapi/scope-catalog", web::get().to(get_scope_catalog))
+        .route(
+            "/openapi/projection-status",
+            web::get().to(get_projection_status),
+        )
+        .route(
+            "/openapi/provider-catalog",
+            web::get().to(get_provider_catalog),
+        )
+        // 发起收款（change add-openapi-payment-channel）：金额取自计费聚合单源
+        .route(
+            "/openapi/billing/pay",
+            web::post().to(payment::post_billing_pay),
+        )
+        // 到账回调（第二阶段）：公开路径 + 服务侧验签补偿（无 JWT；见 host 公开路径白名单）
+        .route(
+            "/openapi/billing/notify",
+            web::post().to(payment::post_billing_notify),
+        )
         .service(web::scope("/openapi").configure(outbound_admin::register))
         .app_data(web::Data::new(pool));
 }
@@ -204,7 +248,7 @@ pub async fn get_outbound_usage_report(
 /// （action ∈ read/create/update/delete，与 PEP 判定格式一致）与
 /// OpenAPI 产品资源类型（configs/sales/purchases/mades —— registry 未注册，
 /// 但 PEP map_resource service 分支按 entity 段推导 `{action}:{entity}`，
-/// OA 由迁移 031 seed，目录 MUST 与 PEP 推导并集一致）的并集，
+/// OA 由 seed-ngac-08-openapi-product-oas.sql 播种，目录 MUST 与 PEP 推导并集一致）的并集，
 /// 再与 `api_clients.scopes` 现有授权值并集；每项含授权 client 数与来源。
 /// 授权：PEP → `openapi_admin:0`。
 pub async fn get_scope_catalog(_req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> HttpResponse {
@@ -212,7 +256,7 @@ pub async fn get_scope_catalog(_req: HttpRequest, pool: web::Data<sqlx::PgPool>)
     const ACTIONS: [&str; 4] = ["read", "create", "update", "delete"];
     // OpenAPI 产品 CRUD 实体（/api/service/openapi/{entity}，管理面）：
     // PEP map_resource service 分支按 entity 段推导 {entity}:0，scope 推导
-    // 同实体名 {action}:{entity}（seed-openapi-product-oa，迁移 031 OA）。
+    // 同实体名 {action}:{entity}（seed-ngac-08-openapi-product-oas.sql OA）。
     const OPENAPI_PRODUCT_ENTITIES: [&str; 4] = ["configs", "sales", "purchases", "mades"];
     let registry = ngac_contract::ResourceRegistry::new().with_alioth_defaults();
     let mut derived: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -270,6 +314,27 @@ pub async fn get_scope_catalog(_req: HttpRequest, pool: web::Data<sqlx::PgPool>)
         })
         .collect();
     HttpResponse::Ok().json(serde_json::json!({ "scopes": scopes }))
+}
+
+/// GET /api/openapi/provider-catalog
+///
+/// provider 目录：**已装注册表**的只读视图（`outbound_client::provider`）。唯一数据源 =
+/// 适配器面装载结果（`build.rs` 编译指令驱动的 `install`）——MUST NOT 在平台侧另建 provider
+/// 清单（配置文件 / 表 / 常量表）。
+///
+/// `installed` 与 `providers.is_empty()` 是两个**独立事实**：「装载未执行」（平台模板档空装配）
+/// 与「本构建零适配器」MUST 可区分——后者恒 `installed=true`。授权：PEP → `openapi_admin:0`。
+///
+/// 规约：`openspec/specs/openapi-external-access :: outbound-provider-catalog-and-membership-check`。
+pub async fn get_provider_catalog(_req: HttpRequest) -> HttpResponse {
+    let installed = outbound_client::provider::installed();
+    let providers: Vec<&'static str> = outbound_client::provider::registry()
+        .map(|r| r.ids())
+        .unwrap_or_default();
+    HttpResponse::Ok().json(serde_json::json!({
+        "installed": installed,
+        "providers": providers,
+    }))
 }
 
 /// GET /api/openapi/usage?client_id=...&days=7
@@ -546,6 +611,7 @@ mod route_registration_tests {
             "/api/openapi/usage?days=7",
             "/api/openapi/usage/outbound?days=7",
             "/api/openapi/scope-catalog",
+            "/api/openapi/provider-catalog",
         ] {
             let req = test::TestRequest::get().uri(uri).to_request();
             let resp = test::call_service(&app, req).await;
@@ -557,5 +623,30 @@ mod route_registration_tests {
                 resp.status()
             );
         }
+        // POST 端点（发起收款）：路由存在即非 404（无注册行时为 503，方法不匹配为 405）
+        let req = test::TestRequest::post()
+            .uri("/api/openapi/billing/pay")
+            .set_json(serde_json::json!({ "client_id": "c1", "month": "2026-01" }))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_ne!(
+            resp.status().as_u16(),
+            404,
+            "/api/openapi/billing/pay 应被路由（非 404），实际 {}",
+            resp.status()
+        );
+
+        // POST 端点（到账回调，公开路径）：路由存在即非 404（无签名头时为 400，无注册行时为 503）
+        let req = test::TestRequest::post()
+            .uri("/api/openapi/billing/notify")
+            .set_json(serde_json::json!({}))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_ne!(
+            resp.status().as_u16(),
+            404,
+            "/api/openapi/billing/notify 应被路由（非 404），实际 {}",
+            resp.status()
+        );
     }
 }

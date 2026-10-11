@@ -1,0 +1,14 @@
+[package]
+name = "ngac-decision"
+version = "0.1.0"
+edition = "2021"
+description = "NGAC 决策核心：策略图 + (UA,OA) 对求值 + deny-overrides 合并 + 决策序 + conditions 求值（纯函数，无 IO）——SSO PDP 与 Framework 内层门的单一实现（openspec extract-ngac-decision-core）"
+
+[lib]
+name = "ngac_decision"
+
+[dependencies]
+dashmap = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

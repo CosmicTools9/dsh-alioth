@@ -238,8 +238,19 @@ where
                 }
             };
 
-            // Build request context
-            let user_id = claims.sub.parse().unwrap_or(0);
+            // Build request context（主体解析 fail-closed：非自然人主体 id ⇒ 401，MUST NOT
+            // 降级为 user_id=0；判定唯一实现 = common::context::natural_subject_id）
+            let Some(user_id) = crate::context::natural_subject_id(&claims.sub) else {
+                log::warn!(
+                    "NgacPep: sub 非自然人主体 id（fail-closed，拒绝注入上下文）: {}",
+                    claims.sub
+                );
+                let response = HttpResponse::Unauthorized().json(error_body(
+                    "INVALID_TOKEN",
+                    "Subject is not a natural-person principal",
+                ));
+                return Ok(req.into_response(response).map_into_right_body());
+            };
             let context =
                 RequestContext::with_username(user_id, claims.username.clone(), claims.username);
 
@@ -274,17 +285,10 @@ fn verify_token(token: &str, public_key_pem: &str) -> Result<Claims, jsonwebtoke
 }
 
 fn extract_token(req: &actix_web::HttpRequest) -> Option<String> {
-    if let Some(cookie) = req.cookie("access_token") {
-        let value = cookie.value().trim();
-        if !value.is_empty() {
-            return Some(value.to_string());
-        }
-    }
-    req.headers()
-        .get(actix_web::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|auth| auth.strip_prefix("Bearer "))
-        .map(|s| s.trim().to_string())
+    // 单一实现（change implement-csrf-protection design.md §3 / spec-audit F1）：
+    // 委托 `crate::csrf::extract_token`（= `resolve_credential`，scoped cookie → Bearer →
+    // 环境 cookie）。本处此前的 cookie→Bearer 顺序是仓内第二份优先级实现，已删除。
+    crate::csrf::extract_token(req)
 }
 
 fn error_body(code: &str, message: &str) -> serde_json::Value {
@@ -588,41 +592,9 @@ impl RateLimitMiddleware {
         }
     }
 
-    /// per-client 限流（openapi-external-access）：以服务令牌的 `svc_user_id`
-    /// 为限流 key（不同 client 互不影响）；无令牌/自然人回退 per-IP。
-    ///
-    /// 与 per_ip 不同，key 从 Authorization Bearer JWT 的 `svc_user_id` claim
-    /// 提取（不验签——限流 key 无安全语义，PEP 后续验签兜底；仅用于隔离）。
-    pub fn per_client(path_prefixes: &[&str], capacity: f64, refill_rate: f64) -> Self {
-        Self {
-            limiter: RateLimiter::new(capacity, refill_rate),
-            key_extractor: |req: &ServiceRequest| {
-                let ip = req
-                    .connection_info()
-                    .realip_remote_addr()
-                    .unwrap_or("unknown")
-                    .to_string();
-                let auth = req
-                    .headers()
-                    .get(actix_web::http::header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("");
-                let Some(token) = auth.strip_prefix("Bearer ") else {
-                    return ip;
-                };
-                match jwt_claim(token, "svc_user_id").and_then(|v| v.as_i64()) {
-                    Some(uid) if uid > 0 => format!("client:{}", uid),
-                    _ => ip,
-                }
-            },
-            cost: 1.0,
-            path_prefixes: path_prefixes.iter().map(|s| s.to_string()).collect(),
-        }
-    }
-
     /// per-user 限流（file-manager 上传防滥用，SECURITY_SPEC §4：20 req/min/user）：
     /// 以 JWT `sub` claim（自然用户 id，String）为限流 key；无令牌/解析失败回退 per-IP。
-    /// 与 per_client 同模式：不验签解码（限流 key 无安全语义，PEP 后续验签兜底）。
+    /// 不验签解码（限流 key 无安全语义，PEP 后续验签兜底）。
     pub fn per_user_any(path_prefixes: &[&str], capacity: f64, refill_rate: f64) -> Self {
         Self {
             limiter: RateLimiter::new(capacity, refill_rate),

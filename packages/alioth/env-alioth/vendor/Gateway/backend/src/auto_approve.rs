@@ -43,11 +43,21 @@ const BATCH_LIMIT: i64 = 200;
 pub struct AutoApproveHandler {
     pool: PgPool,
     bus: std::sync::Arc<dyn common::event_bus::DomainEventBus>,
+    /// 结果通知通道（注册审批通过 → 申请人站内信；`None` = 不投递，仅留痕）
+    messaging: Option<std::sync::Arc<dyn common::messaging::MessagingService>>,
 }
 
 impl AutoApproveHandler {
-    pub fn new(pool: PgPool, bus: std::sync::Arc<dyn common::event_bus::DomainEventBus>) -> Self {
-        Self { pool, bus }
+    pub fn new(
+        pool: PgPool,
+        bus: std::sync::Arc<dyn common::event_bus::DomainEventBus>,
+        messaging: Option<std::sync::Arc<dyn common::messaging::MessagingService>>,
+    ) -> Self {
+        Self {
+            pool,
+            bus,
+            messaging,
+        }
     }
 
     /// 待自动通过的实例 id 集：注册类 code 且无终态主状态桥。
@@ -121,6 +131,7 @@ impl ScheduledHandler for AutoApproveHandler {
                 Some(SYSTEM_USER_ID),
                 Some(AUTO_APPROVE_OPINION.to_string()),
                 Some(&self.bus),
+                self.messaging.as_ref(),
             )
             .await;
             if resp.success {

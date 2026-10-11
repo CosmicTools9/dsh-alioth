@@ -21,12 +21,101 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use chrono::Utc;
 use serde::Serialize;
 use sqlx::PgPool;
 
 use super::matrix::ancestor_closure;
 use super::*;
 use crate::ngac::pip::{Pip, PostgresPip};
+
+/// 审查（用户视图）读取的集合级 OA 行：`label_code` 供 §2.7 密级上限批量判定。
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct CollectionOaRow {
+    id: i64,
+    resource_type: String,
+    fk_policy_class: Option<i64>,
+    ancestor_ids: Vec<i64>,
+    label_code: Option<String>,
+}
+
+/// 分级（密级）上限的批量数据（NGAC_SPEC §2.7）——审查视图消费。
+///
+/// 与 `decide_access` / RLS 列表**同一判据**（`common::ngac_org::label_clearance_denies_rule`）；
+/// 命中的行以 **denied** 呈现（审查 DTO 无独立密级维度），与 `decide` 的 Deny 一致。
+/// 非白名单资源类型 / 无资源标签 ⇒ 不介入。
+struct LabelCeilingData {
+    whitelist: std::collections::HashSet<String>,
+    label_ranks: HashMap<String, i32>,
+    ua_clearance: HashMap<i64, i32>,
+}
+
+impl LabelCeilingData {
+    async fn load(pool: &PgPool) -> Self {
+        let whitelist: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT jsonb_array_elements_text(c.scope->'resource_types') \
+               FROM isahl_auth.org_policy_class c \
+              WHERE c.deleted_at IS NULL AND c.state = 'active' AND c.scope IS NOT NULL",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+        let mut label_ranks: HashMap<String, i32> = HashMap::new();
+        let mut ua_clearance: HashMap<i64, i32> = HashMap::new();
+        if !whitelist.is_empty() {
+            for (code, rank) in sqlx::query_as::<_, (String, i32)>(
+                "SELECT code, rank FROM isahl_auth.org_policy_label \
+                  WHERE deleted_at IS NULL AND is_active",
+            )
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+            {
+                label_ranks.insert(code, rank);
+            }
+            for (id, rank) in sqlx::query_as::<_, (i64, i32)>(
+                "SELECT ua.id, l.rank FROM isahl_auth.ngac_user_attribute ua \
+                   JOIN isahl_auth.org_policy_label l \
+                     ON l.code = (ua.property ->> 'clearance') AND l.deleted_at IS NULL AND l.is_active \
+                  WHERE ua.deleted_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+            {
+                ua_clearance.insert(id, rank);
+            }
+        }
+        Self {
+            whitelist,
+            label_ranks,
+            ua_clearance,
+        }
+    }
+
+    /// 该资源类型 + 该资源标签 + 该 UA 闭包是否命中密级上限。
+    fn denies(
+        &self,
+        resource_type: &str,
+        res_label_code: Option<&str>,
+        ua_closure: &[i64],
+    ) -> bool {
+        if !self.whitelist.contains(resource_type) {
+            return false;
+        }
+        let res_rank = res_label_code
+            .and_then(|c| self.label_ranks.get(c))
+            .copied();
+        let subj_rank = ua_closure
+            .iter()
+            .filter_map(|id| self.ua_clearance.get(id))
+            .copied()
+            .max();
+        ngac_host::label_clearance_denies_rule(true, res_rank, subj_rank)
+    }
+}
 
 /// 审查端点错误：区分 404（用户不存在）与 500（加载/DB 失败）。
 #[derive(Debug)]
@@ -179,7 +268,8 @@ fn deny_overrides_decision(
     access_right: &str,
     ctx: &ConditionContext,
 ) -> Option<bool> {
-    let is_admin = ctx.user_ua_names.iter().any(|n| n == "admin");
+    let is_admin =
+        ngac_host::attr_names_include_admin(ctx.user_ua_names.iter().map(String::as_str));
     let pg = pdp.policy_graph();
     match pdp
         .evaluate_merge_in(&pg, ua_closure, oa_closure, access_right, ctx, is_admin)
@@ -199,18 +289,23 @@ impl Pdp {
         user_id: i64,
     ) -> Result<UserAccessReview, ReviewError> {
         // 用户存在性先行（404 语义）；再 ensure_policy_loaded 取一致版本。
-        let user: Option<(i64, Option<String>, Option<String>)> =
-            sqlx::query_as("SELECT id, username, email FROM isahl_auth.auth_users WHERE id = $1")
-                .bind(user_id)
-                .fetch_optional(pip.pool())
-                .await?;
+        let user: Option<(i64, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT u.id, u.username, \
+                    (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                      WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                      ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email \
+             FROM isahl_auth.auth_users u WHERE u.id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(pip.pool())
+        .await?;
         let (uid, username, email) = match user {
             Some(row) => row,
             None => return Err(ReviewError::UserNotFound(user_id)),
         };
 
         self.ensure_policy_loaded(pip).await?;
-        let version = self.policy_version.load(Ordering::Acquire);
+        let version = ngac_host::Evaluator::global().version();
         let cache_key = format!("user:{}:{}", user_id, version);
         {
             let cache = REVIEW_CACHE.lock().unwrap();
@@ -266,10 +361,11 @@ impl Pdp {
             .collect();
 
         // 3. 集合级 OA（fk_resource = 0）逐个 resource_type 求有效权限
-        let collection_oas: Vec<(i64, String, Option<i64>, Vec<i64>)> = sqlx::query_as(
+        let collection_oas: Vec<CollectionOaRow> = sqlx::query_as(
             r#"
             SELECT id, COALESCE(resource_type, '') AS resource_type, fk_policy_class,
-                   COALESCE(ancestor_ids, '{}'::bigint[]) AS ancestor_ids
+                   COALESCE(ancestor_ids, '{}'::bigint[]) AS ancestor_ids,
+                   property ->> 'label' AS label_code
             FROM isahl_auth.ngac_object_attribute
             WHERE deleted_at IS NULL AND fk_resource = 0
             ORDER BY resource_type, id
@@ -286,27 +382,51 @@ impl Pdp {
             .map(|u| u.o_name.clone())
             .collect::<Vec<_>>();
         let mut permissions: Vec<ReviewPermission> = Vec::new();
-        for (oa_id, resource_type, fk_pc, oa_ancestors_direct) in collection_oas {
+        let ceiling = LabelCeilingData::load(pool).await;
+        for row in collection_oas {
+            let (oa_id, resource_type, fk_pc, oa_ancestors_direct, oa_label) = (
+                row.id,
+                row.resource_type,
+                row.fk_policy_class,
+                row.ancestor_ids,
+                row.label_code,
+            );
             let oa_ancestor_map: HashMap<i64, Vec<i64>> =
                 [(oa_id, oa_ancestors_direct)].into_iter().collect();
             let oa_closure = ancestor_closure(oa_id, &oa_ancestor_map);
-            let ctx = ConditionContext {
-                now: Utc::now(),
-                user_ua_names: user_ua_names.clone(),
-                oa_closure_names: oa_closure
-                    .iter()
-                    .filter_map(|id| ua_name.get(id).cloned())
-                    .collect(),
-            };
+            let oa_closure_names: Vec<String> = oa_closure
+                .iter()
+                .filter_map(|id| ua_name.get(id).cloned())
+                .collect();
             let mut allowed: Vec<String> = Vec::new();
             let mut denied: Vec<String> = Vec::new();
             for ar in pg.access_rights.iter() {
+                // 逐动作上下文（tasks 1.3）：用户作用域审查面同源注入 rhai 求值器；
+                // 审查面仅集合级 OA（`fk_resource = 0`）⇒ `resource = "{resource_type}:0"`
+                // （与 `decide` 对该 resource_type 集合级资源的判定一致）。
+                let ctx = ConditionContext {
+                    now: Utc::now(),
+                    user_ua_names: user_ua_names.clone(),
+                    oa_closure_names: oa_closure_names.clone(),
+                    rhai_eval: Some(ngac_host::rhai_condition_evaluator(
+                        user_id,
+                        format!("{resource_type}:0"),
+                        ar.o_name.clone(),
+                    )),
+                };
                 match deny_overrides_decision(self, &ua_closure_ids, &oa_closure, &ar.o_name, &ctx)
                 {
                     Some(true) => allowed.push(ar.o_name.clone()),
                     Some(false) => denied.push(ar.o_name.clone()),
                     None => {}
                 }
+            }
+            // 分级（密级）上限（NGAC_SPEC §2.7）：命中 ⇒ 该行授权整体按 deny 呈现
+            // （与 decide 对该 resource_type 集合级资源 `rt:0` 的判定一致）。
+            if ceiling.denies(&resource_type, oa_label.as_deref(), &ua_closure_ids) {
+                denied.append(&mut allowed);
+                denied.sort();
+                denied.dedup();
             }
             if !allowed.is_empty() || !denied.is_empty() {
                 permissions.push(ReviewPermission {
@@ -359,7 +479,7 @@ impl Pdp {
         fk_resource: i64,
     ) -> Result<ResourceAccessReview, ReviewError> {
         self.ensure_policy_loaded(pip).await?;
-        let version = self.policy_version.load(Ordering::Acquire);
+        let version = ngac_host::Evaluator::global().version();
         let cache_key = format!("resource:{}:{}:{}", resource_type, fk_resource, version);
         {
             let cache = REVIEW_CACHE.lock().unwrap();
@@ -376,11 +496,19 @@ impl Pdp {
 
         // 1. 目标 OA（(resource_type, fk_resource) 唯一约束 → 至多一行）
         #[allow(clippy::type_complexity)] // sqlx 行类型
-        let oa: Option<(i64, String, Option<i64>, Vec<i64>, Option<String>)> = sqlx::query_as(
+        let oa: Option<(
+            i64,
+            String,
+            Option<i64>,
+            Vec<i64>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx::query_as(
             r#"
             SELECT id, o_name, fk_policy_class,
                    COALESCE(ancestor_ids, '{}'::bigint[]) AS ancestor_ids,
-                   resource_identifier
+                   resource_identifier,
+                   property ->> 'label' AS label_code
             FROM isahl_auth.ngac_object_attribute
             WHERE deleted_at IS NULL AND resource_type = $1 AND fk_resource = $2
             "#,
@@ -393,14 +521,13 @@ impl Pdp {
         let mut holders: Vec<ReviewHolder> = Vec::new();
         let mut oa_ids: Vec<i64> = Vec::new();
         let mut resource_identifier: Option<String> = None;
-        // 展示名（NGAC_SPEC §2.2 解析链；单类型批量查询失败静默降级）
-        let rt_set: std::collections::HashSet<String> =
-            [resource_type.to_string()].into_iter().collect();
-        let meta_names = crate::ngac::display::meta_display_names(pool, &rt_set).await;
+        // 展示名（NGAC_SPEC §2.2 解析链）：链 2（`isahl_meta` 查询）已删（2026-09-29，容器边界）
+        let meta_names: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         let mut display_name =
             crate::ngac::display::resolve_resource_type_display(resource_type, &meta_names);
 
-        if let Some((oa_id, oa_name, _oa_pc, oa_ancestors_direct, oa_identifier)) = oa {
+        if let Some((oa_id, oa_name, _oa_pc, oa_ancestors_direct, oa_identifier, oa_label)) = oa {
             resource_identifier = oa_identifier.clone();
             display_name = crate::ngac::display::resolve_display_name(
                 Some(fk_resource),
@@ -432,6 +559,7 @@ impl Pdp {
             let oa_name_map: HashMap<i64, String> =
                 [(oa_id, oa_name.clone())].into_iter().collect();
             let pg = self.policy_graph();
+            let ceiling = LabelCeilingData::load(pool).await;
             for (ua_id, ua_name, ua_pc, ua_ancestors_direct) in uas {
                 let ua_ancestor_map: HashMap<i64, Vec<i64>> =
                     [(ua_id, ua_ancestors_direct)].into_iter().collect();
@@ -447,6 +575,7 @@ impl Pdp {
                         .iter()
                         .filter_map(|id| oa_name_map.get(id).cloned())
                         .collect(),
+                    rhai_eval: None,
                 };
                 let mut allowed: Vec<String> = Vec::new();
                 let mut denied: Vec<String> = Vec::new();
@@ -457,6 +586,12 @@ impl Pdp {
                         Some(false) => denied.push(ar.o_name.clone()),
                         None => {}
                     }
+                }
+                // 分级（密级）上限（NGAC_SPEC §2.7）：命中 ⇒ 该 holder 行按 deny 呈现
+                if ceiling.denies(resource_type, oa_label.as_deref(), &ua_closure) {
+                    denied.append(&mut allowed);
+                    denied.sort();
+                    denied.dedup();
                 }
                 if allowed.is_empty() && denied.is_empty() {
                     continue;
@@ -501,6 +636,27 @@ impl Pdp {
                                 expires_at: None,
                             });
                         }
+                    }
+                }
+
+                // 属权持有者（NGAC_SPEC §2.2.6）：对**本资源**由 ownership policy 派生该 UA 的
+                // 用户（owner/benefit/permit/access 四路反向解析）——否则属权授予在审查面漏报。
+                // 唯一实现 = `common::ngac_org::ownership_derived_user_holders`（禁第二份 SQL）。
+                let ownership_holders = common::ngac_org::ownership_derived_user_holders(
+                    pool,
+                    resource_type,
+                    fk_resource,
+                    ua_id,
+                )
+                .await?;
+                for (id, username) in ownership_holders {
+                    if !users.iter().any(|u| u.id == id) {
+                        users.push(ReviewHolderUser {
+                            id,
+                            username,
+                            // 属权派生持有跟随资源行（无时间窗语义）
+                            expires_at: None,
+                        });
                     }
                 }
 

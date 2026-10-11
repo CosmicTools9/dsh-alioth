@@ -156,11 +156,10 @@ roJB3RHF1LfIsaCxcnVep0snC4+8StUixIjfLAZ8Mc8+uqa43ndeNEFm
     /// 创建测试用户并返回其 id（同时清理钩子由调用方负责）。
     async fn insert_test_user(pool: &PgPool, suffix: &str) -> i64 {
         sqlx::query_scalar(
-            "INSERT INTO isahl_auth.auth_users (name, email, password_hash, status) \
-             VALUES ($1, $2, 'argon2-placeholder', 'active') RETURNING id",
+            "INSERT INTO isahl_auth.auth_users (username, password_hash, status) \
+             VALUES ($1, 'argon2-placeholder', 'active') RETURNING id",
         )
         .bind(format!("introspect_test_{}", suffix))
-        .bind(format!("introspect_test_{}@example.com", suffix))
         .fetch_one(pool)
         .await
         .expect("插入测试用户失败")

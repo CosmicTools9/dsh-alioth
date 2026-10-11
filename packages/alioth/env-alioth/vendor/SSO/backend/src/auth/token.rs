@@ -59,6 +59,8 @@ fn bad_request(error: &str, description: &str) -> HttpResponse {
 ///    - client 未配置 scope（旧客户端兼容）→ 放行请求的全部 scope；
 ///    - 否则仅保留授予子集，若含未授予 scope → 400 `invalid_scope`。
 /// 6. 签发 access_token（`sub = client:<client_id>`，无刷新令牌）。
+/// 7. best-effort 更新 `api_clients.last_used_at`（审计列；失败不影响签发）。
+///    规约：openapi-external-access :: client-credentials-last-used-tracking。
 pub async fn token_handler(
     pool: web::Data<PgPool>,
     state: web::Data<AuthState>,
@@ -75,9 +77,9 @@ pub async fn token_handler(
     let client_id = req.client_id.as_deref().unwrap_or("");
     let client_secret = req.client_secret.as_deref().unwrap_or("");
 
-    // 1. 查询 client（含 secret 散列、授予 scope 与服务用户）
-    let row: Option<(String, Vec<String>, i64)> = sqlx::query_as(
-        "SELECT secret_hash, scopes, fk_service_user \
+    // 1. 查询 client（含 id / secret 散列 / 授予 scope / 服务用户）
+    let row: Option<(i64, String, Vec<String>, i64)> = sqlx::query_as(
+        "SELECT id, secret_hash, scopes, fk_service_user \
          FROM isahl_auth.api_clients \
          WHERE client_id = $1 AND enabled AND deleted_at IS NULL",
     )
@@ -86,7 +88,7 @@ pub async fn token_handler(
     .await
     .unwrap_or(None);
 
-    let (secret_hash, granted, svc_user_id) = match row {
+    let (client_row_id, secret_hash, granted, svc_user_id) = match row {
         Some(r) => r,
         None => return unauthorized(),
     };
@@ -170,6 +172,23 @@ pub async fn token_handler(
             });
         }
     };
+
+    // 4. 更新 last_used_at（审计列：供管理面识别长期未用/僵尸凭据）。
+    //    best-effort——失败仅告警，MUST NOT 影响签发（与 API Key 链路 `api_key.rs` 同语义）；
+    //    仅**成功签发**路径执行（前述 401/400 分支已提前返回）。
+    //    规约：openapi-external-access :: client-credentials-last-used-tracking。
+    if let Err(e) =
+        sqlx::query("UPDATE isahl_auth.api_clients SET last_used_at = NOW() WHERE id = $1")
+            .bind(client_row_id)
+            .execute(pool.get_ref())
+            .await
+    {
+        log::warn!(
+            "token: update last_used_at failed for client '{}' (ignored): {}",
+            client_id,
+            e
+        );
+    }
 
     let scope_str = effective.join(" ");
     HttpResponse::Ok().json(serde_json::json!({

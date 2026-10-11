@@ -4,6 +4,8 @@
 //! and identity providers. All handlers enforce admin NGAC user attribute check.
 
 pub mod api_clients;
+pub mod billing;
+pub mod chat_agents;
 pub mod handlers;
 pub mod oidc_clients;
 pub mod plans;
@@ -186,6 +188,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 "/api-reconcile",
                 web::get().to(subscriptions::reconcile_export),
             )
+            .route("/api-billing", web::get().to(billing::usage_billing))
             // ─── NGAC access policies (associations) ────────────────
             .route(
                 "/ngac/access-rights",
@@ -202,6 +205,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .route(
                 "/ngac/associations",
                 web::post().to(handlers::create_association),
+            )
+            // 差异收缩（先于 {id} resource 注册，避免 `revoke` 被 {id} 吞掉）
+            .route(
+                "/ngac/associations/revoke",
+                web::post().to(handlers::revoke_association),
             )
             .route(
                 "/ngac/associations/{id}",
@@ -251,12 +259,24 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
                 web::get().to(handlers::get_ngac_preview_file),
             )
             // ─── NGAC 图快照（refactor-ngac-admin-nl-graph，只读聚合） ──
-            .route("/ngac/graph", web::get().to(handlers::get_ngac_graph)),
-    )
-    // 权限申请管理端点（add-ngac-access-request D3，require_admin）
-    .configure(crate::ngac::access_request::configure_admin_routes)
-    // 绑定申请管理端点（add-ngac-binding-request D2，require_admin）
-    .configure(crate::ngac::binding_request::configure_admin_routes)
-    // 组织规范资产端点（ngac-org-phase-d1，D-1 org-policy-assets；require_admin）
-    .configure(crate::ngac::org_policy::configure_admin_routes);
+            .route("/ngac/graph", web::get().to(handlers::get_ngac_graph))
+            // ─── NGAC 家族（**MUST 注册在本 scope 内**）───────────────────
+            // 契约（fix-ngac-admin-route-mount）：NGAC 管理面端点族一律挂 `/api/admin/ngac/*`
+            // （规约 §4.1b/§4.1c 与前端 `api/admin-*.ts` 的 BASE='/api/admin' 同源）。
+            // 历史缺陷：这些 `.configure(...)` 曾链在 **ServiceConfig**（scope 之外）⇒ 生产
+            // 组合（`lib.rs::configure_protected_routes` 直接 `.configure(admin::configure)`）
+            // 下家族落在**根路径** `/ngac/*`，而文档与前端指向 `/api/admin/ngac/*` ⇒ 404；
+            // 单测因再包一层 `/api/admin` 而"恰好"命中，掩盖了分歧（2026-10-10 探针实测）。
+            // MUST NOT 依赖调用方再包一层 `/api/admin`。
+            // ─── 权限申请管理端点（add-ngac-access-request D3，require_admin）
+            .configure(crate::ngac::access_request::configure_admin_routes)
+            // ─── 绑定申请管理端点（add-ngac-binding-request D2，require_admin）
+            .configure(crate::ngac::binding_request::configure_admin_routes)
+            // ─── 权限规范端点（ngac-org-phase-d1，D-1 org-policy-assets；require_admin）
+            .configure(crate::ngac::org_policy::configure_admin_routes)
+            // ─── 义务配置面（change wire-org-policy-declaration-fields 切片 C，require_admin）
+            .configure(crate::ngac::obligation_admin::configure_admin_routes)
+            // ─── NGAC 图分析面（establish-age-graph-analysis-plane：分析端点族 + SoD 冲突对管理）
+            .configure(crate::ngac::analysis::configure_admin_routes),
+    );
 }

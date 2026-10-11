@@ -39,12 +39,24 @@ import { parseModule } from "meriyah";
 // 解析链：Bun.Transpiler 结构化擦除 TS 类型（tsx→js）→ meriyah ESTree AST。
 // 避免依赖 TypeScript compiler API 与聚合 parser 桶文件的重模块图。
 
+import { defineCheck } from "./lib/check-interface";
+
+const META_CHANNEL = "__meta";
+
+class ExitSignal {
+  constructor(readonly rc: number) {}
+}
+let SINK: { out: (l: string) => void; err: (l: string) => void } = {
+  out: (l) => process.stdout.write(`${l}\n`),
+  err: (l) => process.stderr.write(`${l}\n`),
+};
+const exit: (rc: number) => never = (rc) => {
+  throw new ExitSignal(rc);
+};
+
 const __dirname = resolve(fileURLToPath(import.meta.url), "..");
 const REPO_ROOT = resolve(__dirname, "../..");
 const BASELINE_PATH = join(REPO_ROOT, "scripts/check/.nav-hrefs-baseline.txt");
-const STRICT = process.argv.includes("--fail");
-const nsFlagIdx = process.argv.indexOf("--ns");
-const NS_FILTER = nsFlagIdx >= 0 ? process.argv[nsFlagIdx + 1] : undefined;
 
 const KEBAB_SINGLE = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 const tsxTranspiler = new Bun.Transpiler({ loader: "tsx" });
@@ -77,21 +89,25 @@ function loadBaseline(): Map<string, string> {
 
 /** 模块自 baseline sha 起是否有变更（与 guard-pre-delivery.py 的 _has_changed_since 同语义） */
 function hasChangedSince(dirRel: string, sha: string): boolean {
-  const r = spawnSync("git", ["diff", "--name-only", `${sha}..HEAD`, "--", dirRel], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    timeout: 30000,
-  });
+  const r = spawnSync(
+    "git",
+    ["diff", "--name-only", `${sha}..HEAD`, "--", dirRel],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      timeout: 30000,
+    },
+  );
   return (r.stdout ?? "").trim().length > 0;
 }
 
 /** 收集所有模块前端目录（镜像布局优先 Apps/Modules，回退扁平 Sources/Modules）；--ns 时限定单个 namespace */
-function discoverModuleFrontends(): string[] {
+function discoverModuleFrontends(nsFilter?: string): string[] {
   const out: string[] = [];
   const preProc = join(REPO_ROOT, "Pre-Proc");
   if (!existsSync(preProc)) return out;
   for (const ns of readdirSync(preProc)) {
-    if (NS_FILTER && ns !== NS_FILTER) continue;
+    if (nsFilter && ns !== nsFilter) continue;
     const candidates = [
       join(preProc, ns, "Sources", "Apps", "Modules"),
       join(preProc, ns, "Sources", "Modules"),
@@ -114,7 +130,10 @@ interface NavItemLit {
 }
 
 /** 通用 ESTree 遍历（先序） */
-function walk(node: EstNode | null | undefined, visit: (n: EstNode) => void): void {
+function walk(
+  node: EstNode | null | undefined,
+  visit: (n: EstNode) => void,
+): void {
   if (!node || typeof node !== "object") return;
   visit(node);
   for (const value of Object.values(node)) {
@@ -127,7 +146,10 @@ function walk(node: EstNode | null | undefined, visit: (n: EstNode) => void): vo
 }
 
 /** 从 tsx 源码提取 useNavItems 返回数组中的 { id, href } 字面量；null = 未找到 createModuleLayout */
-function extractNavItems(source: string, filePath: string): { items: NavItemLit[]; hasUseNavItems: boolean } | null {
+function extractNavItems(
+  source: string,
+  filePath: string,
+): { items: NavItemLit[]; hasUseNavItems: boolean } | null {
   const js = tsxTranspiler.transformSync(source);
   const ast = parseModule(js, { next: true }) as unknown as EstNode;
 
@@ -169,7 +191,11 @@ function extractNavItems(source: string, filePath: string): { items: NavItemLit[
     if (body.type === "BlockStatement") {
       for (const stmt of (body.body as EstNode[]) ?? []) {
         const arg = stmt.argument as EstNode | undefined;
-        if (stmt.type === "ReturnStatement" && arg && arg.type === "ArrayExpression") {
+        if (
+          stmt.type === "ReturnStatement" &&
+          arg &&
+          arg.type === "ArrayExpression"
+        ) {
           readArrayLiteral(arg);
         }
       }
@@ -185,17 +211,28 @@ function extractNavItems(source: string, filePath: string): { items: NavItemLit[
     ) {
       hasCreateModuleLayout = true;
       walk(n, (inner) => {
-        if (inner.type === "Property" && propName(inner) === "useNavItems") hasUseNavItems = true;
+        if (inner.type === "Property" && propName(inner) === "useNavItems")
+          hasUseNavItems = true;
       });
     }
     // function useNavItems() { return [...] }
-    if (n.type === "FunctionDeclaration" && ((n.id as EstNode)?.name as string) === "useNavItems") {
+    if (
+      n.type === "FunctionDeclaration" &&
+      ((n.id as EstNode)?.name as string) === "useNavItems"
+    ) {
       visitFunctionBody(n.body as EstNode);
     }
     // const useNavItems = () => [...] / () => { return [...] }
-    if (n.type === "VariableDeclarator" && ((n.id as EstNode)?.name as string) === "useNavItems") {
+    if (
+      n.type === "VariableDeclarator" &&
+      ((n.id as EstNode)?.name as string) === "useNavItems"
+    ) {
       const init = n.init as EstNode | undefined;
-      if (init && (init.type === "ArrowFunctionExpression" || init.type === "FunctionExpression")) {
+      if (
+        init &&
+        (init.type === "ArrowFunctionExpression" ||
+          init.type === "FunctionExpression")
+      ) {
         visitFunctionBody(init.body as EstNode);
       }
     }
@@ -203,6 +240,41 @@ function extractNavItems(source: string, filePath: string): { items: NavItemLit[
 
   if (!hasCreateModuleLayout) return null;
   return { items, hasUseNavItems };
+}
+
+/**
+ * 派生装配组 id ↔ `blockNavKeys.groups` 键覆盖（2026-10-09 实测缺陷固化）。
+ *
+ * 背景：`deriveNavItems(assembly, keyMap, t)` 的组文案取 `keyMap.groups[group] || group`，
+ * 而 `group` 来自**派生件** `generated/block-assembly.ts`（真相源 module.json#navigation.groups[].id）。
+ * 键名写错（如历史遗留 `g1`）时不报错、静默回退**裸 id**上屏（实测 `inventory-wz` 侧栏分组头渲染 "default"）。
+ */
+function auditNavGroupKeys(feDir: string, moduleRel: string): Finding[] {
+  const genPath = join(feDir, "src", "generated", "block-assembly.ts");
+  if (!existsSync(genPath)) return [];
+  const gen = readFileSync(genPath, "utf-8");
+  const navIdx = gen.indexOf("navigation:");
+  if (navIdx < 0) return [];
+  const groups = /groups:\s*\[([\s\S]*?)\]/.exec(gen.slice(navIdx));
+  const ids = groups
+    ? [...groups[1].matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1])
+    : [];
+  if (ids.length === 0) return [];
+  const appPath = join(feDir, "src", "App.tsx");
+  const app = existsSync(appPath) ? readFileSync(appPath, "utf-8") : "";
+  const block = /blockNavKeys\s*=\s*\{([\s\S]*?)\n\};/.exec(app);
+  const gsec = block ? /groups:\s*\{([^}]*)\}/.exec(block[1]) : null;
+  const keys = gsec
+    ? [...gsec[1].matchAll(/['"]?([\w-]+)['"]?\s*:/g)].map((m) => m[1])
+    : [];
+  return ids
+    .filter((id) => !keys.includes(id))
+    .map((id) => ({
+      level: "fail" as const,
+      module: moduleRel,
+      item: id,
+      message: `派生装配组 id "${id}" 未被 blockNavKeys.groups 覆盖 ⇒ 侧栏渲染裸 id（须映射到 i18n 键）`,
+    }));
 }
 
 function auditModule(feDir: string, baseline: Map<string, string>): Finding[] {
@@ -216,17 +288,27 @@ function auditModule(feDir: string, baseline: Map<string, string>): Finding[] {
   if (!existsSync(appTsx)) {
     return [{ level: "skip", module: moduleRel, message: "无 src/App.tsx" }];
   }
+  const groupFindings = auditNavGroupKeys(feDir, moduleRel).map(demote);
   const extracted = extractNavItems(readFileSync(appTsx, "utf-8"), appTsx);
   if (!extracted) {
-    return [{ level: "skip", module: moduleRel, message: "未使用 createModuleLayout" }];
+    return [
+      {
+        level: "skip",
+        module: moduleRel,
+        message: "未使用 createModuleLayout",
+      },
+      ...groupFindings,
+    ];
   }
   if (!extracted.hasUseNavItems) {
     return [
       demote({
         level: "warn",
         module: moduleRel,
-        message: "createModuleLayout 未提供 useNavItems（可能走 blockAssembly 派生，v1 不校验）",
+        message:
+          "createModuleLayout 未提供 useNavItems（可能走 blockAssembly 派生，v1 不校验）",
       }),
+      ...groupFindings,
     ];
   }
   if (extracted.items.length === 0) {
@@ -234,8 +316,10 @@ function auditModule(feDir: string, baseline: Map<string, string>): Finding[] {
       demote({
         level: "warn",
         module: moduleRel,
-        message: "useNavItems 存在但未提取到字面量数组（可能定义在外部文件或动态构建）",
+        message:
+          "useNavItems 存在但未提取到字面量数组（可能定义在外部文件或动态构建）",
       }),
+      ...groupFindings,
     ];
   }
 
@@ -246,13 +330,25 @@ function auditModule(feDir: string, baseline: Map<string, string>): Finding[] {
   for (const item of extracted.items) {
     const label = item.id ?? item.href ?? "(匿名)";
     if (!item.id) {
-      findings.push(demote({ level: "fail", module: moduleRel, item: label, message: "缺少 id 字面量" }));
+      findings.push(
+        demote({
+          level: "fail",
+          module: moduleRel,
+          item: label,
+          message: "缺少 id 字面量",
+        }),
+      );
       continue;
     }
     seenIds.set(item.id, (seenIds.get(item.id) ?? 0) + 1);
     if (item.hrefComputed) {
       findings.push(
-        demote({ level: "warn", module: moduleRel, item: label, message: "href 为计算表达式，无法静态判定" }),
+        demote({
+          level: "warn",
+          module: moduleRel,
+          item: label,
+          message: "href 为计算表达式，无法静态判定",
+        }),
       );
       continue;
     }
@@ -262,7 +358,8 @@ function auditModule(feDir: string, baseline: Map<string, string>): Finding[] {
           level: "fail",
           module: moduleRel,
           item: item.id,
-          message: "缺少 href 字面量（Gateway Navigation 直接消费 item.href，缺失会产生 /undefined 跳转）",
+          message:
+            "缺少 href 字面量（Gateway Navigation 直接消费 item.href，缺失会产生 /undefined 跳转）",
         }),
       );
       continue;
@@ -294,33 +391,111 @@ function auditModule(feDir: string, baseline: Map<string, string>): Finding[] {
   }
   for (const [id, count] of seenIds) {
     if (count > 1) {
-      findings.push(demote({ level: "fail", module: moduleRel, item: id, message: `id 重复 ×${count}` }));
+      findings.push(
+        demote({
+          level: "fail",
+          module: moduleRel,
+          item: id,
+          message: `id 重复 ×${count}`,
+        }),
+      );
     }
   }
+  findings.push(...auditNavGroupKeys(feDir, moduleRel).map(demote));
   if (findings.length === 0) {
-    findings.push({ level: "pass", module: moduleRel, message: `${extracted.items.length} 项全部合规` });
+    findings.push({
+      level: "pass",
+      module: moduleRel,
+      message: `${extracted.items.length} 项全部合规`,
+    });
   }
   return findings;
 }
 
-// ── main ──────────────────────────────────────────────────────────────
-const baseline = loadBaseline();
-const frontends = discoverModuleFrontends();
-const all: Finding[] = [];
-for (const fe of frontends) all.push(...auditModule(fe, baseline));
-
-const counts: Record<Level, number> = { fail: 0, warn: 0, skip: 0, baseline: 0, pass: 0 };
-for (const f of all) {
-  counts[f.level] += 1;
-  const tag = f.level.toUpperCase().padEnd(8);
-  console.log(`[${tag}] ${f.module}${f.item ? ` :: ${f.item}` : ""} — ${f.message}`);
+interface NavHrefsOutcome {
+  out: string[];
+  err: string[];
+  rc: number;
 }
-console.log(
-  `\n汇总: ${frontends.length} 模块前端 | pass=${counts.pass} fail=${counts.fail} warn=${counts.warn} baseline=${counts.baseline} skip=${counts.skip}`,
-);
 
-if (STRICT && counts.fail > 0) {
-  console.error(`\nFAIL: ${counts.fail} 条 fail 级违规（基线外）`);
-  process.exit(1);
+/** 判定面（模块前端 nav href 契约审计；`--ns` 限定 ns）；输出经 SINK 记录，报告面回放。 */
+export function navHrefsState(
+  strictMode: boolean,
+  nsFilter: string | null,
+): NavHrefsOutcome {
+  const out: string[] = [];
+  const err: string[] = [];
+  const saved = SINK;
+  SINK = { out: (l) => out.push(l), err: (l) => err.push(l) };
+  try {
+    // ── main ──────────────────────────────────────────────────────────────
+    const STRICT = strictMode;
+    const NS_FILTER = nsFilter ?? undefined;
+    const baseline = loadBaseline();
+    const frontends = discoverModuleFrontends(NS_FILTER);
+    const all: Finding[] = [];
+    for (const fe of frontends) all.push(...auditModule(fe, baseline));
+
+    const counts: Record<Level, number> = {
+      fail: 0,
+      warn: 0,
+      skip: 0,
+      baseline: 0,
+      pass: 0,
+    };
+    for (const f of all) {
+      counts[f.level] += 1;
+      const tag = f.level.toUpperCase().padEnd(8);
+      SINK.out(
+        `[${tag}] ${f.module}${f.item ? ` :: ${f.item}` : ""} — ${f.message}`,
+      );
+    }
+    SINK.out(
+      `\n汇总: ${frontends.length} 模块前端 | pass=${counts.pass} fail=${counts.fail} warn=${counts.warn} baseline=${counts.baseline} skip=${counts.skip}`,
+    );
+
+    if (STRICT && counts.fail > 0) {
+      SINK.err(`\nFAIL: ${counts.fail} 条 fail 级违规（基线外）`);
+      exit(1);
+    }
+    exit(0);
+  } catch (e) {
+    if (!(e instanceof ExitSignal)) throw e;
+    return { out, err, rc: e.rc };
+  } finally {
+    SINK = saved;
+  }
+  return { out, err, rc: 0 };
 }
-process.exit(0);
+
+const gate = defineCheck({
+  id: "nav-hrefs",
+  label: "check-nav-hrefs",
+  valueFlags: ["--ns"],
+  predicate: () => [],
+  report: (ctx, res, io) => {
+    const s = navHrefsState(res.fail, ctx.valueFlags.get("--ns")?.[0] ?? null);
+    for (const line of s.out) io.out(`${line}\n`);
+    for (const line of s.err) io.err(`${line}\n`);
+    return s.rc;
+  },
+  selfTest() {
+    // 判据自证：两次只读求值等价
+    const a = navHrefsState(true, null);
+    const b = navHrefsState(true, null);
+    if (
+      a.rc !== b.rc ||
+      a.out.join("") !== b.out.join("") ||
+      a.err.join("") !== b.err.join("")
+    ) {
+      process.stderr.write(
+        `❌ nav-hrefs self-test 失败：两次求值不等价（rc=${a.rc}/${b.rc}）\n`,
+      );
+      return 1;
+    }
+    process.stdout.write(`✅ nav-hrefs self-test 通过（rc=${a.rc}）\n`);
+    return 0;
+  },
+});
+
+if (import.meta.main) process.exit(await gate.main());

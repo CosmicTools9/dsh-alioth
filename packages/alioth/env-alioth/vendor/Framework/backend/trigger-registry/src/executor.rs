@@ -4,6 +4,7 @@
 //! and raw SQL operations.
 
 use crate::SideEffect;
+use common::ngac_grants::{ensure_resource_oa, ensure_resource_oa_tx, ResourceOaSpec};
 use serde_json::Value;
 use sqlx::{AssertSqlSafe, PgPool};
 use std::collections::HashMap;
@@ -74,6 +75,18 @@ impl SideEffectExecutor {
             SideEffect::RawSqlWithParams { sql, params } => {
                 self.execute_raw_sql_with_params(sql, params).await
             }
+            SideEffect::EnsureResourceOa {
+                resource_type,
+                resource_id,
+                resource_identifier,
+            } => {
+                self.execute_ensure_resource_oa(
+                    resource_type,
+                    *resource_id,
+                    resource_identifier.as_deref(),
+                )
+                .await
+            }
         }
     }
 
@@ -141,6 +154,16 @@ impl SideEffectExecutor {
                         .execute(&mut *tx)
                         .await
                         .map_err(|e| SideEffectError::RawSqlError(e.to_string()))?;
+                }
+                SideEffect::EnsureResourceOa {
+                    resource_type,
+                    resource_id,
+                    resource_identifier,
+                } => {
+                    let spec = oa_spec(resource_type, *resource_id, resource_identifier.as_deref());
+                    ensure_resource_oa_tx(&mut tx, &spec)
+                        .await
+                        .map_err(|e| SideEffectError::DatabaseError(e.to_string()))?;
                 }
             }
         }
@@ -229,6 +252,43 @@ impl SideEffectExecutor {
             .await
             .map_err(|e| SideEffectError::RawSqlError(e.to_string()))?;
         Ok(())
+    }
+
+    /// 行级 NGAC OA 幂等注册（**数据面单源** = `common::ngac_grants`，NGAC_SPEC §2.2.5）。
+    ///
+    /// 触发器只产 [`SideEffect::EnsureResourceOa`]，OA SQL 由单源持有；错误语义与
+    /// [`execute_with_binds`] 一致（DB 写入失败 ⇒ [`SideEffectError::DatabaseError`]）。
+    async fn execute_ensure_resource_oa(
+        &self,
+        resource_type: &str,
+        resource_id: i64,
+        resource_identifier: Option<&str>,
+    ) -> Result<(), SideEffectError> {
+        let spec = oa_spec(resource_type, resource_id, resource_identifier);
+        ensure_resource_oa(&self.pool, &spec)
+            .await
+            .map(|_| ())
+            .map_err(|e| SideEffectError::DatabaseError(e.to_string()))
+    }
+}
+
+/// 构造单源 OA 注册参数（[`SideEffect::EnsureResourceOa`] 的执行映射）：
+/// `o_name` = `{resource_type}-{resource_id}`（单源惯用命名，与
+/// `common::ngac_grants::ensure_resource_oa` 锚点同式）；策略类取具名 `default`
+/// （等价收口前 lifecycle 内联 SQL 的 `WHERE pc.o_name = 'default'`）；
+/// `created_by_id` 留 NULL（系统同步层无创建者，与收口前一致）。
+fn oa_spec<'a>(
+    resource_type: &'a str,
+    resource_id: i64,
+    resource_identifier: Option<&'a str>,
+) -> ResourceOaSpec<'a> {
+    ResourceOaSpec {
+        o_name: format!("{resource_type}-{resource_id}"),
+        resource_type,
+        resource_id,
+        resource_identifier,
+        created_by: None,
+        policy_class_name: Some("default"),
     }
 }
 

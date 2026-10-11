@@ -15,10 +15,9 @@ use common::AliothError as ApiError;
 const ENC_PREFIX: &str = "enc:";
 const NONCE_SIZE: usize = 12;
 
-/// 读取加密密钥（OUTBOUND_ENC_KEY，32 字节 base64；兼容 WZ_FSSC_ENC_KEY）
+/// 读取加密密钥（OUTBOUND_ENC_KEY，32 字节 base64）
 fn key_bytes() -> Result<[u8; 32], ApiError> {
     let raw = std::env::var("OUTBOUND_ENC_KEY")
-        .or_else(|_| std::env::var("WZ_FSSC_ENC_KEY"))
         .map_err(|_| ApiError::Internal("OUTBOUND_ENC_KEY 未设置：无法解密出向凭据".to_string()))?;
     let decoded = BASE64
         .decode(raw.trim())
@@ -52,10 +51,14 @@ pub fn encrypt(plaintext: &str) -> Result<String, ApiError> {
     ))
 }
 
-/// 解密 `enc:...` → 明文；非 enc: 前缀原样返回（兼容明文配置）
+/// 解密 `enc:...` → 明文；非 `enc:` 前缀即报错（fail-closed——明文/错前缀凭据 MUST NOT
+/// 被静默当作有效凭据使用）。
 pub fn decrypt(ciphertext: &str) -> Result<String, ApiError> {
     if !ciphertext.starts_with(ENC_PREFIX) {
-        return Ok(ciphertext.to_string());
+        return Err(ApiError::Internal(
+            "出向凭据非 enc: 密文形态（明文落在注册表 = 违规；请经 provision-outbound-credential 现加密入库）"
+                .to_string(),
+        ));
     }
     let body = &ciphertext[ENC_PREFIX.len()..];
     let (nonce_b64, ct_b64) = body
@@ -84,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn crypto_roundtrip_and_plain() {
+    fn crypto_roundtrip_and_plain_rejected() {
         std::env::set_var(
             "OUTBOUND_ENC_KEY",
             "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
@@ -93,7 +96,19 @@ mod tests {
         let enc = encrypt(plain).expect("encrypt");
         assert!(enc.starts_with("enc:"));
         assert_eq!(decrypt(&enc).unwrap(), plain);
-        assert_eq!(decrypt("plain-secret").unwrap(), "plain-secret");
+        // 明文形态 MUST NOT 被接受（fail-closed）
+        assert!(decrypt("plain-secret").is_err(), "非 enc: 前缀必须报错");
+        // 旧名 WZ_FSSC_ENC_KEY 不得作为密钥来源
+        std::env::remove_var("OUTBOUND_ENC_KEY");
+        std::env::set_var(
+            "WZ_FSSC_ENC_KEY",
+            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+        );
+        assert!(
+            encrypt("x").is_err(),
+            "旧名 WZ_FSSC_ENC_KEY 不得作为密钥来源"
+        );
+        std::env::remove_var("WZ_FSSC_ENC_KEY");
         std::env::remove_var("OUTBOUND_ENC_KEY");
     }
 }

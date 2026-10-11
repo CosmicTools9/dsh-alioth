@@ -68,9 +68,9 @@ async fn approval_family_roundtrip() {
                 settings: None,
                 enabled: Some(true),
                 is_default: None,
-                public: None,
                 domain_: None,
             },
+            None,
         )
         .await
         .expect("update")

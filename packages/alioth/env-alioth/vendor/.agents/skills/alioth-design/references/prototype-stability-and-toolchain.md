@@ -4,8 +4,8 @@
 
 ### Always（必做）
 
-1. 原型必须含静态 HTML 加载骨架（`#boot-skeleton`，TopBar/Sidebar 占位 + spinner），React mount 后由 JS 淡出移除，掩盖 Babel 浏览器端编译 1-3s 延迟。
-2. 所有 React+JSX 原型在 `<script type="text/babel">` 后第一行必须含 `const { useState, useEffect, useRef, useCallback, Fragment, createElement: h } = React;` 解构声明。
+1. 原型必须含静态 HTML 加载骨架（`#boot-skeleton`，TopBar/Sidebar 占位 + spinner），React mount 后由 JS 淡出移除，掩盖首帧挂载延迟。
+2. 所有 React+JSX 原型的内联 JS 块（已编译产物，`<script>` 直接承载；JSX 已由 `scripts/ts/build-gateway-prototypes.ts` 构建期编译）第一行必须含 `const { useState, useEffect, useRef, useCallback, Fragment, createElement: h } = React;` 解构声明（原型构建期为 JSX 时，该行写在 `<script type="text/babel">` 块首）。
 3. `root.render(h(App))` 必须包 try/catch，错误时设置 `document.title` 以便诊断。
 4. **CSS `:root` 选择器禁止转义**：`<style>` 块内必须使用 `:root { ... }`，禁止 `\:root`。
 5. **CSS 变量定义完整性**：`:root` 块必须定义所有 `var(--X)` 引用的变量。两套命名风格必须同时在 `:root` 中赋值。
@@ -16,7 +16,7 @@
 ### Ask（先问）
 
 1. 新增外部字体/库 CDN 引用。
-2. 将原型拆分为多个 `<script type="text/babel">` 块。
+2. 将原型拆分为多个内联 `<script>` 块（JSX 构建期编译产物同样适用）。
 
 ### Never（禁止）
 
@@ -31,7 +31,7 @@
 
 ### Audit（验证）
 
-1. 每次完成 JSX 编辑后，必须运行离线 Babel 解析测试（`node -e "require('@babel/standalone').transform(...)"`）作为前置验证。
+1. 每次完成原型 JS 编辑后，必须运行内联 JS 语法校验（`HTML_DESIGN_SPEC.md` §1.3.4；Gateway 门户原型由 `scripts/ts/build-gateway-prototypes.ts --check` 同源校验）作为前置验证。
 2. `target/debug/ontology-mapping prototype-check` 强制扫描所有原型。
 3. 新增原型或大幅修改原型文件后，需手动验证 `target/debug/ontology-mapping prototype-check` 输出 0 错误 0 警告。
 

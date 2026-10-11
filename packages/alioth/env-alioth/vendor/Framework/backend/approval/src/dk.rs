@@ -25,13 +25,8 @@ pub(crate) enum DkEntity {
     JeFtaEz,
     /// JE/FBB/↓_EZ — 门禁/自动节点操作 zc_id_oper-gate
     JeFbbEz,
-    /// TX/FJA/↓_GG — 自然人主数据 zc_id_empl-natural
-    TxFjaGg,
     /// JE/FBA/↓_AB — 标准/规章模板 zc_id_standard（声明+avic 库现存行）
     JeFbaAb,
-    /// JE/GEC/↑_DA — prot 配置族 zc_id_prot-profile_config（同族先例 prot-env_config /
-    /// prot-oss_config：seed-demo-surfaces.sql:59 / seed-storage-config.sql:17，均 JE·GEC·↑_DA）
-    JeGecDa,
 }
 
 impl DkBinding for DkEntity {
@@ -41,9 +36,7 @@ impl DkBinding for DkEntity {
             DkEntity::JcFtaNc => ("JC", "FTA", "↓_NC"),
             DkEntity::JeFtaEz => ("JE", "FTA", "↓_EZ"),
             DkEntity::JeFbbEz => ("JE", "FBB", "↓_EZ"),
-            DkEntity::TxFjaGg => ("TX", "FJA", "↓_GG"),
             DkEntity::JeFbaAb => ("JE", "FBA", "↓_AB"),
-            DkEntity::JeGecDa => ("JE", "GEC", "↑_DA"),
         }
     }
 }

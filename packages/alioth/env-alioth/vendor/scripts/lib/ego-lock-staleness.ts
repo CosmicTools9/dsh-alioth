@@ -11,8 +11,11 @@
  */
 export const HEARTBEAT_INTERVAL_MS = 5_000;
 export const HEARTBEAT_STALE_MS = 90_000;
-/** 共享锁默认等待窗口：MUST > 单轮 verify 时长（实测 ~85s），否则并发会话结构性饥饿。 */
-export const LOCK_WAIT_DEFAULT_MS = 180_000;
+/** 共享锁默认等待窗口：MUST 显著 > 单轮 verify 时长。基础档实测 ~85s，但 **3 档慢页面 +
+ *  多产物批量可超 180s**（原值 180s 只有 2× 余量 ⇒ 并发会话结构性饥饿，实测 26 分钟零获取）。
+ *  持有者卡死由 90s 心跳判据兜住（`HEARTBEAT_STALE_MS`）⇒ 加长窗口不会卡在死锁上，
+ *  只是让健康持有者跑完。批量清单可再用 `VV_LOCK_WAIT_MS` 放宽。 */
+export const LOCK_WAIT_DEFAULT_MS = 600_000;
 
 export interface LockStalenessInput {
   /** 持有者 PID 是否存活（token 中解析） */

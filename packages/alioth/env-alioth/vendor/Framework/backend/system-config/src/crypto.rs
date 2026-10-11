@@ -3,67 +3,49 @@
 //! 提供敏感凭证的加解密能力，使用 AES-256-GCM。
 //! 加密密钥从环境变量 `SYSTEM_CONFIG_ENC_KEY` 读取，必须是 32 字节 Base64 编码字符串。
 
-use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
-};
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use rand::RngExt;
+use master_key::{MasterKey, ProvidedKeyLoader};
 use std::sync::OnceLock;
-use typenum::U12;
-static CIPHER: OnceLock<Aes256Gcm> = OnceLock::new();
 
-const NONCE_SIZE: usize = 12;
+/// 进程级主密钥环。
+///
+/// active = 调用方传入的 `SYSTEM_CONFIG_ENC_KEY`；previous 来自环境变量
+/// `SYSTEM_CONFIG_ENC_KEY_PREVIOUS`（逗号分隔）与目录 `SYSTEM_CONFIG_ENC_KEYRING_DIR`（可选）。
+/// 轮换过渡期旧钥留在环内 ⇒ 旧密文全程可读 ⇒ 无停机窗口。
+static MASTER_KEY: OnceLock<MasterKey> = OnceLock::new();
 
 /// 初始化加密器（应在应用启动时调用一次）
 pub fn init_encryption(key_b64: &str) -> Result<()> {
-    let key_bytes = BASE64
-        .decode(key_b64)
-        .context("Invalid base64 encryption key")?;
-    if key_bytes.len() != 32 {
-        anyhow::bail!(
-            "Encryption key must be 32 bytes after base64 decode, got {}",
-            key_bytes.len()
-        );
+    let mut loader =
+        ProvidedKeyLoader::new(key_b64).with_previous_env("SYSTEM_CONFIG_ENC_KEY_PREVIOUS");
+    if let Ok(dir) = std::env::var("SYSTEM_CONFIG_ENC_KEYRING_DIR") {
+        if !dir.trim().is_empty() {
+            loader = loader.with_previous_dir(dir);
+        }
     }
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
-        .map_err(|e| anyhow::anyhow!("Invalid AES-256-GCM key length: {:?}", e))?;
-    let _ = CIPHER.set(cipher);
+    let master =
+        MasterKey::load(Box::new(loader)).context("Failed to load system-config keyring")?;
+    let _ = MASTER_KEY.set(master);
     Ok(())
 }
 
-/// 加密明文，返回 base64 编码的 `nonce:ciphertext`
-pub fn encrypt(plaintext: &str) -> Result<String> {
-    let cipher = CIPHER.get().context("Encryption not initialized")?;
-    let nonce_bytes: [u8; 12] = rand::rng().random();
-    #[allow(deprecated)]
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_bytes())
-        .map_err(|e| anyhow::anyhow!("Encrypt failed: {:?}", e))?;
-    let mut combined = nonce_bytes.to_vec();
-    combined.extend_from_slice(&ciphertext);
-    Ok(BASE64.encode(&combined))
+fn master_key() -> Result<&'static MasterKey> {
+    MASTER_KEY.get().context("Encryption not initialized")
 }
 
-/// 解密 base64 编码的 `nonce:ciphertext`
-pub fn decrypt(ciphertext_b64: &str) -> Result<String> {
-    let cipher = CIPHER.get().context("Encryption not initialized")?;
-    let combined = BASE64
-        .decode(ciphertext_b64)
-        .context("Invalid base64 ciphertext")?;
-    if combined.len() < NONCE_SIZE {
-        anyhow::bail!("Ciphertext too short");
-    }
-    let nonce_bytes: [u8; 12] = combined[..NONCE_SIZE]
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Failed to extract 12-byte nonce"))?;
-    let nonce = Nonce::<U12>::from(nonce_bytes);
-    let plaintext = cipher
-        .decrypt(&nonce, &combined[NONCE_SIZE..])
-        .map_err(|e| anyhow::anyhow!("Decrypt failed: {:?}", e))?;
-    String::from_utf8(plaintext).context("Invalid UTF-8 after decryption")
+/// 加密明文 → `v2:<key_id>:<base64(nonce‖ct‖tag)>`（裸载荷；调用层按需前置 `enc:`）
+pub fn encrypt(plaintext: &str) -> Result<String> {
+    master_key()?
+        .encrypt(plaintext)
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// 解密 → 明文。级联兼容 `v2:<kid>:<b64>` 与既有 v1 形态（`enc:<b64>` / 裸 `<b64>`）。
+pub fn decrypt(ciphertext: &str) -> Result<String> {
+    master_key()?
+        .decrypt(ciphertext)
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// 解析带 `enc:` 前缀的凭证值：`enc:` ⇒ AES-256-GCM 解密；其余形态原样返回（兼容明文写入路径）。

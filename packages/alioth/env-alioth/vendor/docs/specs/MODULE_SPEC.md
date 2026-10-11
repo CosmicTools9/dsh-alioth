@@ -287,10 +287,10 @@ Gateway 采用 **双重视角** 的布局系统，详见 [`GATEWAY_DESIGN_SPEC.m
 
 | 组件                | 文件                                                             | 职责                                                                                        |
 | ------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `TopBar`（Gateway） | `Gateway/frontend/src/components/TopBar.tsx`                     | 组合 FrameworkTopBar，按视角切换内容                                                        |
+| `TopBar`（Gateway） | `Gateway/frontend/src/components/layout/TopBar.tsx`                     | 组合 FrameworkTopBar，按视角切换内容                                                        |
 | `FrameworkTopBar`   | `Framework/frontend/components/src/components/layout/TopBar.tsx` | 顶栏外壳，提供 `logo` / `tabs` / `breadcrumbs` / `searchSlot` / `actions` / `userMenu` 插槽 |
-| `Navigation`        | `Gateway/frontend/src/components/Navigation.tsx`                 | Gateway 视角左侧模块导航栏                                                                  |
-| `ModuleTabs`        | `Gateway/frontend/src/components/ModuleTabs.tsx`                 | 应用视角下顶栏左侧模块标签页                                                                |
+| `Navigation`        | `Gateway/frontend/src/components/layout/Navigation.tsx`                 | Gateway 视角左侧模块导航栏                                                                  |
+| `ModuleTabs`        | `Gateway/frontend/src/components/layout/ModuleTabs.tsx`                 | 应用视角下顶栏左侧模块标签页                                                                |
 | `MainLayout`        | `Gateway/frontend/src/layouts/MainLayout.tsx`                    | 主布局，组合 TopBar + Navigation + Content + WorkspaceDock                                  |
 
 ### 6.2 视角检测
@@ -328,12 +328,12 @@ function ProductListPage() {
 
 ### 6.4 关键规则
 
-- **应用视角下 Navigation 侧栏只显示当前 App 的模块导航（不显示应用列表）**：模块导航通过 TopBar 左侧 `ModuleTabs` 呈现；Navigation 侧栏只保留当前 App 的 `useModuleSidebar()` 推送的 navItems。
+- **应用视角下 Navigation 侧栏只显示当前 App 的模块导航（不显示应用列表）**：模块导航通过 TopBar 左侧 `ModuleTabs` 呈现；Navigation 侧栏默认只保留当前 App 的 `useModuleSidebar()` 推送的 navItems，MUST NOT 渲染其他模块的导航项或以其为分组标题。**多槽注册表**（`openspec/specs/gateway-navigation-modes` 的 `module-sidebar-slot-registry`）：`setModuleSidebarEntry(moduleId, …)` / `clearModuleSidebarEntry(moduleId)` 按 moduleId 维护模块导航槽（`ModuleLayout` embedded 态自动按 `workspaceConfig.moduleId` 写槽/清槽，卸载时精确清理该槽）；`useModuleSidebar()` 读端 = URL 激活模块槽 → 最近写入槽 → 首个槽 → 旧单槽键回退。
 - **应用视角下品牌标识只出现一次**：TopBar 已在 `logo` 槽展示应用名（`currentApp.name`），模块 Sidebar 品牌 block 已整体移除（详见 §11.11.6），禁止在两个位置同时出现品牌元素。
 - **Logo 始终可点击返回 Gateway 视角**：`href="/"`
 - **FrameworkTopBar 的 `tabs` 插槽仅在应用视角下传入**，Gateway 视角下为 `undefined`
 
-> **ESM 集成契约参考**: Block → Module → App 三层的 ESM 职责边界（各层渲染什么、滚动容器归属、CSS 变量级联）定义在 `specs/block-module-app-integration/spec.md`（`openspec/changes/spec-block-module-app-shell-contract/specs/block-module-app-integration/spec.md`）。原型的 Module embedded 模式与生产应用视角是两条独立渲染路径，详见该 spec 的 `prototype-embedded-vs-production` 小节。
+> **ESM 集成契约参考**: Block → Module → App 三层的 ESM 职责边界（各层渲染什么、滚动容器归属、CSS 变量级联）定义在 `specs/block-module-app-integration/spec.md`（`openspec/specs/block-module-app-integration/spec.md`）。原型的 Module embedded 模式与生产应用视角是两条独立渲染路径，详见该 spec 的 `prototype-embedded-vs-production` 小节。
 
 ## 7. 前端 API Hooks 规范
 
@@ -588,7 +588,7 @@ import ssoEn from "@alioth/sso-frontend/locales/en";
 
 #### 8.8.1 审计盲区提示
 
-`.agents/skills/alioth-i18n/scripts/audit-i18n-completeness.ts` 按项目目录独立扫描，**不**追踪跨包 key 引用：
+`scripts/i18n/audit-i18n-completeness.ts` 按项目目录独立扫描，**不**追踪跨包 key 引用：
 
 - 宿主 app 引用 `@alioth/sso-frontend/components` 中的 `t("sso.login.divider")` 不被宿主审计器报为「缺失」——因为 SSO 项目的 `i18n-keys.ts` 已记录该键
 - 但宿主 app 实际未加载 SSO locales 时，运行时仍会回退为原始 key
@@ -687,6 +687,7 @@ const categorySelect = createAssociationSelect({
 
 - 三形态统一经由 `FormBody`（AutoForm 统一入口）渲染字段，分组/行绑定/`layout`/i18n 规则一致。
 - **数据表单禁止使用裸 Modal 承载**——确认/选择等无输入表单的操作仍保留轻量 Modal。
+- **右侧抽屉停靠规则**：抽屉 MUST 使用 `StandardDrawer` 族（非模态）并停靠在右侧工作区（`WorkspaceDock`）左侧——偏移量 `right: var(--standard-drawer-right)` 由 `WorkspaceDock` 自量自发布（卸载/无活动槽位归零）；抽屉与遮罩 MUST NOT 覆盖工作区、MUST NOT 因点击工作区而关闭（规约正本：openspec `form-drawer` §drawer-docks-left-of-right-sidebar；门禁 `bun scripts/check/check-drawer-container.ts --fail`，存量归线 `scripts/check/baselines/drawer-container.baseline.txt`）。
 
 ---
 
@@ -789,6 +790,7 @@ font-family:
 1. `createModuleLayout` 在渲染根元素上自动添加 `mod-{moduleName}` 类名；
 2. 模块 `theme.css` 在该类名作用域下定义 `--primary`、`--primary-foreground`、`--primary-bg` 等变量；
 3. `ModuleLayout` 内部所有 `bg-primary`、`text-primary`、`bg-primary/10` 等 Tailwind 类自动解析为模块主题色。
+   ——**例外（3.3）**：主色作**文字**用在浅底上 MUST 用 `text-primary-text`（`--primary-text` 档）；裸 `text-primary` 是主色本色作文字，浅主色对比度不足。
 
 在 Gateway 应用视角下，Gateway 的 `MainLayout` 会读取 `useModuleSidebar()` 中的 `accentBarColor`，以内联 `style` 将 `--primary` 注入到模块与外壳的公共祖先上。此时模块 `theme.css` 中的 `.mod-{name} --primary` 被覆盖，**Gateway 外壳与模块内部使用同一主色**，实现 tab 切换时整站同步换色。
 
@@ -807,13 +809,166 @@ font-family:
 
 > **历史参考**: 旧架构 24-module 分层色表已移除。当前仅 3 个模块（`system-settings`、`system-approve`、`system-dev`），新增模块时在此表补充色值。
 >
-> **shop 模块**使用自定义布局（非 `createModuleLayout`），不通过此机制传递 accentBarColor。若 shop 需要 Gateway 主题同步，需在入口处自行调用 `setModuleSidebar()`。
+> **直挂外壳例外（页面直挂形态）**：Alioth ns 的 `demand` / `inbound-order` 采用「页面直挂 Gateway 外壳」形态——不用 `createModuleLayout`、不推送 navItems（单页无导航），accent 在 App.tsx 以 `moduleAccent` 导出手工声明（`check-module-accent.ts` 读此值）。此为**记录在案的例外**，新增模块默认 MUST 走 `createModuleLayout`。
+
+#### 10.1.1 模块辨识色约定（平台级，2026-09-28 推广）
+
+**约定**：颜色是**模块身份的载体**——用户进入不同模块时，侧栏 accent bar 与模块内 `--primary` 同步切换，
+以颜色即可辨识「当前在哪个模块」。因此：
+
+1. **每个模块 MUST 有唯一辨识色**（`accentBarColor` hex + `accentBarStyle: "solid"`）；同一 ns 内两模块 MUST NOT 取同色。
+2. **两层分工（MUST 区分）**：
+   - **品牌面** = namespace 品牌（ns 声明面 `Pre-Proc/{ns}/branding/brand.json`：名称/标志/favicon/`themeColor`）
+     —— 承载于 shell 外壳与登录页，**MUST NOT** 被模块辨识色覆盖；
+   - **模块辨识面** = 每模块一色（`accentBarColor` + `theme.css` 的 `.mod-{name} { --primary/--ring }`）
+     —— 承载于侧栏 accent bar 与模块内主色。
+   - 品牌 `themeColor` 只作**无模块上下文时的兜底**（壳层 chrome / 落地页），不参与模块辨识。
+3. **色板组织**：按**业务族**分配色相（同族相邻、异族间隔 ≥ 20°），饱和/亮度控制在**主色面文字可达 WCAG AA** 的区间——
+   即 `--primary` 与 `--primary-foreground` 的对比度 MUST ≥ **4.5:1**（见 3.2；实测可用区：S 55–100% / L 36–52%，配下列两档前景）。
+   新增模块按其业务族取色并**在此表登记**。
+3.1 **可辨性（MUST，唯一 ≠ 可辨）**：同 ns 内任两模块的辨识色 MUST 满足 CIELAB **ΔE*ab ≥ 10**（门禁下限；
+   设计目标 ≥ 11，对齐 NS:WZ 基准）——相邻数度色相 / 数个百分点明度的两色人眼视作同色，等同「同色」。
+   拉开方式任选：ΔH ≥ 12° 或 ΔL ≥ 10% 或 ΔS ≥ 25；同族密集时建议「色相阶 + 明度阶交替」。
+3.2 **前景档（MUST）**：`--primary-foreground` MUST 与 `--primary` 满足 WCAG 2.1 对比度 ≥ **4.5:1**（正文 AA）。两档取值：
+   - **深主色**（白字对比 ≥ 4.5:1）→ `0 0% 100%`；
+   - **浅主色**（白字不足）→ **同色相深档** `<hue> <sat>% 25–30%`（保色相 ⇒ 保留兄弟模块的明度差与 ΔE 可辨性）。
+   **MUST NOT** 用「同色相亮色」（如主色明度 +8%）当前景：那是本规约 2026-09-29 前的历史缺陷（43 处跨 ns），
+   主色底 + 同色相亮字 = 对比度 ≈1.1:1，肉眼几乎不可读（门禁 `module-accent-unique` R6 已拦）。
+   浅主色**不得**靠压暗主色到白字达标来满足本条：实测该路径会让 14 对模块 ΔE<10（含 4 对 ΔE=0），违反 3.1。
+3.3 **文字档（MUST）**：主色作**文字**用在浅底上 MUST 用 `text-primary-text`（Tailwind `--color-primary-text` ⇒ `hsl(var(--primary-text))`），
+   MUST NOT 用裸 `text-primary`——后者是主色**本色**作文字，浅主色在白底仅 **1.55–4.41:1**（实测 44/71 模块）。
+   `--primary-text` 声明值 MUST 与白底对比度 ≥ **4.5:1**（浅主色取同色相深档，L 取满足 ≥ 5.0:1 的最大值）；
+   深主色（白字对比已达标）MAY 不声明（回落平台 `--primary-text: var(--primary)`）。
+   原型侧同名工具类 `.text-primary-text` 由 `prototype-base.css` 提供，壳按运行时 accent 注入同规则档位。
+3.4 **声明位置**：模块 `frontend/src` **顶层 tsx**（`App.tsx`，或 `App.tsx` 为转出口时其指向的 `ModuleLayout.tsx` 等）。
+3.5 **覆盖与门禁**：`scripts/check/check-module-accent.ts`（commit 触发式 + push 全量 + `check-all.sh` T1）判：
+   R1 字面 `#rrggbb` 声明 / R2 同 ns 唯一 / R3 与本节色板表一致 / R4 色板表无死条目 / R5 ΔE*ab ≥ 10 /
+   R6 `--primary` × `--primary-foreground` 逐作用域对比度 ≥ 4.5:1（见 3.2）/ R7 模块作用域 `--primary` 与登记一致 /
+   R8 `--primary-text` 对比度 ≥ 4.5:1 且模块前端无裸 `text-primary`（见 3.3）。
+   当前覆盖：`Alioth` 12 · `AVIC-CAASEC` 5 · `SE` 6 · `Cosmic-Tools` 61 · `WZ` 18 个模块（2026-09-29 全平台落地）。
+4. 深色模式同值（如需降低对比可在 `.mod-{name} .dark` 局部覆盖），**MUST NOT** 仅改深色而漏改浅色（曾出现同一模块两模式色不一致）。
+
+3.4 **原型面重建（2026-09-29）**：本批 **56/59** 份模块原型按模块色重建（Alioth 11 · AVIC 5 · SE 6 · Cosmic-Tools 34 ·
+   WZ `contract-wz`），ΔE 修正对（Cosmic git 组等 9 份）另做二次重建。未重建/无原型者：`Alioth/inventory-record`、
+   `Alioth/shell-menu-modes`（无 `module.json`，非可构建模块原型）；`Alioth/demand`（`module.json` 无 block 声明与导航分组
+   ⇒ 无原型可组装；**用户裁决 2026-09-29：不建该模块原型**，原单行占位桩已移除 ⇒ 本表保留其模块身份色但无原型接线）。**`Alioth/todo` 已于 2026-09-29 补齐**（按 `blockAssembly` 组装 4 个既有 Block，
+   未新增业务内容；交付门禁：真实浏览器 mount R1–R4 ✓ / 类型 0 命中 ✓ / 参考对齐 weightedScore 100 ✓ / 视觉 PASS 90 ✓；
+   并级联 App `alioth-biz` a-v10 PASS 90 ✓）。入口写法：`;(window as Window & { __MODULE_ACCENT__?: string }).__MODULE_ACCENT__ = '<H S% L%>'`
+   单条、置于 import 之后（禁重复赋值与 `as any`）。
+   视觉证据（样本 `visual-verify verify`，非全量）：`warehouse`/`rd-milestone`/`git-commit`/`git-repo` **PASS 90（非降级）**；
+   `inventory`/`contract-wz` PASS 100（**degraded** ⇒ 回落 code-level 评分，不计视觉通过）；`knowledge` **REVISE 80**
+   （`hard_errors 0`，窄屏布局信号 2 项；色板改动仅注入 CSS 变量，与该判定无关）。
+   **版本保留策略（正本）**：设计目录与 `Sources/` 开发期镜像按**产物对**共用同一策略——窗口 = 对的版本空间并集最近 3 版；
+   保护集 = 窗口 ∪ 声明指针（`Sources/Apps/{Modules,Blocks}/<unit>/{module,block}.json#prototypeVersion`，绝对路径键）
+   ∪ 镜像 `prototype.html` 引用的 `*.bundle.js`；窗口外且不在保护集的版本化产物（`.html` / `.bundle.js` / `.bundle.css` / `-report.json`）从两侧同时删除。
+   唯一执行入口：`bash scripts/cleanup-prototype-artifacts.sh --keep 3 [--ns <ns>]`（`--dry-run` 先列出逐文件删除清单与释放字节；幂等）。
+   **2026-10-03 已在 5 个 ns 执行**（463 个窗口外产物 / ≈98 MB；保护集 0 命中删除集）。
+
+#### 色板登记（唯一真相源；门禁 `scripts/check/check-module-accent.ts` 与代码双向比对）
+
+新增/调整模块颜色 MUST 同时改代码（`accentBarColor`）与本表——任一漂移即被门禁拒绝。表头 `NS:<ns>` 为门禁解析锚点。
+
+#### NS:WZ
+
+（2026-09-28 落地；`income-wz`/`outgo-wz` 保留既有资金域色）
+
+| 模块 | 辨识色 | HSL | 族 |
+|---|---|---|---|
+| `transport-wz` | `#00a0e9` | 199 100% 46% | 物流运营（品牌族蓝，主业务） |
+| `fleet-wz` | `#1166d4` | 214 85% 45% | 运力（蓝） |
+| `contract-wz` | `#223ad3` | 232 72% 48% | 合同（蓝） |
+| `comprehensive-wz` | `#4b2fda` | 250 70% 52% | 运营管理（靛） |
+| `title-exchange` | `#8f30cf` | 276 62% 50% | 权属流转（紫） |
+| `title-ledger` | `#b22fbc` | 296 60% 46% | 物权台账（紫） |
+| `inventory-wz` | `#1da578` | 160 70% 38% | 仓储（绿） |
+| `bin-title` | `#259d4d` | 140 62% 38% | 物权地图（绿） |
+| `trustee-account` | `#298e29` | 120 55% 36% | 受托账户（绿） |
+| `trade-desk` | `#f0690f` | 24 88% 50% | 交易作业台（橙） |
+| `income-wz` | `#f59f0a` | 38 92% 50% | 应收（资金域，既有保留） |
+| `outgo-wz` | `#0e9caf` | 187 85% 37% | 应付（资金域，既有保留） |
+| `delivery` | `#d3225d` | 340 72% 48% | 交割（玫红） |
+| `trade-order` | `#d1321a` | 8 78% 46% | 订单（红） |
+| `fund-management` | `#178274` | 172 70% 30% | 财务（资金域，青绿深档） |
+| `biz-analysis` | `#6f34d5` | 262 66% 52% | 经营分析（靛） |
+
+#### NS:Alioth
+
+（无独立前端的模块不登记；2026-10-05 清 `system-settings` 死条目——该模块已不在本 ns，R4「改名/删除后须同批清表」）
+
+| 模块 | 辨识色 | HSL | 族 |
+|---|---|---|---|
+| `customer` | `#d38012` | 34 84% 45% | 橙（营销） |
+| `demand` | `#e83317` | 8 82% 50% | 红（需求） |
+| `inbound-order` | `#1fa8bd` | 188 72% 43% | 青（入库） |
+| `inventory` | `#1d9a81` | 168 68% 36% | 青绿（库存） |
+| `inventory-balance` | `#1ea9a4` | 178 70% 39% | 青（库存余额） |
+| `ledger-entry` | `#b62acb` | 292 66% 48% | 紫（记账） |
+| `sales-order` | `#e14e0e` | 18 88% 47% | 橙（销售） |
+| `stock-count` | `#2087ac` | 196 69% 40% | 青（盘点） |
+| `system-approve` | `#2558d0` | 222 70% 48% | 蓝（系统） |
+| `todo` | `#2fa12b` | 118 58% 40% | 绿（任务） |
+| `warehouse` | `#259d71` | 158 62% 38% | 青绿（仓储） |
+
+#### NS:AVIC-CAASEC
+
+（5 模块；2026-09-29 落地）
+
+| 模块 | 辨识色 | HSL | 族 |
+|---|---|---|---|
+| `airworthiness` | `#078cc5` | 198 93% 40% | 青（适航） |
+| `knowledge` | `#7a29d6` | 268 68% 50% | 紫（知识） |
+| `org-management` | `#29a352` | 140 60% 40% | 青绿（组织） |
+| `system-approve` | `#d34f0d` | 20 88% 44% | 橙（系统） |
+| `system-dev` | `#c47f08` | 38 92% 40% | 橙（系统开发） |
+
+#### NS:SE
+
+（6 模块；2026-09-29 落地，既有色保留；`rd-milestone` 为保可辨性微调）
+
+| 模块 | 辨识色 | HSL | 族 |
+|---|---|---|---|
+| `budget-analysis` | `#773cdd` | 262 70% 55% | 靛蓝（预算） |
+| `budget-core` | `#7f2dbe` | 274 62% 46% | 紫（预算） |
+| `rd-milestone` | `#6417ca` | 266 80% 44% | 紫（研发） |
+| `rd-project` | `#156bc1` | 210 80% 42% | 蓝（研发） |
+| `sap-execution` | `#d46211` | 25 85% 45% | 橙（SAP 执行） |
+| `system-approve` | `#23957e` | 168 62% 36% | 青绿（系统） |
+
+#### NS:Cosmic-Tools
+
+（26 模块；2026-09-29 落地，既有 5 色重新分配）
+
+| 模块 | 辨识色 | HSL | 族 |
+|---|---|---|---|
+| `appointment` | `#ca217e` | 327 72% 46% | 品红（预约） |
+| `customer` | `#d32263` | 338 72% 48% | 玫红（客户） |
+| `fulfillment-plan` | `#5bd813` | 98 84% 46% | 绿（履约计划） |
+| `git-commit` | `#4b04bd` | 263 96% 38% | 靛蓝（git） |
+| `git-repo` | `#7122e7` | 264 80% 52% | 靛蓝（git） |
+| `inventory` | `#09c0ce` | 184 92% 42% | 青（库存） |
+| `logistics` | `#da6b10` | 27 86% 46% | 橙（物流） |
+| `material-consumption` | `#097cce` | 205 92% 42% | 蓝（物料消耗） |
+| `material-plan` | `#0ae5f5` | 184 92% 50% | 青（物料计划） |
+| `material-production` | `#0993ce` | 198 92% 42% | 青（物料生产） |
+| `material-requisition` | `#09aace` | 191 92% 42% | 青（物料领用） |
+| `material-scrap` | `#0965ce` | 212 92% 42% | 蓝（物料报废） |
+| `order` | `#da2110` | 5 86% 46% | 红（订单） |
+| `org` | `#24bc2c` | 123 68% 44% | 绿（组织） |
+| `pipelines` | `#9dd813` | 78 84% 46% | 黄绿（流水线） |
+| `planning` | `#b5ce12` | 68 84% 44% | 黄绿（计划） |
+| `product` | `#24bc73` | 151 68% 44% | 青绿（产品） |
+| `production-order` | `#76ce12` | 88 84% 44% | 黄绿（生产订单） |
+| `reviews` | `#d322a4` | 316 72% 48% | 品红（评审） |
+| `service` | `#26c565` | 144 68% 46% | 青绿（服务） |
+| `settlement` | `#d18a10` | 38 86% 44% | 橙（结算） |
+| `system-approve` | `#32d75d` | 136 67% 52% | 绿（系统） |
+| `trade-order` | `#e44911` | 16 86% 48% | 橙（贸易订单） |
 
 ```css
 /* Pre-Proc/{ns}/Sources/Apps/Modules/{name}/frontend/src/theme.css */
 .mod-orders {
   --primary: 355 68% 48%; /* Crimson Red 绯红 */
-  --primary-foreground: 0 0% 100%;
+  --primary-foreground: 0 0% 100%; /* 深主色取白字；浅主色改同色相深档，如 355 68% 27%（对比度 MUST ≥ 4.5:1） */
   --primary-hover: 355 68% 40%;
   --primary-bg: 355 68% 48% / 0.08;
   --primary-bg-hover: 355 68% 48% / 0.12;
@@ -828,7 +983,8 @@ font-family:
 | 变量名                 | 用途                                   | 必须           |
 | ---------------------- | -------------------------------------- | -------------- |
 | `--primary`            | 主按钮、活跃状态、品牌图标、强调装饰条 | ✅             |
-| `--primary-foreground` | 主色上的文字                           | ✅             |
+| `--primary-foreground` | 主色上的文字（与 `--primary` 对比度 MUST ≥ 4.5:1；深主色取 `0 0% 100%`、浅主色取同色相深档） | ✅             |
+| `--primary-text`       | 主色**作文字**用的档位（与白底对比度 MUST ≥ 4.5:1；浅主色取同色相深档，深主色可省 ⇒ 回落 `var(--primary)`）——用法 `text-primary-text` | 浅主色必填     |
 | `--primary-hover`      | 主按钮悬停                             | 推荐           |
 | `--primary-bg`         | 低透明度背景（选中行、图标容器）       | 推荐           |
 | `--primary-bg-hover`   | 低透明度背景悬停                       | 推荐           |
@@ -1045,7 +1201,7 @@ const COLORS = [
 
 ## 11. 模块前端目录结构与架构规范
 
-所有 Module 前端统一遵循以下约定。**例外**：`shop`（双区域架构，见 §11.9，不使用 ModuleLayout 见 §11.11.6），其余模块均需对齐。
+所有 Module 前端统一遵循以下约定。
 
 ### 11.1 最小目录结构
 
@@ -1115,8 +1271,7 @@ Pre-Proc/{ns}/Sources/Apps/Modules/{name}/frontend/
     "@alioth/types": "workspace:*"
   },
   "devDependencies": {
-    "@alioth/config": "workspace:*",
-    "@alioth/testing": "workspace:*"
+    "@alioth/config": "workspace:*"
   }
 }
 ```
@@ -1143,7 +1298,7 @@ Pre-Proc/{ns}/Sources/Apps/Modules/{name}/frontend/
 
 | 方向                        | 允许？   | 原因                                                                                                          |
 | --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
-| `api → {components, hooks}` | **禁止** | API 层不应引用 UI 或 hooks 层状态逻辑。需 `ThemeProvider` 等运行时组件时，从 `next-themes` 等底层库直接引入。 |
+| `api → {components, hooks}` | **禁止** | API 层不应引用 UI 或 hooks 层状态逻辑。需 `ThemeProvider` 等运行时组件时，由 `api` 层**自持实现**（单源 `Framework/frontend/api/src/theme.tsx`，`components` 经 barrel 反向再导出），MUST NOT 反引 `components`；MUST NOT 在 React 树内渲染主题初始化 `<script>`（React 19 硬 console 错误 + `visual-verify capture` 判据失败）。 |
 | `hooks → components`        | **禁止** | hooks 层是纯状态/atom 逻辑，不涉及 UI。                                                                       |
 | `components → {api, hooks}` | 允许     | UI 层可引用 HTTP 客户端和状态 hooks。                                                                         |
 
@@ -1227,7 +1382,7 @@ export const { bootstrap, mount, unmount } = createMicroAppLifecycle({
 
 - 无业务逻辑的纯展示组件，优先用框架 `@alioth/components` 的现有组件组合
 - 在其他 2 个以上模块中重复出现的组件，应提升到 `Framework/frontend/components/src/` 作为共享组件
-- 禁止在 `src/pages/` 目录下创建子目录组织代码（**例外**：见 §11.9 shop 模块）
+- 禁止在 `src/pages/` 目录下创建子目录组织代码
 
 ### 11.5 模块间组件引用
 
@@ -1262,7 +1417,7 @@ src/pages/
 
 - 纯函数（schema 定义、工具函数）使用 `vitest` 直接测试
 - UI 组件使用 `@testing-library/react` 渲染测试
-- 使用 `@alioth/testing` 提供的辅助工具
+- 共享测试配置由 `@alioth/config` 提供
 - 测试文件命名 `{被测文件}.test.tsx`，与源文件同目录
 
 ### 11.7 禁用项汇总
@@ -1302,34 +1457,9 @@ src/pages/
 | `approve`     | ✅         | ✅          |                    |
 | `ai`          | ✅         | ✅          |                    |
 | `devices`     | ✅         | ✅          |                    |
-| **`shop`**    | ✅         | **⚠️ 例外** | 见 §11.9           |
 | `contacts`    | 仅 backend | —           | 仅 backend，无前端 |
 
-### 11.9 例外：`shop` 模块
-
-`shop` 具有**双区域架构**——同时包含门店前台（storefront）和后台管理（admin），不适用标准模块的扁平页面结构。
-
-#### 差异点
-
-| 维度     | 标准模块                                               | shop 模块                                                                                     |
-| -------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| 页面结构 | 扁平：`pages/{Entity}ListPage.tsx`                     | 垂直：`pages/store/{area}/{Page}.tsx` + `pages/admin/{Page}.tsx`                              |
-| 页面模式 | CRUD 工厂（`createEntityListPage` / `EntityFormPage`） | admin 侧用 CRUD 工厂；store 侧用自定义页面（`ProductDetailPage`、`CartPage`、`CheckoutPage`） |
-| 状态管理 | 实体级 Jotai stores                                    | 标准实体 stores + 独有 `cartStore.ts`（客户端购物车状态）                                     |
-| 路由层级 | 单层 `/entity`                                         | 双层 `/store/products`、`/store/cart`、`/admin/products`                                      |
-| 适用场景 | 后台数据管理                                           | B2C/B2B 门店前台 + 后台管理                                                                   |
-
-#### shop 被允许豁免的规则
-
-- ✅ `pages/` 下可以使用子目录（`store/`、`admin/`）
-- ✅ 可以不使用 CRUD 工厂构建 store 侧页面
-- 可以定义模块特有的客户端状态（如购物车 `cartStore`）
-- shop 仍需遵守：入口模式（single-spa.tsx）、字典合并、框架依赖声明、`exports/` 目录、i18n 键命名规范
-- admin 侧页面仍应尽量使用 CRUD 工厂
-
-> 此例外仅限 `shop` 模块。新增模块如需类似双区域架构，需先讨论决定是否扩展此规范。
-
-### 11.10 页面宽度约束
+### 11.9 页面宽度约束
 
 所有列表/详情页面必须充分利用窗口宽度：
 
@@ -1343,9 +1473,9 @@ max-width: none; /* 禁止固定宽度限制 */
 - 内容区宽度由 ModuleLayout 侧边栏自然约束
 - 表格列宽使用 `min-width` + `max-width` 灵活控制，禁止固定像素宽度
 
-### 11.11 ModuleLayout 统一布局（除 shop 外均须使用）
+### 11.11 ModuleLayout 统一布局
 
-所有模块（`shop` 除外）必须使用 `@alioth/components` 的 **`ModuleLayout`** 组件作为路由布局容器，由 **`createModuleLayout`** 工厂生成。
+所有模块必须使用 `@alioth/components` 的 **`ModuleLayout`** 组件作为路由布局容器，由 **`createModuleLayout`** 工厂生成。
 
 > 详细实现参考：`Framework/frontend/examples/module-template/LAYOUT_REFERENCE.md`
 
@@ -1393,9 +1523,26 @@ ModuleLayout (flex h-screen)
 - Sidebar 可折叠：展开 240px，折叠 64px（仅显示 icon）
 - 导航激活项通过 `useLocation().pathname` 自动推断（`id` 前缀匹配 `href`）
 - 支持通过 `aiContext` 配置注入 EmpAgent 上下文
-- Gateway 应用视角下：模块 ModuleLayout 全屏渲染（含 Sidebar + TopBar + 内容区），作为 Gateway MainLayout `<Outlet />` 的内容。`embedded: true` 仅用于 Meta 模块预览等独立嵌入场景，此时 Sidebar + TopBar 隐藏，仅渲染 ContentArea。
+- **宿主集成模式（Gateway 应用视角，`embedded: true`）**：模块由 Gateway `MicroFrontendLoader` 以 single-spa 挂载，`props.embedded = true` 经 `createMicroAppLifecycle` 写入 `window.__ALIOTH_APP_PROPS__`；模块侧 `ModuleLayout` 据此**仅渲染内容区**（`ContentArea padding="none"` + accent bar），Sidebar / TopBar / Footer 由 Gateway 绘制，模块经 `setModuleSidebar()` 把导航项与主色（`accentBarColor`）推给 Gateway。非集成模式（`embedded` 未设置，如模块独立运行）才渲染完整 `ModuleLayout`（Sidebar + TopBar + 内容区）。
 - Sidebar 顶部不渲染品牌 block。品牌由 Gateway TopBar 统一管理（详见 §11.11.6）。
 - SideFoot 仅有折叠/展开切换功能，不含用户档案、退出登录等其他操作入口
+
+##### 11.11.2.1 内容根（内容区边距与滚动唯一源）
+
+`ContentArea` 由 `ModuleLayout` 以 `padding="none"` 挂载（`paddingClasses.none = ''`）⇒ **宿主贡献 0 边距**。内容区边距的唯一来源 = 页面根节点携带的平台语义类 `.page`：
+
+| 项 | 规约值 | 出处 |
+| --- | --- | --- |
+| 内容根类 | `.page` | `Framework/frontend/components/src/theme-components.css`（生产 dist 生效的 shipped 语义：`padding:20px 24px; width:100%; height:100%; overflow-y:auto`） |
+| 边距值 | `20px 24px` | 同上 + `HTML_DESIGN_SPEC.md` §3.5 页面容器 |
+| 滚动视口 | `.page` 自身（`height:100%` + `overflow-y:auto`） | 同上；`ContentArea` 的 `<main>` 在页面填满视口时不再滚动 |
+
+- 页面根（`App.tsx` 的 `blockComponents` / `pageRoutes` 引用的页面组件，**含早返回分支**）MUST 携带 `.page`；
+- 页面根 MUST NOT 自持 `padding*`、`min-height:<vh>`、`overflow*`（后者会叠出第二个滚动容器）；模块自有 class（`.ct-app` 等）只承载模块色与后代规则；
+- 原型侧：模块原型（`Prototypes/Modules/{name}/llm-tsx/module.tsx`）的**内容视口** MUST 用 `py-5 px-6` + `overflow-y-auto`（与 `.page` 同值）。`module.tsx` 内带 `overflow-y-auto` 的元素即内容视口（embedded / standalone 两分支各一个时**两个都要**合规）；块内的嵌套滚动区属 Block 文件，不在本判据面。原型侧写工具类而非 `.page` 类名（工具类语义自含，与平台 `.page` 的唯一定义——`theme-components.css`——解耦）；
+- 门禁：`bun scripts/check/check-content-root-padding.ts --fail`（判据 R1 页根缺 `.page` / R2 页根叠加 padding 工具类 / R3 模块 `theme.css` 在页面根选择器上声明 padding·`min-height:<vh>`·overflow / R4 原型视口非 `py-5 px-6`；解析走 `scripts/parser-utils.mjs`）。
+- **宿主壳侧滚动所有权**（唯一滚动属主 / 页根零 `overflow-*` / chrome 不随内容滚；Gateway 与 OpenActivity 生产壳）条款正本 = `SHELL_LAYOUT_SPEC.md` §1。本节 `.page` 是**模块面**滚动视口契约；Gateway admin 面 `.page` 退役中（同规约 §6 迁移台账，台账清零后判据面不含 Gateway）。
+- **加入方式**：ns 目录放 `Pre-Proc/{ns}/content-root-contract.json`（声明 `containerClass` 与原型视口期望 token）；**未声明的 ns 一律跳过**，即本条款按 ns 迁移，MUST NOT 视为跨 ns 一次性切换。
 
 #### 11.11.3 Sidebar 尺寸与折叠按钮 Token
 
@@ -1423,6 +1570,16 @@ ModuleLayout (flex h-screen)
 - Gateway 视角的 Navigation 侧栏折叠按钮必须保持同一套 `PanelLeft` / `PanelRight` 方向语义
 
 > **HTML 原型对齐**：HTML 原型阶段的具体 CSS 书写规范见 `docs/specs/HTML_DESIGN_SPEC.md` §3.1 / §3.2；生产 React 实现以本节 Token 为准。
+
+> **与导航菜单模式的关系（六模式，2026-09-29 收口）**：Gateway **App 视角**的导航呈现有六种模式
+> （`sidebar` / `category` / `dual` / `top` / `grouped` / `topDual`），由用户偏好驱动（per-browser `localStorage`，
+> 不写 `app.json` / DB）。实现 = `Gateway/frontend/src/atoms/navigation-mode-atoms.ts` +
+> `Gateway/frontend/src/components/layout/{Navigation,NavBars}.tsx`，入口 = 个人中心「导航」tab（`?tab=navigation`）；
+> 规约正本 = `openspec/specs/gateway-navigation-modes`（原型侧 = `openspec/specs/shell-navigation-modes`）。
+> **本节 Token 对主侧栏恒成立**：`sidebar` / `grouped` 折叠宽度 **MUST 恒为 `w-16` 仅图标**，不受
+> `collapsedShowText` 影响（该开关只作用于**二级导航列**——`category` 分类列 / `dual` 二级列，折叠 `w-16` 或 `w-56`）；
+> `top` / `topDual` 不渲染侧栏，故本节 Token 不适用。跨仓一致性由
+> `scripts/check/check-nav-menu-mode-parity.ts` 守护（原型壳 / 生产 atoms / 契约文档三源）。
 
 #### 11.11.4 导航项规范
 
@@ -1558,11 +1715,12 @@ interface BlockNavKeyMap {
 
 **必须定义的模块变量**：
 
-| 变量                   | 示例值               | 说明                            |
-| ---------------------- | -------------------- | ------------------------------- |
-| `--primary`            | `355 68% 48%`        | HSL 主色                        |
-| `--primary-foreground` | `0 0% 100%`          | 主色上文字                      |
-| `--primary-bg`         | `355 68% 48% / 0.08` | 低透明背景，用于选中行/图标容器 |
+| 变量                   | 示例值                        | 说明                            |
+| ---------------------- | ----------------------------- | ------------------------------- |
+| `--primary`            | `355 68% 48%`                 | HSL 主色                        |
+| `--primary-foreground` | `0 0% 100%` / `355 68% 27%`   | 主色上文字（对比度 MUST ≥ 4.5:1） |
+| `--primary-text`       | `355 68% 30%`（浅主色）        | 主色作文字用（与白底 ≥ 4.5:1；用法 `text-primary-text`） |
+| `--primary-bg`         | `355 68% 48% / 0.08`          | 低透明背景，用于选中行/图标容器 |
 
 **推荐定义的模块变量**：
 
@@ -1601,8 +1759,11 @@ export const {Name}Layout = createModuleLayout({
 **作用域说明**：
 
 - Gateway 视角（`isAppPerspective === false`，如 `/` 首页）：模块 Layout 不参与渲染，Gateway TopBar 展示平台品牌名。
-- Meta 预览 / 模块独立运行（`embedded: true` 但非 Gateway App 视角）：模块 `ModuleLayout` 全屏渲染包含 Sidebar + 内容区，不渲染品牌 block。
-- **`shop` 模块**：使用双区域自定义布局（§11.9），不走 `createModuleLayout`，本节不适用。
+- 宿主集成模式（`embedded: true`）：模块 `ModuleLayout` **仅渲染内容区**（`ContentArea padding="none"` + accent bar），
+  不渲染 Sidebar / TopBar / Footer；外壳（含模块导航列与品牌）由宿主绘制——Gateway 端由
+  `MicroFrontendLoader` 传 `embedded: true`（经 `createMicroAppLifecycle` 写入 `window.__ALIOTH_APP_PROPS__`），
+  模块在 `embedded` 时经 `setModuleSidebar(navItems, { title, subtitle, icon, accentBarColor })` 把导航与主色推给 Gateway。
+  非集成模式（`embedded` 未设置/false，如模块独立运行）才渲染完整 `ModuleLayout`（Sidebar + TopBar + 内容区）。
 
 #### 11.11.7 已使用 ModuleLayout 的模块
 
@@ -1613,7 +1774,6 @@ export const {Name}Layout = createModuleLayout({
 - 模块布局必须使用 `createModuleLayout` 工厂（门禁：`scripts/check/check-module-auth-middleware.ts`）
 - 认证由 Gateway 统一处理，模块 Layout 不定义 auth 中间件（门禁：`scripts/check/check-module-auth-middleware.ts`）
 - 模块导航使用 Sidebar，不得在 Layout 中使用 `react-router` 导航守卫
-- `shop` 模块使用独立双区域布局，不得使用 `ModuleLayout`
 - Gateway App 视角下 Sidebar 顶部品牌 block 已整体移除，不得渲染独立品牌 block
   模块级 `TopBar` 由 `ModuleLayout` 内置渲染，是 Sidebar 与 ContentArea 之间的水平顶栏。本节定义其视觉样式、区域划分和交互行为，所有模块应在此规约约束下保持一致性。
 
@@ -1655,7 +1815,7 @@ export const {Name}Layout = createModuleLayout({
 `actions` 插槽由 `useWorkspaceSlots({ ai, approval, schedule, inbox, profile })` 统一构建：
 
 ```ts
-// Framework/frontend/components/src/components/layout/ModuleLayout.tsx
+// Framework/frontend/composables/src/layout/ModuleLayout.tsx
 const { slots, pendingCount, unreadCount } = useWorkspaceSlots({
   ai: workspaceConfig?.ai,
   approval: workspaceConfig?.approval,
@@ -1683,10 +1843,13 @@ const { slots, pendingCount, unreadCount } = useWorkspaceSlots({
 />
 ```
 
-此装饰条**当前未在 ModuleLayout 中实现**。选装约束：
+**实现位置（唯一）**：`ModuleLayout` 的两条分支（embedded / standalone）均把它作为 `ContentArea` 的 `accentBar` 传入 ⇒ 渲染为内容区**首子元素、位于滚动体之外**，紧贴壳顶栏下沿（实测 `y == 顶栏高 56px`）。**外壳 MUST NOT 再叠加纵向内距**：App 视角外壳（`Gateway/frontend/src/perspective/ContentArea.tsx`）承载内嵌模块时须 `padding="none"`，否则模块整块（含本条）被下推 24px（实测 y 56 → 80，2026-10-09 修复 `3808d736a2`）。
 
-- ✅ 仅 `accentBarColor` 控制颜色
-- 色条样式由 `accentBarColor` 统一控制，必须从 `moduleAccent` CSS 变量继承
+约束：
+
+- ✅ 仅 `accentBarColor` 控制颜色：尺寸由实现固定 `h-[3px] w-full shrink-0`
+- 颜色取 `accentBarColor`（hex 字面值）；未声明时按 `accentBarStyle` 回退：`'solid'` → `bg-primary`，否则 `bg-primary/15`
+- **原型面**：模块原型 MUST 含**恰一个** `.accent-bar` 元素，且位于滚动体（`overflow-y-auto`）**之前** —— 由 `check-module-accent.ts` **R9** 判红（fail 级；本仓 `Pre-Proc/` 仅含该 ns，跨 ns 面由各 ns 仓自身跑同一 gate）
 
 ##### 11.11.9.6 与 Gateway TopBar 的关系
 
@@ -1979,7 +2142,6 @@ function SomeAction() {
 | --------- | --------------------------------------------- | ---------------------------------------------------- |
 | `Meta`    | `Meta/frontend/src/styles/main.css`           | `"../../../../Framework/frontend/components/src"`    |
 | `Gateway` | `Gateway/frontend/src/index.css`              | `"../../../Framework/frontend/components/src"`       |
-| `SSO`     | `SSO/frontend/src/styles/main.css`            | `"../../../../Framework/frontend/components/src"`    |
 | 各 Module | `Pre-Proc/{ns}/Sources/{Apps｜Open｜Services｜changes}/Modules/<name>/frontend/src/theme.css`（或 `index.css` / `dev-styles.css`） | 声明 `@source` 时从该 CSS 文件到根为 7 层：`"../../../../../../../Framework/frontend/components/src"` |
 
 **模块源码必须由宿主应用声明**（2026-09-14 修复）：模块页面的 Tailwind 工具类由 Gateway 的
@@ -1992,7 +2154,7 @@ function SomeAction() {
 @source "../../../Pre-Proc/*/Sources/*/Modules/*/frontend/src/**/*.tsx";
 ```
 
-> 实证：写成 `Pre-Proc/**/Sources/Modules/**` 时 `@tailwindcss/oxide` Scanner 命中 **0 文件**
+> 实证：写成 `Pre-Proc/**/Sources/Apps/Modules/**` 时 `@tailwindcss/oxide` Scanner 命中 **0 文件**
 > （修后 609 文件 / 12690 候选类），模块独有的 `w-3/5` / `w-2/5` / `md:grid-cols-5` 等类
 > 全部未生成，页面退回内容宽度（合同详情页右列仅 370px，行尾留 355px 空白）。
 
@@ -2006,20 +2168,20 @@ function SomeAction() {
 
 > **2026-06-12 升级**：从抽检 `sm:flex-row` 三个类升级为**全量**检查所有带响应式/状态前缀的 Tailwind 类（184+ 个），覆盖 `Framework/frontend/components/src/**` 中每个使用的 `sm:` / `md:` / `dark:` / `hover:` / `data-[]` 等前缀类。
 
-项目提供专用审计脚本 **`scripts/check/check-tailwind-source.sh`**，集成到 `test-all.sh --check` 和 `.gitea/workflows/meta_cicd.yaml`：
+项目提供专用审计脚本 **`scripts/check/check-tailwind-source.sh`**，集成到 `bash scripts/test-all.sh --check`：
 
 ```bash
 # 完整检查（构建所有 app + 验证 @source 路径 + 验证所有前缀类覆盖度）
-bash scripts/check-tailwind-source.sh
+bash scripts/check/check-tailwind-source.sh
 
 # 仅检查（要求 dist 已存在）
-bash scripts/check-tailwind-source.sh --no-build
+bash scripts/check/check-tailwind-source.sh --no-build
 
 # 仅检查单个 app
-bash scripts/check-tailwind-source.sh Meta
+bash scripts/check/check-tailwind-source.sh Meta
 
 # 严格模式（任何 warning 也算失败）
-bash scripts/check-tailwind-source.sh --strict
+bash scripts/check/check-tailwind-source.sh --strict
 ```
 
 审计脚本三层验证：
@@ -2093,7 +2255,7 @@ Framework 共享组件（`AlertDialog` / `Dialog` / `Sheet` / `Popover` 等）**
 
 ### 15.1 前端预定义步骤必须与后端 ProgressEvent 严格对齐（2026-06-12 教训）
 
-> **2026-06-12 案例**：`ModelPublishPage.tsx` 的 `PUBLISH_STEPS` 包含 8 个步骤（`prepare`, `schema`, `enums`, `isahl_dump`, `meta_dump`, `meta_data`, `readme`, `done`），但后端 `Meta/backend/src/model_publish.rs` 的 `publish_model_to_dir` 只发送 5 个 ProgressEvent（`prepare`, `schema`, `isahl_dump`, `readme`, `done`）。前端 3 个步骤永远停在"等待中..."，即使发布已成功完成。
+> **2026-06-12 案例**：`ModelPublishPage.tsx` 的 `PUBLISH_STEPS` 包含 8 个步骤（`prepare`, `schema`, `enums`, `isahl_dump`, `meta_dump`, `meta_data`, `readme`, `done`），但后端 `Meta/backend/src/model_publish/` 的 `publish_model_to_dir` 只发送 5 个 ProgressEvent（`prepare`, `schema`, `isahl_dump`, `readme`, `done`）。前端 3 个步骤永远停在"等待中..."，即使发布已成功完成。
 
 **核心规约**：使用 SSE 流式进度的前端，**预定义的步骤列表必须 1:1 对应后端会发送的 ProgressEvent 名称**。禁止列出后端不发事件的步骤，也禁止等待后端不发的事件。
 
@@ -2101,7 +2263,7 @@ Framework 共享组件（`AlertDialog` / `Dialog` / `Sheet` / `Popover` 等）**
 
 | 步骤 ID（step） | 显示标签          | 后端发送者                               |
 | --------------- | ----------------- | ---------------------------------------- |
-| `prepare`       | 准备输出目录      | `model_publish.rs::publish_model_to_dir` |
+| `prepare`       | 准备输出目录      | `model_publish/pipeline.rs::publish_model_to_dir` |
 | `schema`        | 创建设置 SQL      | 同上                                     |
 | `isahl_dump`    | 导出 isahl 表结构 | 同上                                     |
 | `readme`        | 写入模型文件      | 同上                                     |
@@ -2333,7 +2495,7 @@ const handleClick = () => {
 3. 重复的 `const [x, setX] = useState(false);` 即使在不同行, 也是 bug
 4. 在 `tsconfig.json` 启用 `react-hooks/exhaustive-deps` lint 规则
 
-**Lint 检查**（`Framework/frontend/.eslintrc` 已配置）：
+**Lint 检查**（项目 linter = oxlint，配置见 `Gateway/frontend/oxlintrc.json`；下列 react-hooks 规则为本节要求项）：
 
 ```json
 {

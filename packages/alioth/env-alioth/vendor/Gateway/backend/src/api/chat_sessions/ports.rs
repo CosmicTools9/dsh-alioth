@@ -4,6 +4,8 @@ use serde_json::Value;
 
 use ai_agent::agents::AgentConfig;
 
+use super::context_envelope::ChatContextEnvelope;
+
 #[derive(Debug)]
 pub struct ChatSession {
     pub id: i64,
@@ -170,11 +172,14 @@ pub trait LlmConfigPort: Send + Sync {
 
 #[async_trait]
 pub trait AgentDispatchPort: Send + Sync {
+    /// 路由所需入站上下文一束（C6/D5）：`page_context` 与 `suggested_agent` 是
+    /// 同一信封的声明字段，不再以两个散参并列传入（原 8 参 → clippy
+    /// `too_many_arguments`）。形状发现唯一实现在 [`ChatContextEnvelope::from_raw`]。
     async fn resolve_agent(
         &self,
         session_id: i64,
         user_message: &str,
-        page_context: Option<Value>,
+        envelope: &ChatContextEnvelope,
         history: &[(String, String)],
         locale: &str,
         llm: &llm::LlmService,
@@ -184,9 +189,12 @@ pub trait AgentDispatchPort: Send + Sync {
     async fn list_agent_configs(&self) -> Result<Vec<AgentConfig>, String>;
 }
 
+/// 路由决策历史写径（D11）：`AgentRouterAdapter` 不再回调 `adapters::db_session`
+/// （adapter 依赖另一个 adapter = 方向倒置），改为依赖本端口 ⇒ 依赖方向单向
+/// （只依赖 `ports`）。环形保留条数与存储键由实现持有。
 #[async_trait]
-pub trait AIContactPort: Send + Sync {
-    /// 用户发送方地址（`zc_id_contact_infos` id）。
-    /// 主体化后不再有共享 AI 联系人解析（见 `memory_scope`：每主体独立联系方式）。
-    async fn resolve_user_contact_id(&self, user_id: i64) -> Result<Option<i64>, String>;
+pub trait RoutingHistoryPort: Send + Sync {
+    /// 追加一条路由决策（`agent_state.routing` 环形数组，保留最近 `ROUTING_STATE_CAP`
+    /// 条，条目=单次决策）。读改写 + 行锁语义由实现保证。
+    async fn append_routing_decision(&self, session_id: i64, entry: Value) -> Result<(), String>;
 }

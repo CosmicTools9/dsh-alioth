@@ -188,9 +188,9 @@ pub async fn agent_contact_id_set(pool: &PgPool) -> Result<std::collections::Has
     Ok(rows.into_iter().collect())
 }
 
-/// 会话当前智能体 code：`agent_state.pinned_agent`（非空）→ 最近 assistant 消息
-/// meta.agent_code；均无 → None。
-pub async fn session_agent_code(pool: &PgPool, session_id: i64) -> Result<Option<String>, String> {
+/// 会话 pinned agent（`agent_state->>'pinned_agent'`，非空）——**单一实现**（D10）。
+/// 所有读取点 MUST 经此函数，MUST NOT 各自复写 SQL 字面量。
+pub async fn read_pinned_agent(pool: &PgPool, session_id: i64) -> Result<Option<String>, String> {
     let pinned: Option<String> = sqlx::query_scalar::<_, String>(
         r#"SELECT agent_state->>'pinned_agent'
            FROM isahl."zc_id_thre-ai_session" WHERE id = $1"#,
@@ -198,12 +198,16 @@ pub async fn session_agent_code(pool: &PgPool, session_id: i64) -> Result<Option
     .bind(session_id)
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten()
+    .map_err(|e| format!("read pinned agent failed: {}", e))?
     .filter(|s| !s.is_empty());
-    if pinned.is_some() {
-        return Ok(pinned);
-    }
+    Ok(pinned)
+}
+
+/// 会话最近一条 assistant 消息记录的 agent_code——**单一实现**（D10）。
+pub async fn read_last_agent_code(
+    pool: &PgPool,
+    session_id: i64,
+) -> Result<Option<String>, String> {
     let last: Option<String> = sqlx::query_scalar(
         r#"SELECT cm.agent_code
              FROM isahl."zc_id_msgs-chat_ai" m
@@ -214,9 +218,59 @@ pub async fn session_agent_code(pool: &PgPool, session_id: i64) -> Result<Option
     .bind(session_id)
     .fetch_optional(pool)
     .await
-    .ok()
-    .flatten();
+    .map_err(|e| format!("read last agent code failed: {}", e))?;
     Ok(last)
+}
+
+/// 会话内逐消息持久记录中的结构化动作（C1，change `deepen-chat-action-seam`）。
+///
+/// 语义：在 `isahl_auth.chat_message_meta.structured -> 'actions'` 中，按消息时间
+/// **倒序**查找最近一条含 `id == action_id` 且 `kind == 'execute'` 的动作记录——
+/// 这是「确认动作」的**权威**解析面（工具产出经服务端提升后落 meta）；会话级
+/// mirror（`agent_state.last_result`）仅作无 meta 历史消息的回落。
+///
+/// 有界：最多回看 [`ACTION_LOOKBACK`] 条含 structured 的消息（不扫无界历史）。
+pub async fn find_structured_action(
+    pool: &PgPool,
+    session_id: i64,
+    action_id: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    const ACTION_LOOKBACK: i64 = 50;
+    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        r#"SELECT cm.structured
+             FROM isahl."zc_id_msgs-chat_ai" m
+             JOIN isahl_auth.chat_message_meta cm ON cm.msg_id = m.id
+            WHERE m.fk_thread = $1 AND m.deleted_at IS NULL AND cm.structured IS NOT NULL
+            ORDER BY m.created_at DESC, m.id DESC LIMIT $2"#,
+    )
+    .bind(session_id)
+    .bind(ACTION_LOOKBACK)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("find structured action failed: {}", e))?;
+    Ok(rows.into_iter().find_map(|structured| {
+        structured
+            .get("actions")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|actions| {
+                actions
+                    .iter()
+                    .find(|a| {
+                        a.get("id").and_then(serde_json::Value::as_str) == Some(action_id)
+                            && a.get("kind").and_then(serde_json::Value::as_str) == Some("execute")
+                    })
+                    .cloned()
+            })
+    }))
+}
+
+/// 会话当前智能体 code：`agent_state.pinned_agent`（非空）→ 最近 assistant 消息
+/// meta.agent_code；均无 → None。两跳均引用**单一实现**（D10）。
+pub async fn session_agent_code(pool: &PgPool, session_id: i64) -> Result<Option<String>, String> {
+    if let Some(pinned) = read_pinned_agent(pool, session_id).await? {
+        return Ok(Some(pinned));
+    }
+    read_last_agent_code(pool, session_id).await
 }
 
 /// 会话当前智能体的联系方式 id（无主体 code / 未 materialize 联系方式 → None）。

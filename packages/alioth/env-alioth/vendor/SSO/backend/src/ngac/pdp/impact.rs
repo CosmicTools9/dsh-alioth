@@ -397,9 +397,11 @@ impl Pdp {
                 // admin 遍历后兜底（NGAC_SPEC §2.5）：主体 UA 闭包含 admin UA ⇒
                 // 无策略也 Permit ⇒ 被删边对 admin 主体不构成影响（少报面消除）
                 let subject_is_admin = |closure: &[i64]| {
-                    closure
-                        .iter()
-                        .any(|id| ua_names.get(id).is_some_and(|n| n == "admin"))
+                    ngac_host::attr_names_include_admin(
+                        closure
+                            .iter()
+                            .filter_map(|id| ua_names.get(id).map(String::as_str)),
+                    )
                 };
 
                 for ar in &access_rights {
@@ -442,10 +444,9 @@ impl Pdp {
         }
 
         // 5. 组装 + 受影响用户解析（未删、未过期）
-        // 展示名：受影响 resource_type 集一次批量 meta_collections 查询（禁止 N+1）
-        let rt_set: std::collections::HashSet<String> =
-            affected_map.keys().map(|(_, rt)| rt.clone()).collect();
-        let meta_names = crate::ngac::display::meta_display_names(pool, &rt_set).await;
+        // 展示名：链 2（`isahl_meta` 查询）已删（2026-09-29，容器边界）⇒ 空 map，链 3 承担
+        let meta_names: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         let mut affected: Vec<ImpactAffected> = Vec::new();
         for ((subject, resource_type), (mut lost_allow, mut lost_deny)) in affected_map {
             lost_allow.sort();

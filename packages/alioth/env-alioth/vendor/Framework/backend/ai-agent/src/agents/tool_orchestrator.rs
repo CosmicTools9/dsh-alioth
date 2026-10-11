@@ -67,13 +67,35 @@ pub trait ActionHandler: Send + Sync {
         params: &serde_json::Value,
         ctx: &ToolContext,
     ) -> Result<serde_json::Value, String>;
+    /// **只读分析**执行口（NGAC dry-run / explain-paths；change
+    /// `wire-org-policy-declaration-fields` tasks 3.3）：与业务动作**分离**——
+    /// 零副作用、无确认级，且不经动作目录（MUST NOT 与可执行动作共枚举，
+    /// 避免能力外溢）。默认不可用（非 Gateway 宿主/未实现 ⇒ fail-closed）。
+    async fn analyze(
+        &self,
+        tool: &str,
+        params: &serde_json::Value,
+        ctx: &ToolContext,
+    ) -> Result<serde_json::Value, String> {
+        let _ = (tool, params, ctx);
+        Err(format!("ANALYSIS_UNAVAILABLE: {tool}"))
+    }
     /// 该动作类型的确认级别：None/Preview/Low 直接执行；
     /// Explicit/High/Critical 必须 `args.confirmed == true` 才执行。
-    fn confirmation_level(&self, action_type: &str) -> ConfirmationLevel;
+    ///
+    /// 默认实现由**动作目录**派生（change add-action-catalogue）：单一真相源，
+    /// 未知动作 fail-safe 归 `Explicit`（MUST NOT 手写 match + 通配）。宿主
+    /// （Gateway）无需覆写；测试假实现可按需覆写以设定任意级别。
+    fn confirmation_level(&self, action_type: &str) -> ConfirmationLevel {
+        crate::tools::action_catalogue::ActionCatalogue::confirmation_level(action_type)
+    }
 }
 
 /// execute_action 门禁判定：哪些确认级别必须收到 `confirmed=true` 才放行执行。
-pub(crate) fn level_requires_confirmation(level: &ConfirmationLevel) -> bool {
+///
+/// **单一实现**：宿主（Gateway）经 `ai_agent::agents::tool_orchestrator::
+/// level_requires_confirmation` 消费，MUST NOT 在宿主侧复写同判据。
+pub fn level_requires_confirmation(level: &ConfirmationLevel) -> bool {
     matches!(
         level,
         ConfirmationLevel::Explicit | ConfirmationLevel::High | ConfirmationLevel::Critical
@@ -485,6 +507,9 @@ pub struct DbToolAdapter {
     pool: sqlx::PgPool,
     /// 允许该 agent 调用的工具白名单；空集 = 不过滤（registry 全量）。
     allowed_tools: std::collections::HashSet<String>,
+    /// 表单契约（change `add-form-contract-seam`，ADR D-053）：本轮页面登记后随上下文注入。
+    /// `None` = 无可用契约 ⇒ `validate_form` MUST fail-closed（`CONTRACT_UNAVAILABLE`）。
+    form_contract: Option<crate::tools::form_contract::FormContract>,
 }
 
 impl DbToolAdapter {
@@ -492,6 +517,7 @@ impl DbToolAdapter {
         Self {
             pool,
             allowed_tools: std::collections::HashSet::new(),
+            form_contract: None,
         }
     }
 
@@ -499,6 +525,16 @@ impl DbToolAdapter {
     /// 作为可调用白名单；空 `names` = 不过滤（保持全量）。
     pub fn with_allowed_tools(mut self, names: Vec<String>) -> Self {
         self.allowed_tools = names.into_iter().collect();
+        self
+    }
+
+    /// 注入本轮的页面表单契约（change `add-form-contract-seam`）：契约由页面派生、
+    /// 随 `pageContext.formContract` 逐轮到达，经宿主（Gateway）解析后在此携带。
+    pub fn with_form_contract(
+        mut self,
+        contract: Option<crate::tools::form_contract::FormContract>,
+    ) -> Self {
+        self.form_contract = contract;
         self
     }
 
@@ -534,6 +570,7 @@ impl ToolExecutionPort for DbToolAdapter {
             // DbToolAdapter 仅承载 DB 工具；业务动作 handler 由宿主
             // （Gateway ActionHandler）经自定义执行端口注入。
             action_handler: None,
+            form_contract: self.form_contract.clone(),
         };
         registry.execute(call, &ctx).await
     }

@@ -1,0 +1,5 @@
+{
+  "note": "check-sql-literal-single-source 门禁的合法例外（只减不增）。key = 归一化 token 序列的 sha256 前 16 位（**内容锚定**，与行号无关 ⇒ 文件增删行不会造成基线 rot）。source 枚举：debt-preexisting（既有重复，收口须另立 change）| intentional-replica（有意复刻）| data-plane（数据/种子形态）| generator-face（生成器产物面）| test-fixture（测试夹具）。新增条目 MUST 写可核验的 source + reason；清理后请删条目。历史：2026-09-29 两处既有重复已收敛（waybill-writer `dispatch.rs` 抽 `CONSIGNMENT_WEIGHT_SQL`；approval `advance.rs` 四处抽 `NODE_INFO_SQL`）后为「零容忍」形态；2026-10-09 曾登记 1 条（extract-ngac-decision-host 迁移中间态孪生副本 `26e6dc24be9050cb`），该 change 收敛（`common::permissions` 的 `ua_closure_rows` 装配 SQL 改调 `ngac_host::ua_closure_rows`，单源化）后条目已删除 ⇒ 回归零容忍。",
+  "rule_reference": "openspec/specs/sql-literal-single-source/spec.md :: sql-literal-single-source（同一语义 SQL 字面量 MUST 单一实现）；docs/specs/SPEC_ENFORCEMENT_SUBSTRATE.md §基线卫生（R2 只减不增 / R3 同源更新）",
+  "entries": []
+}

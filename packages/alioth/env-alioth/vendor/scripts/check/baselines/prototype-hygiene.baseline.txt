@@ -1,0 +1,6 @@
+AVIC-CAASEC|Pre-Proc/AVIC-CAASEC/Prototypes/Modules/airworthiness/llm-tsx/module.tsx|footerBrand 'Cosmic-Tools' 为他 ns 品牌（契约：MUST NOT 串味）
+AVIC-CAASEC|Pre-Proc/AVIC-CAASEC/Prototypes/Modules/org-management/llm-tsx/module.tsx|footerBrand 'Cosmic-Tools' 为他 ns 品牌（契约：MUST NOT 串味）
+AVIC-CAASEC|Pre-Proc/AVIC-CAASEC/Prototypes/Modules/system-approve/llm-tsx/module.tsx|footerBrand 'Cosmic-Tools' 为他 ns 品牌（契约：MUST NOT 串味）
+AVIC-CAASEC|Pre-Proc/AVIC-CAASEC/Prototypes/Modules/system-dev/llm-tsx/module.tsx|footerBrand 'Cosmic-Tools' 为他 ns 品牌（契约：MUST NOT 串味）
+Alioth|Pre-Proc/Alioth/Prototypes/Modules/system-approve/llm-tsx/module.tsx|footerBrand 'Cosmic-Tools' 为他 ns 品牌（契约：MUST NOT 串味）
+Alioth|Pre-Proc/Alioth/Sources/Apps/Modules/demand/module.json|缺 prototypeVersion（声明面 MUST 指向现存产物）

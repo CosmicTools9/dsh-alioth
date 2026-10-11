@@ -5,8 +5,8 @@
 //! 审批岗位类别字典（zc_id_cate-approve_role 直管/代理/升级/备选）不在此端点。
 //! NGAC 资源复用 "approval-roles"（审批候选岗位可见性同审批角色）。
 //!
-//! 任职字段随行返回（`repositories::list_position_options` 落地）：**行粒度 =
-//! (真实岗位, 活跃任职账号)**，每行 `{ id, name, fk_user }`，`fk_user` = 该岗位的一名任职账号
+//! 任职字段随行返回（经 services 层收口 `services::list_position_options`，
+//! 落地判据见 repositories 层实现）：**行粒度 = (真实岗位, 活跃任职账号)**，每行 `{ id, name, fk_user }`，`fk_user` = 该岗位的一名任职账号
 //! （岗位标量 `fk_user` ∪ 任职桥 `post_rr_employee` 派生的 `empl-natural`/`empl-agent`.fk_user，
 //! 去重、仅活跃；判据单一实现 `common::position_incumbent_accounts_sql!()`）。
 //! 无活跃任职账号的岗位不出行（无可解析审批人）。
@@ -19,7 +19,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use sqlx::PgPool;
 
 use crate::ngac::NgacGuard;
-use crate::repositories::list_position_options;
+use crate::services::list_position_options;
 
 /// 注册审批岗位只读路由
 pub fn register<G: NgacGuard + 'static>(cfg: &mut web::ServiceConfig) {

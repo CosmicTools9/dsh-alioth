@@ -3,7 +3,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use std::collections::HashMap;
 
-use crate::api::chat_sessions::ports::{ChatSession, SessionStorePort};
+use crate::api::chat_sessions::ports::{ChatSession, RoutingHistoryPort, SessionStorePort};
 
 pub struct SqlxSessionAdapter {
     pool: PgPool,
@@ -382,6 +382,26 @@ pub(crate) async fn append_bounded_state(
     .map_err(|e| format!("DB error: {}", e))?;
 
     tx.commit().await.map_err(|e| format!("DB error: {}", e))
+}
+
+/// 路由决策历史的生产实现（D11）：委托 [`append_bounded_state`]（"routing" 槽，
+/// 保留 [`ROUTING_STATE_CAP`] 条）。`AgentRouterAdapter` 经 `RoutingHistoryPort`
+/// 注入本实现 ⇒ adapter 不再 import `adapters::db_session`。
+pub struct DbRoutingHistory {
+    pool: PgPool,
+}
+
+impl DbRoutingHistory {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl RoutingHistoryPort for DbRoutingHistory {
+    async fn append_routing_decision(&self, session_id: i64, entry: Value) -> Result<(), String> {
+        append_bounded_state(&self.pool, session_id, "routing", entry, ROUTING_STATE_CAP).await
+    }
 }
 
 #[cfg(test)]

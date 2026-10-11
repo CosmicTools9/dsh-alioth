@@ -39,14 +39,24 @@ async fn read_system_row(pool: &PgPool) -> SystemRow {
 async fn ensure_admin(pool: &PgPool) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES ($1, 'boot-admin', 'boot-admin', 'boot-admin@test.local', 'active', true, NOW(), NOW())
+           (id, username, status, is_active, created_at, updated_at)
+           VALUES ($1, 'boot-admin', 'active', true, NOW(), NOW())
            ON CONFLICT (id) DO UPDATE SET is_active = true"#,
     )
     .bind(ADMIN_UID)
     .execute(pool)
     .await
     .expect("insert admin fixture");
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+           VALUES ($1, 'boot-admin@test.local', TRUE, NOW(), NOW())
+           ON CONFLICT DO NOTHING"#,
+    )
+    .bind(ADMIN_UID)
+    .execute(pool)
+    .await
+    .expect("insert admin email fixture");
 
     let policy_class: i64 =
         match sqlx::query_scalar("SELECT id FROM isahl_auth.ngac_policy_class LIMIT 1")
@@ -175,6 +185,12 @@ async fn cleanup(pool: &PgPool, restore: SystemRow, boot_subject_id: Option<i64>
         .ok();
     // admin fixture
     sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
+        .bind(ADMIN_UID)
+        .execute(pool)
+        .await
+        .ok();
+    // auth_user_emails 入边 FK 无 ON DELETE CASCADE：先删邮箱行再删账号
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
         .bind(ADMIN_UID)
         .execute(pool)
         .await

@@ -86,15 +86,17 @@
   --input:  214.3 31.8% 91.4%;
   --ring:  217 91% 60%;
   --radius:  0.5rem;
-  --radius-md:  0.375rem;
-  --radius-lg:  0.5rem;
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
   --success:  160 84% 39%;
   --success-foreground:  0 0% 100%;
   --warning:  38 92% 50%;
   --warning-foreground:  0 0% 100%;
   --info:  217 91% 60%;
   --info-foreground:  0 0% 100%;
-  --sidebar-background:  0 0% 98%;
+  --sidebar-background:  var(--sidebar);
   --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono:  'JetBrains Mono', monospace;
   --topbar-height:  3.5rem;
@@ -107,20 +109,23 @@
   --text2:  var(--muted-foreground);
   --tw-space-y-reverse:  0;
   --sidebar:  0 0% 98%;
-  --muted-fg:  215 16% 47%;
+  --muted-fg:  var(--muted-foreground);
   --border-width:  1px;
   --border-width-2:  2px;
   --bg-success:  160 84% 39% / 0.1;
   --bg-warning:  38 92% 50% / 0.1;
   --bg-destructive:  0 84% 60% / 0.1;
   --bg-info:  217 91% 60% / 0.1;
-  --chart-1:  191 97% 37%;
-  --chart-2:  271 91% 53%;
-  --chart-3:  330 80% 60%;
-  --chart-4:  239 84% 67%;
-  --chart-5:  224 76% 48%;
-  --overlay-bg:  hsla(0, 0%, 0%, 0.4);
+  --chart-1:  var(--categorical-1);
+  --chart-2:  var(--categorical-2);
+  --chart-3:  var(--categorical-3);
+  --chart-4:  var(--categorical-4);
+  --chart-5:  var(--categorical-5);
+  --overlay-bg:  rgba(0, 0, 0, 0.2);
+  --overlay-blur:  blur(4px);
+  --primary-text:  var(--primary);
   --destructive-hover:  0 70% 45%;
+  --elev-modal:  var(--shadow-2xl);
   --badge-success-bg:  160 84% 92%;
   --badge-success-fg:  160 84% 25%;
   --badge-warning-bg:  38 92% 92%;
@@ -133,11 +138,11 @@
   --badge-muted-fg:  215 16% 35%;
   --shadow-color:  0 0% 0%;
   --shadow-xs:  0 1px 2px hsl(var(--shadow-color) / 0.05);
-  --shadow-sm:  0 1px 6px hsl(var(--shadow-color) / 0.08);
+  --shadow-sm: 0 1px 2px 0 hsl(var(--shadow-color) / 0.05);
   --shadow:  0 4px 16px hsl(var(--shadow-color) / 0.08);
-  --shadow-lg:  0 12px 32px hsl(var(--shadow-color) / 0.20);
-  --shadow-xl:  0 12px 48px hsl(var(--shadow-color) / 0.20);
-  --shadow-2xl:  0 12px 48px hsl(var(--shadow-color) / 0.25);
+  --shadow-lg: 0 10px 15px -3px hsl(var(--shadow-color) / 0.1), 0 4px 6px -4px hsl(var(--shadow-color) / 0.1);
+  --shadow-xl: 0 20px 25px -5px hsl(var(--shadow-color) / 0.1), 0 8px 10px -6px hsl(var(--shadow-color) / 0.1);
+  --shadow-2xl: 0 25px 50px -12px hsl(var(--shadow-color) / 0.25);
   --overlay:  hsl(var(--shadow-color) / 0.65);
   --categorical-1:  243 75% 59%;
   --categorical-2:  211 100% 50%;
@@ -147,6 +152,7 @@
   --categorical-6:  280 65% 55%;
   --categorical-7:  335 75% 55%;
   --categorical-8:  174 70% 41%;
+  --shadow-md: 0 4px 6px -1px hsl(var(--shadow-color) / 0.1), 0 2px 4px -2px hsl(var(--shadow-color) / 0.1);
 }
 
 .dark {
@@ -178,20 +184,20 @@
   --primary-foreground:  0 0% 100%;
   --primary-hover:  217 91% 53%;
   --primary-bg:  217 91% 60% / 0.15;
-  --primary-bg-hover:  217 91% 60% / 0.20;
+  --primary-bg-hover:  217 91% 60% / 0.2;
   --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono:  'JetBrains Mono', monospace;
   --sidebar:  222.2 84% 4.9%;
-  --muted-fg:  215 20.2% 65.1%;
+  --muted-fg:  var(--muted-foreground);
   --bg-success:  160 84% 39% / 0.15;
   --bg-warning:  38 92% 50% / 0.15;
   --bg-destructive:  0 62.8% 30.6% / 0.15;
   --bg-info:  217 91% 60% / 0.15;
-  --chart-1:  191 97% 45%;
-  --chart-2:  271 91% 60%;
-  --chart-3:  330 80% 67%;
-  --chart-4:  239 84% 74%;
-  --chart-5:  224 76% 55%;
+  --chart-1:  var(--categorical-1);
+  --chart-2:  var(--categorical-2);
+  --chart-3:  var(--categorical-3);
+  --chart-4:  var(--categorical-4);
+  --chart-5:  var(--categorical-5);
   --destructive-hover:  0 62.8% 40%;
   --badge-success-bg:  160 84% 15%;
   --badge-success-fg:  160 84% 75%;
@@ -204,11 +210,11 @@
   --badge-muted-bg:  215 16% 20%;
   --badge-muted-fg:  215 16% 75%;
   --shadow-xs:  0 1px 2px hsl(var(--shadow-color) / 0.12);
-  --shadow-sm:  0 1px 6px hsl(var(--shadow-color) / 0.20);
-  --shadow:  0 4px 16px hsl(var(--shadow-color) / 0.20);
-  --shadow-lg:  0 12px 32px hsl(var(--shadow-color) / 0.35);
-  --shadow-xl:  0 12px 48px hsl(var(--shadow-color) / 0.35);
-  --shadow-2xl:  0 12px 48px hsl(var(--shadow-color) / 0.40);
+  --shadow-sm: 0 1px 2px 0 hsl(var(--shadow-color) / 0.20);
+  --shadow:  0 4px 16px hsl(var(--shadow-color) / 0.2);
+  --shadow-lg: 0 10px 15px -3px hsl(var(--shadow-color) / 0.35), 0 4px 6px -4px hsl(var(--shadow-color) / 0.35);
+  --shadow-xl: 0 20px 25px -5px hsl(var(--shadow-color) / 0.35), 0 8px 10px -6px hsl(var(--shadow-color) / 0.35);
+  --shadow-2xl: 0 25px 50px -12px hsl(var(--shadow-color) / 0.40);
   --overlay:  hsl(var(--shadow-color) / 0.75);
   --categorical-1:  243 75% 59%;
   --categorical-2:  211 100% 50%;
@@ -218,6 +224,7 @@
   --categorical-6:  280 65% 55%;
   --categorical-7:  335 75% 55%;
   --categorical-8:  174 70% 41%;
+  --shadow-md: 0 4px 6px -1px hsl(var(--shadow-color) / 0.20), 0 2px 4px -2px hsl(var(--shadow-color) / 0.20);
 }
 
 .hide-scrollbar {
@@ -328,6 +335,7 @@ img, video { max-width: 100%; height: auto; }
 .w-auto { width: auto; }
 .min-w-0 { min-width: 0; }
 .min-w-5 { min-width: 1.25rem; }
+.min-w-16 { min-width: 4rem; }
 .min-w-full { min-width: 100%; }
 .max-w-full { max-width: 100%; }
 .max-w-screen-xl { max-width: 1280px; }
@@ -989,6 +997,7 @@ img, video { max-width: 100%; height: auto; }
 }
 
 /* ── Drawer Container ── */
+/* drawer-container-gate: keep — 基线内 ns 消费者（Cosmic-Tools/SE/AVIC/Alioth）迁移完成前保留 */
 .drawer-overlay {
   position: fixed;
   inset: 0;
@@ -2120,6 +2129,299 @@ select.input {
   to { transform: rotate(360deg); }
 }
 
+/* ── 字典管理（「描述信息」共享页，extract-dict-mgmt-shared-component） ──
+   前缀 alioth-dict- 避免与消费 ns 的同名类（.dict-* / .badge / .link-btn）冲突；
+   规则自 WZ theme.css 逐条平移（视觉等值），键为 Framework 样式自持面（css-completeness）。 */
+.alioth-dict-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.alioth-dict-page-header h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+.alioth-dict-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  min-height: 420px;
+}
+/* ≥1024px（Tailwind `lg` 同阈）才切两栏 + 定高；窄屏单列自然高度（与 Block 原型 b-v6 一致） */
+@media (min-width: 1024px) {
+  .alioth-dict-layout {
+    grid-template-columns: 280px minmax(0, 1fr);
+    height: calc(100vh - 190px);
+  }
+}
+.alioth-dict-sidebar,
+.alioth-dict-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+}
+.alioth-dict-sidebar-search {
+  padding: 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.alioth-dict-sidebar-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+}
+.alioth-dict-group-title {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+.alioth-dict-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: hsl(var(--foreground));
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.alioth-dict-nav-item:hover {
+  background: hsl(var(--accent) / 0.4);
+}
+.alioth-dict-nav-item.active {
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+  font-weight: 500;
+}
+.alioth-dict-nav-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.alioth-dict-nav-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alioth-dict-nav-table,
+.alioth-dict-panel-table,
+.alioth-dict-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.alioth-dict-nav-table {
+  margin-left: 4px;
+  font-size: 10px;
+  color: hsl(var(--muted-foreground) / 0.5);
+}
+.alioth-dict-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+.alioth-dict-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.alioth-dict-panel-title h2 {
+  font-size: 16px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.alioth-dict-panel-table {
+  font-size: 11px;
+  color: hsl(var(--muted-foreground) / 0.6);
+}
+.alioth-dict-count {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.alioth-dict-panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.alioth-dict-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+.alioth-dict-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
+}
+.alioth-dict-input {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid hsl(var(--input));
+  border-radius: 8px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 13px;
+}
+.alioth-dict-input-search {
+  width: 224px;
+}
+.alioth-dict-btn,
+.alioth-dict-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+}
+.alioth-dict-btn-primary {
+  border-color: transparent;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+.alioth-dict-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.alioth-dict-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: hsl(var(--primary));
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.alioth-dict-link:hover {
+  opacity: 0.8;
+}
+.alioth-dict-link-danger {
+  color: hsl(var(--destructive));
+}
+.alioth-dict-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.alioth-dict-muted {
+  color: hsl(var(--muted-foreground));
+}
+.alioth-dict-strong {
+  font-weight: 500;
+}
+.alioth-dict-mono {
+  font-size: 12px;
+  color: hsl(var(--primary));
+}
+.alioth-dict-center {
+  padding: 32px 0;
+  text-align: center;
+  font-size: 13px;
+}
+.alioth-dict-empty {
+  padding: 64px 16px;
+  text-align: center;
+}
+.alioth-dict-empty h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.alioth-dict-empty p {
+  margin-top: 6px;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+.alioth-dict-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.alioth-dict-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.alioth-dict-field-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.alioth-dict-field-label {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+.alioth-dict-required {
+  color: hsl(var(--destructive));
+}
+.alioth-dict-dialog {
+  max-width: 480px;
+}
+.alioth-dict-authority {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid hsl(var(--warning) / 0.35);
+  border-radius: 8px;
+  background: hsl(var(--warning) / 0.08);
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 轻量 Toast（2.4s 自动消失；供 Toast/useToastLocal 消费——原 WZ comprehensive/outgo theme.css 副本归位；
+   成功 primary / 失败 destructive，fixed 底部居中） */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 13px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+  z-index: 1200;
+}
+.toast.toast-error {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+
 /* Framework/frontend/components/src/theme-flow.css
  * Generated from system-approve module theme.css
  */
@@ -2865,4 +3167,12 @@ select.input {
 .vfd-node-wrapper:hover .vfd-node-delete,
 .vfd-node-delete:focus-visible {
   opacity: 1;
+}
+
+/* ── 窄屏保宽（共享层）── */
+@media (max-width: 900px) {
+  table { min-width: 640px; }
+  th, td { min-width: 4.5em; }
+  th { white-space: nowrap; }
+  .overflow-y-auto { overflow-x: auto; }
 }

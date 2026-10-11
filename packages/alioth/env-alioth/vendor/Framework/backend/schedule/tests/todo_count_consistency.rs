@@ -5,6 +5,9 @@
 //! 仅在清单侧排除系统翻转事实（`record_slice_flip` 产物，`code` 前缀 `flip-`），
 //! 徽标仍把对账切片计为待办（徽标 8 / 清单可见行 0）。本测试锁定契约：
 //! **徽标数 == 清单中 `done == false` 的行数**，且清单须保留已完成行（「显示已完成」展开依赖）。
+//!
+//! 夹具说明：已完成事件经生产写径 `ScheduleService::toggle_event_done` 播种——该路径
+//! 自愈式补种「完成/end」状态行（此前硬取该行 id，测试库与 pre 库均无此种子 → 必失败）。
 
 use framework_schedule::service::ScheduleService;
 use framework_schedule::ScheduleRepository;
@@ -50,14 +53,16 @@ async fn seed_event(pool: &PgPool, user_id: i64, code: &str, notice: Option<&str
     .expect("seed event")
 }
 
-/// 取「完成/end」状态行 id——不硬编码，库内缺失即测试失败（判据本身不可静默降级）
-async fn done_status_id(pool: &PgPool) -> i64 {
-    sqlx::query_scalar::<_, i64>(
-        r#"SELECT id FROM isahl."zc_id_stus-event" WHERE notice = '完成' AND flag = 'end' LIMIT 1"#,
+/// 「完成/end」状态行是否已存在（`list_todos` 的 `done` 派生判据；生产写径自愈补种，
+/// 见 `ScheduleRepository::toggle_event_done` Step 1）——用于清理时恢复库内原状。
+async fn completed_status_seeded(pool: &PgPool) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        r#"SELECT COUNT(*) > 0 FROM isahl."zc_id_stus-event"
+           WHERE notice = '完成' AND flag = 'end' AND deleted_at IS NULL"#,
     )
     .fetch_one(pool)
     .await
-    .expect("zc_id_stus-event 完成/end 状态行缺失")
+    .expect("probe completed status row")
 }
 
 #[tokio::test]
@@ -90,22 +95,21 @@ async fn pending_todo_count_matches_visible_todo_rows() {
     )
     .await;
 
-    // 已完成事件挂主状态 → 计入清单（供「显示已完成」展开）但不计入徽标
-    let status_id = done_status_id(&pool).await;
-    sqlx::query(
-        r#"INSERT INTO isahl."zc_id_lifecycle_r_primary-status" (ref_left, ref_right, created_by_id)
-           VALUES ($1, $2, $3)"#,
-    )
-    .bind(done)
-    .bind(status_id)
-    .bind(user_id)
-    .execute(&pool)
-    .await
-    .expect("mark event done");
-
     let repo = ScheduleRepository::new(pool.clone());
     let svc = ScheduleService::new(repo.clone());
     let scope = vec![normal, flipped, blank, done];
+
+    // 已完成事件：走生产写径标记（`/schedule/toggle` 对 event id 即此路径；叶表
+    // `zc_id_even-alert` 继承 `zc_id_event`，故 event 存在性检查命中本轮播种行）。
+    // 该写径自愈式补种「完成/end」状态行——测试不硬编码其 id；读径判据仍由断言锁定：
+    // 若补种行的 (notice, flag) 与 `list_todos` 派生不一致，下方「未完成行数」必为 2。
+    let status_seeded_before = completed_status_seeded(&pool).await;
+    let toggled = svc
+        .toggle_event_done(done)
+        .await
+        .expect("toggle event done")
+        .expect("seeded event must be visible via zc_id_event");
+    assert_eq!(toggled.id, done, "toggle 返回本轮播种的 event");
 
     // 路径 1：RLS 可见集限定（PEP 注入场景）
     let count_scoped = repo
@@ -175,4 +179,14 @@ async fn pending_todo_count_matches_visible_todo_rows() {
         .execute(&pool)
         .await
         .expect("cleanup events");
+    // toggle 若触发自愈补种，恢复库内原状（仅在「本轮之前不存在」时删除，避免误删既有字典行）
+    if !status_seeded_before {
+        sqlx::query(
+            r#"DELETE FROM isahl."zc_id_stus-event"
+               WHERE notice = '完成' AND flag = 'end' AND deleted_at IS NULL"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("cleanup lazily seeded completed status");
+    }
 }

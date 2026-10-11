@@ -15,6 +15,20 @@ use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Cl
 use gateway_sso::auth::AuthState;
 use serde_json::json;
 use sqlx::PgPool;
+use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
+
+/// 文件级串行化（**本文件刻意的共享场景夹具**）。
+///
+/// 2 个测试共用同一套夹具：UA `reader_ngac_sd` + 集合级 OA `sd-engineers:0`（资源名出现在
+/// 断言与 decide 请求里）。而 `cleanup` 按该 UA 名/该 OA 清空 ⇒ 并行执行必然互相清空
+///（实测非确定性红：`soft_deleted_association_not_in_policy_graph` 284 行随机失败）。
+/// 共享场景是设计选择（同一 scenario 的 association/prohibition 两切面），故串行而非改名。
+static SERIAL_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn lock_serial() -> MutexGuard<'static, ()> {
+    SERIAL_LOCK.lock().await
+}
 
 struct Seed {
     user: i64,
@@ -47,21 +61,29 @@ async fn seed(pool: &PgPool, email: &str) -> Seed {
     .expect("policy class");
 
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING"#,
     )
-    .bind(email)
     .bind(&username)
     .execute(pool)
     .await
     .ok();
     let user: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email=$1 LIMIT 1")
-            .bind(email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username=$1 LIMIT 1")
+            .bind(&username)
             .fetch_one(pool)
             .await
             .expect("user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
 
     sqlx::query(
         r#"INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class, created_at, updated_at)
@@ -217,16 +239,27 @@ async fn decide(pool: &PgPool, user: i64, action: &str) -> serde_json::Value {
 }
 
 async fn cleanup(pool: &PgPool, email: &str, oa_id: i64) {
+    // 子行按 username 句柄定位（由 email 派生，1:1）；邮箱行按 email（唯一存储）删；主行最后删——入边 FK 不阻断
+    let username = email
+        .split('@')
+        .next()
+        .unwrap_or("ngac_user")
+        .replace('-', "_");
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email=$1)",
+         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE username=$1)",
     )
-    .bind(email)
+    .bind(&username)
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email=$1")
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email=$1")
         .bind(email)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username=$1")
+        .bind(&username)
         .execute(pool)
         .await
         .ok();
@@ -255,6 +288,7 @@ async fn cleanup(pool: &PgPool, email: &str, oa_id: i64) {
 /// read 从 permit 变为 not-applicable（permitted=false）。
 #[tokio::test]
 async fn soft_deleted_association_not_in_policy_graph() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     let email = "ngac-sd-assoc@test.local";
@@ -293,6 +327,7 @@ async fn soft_deleted_association_not_in_policy_graph() {
 /// delete 从 deny 变为 not-applicable。
 #[tokio::test]
 async fn soft_deleted_prohibition_not_in_policy_graph() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     let email = "ngac-sd-proh@test.local";

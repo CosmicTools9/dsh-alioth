@@ -16,23 +16,41 @@ use sqlx::PgPool;
 /// 创建测试用户（负 ID，便于清理），返回 user_id
 async fn ensure_test_user(pool: &PgPool, uid: i64) -> i64 {
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, 'active', true, NOW(), NOW())
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES ($1, $2, 'active', true, NOW(), NOW())
            ON CONFLICT (id) DO UPDATE SET is_active = true
            RETURNING id"#,
     )
     .bind(uid)
-    .bind(format!("User {}", uid.abs()))
     .bind(format!("user_{}", uid.abs()))
-    .bind(format!("user_{}@test.local", uid.abs()))
     .fetch_one(pool)
     .await
     .expect("insert test user");
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(uid)
+        .execute(pool)
+        .await
+        .expect("reset test user email");
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+           VALUES ($1, $2, TRUE)"#,
+    )
+    .bind(uid)
+    .bind(format!("user_{}@test.local", uid.abs()))
+    .execute(pool)
+    .await
+    .expect("insert test user email");
     uid
 }
 
 /// 删除测试用户及其站内信
 async fn cleanup_test_user(pool: &PgPool, uid: i64) {
+    // 邮箱先于账号删（auth_user_emails.fk_user FK 无级联）
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(uid)
+        .execute(pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(uid)
         .execute(pool)

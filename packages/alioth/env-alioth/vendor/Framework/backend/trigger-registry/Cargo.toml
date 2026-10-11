@@ -19,6 +19,9 @@ serde_json = { workspace = true }
 yaml_serde = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
+# NGAC 授权写入单源：`SideEffect::EnsureResourceOa` 的执行面 MUST 调
+# `common::ngac_grants`，MUST NOT 自拼 OA 写入 SQL（NGAC_SPEC §2.2.5）。
+common = { path = "../common" }
 
 [dev-dependencies]
 common = { path = "../common" }

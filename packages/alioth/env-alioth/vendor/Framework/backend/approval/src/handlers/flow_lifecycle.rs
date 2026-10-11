@@ -8,6 +8,7 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
 use common::error::AliothError;
+use common::search::like_pattern;
 use common::{ApiResponse, PaginatedResponse};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
@@ -118,7 +119,7 @@ pub async fn list_by_class(
     let needle = query
         .search
         .as_deref()
-        .map(|s| format!("%{}%", s.trim().replace('%', "")))
+        .map(|s| like_pattern(s.trim()))
         .filter(|p| p != "%%");
 
     // _t_ 放宽：匹配类值或未设置（模板行 _t_=NULL 属对应 _f_ 类可见范围，

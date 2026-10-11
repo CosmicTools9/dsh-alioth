@@ -20,6 +20,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use common::context::require_auth;
 use common::data::ApiResponse;
 use common::permissions::require_resource_access;
+use common::search::like_pattern;
 use common::AliothError as ApiError;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -324,11 +325,25 @@ fn category_base_table(value: &str) -> Option<&'static str> {
         .map(|(_, table)| *table)
 }
 
+/// 逗号分隔多标签（如 `雇员,组织`）→ 各标签基表；任一标签未收录 → `None`
+/// （fail-closed 整体空集——禁止静默丢弃未知标签后按其余标签过滤）。
+/// 单标签 = 一元列表（与 `category_base_table` 等价）；空白段跳过，全空 → `None`。
+fn category_base_tables(value: &str) -> Option<Vec<&'static str>> {
+    let bases: Vec<&'static str> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(category_base_table)
+        .collect::<Option<Vec<_>>>()?;
+    (!bases.is_empty()).then_some(bases)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SubjectListQuery {
     /// 关系视角 code（如 VIEW-CUST / VIEW-SUPP / VIEW-CPARTY / VIEW-REGULATOR）
     pub view: Option<String>,
-    /// 社会分类标签（如 法人 / 自然人 / 商业银行）
+    /// 社会分类标签（如 法人 / 自然人 / 商业银行）；支持逗号分隔多标签（如 雇员,组织），
+    /// 语义 = 各标签继承子树的并集，任一标签未知 fail-closed 空集
     pub category: Option<String>,
     /// 搜索词（匹配 notice / code）
     pub q: Option<String>,
@@ -420,7 +435,7 @@ pub struct CreateSubjectRequest {
     #[serde(default)]
     pub comments: Option<String>,
     /// 岗位 id（可选；有值挂到指定岗位，为空且需写视角标签时自动建默认岗位 POST-AUTO-<id> 挂接）
-    #[serde(default)]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub position_id: Option<i64>,
     /// 交易视角 code 列表（可选；创建事务内直接落标签关系，与 PUT view-tags 同差量语义）
     #[serde(default)]
@@ -480,14 +495,15 @@ pub struct UpdateSubjectRequest {
     pub mdm_code: Option<String>,
 }
 
-/// `/subjects` 筛选参数（列表与计数**同一实现**的输入）
-struct SubjectFilters<'a> {
-    q: &'a str,
-    view: &'a str,
-    category: &'a str,
-    kind: &'a str,
-    exclude_system: bool,
-    exclude_disabled: bool,
+/// `/subjects` 筛选参数（列表与计数**同一实现**的输入；`pub` = 集成测试直驱谓词，
+/// 与 `push_subject_filters` 同为谓词单一实现的公开面）
+pub struct SubjectFilters<'a> {
+    pub q: &'a str,
+    pub view: &'a str,
+    pub category: &'a str,
+    pub kind: &'a str,
+    pub exclude_system: bool,
+    pub exclude_disabled: bool,
 }
 
 /// 计数查询 FROM（`QueryBuilder::new` 的静态起点）——单点常量：探针 `list_count_sql_probe`
@@ -501,11 +517,12 @@ const SUBJECT_COUNT_FROM: &str = "SELECT COUNT(*) FROM \"isahl\".\"zc_id_subject
 /// 语义逐条在此单点实现：
 /// - `q`：`notice` / `code` 模糊匹配；
 /// - `category`：社会分类 = **基表 ∪ 其全部后代表**（`pg_catalog.pg_inherits` 递归，禁硬编码父子边）；
-///   未收录分类 fail-closed 成空集（旧实现 `_ => zc_id_subjects` 把未知分类静默变成「不过滤」）；
+///   支持逗号分隔多标签（如 `雇员,组织`，并集）；任一未收录分类 fail-closed 成空集
+///   （旧实现 `_ => zc_id_subjects` 把未知分类静默变成「不过滤」）；
 /// - `exclude_system`：排除岗位（`zc_id_subj-position`）与无业务分类的根表行（`zc_id_subjects`）；
 /// - `view`：主体经「岗位↔视角主体桥 → 视角标签」持有该关系视角；
 /// - `kind`：主体分类 code 简写（customer / carrier / driver）。
-fn push_subject_filters(builder: &mut QueryBuilder<Postgres>, f: &SubjectFilters<'_>) {
+pub fn push_subject_filters(builder: &mut QueryBuilder<Postgres>, f: &SubjectFilters<'_>) {
     // 停用/黑名单主体其他页面不可选——选择器传 exclude_disabled=1；
     // 码集 = `crate::subject_status::BLACKLIST_STATUS_CODES`（与相对方签约拒绝、blacklisted 投影同源）
     if f.exclude_disabled {
@@ -522,7 +539,7 @@ fn push_subject_filters(builder: &mut QueryBuilder<Postgres>, f: &SubjectFilters
         builder.push("))");
     }
     if !f.q.is_empty() {
-        let pat = format!("%{}%", f.q);
+        let pat = like_pattern(f.q);
         builder.push(" AND (s.notice ILIKE ");
         builder.push_bind(pat.clone());
         builder.push(" OR s.code ILIKE ");
@@ -530,18 +547,20 @@ fn push_subject_filters(builder: &mut QueryBuilder<Postgres>, f: &SubjectFilters
         builder.push(")");
     }
     if !f.category.is_empty() {
-        match category_base_table(f.category) {
-            Some(base) => {
+        match category_base_tables(f.category) {
+            Some(bases) => {
                 builder.push(concat!(
                     " AND s.tableoid IN (WITH RECURSIVE cat(oid) AS (",
                     " SELECT c.oid FROM pg_class c \
                        JOIN pg_namespace n ON n.oid = c.relnamespace \
-                      WHERE n.nspname = 'isahl' AND c.relname = "
+                      WHERE n.nspname = 'isahl' AND c.relname = ANY("
                 ));
-                builder.push_bind(base);
-                builder.push(" UNION ALL SELECT ch.oid FROM cat JOIN pg_inherits i ON i.inhparent = cat.oid JOIN pg_class ch ON ch.oid = i.inhrelid JOIN pg_namespace n2 ON n2.oid = ch.relnamespace AND n2.nspname = 'isahl') SELECT oid FROM cat)");
+                // 多根子树并集：`relname = ANY(基表数组)`——单标签 = 一元数组，行为与单根等价
+                builder.push_bind(bases.iter().map(|b| b.to_string()).collect::<Vec<String>>());
+                builder.push(") UNION ALL SELECT ch.oid FROM cat JOIN pg_inherits i ON i.inhparent = cat.oid JOIN pg_class ch ON ch.oid = i.inhrelid JOIN pg_namespace n2 ON n2.oid = ch.relnamespace AND n2.nspname = 'isahl') SELECT oid FROM cat)");
             }
-            // 未收录分类 = 语义上不存在该分类 → 空集（fail-closed；禁止静默退化为「不过滤」）
+            // 未收录分类（含多标签中任一未知）= 语义上不存在该分类 → 空集
+            // （fail-closed；禁止静默退化为「不过滤」，禁止静默丢弃未知标签）
             None => {
                 builder.push(" AND FALSE");
             }
@@ -2566,6 +2585,65 @@ mod list_count_sql_probe {
         assert!(
             b.sql().as_str().contains("ss.code = ANY("),
             "exclude_disabled 子句缺失"
+        );
+    }
+
+    /// 多标签（change: add-subject-list-default-common-categories）：
+    /// 解析层——并集基表集 / 单标签兼容 / 任一未知整体 fail-closed；
+    /// SQL 层——`relname = ANY(` 多根发射，未知发射 `AND FALSE`。
+    #[test]
+    fn probe_category_multi_label() {
+        assert_eq!(
+            category_base_tables("雇员,组织"),
+            Some(vec!["zc_id_subj-employee", "zc_id_subj-org"])
+        );
+        // 单标签 = 一元列表（既有消费方行为等价）
+        assert_eq!(category_base_tables("法人"), Some(vec!["zc_id_orga-legal"]));
+        // 标签与叶表名混用、空白段容忍
+        assert_eq!(
+            category_base_tables(" 雇员 , zc_id_subj-org , "),
+            Some(vec!["zc_id_subj-employee", "zc_id_subj-org"])
+        );
+        // 任一未知 → 整体 fail-closed（不得静默丢弃未知标签）
+        assert_eq!(category_base_tables("雇员,不存在分类"), None);
+        // 全空段 → None（无有效基表）
+        assert_eq!(category_base_tables(" , ,"), None);
+
+        let mut b: QueryBuilder<Postgres> = QueryBuilder::new("");
+        push_subject_filters(
+            &mut b,
+            &SubjectFilters {
+                q: "",
+                view: "",
+                category: "雇员,组织",
+                kind: "",
+                exclude_system: false,
+                exclude_disabled: false,
+            },
+        );
+        assert!(
+            b.sql().as_str().contains("c.relname = ANY("),
+            "多根子树 ANY 发射缺失: {}",
+            b.sql().as_str()
+        );
+        assert!(!b.sql().as_str().contains("AND FALSE"));
+
+        let mut fb: QueryBuilder<Postgres> = QueryBuilder::new("");
+        push_subject_filters(
+            &mut fb,
+            &SubjectFilters {
+                q: "",
+                view: "",
+                category: "雇员,不存在分类",
+                kind: "",
+                exclude_system: false,
+                exclude_disabled: false,
+            },
+        );
+        assert!(
+            fb.sql().as_str().contains("AND FALSE"),
+            "未知标签须 fail-closed: {}",
+            fb.sql().as_str()
         );
     }
 }

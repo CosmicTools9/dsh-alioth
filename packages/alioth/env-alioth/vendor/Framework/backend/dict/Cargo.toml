@@ -13,5 +13,8 @@ serde_json = { workspace = true }
 common = { path = "../common" }
 crud = { path = "../crud" }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
 [lib]
 path = "src/lib.rs"

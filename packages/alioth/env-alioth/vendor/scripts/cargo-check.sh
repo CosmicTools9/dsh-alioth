@@ -2,8 +2,9 @@
 # cargo-check.sh — 在独立 target 目录中执行 cargo check（不抢部署构建/门禁的锁）
 #
 # 特性（实现内聚在 scripts/lib/cargo-run.sh）:
-#   - target 默认 /tmp/alioth-check（rust-clean 保留的热缓存之一）；被活 cargo 进程占用时
-#     自动改用会话稳定目录 /tmp/alioth-check-sess-<hash>，仍占用则退为带时间戳的冷目录
+#   - target 默认 <仓父目录>/.tmp/alioth-check（本脚本 GC 保护的固定目录；注意 rust-clean 的默认
+#     保留面只含 <仓父目录>/.tmp/alioth-check-gate，不含本目录）；被活 cargo 进程占用时
+#     自动改用会话稳定目录 <仓父目录>/.tmp/alioth-check-sess-<hash>，仍占用则退为带时间戳的冷目录
 #   - 启动时机会式 GC：清理超龄 sess/fallback/gate 临时目录（占锁跳过）
 #   - **源码漂移守卫**：编译前后比对源码内容指纹；不一致（编译读到变化中的树，共享
 #     checkout 下他人 checkout/stash 会致「符号找不到」类瞬时假错）⇒ 自动重跑一次并打印两次结论

@@ -1,7 +1,7 @@
 //! gate-db-digest.ts — 「DB 派生门禁」的缓存键（DB 摘要 + 目标文件 + 生成器）
 //!
 //! 适用对象（两者同形：从 DB 元数据生成整文件 → 与已提交文件比对 → 漂移则改写并阻断）：
-//!   · gate `context-fields-sync` → scripts/check/check-context-fields.ts（目标
+//!   · gate `context-fields-sync`（push）→ scripts/check/check-context-fields.ts（目标
 //!     `Framework/backend/approval/src/context_meta.rs`）
 //!   · gate `fk-index`（push）→ scripts/check/check-fk-index.ts（目标
 //!     `Framework/backend/crud/src/fk_index.rs`）
@@ -27,12 +27,13 @@
 //!   dev 库负载主导，非 SQL 形态；缓存的价值恰在库忙时最大（它免掉的是**生成器**：fk-index
 //!   6.5–17s、context-fields 1–82s，且同样要付 DB 延迟）。
 
-import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 
-import { cacheDisabled, sha256Short } from './gate-cache';
+import { cacheDisabled, sha256Short } from "./gate-cache";
+import { repoRoleOf, repoRootOf, resolveRepoDbUrl } from "./repo-role";
 
-export { cacheDisabled, cacheFile, cacheHit, cacheWrite } from './gate-cache';
+export { cacheDisabled, cacheFile, cacheHit, cacheWrite } from "./gate-cache";
 
 /** 单一 SQL：覆盖两个生成器读取面的并集，返回 md5 摘要。 */
 const DIGEST_SQL = `SELECT md5(
@@ -77,24 +78,40 @@ const DIGEST_SQL = `SELECT md5(
  * 读 DB 摘要；不可得（psql 缺失/库不可达/查询失败）⇒ null（调用方降级为全量），并**打印原因**不静默。
  */
 export async function dbDigest(): Promise<string | null> {
+  // 仓角色分流（2026-09-28）：ns 仓 ⇒ 本 ns 库；解析不到判不可得（MUST NOT 回落平台共享库缺省）。
+  const root = repoRootOf() ?? process.cwd();
+  const resolved = resolveRepoDbUrl(root);
   const url =
-    process.env.DATABASE_URL ?? 'postgres://alioth_readonly@localhost:5432/aliothstudio_dev';
+    process.env.DATABASE_URL ??
+    resolved.url ??
+    (repoRoleOf(root) === "ns"
+      ? null
+      : "postgres://alioth_readonly@localhost:5432/aliothstudio_dev");
+  if (url === null) {
+    console.warn(
+      "⚠️ gate-db-digest: 本 ns DB 未配置（Deploy/{ns}/.env 缺 DATABASE_URL）⇒ 摘要不可得，降级全量判定。",
+    );
+    return null;
+  }
   // 用 psql（仓库只读审计既有模式，见 check-actor-identity-integrity.ts / lib/db-ready.sh）：
   // 免 Bun.SQL 依赖（scripts/lib 作用域无 bun 类型）、进程与连接开销更小；SQL 经 -c 传入，
   // 结果取 -tA 单行。
-  const res = spawnSync('psql', [url, '-tA', '-c', DIGEST_SQL], { encoding: 'utf8', timeout: 60_000 });
+  const res = spawnSync("psql", [url, "-tA", "-c", DIGEST_SQL], {
+    encoding: "utf8",
+    timeout: 60_000,
+  });
   if (res.error !== undefined || res.status !== 0) {
     console.warn(
       `⚠️ gate-db-digest: DB 摘要不可得（psql rc=${String(res.status)}），降级全量判定。${String(
-        res.stderr ?? '',
+        res.stderr ?? "",
       )
         .trim()
         .slice(0, 160)}`,
     );
     return null;
   }
-  const digest = (res.stdout ?? '').trim();
-  return digest === '' ? null : digest;
+  const digest = (res.stdout ?? "").trim();
+  return digest === "" ? null : digest;
 }
 
 /**
@@ -108,8 +125,10 @@ export async function digestCacheKey(
   if (cacheDisabled()) return null;
   const digest = await dbDigest();
   if (digest === null) return null;
-  const target = await readFile(targetPath, 'utf8').catch(() => null);
-  const generator = await readFile(generatorPath, 'utf8').catch(() => null);
+  const target = await readFile(targetPath, "utf8").catch(() => null);
+  const generator = await readFile(generatorPath, "utf8").catch(() => null);
   if (target === null || generator === null) return null;
-  return sha256Short(`${digest}|${sha256Short(target)}|${sha256Short(generator)}`);
+  return sha256Short(
+    `${digest}|${sha256Short(target)}|${sha256Short(generator)}`,
+  );
 }

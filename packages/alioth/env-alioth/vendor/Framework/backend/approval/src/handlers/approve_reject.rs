@@ -107,7 +107,7 @@ pub async fn approve(
     require_row_or_collection_access(
         pool.get_ref(),
         user_id,
-        "approval-instances",
+        "approval_instances",
         instance_id,
         "approve",
     )
@@ -207,8 +207,10 @@ pub(crate) async fn approve_inner(
     insert_opinion(pool, instance_id, APPROVE_NOTICE, opinion, user_id).await?;
     update_lifecycle_status(pool, instance_id, "approved", "已通过", user_id).await?;
     advance_flow(pool, instance_id, user_id, Some(bus)).await?;
-    // G4 收口：employee-onboarding 副作用（员工创建/UA/profile/用户激活）已迁出，
-    // 由 handlers::employee_onboarding 订阅者消费（见该模块文档）。
+    // 注册审批的 auth 域副作用（激活/禁用 + 主体绑定 + employee UA 授予）不在本层：
+    // framework 写径发布 ApprovalCompleted，由 Gateway 侧平台档位兜底订阅者消费
+    // （`subscribe_registration_activation_events` ⇒ `apply_registration_activation`）；
+    // 本 crate MUST NOT 触 isahl_auth（approval-backend-ownership）。
     publish_approval_completed(bus, pool, instance_id, "approved", Some(opinion)).await;
     Ok(())
 }
@@ -261,7 +263,7 @@ pub async fn reject(
     require_row_or_collection_access(
         pool.get_ref(),
         user_id,
-        "approval-instances",
+        "approval_instances",
         instance_id,
         "approve",
     )
@@ -306,7 +308,7 @@ pub async fn abstain(
     require_row_or_collection_access(
         pool.get_ref(),
         user_id,
-        "approval-instances",
+        "approval_instances",
         instance_id,
         "approve",
     )
@@ -487,4 +489,27 @@ pub(crate) async fn update_lifecycle_status(
     }
 
     Ok(())
+}
+
+/// 系统身份终局记录（fix-approval-error-branch-integrity）：自动终局分支
+/// （vote quorum 未达自动驳回）在**新建**的系统实例上物化可查询终局——
+/// 驳回意见 + 主状态桥，归属 `SYSTEM_USER_ID`。与人工驳回同构，故时间线/
+/// 富化/待办读路径免改即可呈现终局；不触碰既有实例的终态桥（终态单调不变）。
+pub(crate) async fn record_system_verdict(
+    pool: &PgPool,
+    instance_id: i64,
+    status_code: &str,
+    status_notice: &str,
+    notice: &str,
+    opinion: &str,
+) -> Result<(), ApiError> {
+    insert_opinion(pool, instance_id, notice, opinion, common::SYSTEM_USER_ID).await?;
+    update_lifecycle_status(
+        pool,
+        instance_id,
+        status_code,
+        status_notice,
+        common::SYSTEM_USER_ID,
+    )
+    .await
 }

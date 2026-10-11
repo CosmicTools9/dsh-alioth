@@ -248,24 +248,6 @@ impl<E: AliothDbEntity> GenericRepository<E> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 关键词搜索——仅当 E: KeywordSearchable 时可用
-// ═══════════════════════════════════════════════════════════════════════════════
-
-impl<E: AliothDbEntity + crate::search::KeywordSearchable> GenericRepository<E> {
-    /// 关键词搜索（返回分页结果，不含引用解析）
-    pub async fn search(
-        &self,
-        query: &ListQuery,
-        keyword: &str,
-    ) -> Result<PaginatedResponse<E>, AliothError> {
-        QueryBuilder::<E>::from_list_query(&self.pool, query)
-            .with_keyword(keyword)
-            .fetch(query.page, query.page_size)
-            .await
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // 引用解析扩展——仅当 E: HasReferenceJoins 时可用
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -301,25 +283,5 @@ impl<E: AliothDbEntity + HasReferenceJoins> GenericRepository<E> {
         authorized_columns: Option<&[String]>,
     ) -> Result<Option<E>, AliothError> {
         QueryBuilder::<E>::get_refs(&self.pool, id, authorized_columns).await
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// 引用解析 + 关键词搜索——仅当 E: HasReferenceJoins + KeywordSearchable 时可用
-// ═══════════════════════════════════════════════════════════════════════════════
-
-impl<E: AliothDbEntity + HasReferenceJoins + crate::search::KeywordSearchable>
-    GenericRepository<E>
-{
-    /// 关键词搜索（含引用解析）
-    pub async fn search_refs(
-        &self,
-        query: &ListQuery,
-        keyword: &str,
-    ) -> Result<PaginatedResponse<E>, AliothError> {
-        QueryBuilder::<E>::from_list_query(&self.pool, query)
-            .with_keyword(keyword)
-            .fetch_refs(query.page, query.page_size)
-            .await
     }
 }

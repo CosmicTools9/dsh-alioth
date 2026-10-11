@@ -66,12 +66,26 @@ actix-cors = { workspace = true }
 
 # NGAC contract
 ngac-contract = { path = "../../Framework/backend/ngac-contract" }
+# NGAC 决策核心唯一实现（extract-ngac-decision-core）：对求值/合并/决策序/conditions
+ngac-decision = { path = "../../Framework/backend/ngac-decision" }
 
 # Shared infrastructure
 common = { path = "../../Framework/backend/common" }
+ngac-host = { path = "../../Framework/backend/ngac-host" }
+# 平台唯一表达式引擎（Rhai）——NGAC 义务求值（`ngac/obligation.rs`）与既有表达式消费面同源
+runtime-engine = { path = "../../Framework/backend/runtime-engine" }
+# 触发器写路径（move-chat-admin-agents-to-sso）：admin/agents CRUD 写入经
+# crud::trigger 的 pool 版（与 ln 侧 trigger_crud 签名一致，trigger-write-path 规约）
+crud = { path = "../../Framework/backend/crud" }
+# 进程级 trigger smart registry 初始化（admin/agents 写路径依赖；经 crud 传递可用，
+# 显式声明以直调 init::init_smart_registry_global）
+trigger-registry = { path = "../../Framework/backend/trigger-registry" }
 
 # Ontology coordinates（§7.3.3 静态绑定：code → ZUID 解析）
 ontology-binding = { path = "../../Framework/backend/ontology-binding" }
+
+# OpenAPI 计费聚合内核（唯一计价文法；发起收款端 `Gateway/backend/src/openapi/payment.rs` 同源消费）
+openapi-billing = { path = "../../Framework/backend/openapi-billing" }
 
 # SAML 2.0 已移除（remove-saml-sso）：xmlsec/quick-xml/flate2/libxml 依赖链随之下线
 webauthn-rs = { version = "0.5", features = ["danger-allow-state-serialisation"] }

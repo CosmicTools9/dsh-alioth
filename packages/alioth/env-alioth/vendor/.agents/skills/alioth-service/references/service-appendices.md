@@ -10,7 +10,7 @@
 bun scripts/check/check-service-dag.ts Pre-Proc/{ns} --fail
 ```
 
-输出：命名空间内 Service 清单、依赖边、悬空引用与循环路径。pre-commit 已接入同一脚本（`Service DAG` 门禁）。
+输出：命名空间内 Service 清单、依赖边、悬空引用与循环路径。push `repo-wide-gates`（逐 NS）已接入同一脚本（`Service DAG` 门禁）。
 
 ### ontology-mapping gap（Rust CLI）
 

@@ -50,27 +50,37 @@ fn test_auth_state() -> AuthState {
 async fn ensure_user(pool: &PgPool, email: &str) -> i64 {
     let username = email.split('@').next().unwrap_or("audx").replace('-', "_");
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING"#,
     )
-    .bind(email)
     .bind(&username)
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email=$1 LIMIT 1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .expect("test user")
+    let user_id: i64 =
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username=$1 LIMIT 1")
+            .bind(&username)
+            .fetch_one(pool)
+            .await
+            .expect("test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 /// 清理 audx-* 测试数据（含审计行——entity_id 引用测试实体或 actor 为测试用户）。
 async fn cleanup(pool: &PgPool) {
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_policy_audit_log \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email LIKE 'audx-%@test.local') \
+         WHERE fk_user IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email LIKE 'audx-%@test.local') \
             OR new_values::text LIKE '%audx-%' OR old_values::text LIKE '%audx-%'",
     )
     .execute(pool)
@@ -78,12 +88,17 @@ async fn cleanup(pool: &PgPool) {
     .ok();
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email LIKE 'audx-%@test.local')",
+         WHERE fk_user IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email LIKE 'audx-%@test.local')",
     )
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email LIKE 'audx-%@test.local'")
+    // 邮箱行（唯一存储）先行；主行按 username（由同一 email 派生，1:1 句柄）删——入边 FK 不阻断
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email LIKE 'audx-%@test.local'")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username LIKE 'audx\\_%'")
         .execute(pool)
         .await
         .ok();
@@ -143,8 +158,12 @@ async fn seed(pool: &PgPool) -> Seed {
     .await
     .ok();
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        // 必须按策略类过滤：`o_name='admin'` 在每个策略类下各有一行；无过滤器时 LIMIT 1 可能取到
+        // 他测试残留的、他类 admin UA ⇒ 绑定到错类 UA 使 require_admin 的 NGAC 判定 Deny（非确定性 403）。
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");

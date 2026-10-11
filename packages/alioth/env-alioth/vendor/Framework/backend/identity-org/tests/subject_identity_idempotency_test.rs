@@ -2,12 +2,12 @@
 //!
 //! 被测单元 = `subjects.rs::write_subject_identity`（`POST /subjects` identities 分支的
 //! **唯一写入实现**，handler 与其共用）：
-//! ① 同 `cert_no` 连续两次写件 → 恰 1 行活动 `zc_id_identity`（`code` == `cert_no` == `identity`）
-//!    + 恰 1 行活动桥 `zc_id_entity_rr_identity`；
-//! ② 种子形态（`code` = 统一社会信用代码，含种子形态桥）先存在 → API 写件复用既有 id，
-//!    活动证照行与桥行均不增；
-//! ③ 同证件号挂**其他主体** → 拒（`Conflict`，change `align-storage-issuer-and-holding` §D3
-//!    判重域全局），同主体重入仍幂等复用。
+//! - ① 同 `cert_no` 连续两次写件 → 恰 1 行活动 `zc_id_identity`（`code` == `cert_no` == `identity`）
+//!   + 恰 1 行活动桥 `zc_id_entity_rr_identity`；
+//! - ② 种子形态（`code` = 统一社会信用代码，含种子形态桥）先存在 → API 写件复用既有 id，
+//!   活动证照行与桥行均不增；
+//! - ③ 同证件号挂**其他主体** → 拒（`Conflict`，change `align-storage-issuer-and-holding` §D3
+//!   判重域全局），同主体重入仍幂等复用。
 //!
 //! 依赖：test 库主体叶表 `zc_id_orga-non-banking-legal` + 字典 `zc_id_cate-identity`
 //! BUSINESS_LICENSE + 维度行 JE/FJA/↑_DA。自清理：尾部硬删（桥 → 证照 → 主体）。

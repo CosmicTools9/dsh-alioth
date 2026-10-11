@@ -11,6 +11,20 @@ mod common;
 
 use ::common::testing::connect_test_db;
 use sqlx::PgPool;
+use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
+
+/// 文件级串行化。
+///
+/// 3 个测试共用同一 `me_enrich_test` 用户（`setup_user` 幂等 upsert 同一 username）与同一批
+/// 夹具 UA，且 `cleanup_user` 删除该用户的 rr 行/用户行 ⇒ 并行执行时一方删掉共享用户，
+/// 另一方 `assign_ua_to_user` 撞 `ngac_user_rr_attribute_fk_user_fkey`（实测 211 行随机红）。
+/// 共享是设计选择（同一用户的多属性切面），故串行而非改名。
+static SERIAL_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn lock_serial() -> MutexGuard<'static, ()> {
+    SERIAL_LOCK.lock().await
+}
 
 /// Create NGAC tables needed for the test.
 /// These should already exist from migration, but we use IF NOT EXISTS
@@ -98,25 +112,38 @@ async fn create_ngac_tables(pool: &PgPool) {
 
 async fn setup_user(pool: &PgPool) -> i64 {
     // Idempotent upsert: this file's tests run in parallel / across runs sharing the DB,
-    // so a bare INSERT collides on the unique email/name. upsert-then-select is race-safe.
+    // so a bare INSERT collides on the unique username. upsert-then-select is race-safe.
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.auth_users (id, name, username, email, status, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), 'me_enrich_test', 'me_enrich_test', 'me_enrich@test.local', 'active', NOW(), NOW())
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO isahl_auth.auth_users (id, username, status, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), 'me_enrich_test', 'active', NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
         "#,
     )
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar::<_, i64>(
+    let user_id = sqlx::query_scalar::<_, i64>(
         r#"
-        SELECT id FROM isahl_auth.auth_users WHERE email = 'me_enrich@test.local' LIMIT 1
+        SELECT id FROM isahl_auth.auth_users WHERE username = 'me_enrich_test' LIMIT 1
         "#,
     )
     .fetch_one(pool)
     .await
-    .expect("Failed to create/find test user")
+    .expect("Failed to create/find test user");
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails（auth_users 无 email 列）
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, 'me_enrich@test.local', TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 async fn default_policy_class_id(pool: &PgPool) -> i64 {
@@ -204,6 +231,12 @@ async fn cleanup_user(pool: &PgPool, user_id: i64) {
         .execute(pool)
         .await
         .ok();
+    // auth_user_emails 入边 FK 无 ON DELETE CASCADE：先删邮箱行再删账号
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_id)
         .execute(pool)
@@ -213,6 +246,7 @@ async fn cleanup_user(pool: &PgPool, user_id: i64) {
 
 #[tokio::test]
 async fn test_ngac_attributes_empty_when_no_data() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool)
         .await
@@ -248,6 +282,7 @@ async fn test_ngac_attributes_empty_when_no_data() {
 
 #[tokio::test]
 async fn test_ngac_attributes_returns_values_for_admin_user() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool)
         .await
@@ -291,6 +326,7 @@ async fn test_ngac_attributes_returns_values_for_admin_user() {
 
 #[tokio::test]
 async fn test_ngac_multiple_attributes_per_user() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool)
         .await

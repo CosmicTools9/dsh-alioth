@@ -146,8 +146,12 @@ async fn handle_password_grant(
         };
 
     let rows = match sqlx::query_as::<_, (i64, String, Option<String>)>(
-        "SELECT id, password_hash, email FROM isahl_auth.auth_users \
-         WHERE id = ANY($1) AND password_hash IS NOT NULL ORDER BY id",
+        "SELECT u.id, u.password_hash, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email \
+         FROM isahl_auth.auth_users u \
+         WHERE u.id = ANY($1) AND u.password_hash IS NOT NULL ORDER BY u.id",
     )
     .bind(&candidate_ids)
     .fetch_all(pool.get_ref())

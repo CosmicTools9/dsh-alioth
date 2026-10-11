@@ -15,6 +15,7 @@ pub fn get_all_categories() -> Vec<ConfigCategory> {
         storage_category(),
         sms_category(),
         approval_category(),
+        amap_category(),
     ]
 }
 
@@ -84,6 +85,7 @@ fn llm_category() -> ConfigCategory {
         notice: "大语言模型".to_string(),
         description: Some("配置 LLM 服务提供商接入".to_string()),
         icon: Some("Brain".to_string()),
+        supports_probe: true,
         providers: vec![
             llm_provider(
                 "deepseek",
@@ -202,6 +204,7 @@ fn email_category() -> ConfigCategory {
         notice: "邮件服务".to_string(),
         description: Some("配置 SMTP 邮件发送服务".to_string()),
         icon: Some("Mail".to_string()),
+        supports_probe: true,
         providers: vec![ConfigProvider {
             code: "smtp".to_string(),
             notice: "SMTP".to_string(),
@@ -279,6 +282,7 @@ fn im_category() -> ConfigCategory {
         notice: "即时通讯".to_string(),
         description: Some("配置企业微信、钉钉、飞书等 IM 接入".to_string()),
         icon: Some("MessageSquare".to_string()),
+        supports_probe: false,
         providers: vec![
             ConfigProvider {
                 code: "wecom".to_string(),
@@ -389,6 +393,7 @@ fn webhook_category() -> ConfigCategory {
         notice: "Webhook".to_string(),
         description: Some("配置通用 Webhook 回调".to_string()),
         icon: Some("Webhook".to_string()),
+        supports_probe: false,
         providers: vec![ConfigProvider {
             code: "generic".to_string(),
             notice: "通用 Webhook".to_string(),
@@ -438,6 +443,7 @@ fn storage_category() -> ConfigCategory {
         notice: "对象存储".to_string(),
         description: Some("配置本地磁盘 / OSS / S3 等文件存储接入".to_string()),
         icon: Some("HardDrive".to_string()),
+        supports_probe: false,
         providers: vec![
             ConfigProvider {
                 code: "local".to_string(),
@@ -550,6 +556,7 @@ fn sms_category() -> ConfigCategory {
         notice: "短信服务".to_string(),
         description: Some("配置短信发送服务商".to_string()),
         icon: Some("Smartphone".to_string()),
+        supports_probe: false,
         providers: vec![ConfigProvider {
             code: "aliyun".to_string(),
             notice: "阿里云短信".to_string(),
@@ -603,11 +610,47 @@ fn approval_category() -> ConfigCategory {
         notice: "审批".to_string(),
         description: Some("审批域平台开关（注册审批自动通过等）".to_string()),
         icon: Some("CheckSquare".to_string()),
+        supports_probe: false,
         providers: vec![ConfigProvider {
             code: "platform".to_string(),
             notice: "平台".to_string(),
             description: Some("平台级审批开关".to_string()),
             schema: vec![],
+            defaults: None,
+        }],
+    }
+}
+
+// ============================================
+// 高德地图（env 配置族 zc_id_prot-env_config，code='integration:amap'）
+// ============================================
+
+/// 高德地图配置分类（amap-system-config-category）——
+/// 承载 `integration:amap` 行（高德 JSAPI 凭据）。key/secret 落 `settings` **明文**
+/// （`sensitive=false`）：JSAPI 值最终注入浏览器（`window.__ALIOTH_AMAP_*__`），且
+/// 构建期消费链（`scripts/lib/amap-creds.sh` 直读 `settings->>'key'/'secret'`）无
+/// 解密通道——MUST NOT 落 `enc_fields`（与 email/password 类真服务端机密相反）。
+fn amap_category() -> ConfigCategory {
+    ConfigCategory {
+        code: "amap".to_string(),
+        notice: "高德地图".to_string(),
+        description: Some("高德 JSAPI 凭据（key/secret；组织级生效经构建期注入全站）".to_string()),
+        icon: Some("Map".to_string()),
+        supports_probe: true,
+        providers: vec![ConfigProvider {
+            code: "amap".to_string(),
+            notice: "高德".to_string(),
+            description: Some("高德开放平台 Web 端 JSAPI".to_string()),
+            schema: vec![
+                with_placeholder(
+                    field("key", "Key", "text", false),
+                    "如 f3a4…（Web 端 JS API Key）",
+                ),
+                with_placeholder(
+                    field("secret", "安全密钥", "password", false),
+                    "与 Key 配套的 jscode（securityJsCode）",
+                ),
+            ],
             defaults: None,
         }],
     }
@@ -723,6 +766,35 @@ mod tests {
             get_sensitive_keys("email", "smtp"),
             vec!["password".to_string()],
             "email 敏感键 MUST 恰为 enc_fields 消费者的 password"
+        );
+    }
+
+    /// amap 分类契约（amap-system-config-category）：
+    /// key/secret MUST 非密（落 `settings` 明文）——构建期消费链
+    /// （`scripts/lib/amap-creds.sh` 直读 `settings->>'key'/'secret'`）无解密通道；
+    /// JSAPI 值本就注入浏览器，`enc_fields` 留给真正的服务端机密。
+    #[test]
+    fn amap_schema_keeps_credentials_in_settings() {
+        let cat = get_category("amap").expect("amap 分类必须存在");
+        assert!(
+            cat.supports_probe,
+            "amap 分类 MUST 支持探测（统一 probe seam）"
+        );
+        let provider = cat
+            .providers
+            .iter()
+            .find(|p| p.code == "amap")
+            .expect("amap/amap provider 必须存在");
+
+        let keys: Vec<&str> = provider.schema.iter().map(|f| f.key.as_str()).collect();
+        assert!(
+            keys.contains(&"key") && keys.contains(&"secret"),
+            "字段 MUST 含 key/secret"
+        );
+
+        assert!(
+            get_sensitive_keys("amap", "amap").is_empty(),
+            "amap 敏感键 MUST 为空（key/secret 落 settings，amap-creds.sh 直读）"
         );
     }
 }

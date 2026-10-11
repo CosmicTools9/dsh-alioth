@@ -109,20 +109,31 @@ pub async fn list_users(
     let offset = start_index - 1;
 
     // 静态 SQL（项目 sqlx 封装要求字面量，禁止 format! 动态拼接）。
+    // 投影：name = COALESCE(display_name, username)，email = 主邮箱子查询（唯一存储 =
+    // isahl_auth.auth_user_emails），status 枚举直读须 ::text。
     const LIST_SQL_FILTER: &str =
-        "SELECT id, name, username, email, display_name, status, is_active, created_at, updated_at, \
-                settings->>'scim_external_id' AS external_id \
-         FROM isahl_auth.auth_users \
-         WHERE is_active = true AND (email = $1 OR name = $1 OR username = $1) \
+        "SELECT u.id, COALESCE(u.display_name, u.username) AS name, u.username, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                u.display_name, u.status::text AS status, u.is_active, u.created_at, u.updated_at, \
+                u.settings->>'scim_external_id' AS external_id \
+         FROM isahl_auth.auth_users u \
+         WHERE u.is_active = true AND (u.username = $1 OR u.id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)) \
          ORDER BY id LIMIT $2 OFFSET $3";
     const LIST_SQL_ALL: &str =
-        "SELECT id, name, username, email, display_name, status, is_active, created_at, updated_at, \
-                settings->>'scim_external_id' AS external_id \
-         FROM isahl_auth.auth_users \
-         WHERE is_active = true ORDER BY id LIMIT $1 OFFSET $2";
+        "SELECT u.id, COALESCE(u.display_name, u.username) AS name, u.username, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                u.display_name, u.status::text AS status, u.is_active, u.created_at, u.updated_at, \
+                u.settings->>'scim_external_id' AS external_id \
+         FROM isahl_auth.auth_users u \
+         WHERE u.is_active = true ORDER BY id LIMIT $1 OFFSET $2";
     const COUNT_SQL_FILTER: &str =
-        "SELECT COUNT(*) FROM isahl_auth.auth_users WHERE is_active = true AND (email = $1 OR name = $1 OR username = $1)";
-    const COUNT_SQL_ALL: &str = "SELECT COUNT(*) FROM isahl_auth.auth_users WHERE is_active = true";
+        "SELECT COUNT(*) FROM isahl_auth.auth_users u WHERE u.is_active = true AND (u.username = $1 OR u.id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1))";
+    const COUNT_SQL_ALL: &str =
+        "SELECT COUNT(*) FROM isahl_auth.auth_users u WHERE u.is_active = true";
 
     let total: i64 = {
         let q = if let Some(v) = &filter_value {
@@ -235,7 +246,7 @@ pub async fn create_user(
     let user_id = if let Some((id,)) = existing {
         let _ = sqlx::query(
             "UPDATE isahl_auth.auth_users \
-             SET display_name = COALESCE($2, display_name), status = $3, is_active = $4, \
+             SET display_name = COALESCE($2, display_name), status = $3::isahl_auth.auth_user_status, is_active = $4, \
                  updated_at = NOW() WHERE id = $1",
         )
         .bind(&display_name)
@@ -248,12 +259,10 @@ pub async fn create_user(
     } else {
         let row: (i64,) = match sqlx::query_as(
             "INSERT INTO isahl_auth.auth_users \
-             (name, username, email, password_hash, display_name, status, is_active, settings, created_at, updated_at) \
-             VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, NOW(), NOW()) \
+             (username, password_hash, display_name, status, is_active, settings, created_at, updated_at) \
+             VALUES ($1, NULL, $2, $3::isahl_auth.auth_user_status, $4, $5, NOW(), NOW()) \
              RETURNING id",
         )
-        .bind(&email)
-        .bind(&email)
         .bind(&email)
         .bind(&display_name)
         .bind(status_str)
@@ -271,14 +280,41 @@ pub async fn create_user(
                 );
             }
         };
+        // NGAC 基础身份接线（approval-endpoint-gates::user-ua-on-all-provisioning-channels）：
+        // SCIM 供给建号即挂 user UA（此前仅下次 Gateway 重启兜底）。
+        if let Ok(mut conn) = pool.get_ref().acquire().await {
+            let _ = common::registration_approval::ensure_user_ua(&mut conn, row.0).await;
+        }
+        // 邮箱唯一存储 = isahl_auth.auth_user_emails（userName 值落主邮箱行）
+        if let Err(e) = sqlx::query(
+            "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+             VALUES ($1, $2, TRUE, NOW(), NOW()) \
+             ON CONFLICT (fk_user, email) WHERE deleted_at IS NULL DO UPDATE \
+                 SET is_primary = TRUE, deleted_at = NULL, updated_at = NOW()",
+        )
+        .bind(row.0)
+        .bind(&email)
+        .execute(pool.get_ref())
+        .await
+        {
+            log::error!("scim create_user email insert error: {}", e);
+            return error_response(
+                actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create user",
+            );
+        }
         row.0
     };
 
     // 读取最新行以构造完整 SCIM 表示
     let row: Option<UserRow> = sqlx::query_as(
-        "SELECT id, name, username, email, display_name, status, is_active, created_at, updated_at, \
-                settings->>'scim_external_id' AS external_id \
-         FROM isahl_auth.auth_users WHERE id = $1",
+        "SELECT u.id, COALESCE(u.display_name, u.username) AS name, u.username, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                u.display_name, u.status::text AS status, u.is_active, u.created_at, u.updated_at, \
+                u.settings->>'scim_external_id' AS external_id \
+         FROM isahl_auth.auth_users u WHERE u.id = $1",
     )
     .bind(user_id)
     .fetch_optional(pool.get_ref())
@@ -307,9 +343,13 @@ pub async fn get_user(
         Err(_) => return error_response(actix_web::http::StatusCode::BAD_REQUEST, "Invalid id"),
     };
     let row: Option<UserRow> = sqlx::query_as(
-        "SELECT id, name, username, email, display_name, status, is_active, created_at, updated_at, \
-                settings->>'scim_external_id' AS external_id \
-         FROM isahl_auth.auth_users WHERE id = $1",
+        "SELECT u.id, COALESCE(u.display_name, u.username) AS name, u.username, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                u.display_name, u.status::text AS status, u.is_active, u.created_at, u.updated_at, \
+                u.settings->>'scim_external_id' AS external_id \
+         FROM isahl_auth.auth_users u WHERE u.id = $1",
     )
     .bind(id)
     .fetch_optional(pool.get_ref())
@@ -350,7 +390,7 @@ pub async fn replace_user(
     let status_str = if active { "active" } else { "disabled" };
     let _ = sqlx::query(
         "UPDATE isahl_auth.auth_users \
-         SET display_name = COALESCE($2, display_name), status = $3, is_active = $4, updated_at = NOW() \
+         SET display_name = COALESCE($2, display_name), status = $3::isahl_auth.auth_user_status, is_active = $4, updated_at = NOW() \
          WHERE id = $1",
     )
     .bind(id)
@@ -401,7 +441,7 @@ pub async fn patch_user(
 
         let (sql, bind_val): (&str, String) = match path {
             "active" => (
-                "UPDATE isahl_auth.auth_users SET is_active = $2, status = CASE WHEN $2 THEN 'active' ELSE 'disabled' END, updated_at = NOW() WHERE id = $1",
+                "UPDATE isahl_auth.auth_users SET is_active = $2, status = (CASE WHEN $2 THEN 'active' ELSE 'disabled' END)::isahl_auth.auth_user_status, updated_at = NOW() WHERE id = $1",
                 value_str.clone().unwrap_or_else(|| "true".into()),
             ),
             "displayName" => (
@@ -472,9 +512,13 @@ pub async fn delete_user(
 
 async fn get_user_inner(pool: &PgPool, id: i64) -> HttpResponse {
     let row: Option<UserRow> = sqlx::query_as(
-        "SELECT id, name, username, email, display_name, status, is_active, created_at, updated_at, \
-                settings->>'scim_external_id' AS external_id \
-         FROM isahl_auth.auth_users WHERE id = $1",
+        "SELECT u.id, COALESCE(u.display_name, u.username) AS name, u.username, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                u.display_name, u.status::text AS status, u.is_active, u.created_at, u.updated_at, \
+                u.settings->>'scim_external_id' AS external_id \
+         FROM isahl_auth.auth_users u WHERE u.id = $1",
     )
     .bind(id)
     .fetch_optional(pool)

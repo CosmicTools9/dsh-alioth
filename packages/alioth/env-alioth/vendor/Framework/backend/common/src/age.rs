@@ -1,7 +1,7 @@
 //! age — Apache AGE 三态准入（AGE 读路径守护面）
 //!
-//! 设计正本：`openspec/specs/age-graph-projection/spec.md`（explicit-degradation /
-//! shared-cypher-client）、`openspec/specs/knowledge-graph-cypher/spec.md`。
+//! 设计正本：`openspec/specs/knowledge-graph-cypher/spec.md`（AGE 读路径三态准入 +
+//! SQL 等价降级契约）、`docs/specs/NGAC_SPEC.md §11`（NGAC 侧 AGE 图投影已退役）。
 //!
 //! ## AGE 语义实测基线（2026-09-20，PG 18.6 + AGE 1.8.0，全库核对）
 //!

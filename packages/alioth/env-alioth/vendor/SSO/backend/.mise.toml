@@ -1,6 +1,6 @@
 [tasks]
 # cargo 目标目录统一经映射取值（scripts/lib/cargo-target-dirs.sh）：SSO 是 root workspace
-# 成员 ⇒ 用途 check（/tmp/alioth-check）；MUST NOT 依赖 cwd 默认推导（根 target/）。
+# 成员 ⇒ 用途 check（<仓父目录>/.tmp/alioth-check）；MUST NOT 依赖 cwd 默认推导（根 target/）。
 setup = "cargo fetch && env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo check"
 dev = "bash ../../scripts/lib/guard-mise-task.sh SSO -- env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo run"
 # release 构建唯一入口 = scripts/sso/build.sh（内含目标目录映射 + DATABASE_URL 解密 + 产物校验）
@@ -11,7 +11,11 @@ deploy = "bash ../../scripts/sso/deploy.sh --target ${SSO_TARGET:-Release/SSO} -
 # mise 默认从 .env 加载 dev 库的 DATABASE_URL，会被层级守卫拒绝，因此这里
 # 显式覆盖为规范的测试库连接串（与 scripts/db/reset-db.sh 的 whoami 约定一致）。
 # 需要自定义（如 CI 指定带密码的 URL）时可设 SSO_TEST_DATABASE_URL 环境变量。
-test = "DATABASE_URL=\"${SSO_TEST_DATABASE_URL:-postgres://$(whoami)@localhost:5432/aliothstudio_test}\" bash ../../scripts/lib/guard-mise-task.sh SSO --mode test -- env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo test"
+# RUST_TEST_THREADS=1：本包 lib 测试是 **DB 集成**（共享 aliothstudio_test 的 NGAC 策略图 /
+# 版本行 / 序列表），并行会互相踩踏（2026-09-27 实测：并行随机 1 失败且在 ngac 用例间轮换，
+# 串行 174/174 全绿）。与 scripts/test-all.sh 的 run_rust_tests_db（DB-heavy 强制串行）同口径；
+# 串行用 env（`[test] test-threads` 会被 cargo 静默忽略，见 scripts/pre/gates.ts 该条规则）。
+test = "RUST_TEST_THREADS=1 DATABASE_URL=\"${SSO_TEST_DATABASE_URL:-postgres://$(whoami)@localhost:5432/aliothstudio_test}\" bash ../../scripts/lib/guard-mise-task.sh SSO --mode test -- env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo test"
 lint = "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo clippy -- -D warnings && cargo fmt --check"
 # 无独立 workspace（根 workspace 成员）：-p 限定只清本包产物，避免清空共享缓存
 # （目标目录 = 映射 check，MUST 与构建同源，否则清不到真实产物）
@@ -29,9 +33,6 @@ _.source = ["../../scripts/lib/cargo-target-env.sh", "../../scripts/env/decrypt-
 SQLX_OFFLINE = "true"
 JWT_ACCESS_EXPIRY = "86400"
 JWT_REFRESH_EXPIRY = "6048000"
-
-# OAuth 配置
-OAUTH_REDIRECT_URL = "http://localhost:9002/auth/callback"
 
 # 日志级别
 LOG_LEVEL = "info"

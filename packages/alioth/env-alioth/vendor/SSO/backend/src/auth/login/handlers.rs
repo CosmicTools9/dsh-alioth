@@ -4,6 +4,8 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::Utc;
 use sqlx::PgPool;
 
+use crate::config::Config;
+
 use super::tokens::{
     is_valid_refresh_token, record_failed_login, reset_failed_login, revoke_refresh_token,
     store_refresh_token,
@@ -17,20 +19,22 @@ use crate::auth::{
     crypto::decode_secret,
     identifier::{resolve_candidate_ids, IdentifierColumn},
     jwt::{
-        self, access_cookie_name, clear_access_cookie, clear_refresh_cookie, decode_token_any,
-        encode_access_token, encode_refresh_token, refresh_cookie_name, set_access_cookie,
-        set_refresh_cookie, Claims,
+        self, access_cookie_name, attach_csrf_cookie, clear_access_cookie, clear_csrf_cookie,
+        clear_refresh_cookie, decode_token_any, encode_access_token, encode_refresh_token,
+        refresh_cookie_name, set_access_cookie, set_refresh_cookie, Claims,
     },
     mfa::verify_totp_code,
     password::verify_password_async,
     session::{CreateSessionRequest, SessionManager},
     AuthState,
 };
-use crate::ngac::pdp::{evaluate_conditions, ConditionContext};
+use crate::ngac::pdp::{ancestor_closure, evaluate_conditions, ConditionContext};
 
-/// 认证 cookie 应用作用域（isolate-auth-cookie-scope）：读取并校验
-/// `x-auth-cookie-scope` 请求头；缺失/非法 → None（缺省 cookie 名，向后兼容）。
-/// 合法字符 [A-Za-z0-9_-]，长度 ≤32——防 cookie 名注入。
+// 认证 cookie 应用作用域（isolate-auth-cookie-scope）单一实现 =
+// `common::csrf::cookie_scope`（读取并校验 `x-auth-cookie-scope`；CSRF 校验侧
+// 使用同一函数，MUST NOT 在此另立私有副本）。
+use common::csrf::cookie_scope;
+
 /// 登录状态门禁（login 与微信小程序一键登录同一口径）：
 /// 返回 Some(响应) = 拦截；None = 放行。active 正常放行；rejected = 驳回暂不授权
 /// 但放行登录（前端展示驳回态；无业务授权由「未挂 employee UA」天然保证）。
@@ -134,24 +138,13 @@ pub(crate) async fn issue_login_response(
         state.jwt_access_expiry_secs,
         cookie_scope(req).as_deref(),
     );
-    set_refresh_cookie(
+    let response = set_refresh_cookie(
         response,
         &refresh_token,
         state.jwt_refresh_expiry_secs,
         cookie_scope(req).as_deref(),
-    )
-}
-fn cookie_scope(req: &actix_web::HttpRequest) -> Option<String> {
-    req.headers()
-        .get("x-auth-cookie-scope")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| {
-            !s.is_empty()
-                && s.len() <= 32
-                && s.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        })
+    );
+    attach_csrf_cookie(response, cookie_scope(req).as_deref())
 }
 
 /// 标识歧义候选数与密码校验上限（allow-duplicate-email-accounts）：
@@ -427,7 +420,7 @@ pub async fn login(
 
     // Check user status before proceeding
     let user_status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+        sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
             .bind(user_id_i64)
             .fetch_optional(pool.get_ref())
             .await
@@ -492,10 +485,20 @@ pub struct EmailCodeLoginRequest {
 /// 状态门禁与密码登录共享 status_gate_error。
 pub async fn login_email_code(
     pool: web::Data<PgPool>,
+    config: web::Data<Config>,
     state: web::Data<AuthState>,
     req: HttpRequest,
     body: web::Json<EmailCodeLoginRequest>,
 ) -> HttpResponse {
+    // 部署级门禁（fail-closed，与 send-code(purpose=login) 同一开关）：
+    // 关闭时 MUST NOT 签发会话——即使库中存在有效 purpose=login 验证码。
+    if !config.email_code_login_enabled {
+        log::warn!("邮箱验证码登录被拒：未启用（SSO_EMAIL_CODE_LOGIN）");
+        return HttpResponse::Forbidden().json(AuthError {
+            error: "EMAIL_CODE_LOGIN_DISABLED".to_string(),
+        });
+    }
+
     let candidates =
         match resolve_candidate_ids(pool.get_ref(), IdentifierColumn::Email, &body.email).await {
             Ok(ids) => ids,
@@ -612,7 +615,7 @@ pub async fn login_email_code(
 
     // 状态门禁（与密码登录共享同一实现）
     let user_status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+        sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
             .bind(user_id_i64)
             .fetch_optional(pool.get_ref())
             .await
@@ -821,12 +824,13 @@ pub async fn login_mfa(
         state.jwt_access_expiry_secs,
         cookie_scope(&req).as_deref(),
     );
-    set_refresh_cookie(
+    let response = set_refresh_cookie(
         response,
         &refresh_token,
         state.jwt_refresh_expiry_secs,
         cookie_scope(&req).as_deref(),
-    )
+    );
+    attach_csrf_cookie(response, cookie_scope(&req).as_deref())
 }
 
 /// Logout - invalidate session and tokens
@@ -872,6 +876,10 @@ pub async fn logout(
     // fix-sso-noauth-removal：Bearer-only 客户端（无 cookie/X-Session-Token）登出
     // 同样即时失效——解 Authorization access token 的 sid 撤销会话 + 全量吊销
     // 该用户 refresh tokens（登出后 token 不得存活至 TTL）
+    //
+    // 注（change implement-csrf-protection）：本处**不属** delta `auth`「访问令牌提取优先级 →
+    // 单一实现」面——它不解令牌做**鉴权**，只在登出（CSRF 豁免面）里从 Bearer 取 `sid` 撤销会话；
+    // cookie 形态的同类读取在上方以 `access_cookie_name(scope)` 单源命名完成。
     if session_token.is_none() {
         if let Some(bearer) = req
             .headers()
@@ -891,12 +899,20 @@ pub async fn logout(
                         log::warn!("Failed to revoke session from Bearer access_token: {}", e);
                     }
                 }
-                let user_id = claims.sub.parse::<i64>().unwrap_or(0);
                 // 本分支只有 access token（无 refresh token 可吊销）：会话吊销已在上方完成，
                 // refresh 硬门禁（claims.sid 会话活性校验）会拒绝其后续轮换 ⇒ 本机等价登出。
                 // **不再** revoke_all_user_tokens：那会波及同账号其他设备（2026-09-22 用户裁决，
-                // 见下方 cookie 分支说明）。user_id 仍解析以保留日志上下文。
-                log::info!("Logout (Bearer): session revoked; user_id={user_id}");
+                // 见下方 cookie 分支说明）。日志按主体解析结果分支——非自然人主体 id 记 warn，
+                // MUST NOT 打印 `user_id=0` 伪装成主体（登出的状态码与副作用不因本分支改变）。
+                match common::context::natural_subject_id(&claims.sub) {
+                    Some(user_id) => {
+                        log::info!("Logout (Bearer): session revoked; user_id={user_id}")
+                    }
+                    None => log::warn!(
+                        "Logout (Bearer): sub 非自然人主体 id，仅按 sid 吊销（不记 user_id）: {}",
+                        claims.sub
+                    ),
+                }
             }
         }
     }
@@ -926,7 +942,8 @@ pub async fn logout(
     }
 
     let response = clear_access_cookie(HttpResponse::Ok().finish(), scope.as_deref());
-    clear_refresh_cookie(response, scope.as_deref())
+    let response = clear_refresh_cookie(response, scope.as_deref());
+    clear_csrf_cookie(response, scope.as_deref())
 }
 
 /// Refresh access token using refresh token
@@ -936,6 +953,10 @@ pub async fn refresh(
     state: web::Data<AuthState>,
 ) -> HttpResponse {
     // Extract refresh token from cookie first, fall back to Authorization header
+    //
+    // 注（change implement-csrf-protection）：本处提取的是 **refresh token**（另一凭据），
+    // 非 delta `auth`「访问令牌提取优先级」面；且 `/auth/refresh` 属 CSRF **豁免面**
+    // （会话自举通道，见 SECURITY_SPEC §8.1）。
     let scope = cookie_scope(&req);
     let refresh_token = match req.cookie(&refresh_cookie_name(scope.as_deref())) {
         Some(c) => c.value().to_string(),
@@ -988,9 +1009,17 @@ pub async fn refresh(
     // fix-approval-endpoint-gates：refresh 状态门禁（与 login 门禁同语义）——
     // disabled/pending_approval/pending 用户不得刷新 token（登录绕过漏洞）；
     // rejected 放行（维持「可登录重新申请」登录态）。
-    let gate_user_id: i64 = claims.sub.parse::<i64>().unwrap_or(0);
+    // 主体解析 fail-closed（判定唯一实现 = common::context::natural_subject_id）：无法解析自然人
+    // 主体 id（服务令牌 `client:*` / 畸形 sub）即拒绝刷新，MUST NOT 以主体 0 查状态门禁
+    // （此前经 `_ =>` 分支亦为 401，但错误码 `ACCOUNT_INACTIVE` 把「主体非法」说成「账号停用」）。
+    let Some(gate_user_id) = common::context::natural_subject_id(&claims.sub) else {
+        log::warn!("Refresh rejected: sub 非自然人主体 id: {}", claims.sub);
+        return HttpResponse::Unauthorized().json(AuthError {
+            error: "INVALID_SUBJECT".to_string(),
+        });
+    };
     let gate_status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+        sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
             .bind(gate_user_id)
             .fetch_optional(pool.get_ref())
             .await
@@ -1065,7 +1094,8 @@ pub async fn refresh(
     // Store new refresh token in database
     use chrono::TimeDelta;
     let expires_at = Utc::now() + TimeDelta::seconds(state.jwt_refresh_expiry_secs);
-    let user_id_i64 = claims.sub.parse::<i64>().unwrap_or(0);
+    // 复用门禁已解析的主体 id（`None` 已在上方 401）——MUST NOT 重新解析或降级为主体 0。
+    let user_id_i64 = gate_user_id;
     if let Err(e) =
         store_refresh_token(pool.get_ref(), user_id_i64, &new_refresh_token, expires_at).await
     {
@@ -1084,12 +1114,14 @@ pub async fn refresh(
         state.jwt_access_expiry_secs,
         scope.as_deref(),
     );
-    set_refresh_cookie(
+    let response = set_refresh_cookie(
         response,
         &new_refresh_token,
         state.jwt_refresh_expiry_secs,
         scope.as_deref(),
-    )
+    );
+    // refresh 成功重签发 CSRF（design.md §6 轮换；亦是 csrf 丢失后的恢复通道 §7）
+    attach_csrf_cookie(response, scope.as_deref())
 }
 
 /// Current user info (GET /auth/me)
@@ -1153,12 +1185,14 @@ pub async fn me(
         SELECT
             u.id::TEXT,
             u.username,
-            u.email,
-            u.name,
+            (SELECT e.email FROM isahl_auth.auth_user_emails e
+              WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+              ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email,
+            COALESCE(u.display_name, u.username) AS name,
             u.display_name,
-            u.user_type,
+            u.user_type::text,
             u.is_active,
-            u.status,
+            u.status::text,
             COALESCE(
                 array_agg(DISTINCT ua.o_name) FILTER (WHERE ua.o_name IS NOT NULL),
                 '{}'::TEXT[]
@@ -1170,18 +1204,16 @@ pub async fn me(
                 '{}'::TEXT[]
             ) AS accessible_modules
         FROM isahl_auth.auth_users u
-        LEFT JOIN isahl_auth.ngac_user_rr_attribute ur
-            ON ur.fk_user = u.id
-            AND ur.deleted_at IS NULL
-            AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+        -- 有效 UA 集 = 判定链 PIP 单源（直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包 + 时效）
+        LEFT JOIN isahl_auth.effective_ua_ids(u.id) eu ON TRUE
         LEFT JOIN isahl_auth.ngac_user_attribute ua
-            ON ua.id = ur.fk_user_attribute
+            ON ua.id = eu.ua_id
         LEFT JOIN isahl_auth.ngac_association assoc
             ON assoc.fk_user_attribute = ua.id
         LEFT JOIN isahl_auth.ngac_object_attribute oa
             ON oa.id = assoc.fk_object_attribute
         WHERE u.id = $1 AND u.is_active = true
-        GROUP BY u.id, u.username, u.email, u.name, u.display_name, u.user_type, u.is_active, u.status
+        GROUP BY u.id, u.username, u.display_name, u.user_type, u.is_active, u.status
         "#,
     )
     .bind(user_id)
@@ -1213,45 +1245,22 @@ pub async fn me(
             // ── NGAC 逐资源权限矩阵（与 PDP 同一关联集；条件按 NGAC_SPEC §2.4 fail-closed 求值）──
             // 供 Gateway 前端 usePermission/PermissionGate 做 UI 显隐判定；服务端 PEP/PDP 仍为准。
             // v2 条件上下文（add-ngac-condition-v2）：用户有效 UA 名 = ngac_attrs（直接指派）
-            // ∪ 认知/委托派生名（effective_ua 同源）；OA 闭包名 = 集合级 OA 名全集
+            // ∪ 认知/委托派生名；OA 闭包名与 rhai 求值器**逐行**构造（tasks 1.3，见下）
             // 扩展表运行时幂等自愈（零 DDL 交付，add-ngac-runtime-ensure）——
             // 派生名查询引用 ngac_delegation（DELEGATED_CTE），MUST 先行
             crate::ngac::ensure::ensure_ngac_extension_tables(pool.get_ref()).await;
+            // 有效 UA 集 = 判定链 PIP 单源（`isahl_auth.effective_ua_ids`）：直派 ∪ 认知派生
+            // ∪ 委托派生 ∪ 祖先闭包 + 时效。此前本处自持同构 SQL（与 PIP 同 CTE 的双份实现）。
             let derived_ua_names: Vec<String> = {
-                let derived_sql = format!(
-                    r#"
-                    WITH {COGNITION_CTE},
-                    {DELEGATED_CTE},
-                    effective_ua AS (
-                        SELECT ur.fk_user_attribute AS ua_id
-                        FROM isahl_auth.ngac_user_rr_attribute ur
-                        WHERE ur.fk_user = $1
-                          AND ur.deleted_at IS NULL
-                          AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-                        UNION
-                        SELECT ua2.id
-                        FROM isahl_auth.ngac_user_attribute ua2
-                        JOIN cognition_ua_names cn ON cn.o_name = ua2.o_name
-                        WHERE ua2.deleted_at IS NULL
-                        UNION
-                        SELECT ua3.id
-                        FROM delegated_ua du
-                        JOIN isahl_auth.ngac_user_attribute ua3 ON ua3.id = du.id
-                        WHERE ua3.deleted_at IS NULL
-                    )
-                    SELECT ua.o_name FROM isahl_auth.ngac_user_attribute ua
-                    JOIN effective_ua eu ON eu.ua_id = ua.id
-                    WHERE ua.deleted_at IS NULL
-                    "#,
-                    COGNITION_CTE = common::ngac_org::COGNITION_CTE,
-                    DELEGATED_CTE = common::ngac_org::DELEGATED_CTE,
-                );
-                let names: Vec<String> =
-                    sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(derived_sql.as_str()))
-                        .bind(user_id)
-                        .fetch_all(pool.get_ref())
-                        .await
-                        .unwrap_or_default();
+                let names: Vec<String> = sqlx::query_scalar(
+                    "SELECT ua.o_name FROM isahl_auth.ngac_user_attribute ua \
+                     JOIN isahl_auth.effective_ua_ids($1) eu ON eu.ua_id = ua.id \
+                     WHERE ua.deleted_at IS NULL",
+                )
+                .bind(user_id)
+                .fetch_all(pool.get_ref())
+                .await
+                .unwrap_or_default();
                 names
             };
             let mut user_ua_names: Vec<String> = ngac_attrs.clone();
@@ -1260,45 +1269,33 @@ pub async fn me(
                     user_ua_names.push(n);
                 }
             }
-            let collection_oa_names: Vec<String> = sqlx::query_scalar(
-                "SELECT o_name FROM isahl_auth.ngac_object_attribute \
-                 WHERE deleted_at IS NULL AND fk_resource = 0",
+            // 逐行求值上下文的 OA 元数据（tasks 1.3）：闭包名与 `resource` 按**行内 OA** 精确构造。
+            // 原实现以「集合级 OA 名全集」充当每行 `oa_closure_names` ⇒ v2 `object_attr_in` 过匹配
+            // （任意集合 OA 同名即满足 = 放行方向），与 §2.4 v2「同源 OA 闭包名」要求不符。
+            // 元数据全表读取（OA 表小；本面每会话一次，非每请求）；闭包唯一实现 = `pdp::ancestor_closure`。
+            let oa_meta: Vec<(i64, String, Vec<i64>, String, i64)> = sqlx::query_as(
+                "SELECT id, o_name, COALESCE(ancestor_ids, '{}'::bigint[]), \
+                        COALESCE(resource_type, ''), COALESCE(fk_resource, 0) \
+                   FROM isahl_auth.ngac_object_attribute WHERE deleted_at IS NULL",
             )
             .fetch_all(pool.get_ref())
             .await
             .unwrap_or_default();
-            let ctx = ConditionContext {
-                now: Utc::now(),
-                user_ua_names,
-                oa_closure_names: collection_oa_names,
-            };
+            let oa_anc: std::collections::HashMap<i64, Vec<i64>> = oa_meta
+                .iter()
+                .map(|(id, _, anc, _, _)| (*id, anc.clone()))
+                .collect();
+            let oa_names: std::collections::HashMap<i64, String> = oa_meta
+                .iter()
+                .map(|(id, name, _, _, _)| (*id, name.clone()))
+                .collect();
             // 认知派生 UA 先物化（幂等，warn 降级），再并入有效 UA 集
-            // （add-ngac-cognition-derived-ua D3：与 PIP 同一 CTE 常量，不含祖先闭包的既有矩阵语义不变）
+            // （add-ngac-cognition-derived-ua D3）
             common::ngac_org::ensure_cognition_uas(pool.get_ref(), user_id).await;
-            let perm_sql = format!(
-                r#"
-                WITH {COGNITION_CTE},
-                {DELEGATED_CTE},
-                effective_ua AS (
-                    SELECT ur.fk_user_attribute AS ua_id
-                    FROM isahl_auth.ngac_user_rr_attribute ur
-                    WHERE ur.fk_user = $1
-                      AND ur.deleted_at IS NULL
-                      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-                    UNION
-                    SELECT ua2.id
-                    FROM isahl_auth.ngac_user_attribute ua2
-                    JOIN cognition_ua_names cn ON cn.o_name = ua2.o_name
-                    WHERE ua2.deleted_at IS NULL
-                    UNION
-                    -- 委托派生 UA（add-ngac-delegation D2，与 PIP 同 CTE 同构）
-                    SELECT ua3.id
-                    FROM delegated_ua du
-                    JOIN isahl_auth.ngac_user_attribute ua3 ON ua3.id = du.id
-                    WHERE ua3.deleted_at IS NULL
-                )
-                SELECT oa.resource_type, ar.o_name, assoc.conditions
-                FROM effective_ua eu
+            // 权限矩阵的有效 UA 集 = 判定链 PIP 单源（含直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包 + 时效）
+            let perm_sql = r#"
+                SELECT oa.resource_type, oa.id, COALESCE(oa.fk_resource, 0), ar.o_name, assoc.conditions
+                FROM isahl_auth.effective_ua_ids($1) eu
                 JOIN isahl_auth.ngac_user_attribute ua ON ua.id = eu.ua_id
                 JOIN isahl_auth.ngac_association assoc ON assoc.fk_user_attribute = ua.id
                 JOIN isahl_auth.ngac_object_attribute oa ON oa.id = assoc.fk_object_attribute
@@ -1306,14 +1303,12 @@ pub async fn me(
                 WHERE ua.deleted_at IS NULL
                   AND assoc.deleted_at IS NULL
                   AND oa.deleted_at IS NULL
-                "#,
-                COGNITION_CTE = common::ngac_org::COGNITION_CTE,
-                DELEGATED_CTE = common::ngac_org::DELEGATED_CTE
-            );
-            // SQL 由编译期常量 common::ngac_org::COGNITION_CTE 拼装（无用户输入），AssertSqlSafe 显式审计
-            let perm_rows = sqlx::query_as::<_, (String, String, Option<serde_json::Value>)>(
-                sqlx::AssertSqlSafe(perm_sql.as_str()),
-            )
+                "#;
+            // 判定链 PIP 单源 SQL（字面，无插值）
+            let perm_rows = sqlx::query_as::<
+                _,
+                (String, i64, i64, String, Option<serde_json::Value>),
+            >(perm_sql)
             .bind(user_id)
             .fetch_all(pool.get_ref())
             .await;
@@ -1324,9 +1319,24 @@ pub async fn me(
             > = std::collections::HashMap::new();
             match perm_rows {
                 Ok(rows) => {
-                    for (resource_type, action, conditions) in rows {
+                    for (resource_type, oa_id, fk_resource, action, conditions) in rows {
+                        // 逐行上下文（tasks 1.3）：本行 OA 闭包名 + `"{resource_type}:{fk_resource}"`
+                        // （与 PEP/decide 同源）+ 真实 `user_id` ⇒ rhai 与 v2 求值和真决策同语义。
+                        let ctx = ConditionContext {
+                            now: Utc::now(),
+                            user_ua_names: user_ua_names.clone(),
+                            oa_closure_names: ancestor_closure(oa_id, &oa_anc)
+                                .iter()
+                                .filter_map(|id| oa_names.get(id).cloned())
+                                .collect(),
+                            rhai_eval: Some(ngac_host::rhai_condition_evaluator(
+                                user_id,
+                                format!("{resource_type}:{fk_resource}"),
+                                action.clone(),
+                            )),
+                        };
                         if !evaluate_conditions(&conditions, &ctx) {
-                            // 条件不满足（含非法字段，失败封闭）→ 该条关联不授予
+                            // 条件不满足（含非法字段/未知键，失败封闭）→ 该条关联不授予
                             continue;
                         }
                         perm_map.entry(resource_type).or_default().insert(action);
@@ -1344,46 +1354,38 @@ pub async fn me(
             // prohibition 扣减（deny-overrides 对齐，fix-ngac-decision-consistency D6）：
             // 用户有效 UA 集命中的 active prohibition（conditions 同一 fail-closed 求值）
             // 对应 (resource_type, action) 从矩阵剔除——UI 显隐与服务端裁决一致。
-            let denial_sql = format!(
-                r#"
-                WITH {COGNITION_CTE},
-                {DELEGATED_CTE},
-                effective_ua AS (
-                    SELECT ur.fk_user_attribute AS ua_id
-                    FROM isahl_auth.ngac_user_rr_attribute ur
-                    WHERE ur.fk_user = $1
-                      AND ur.deleted_at IS NULL
-                      AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
-                    UNION
-                    SELECT ua2.id
-                    FROM isahl_auth.ngac_user_attribute ua2
-                    JOIN cognition_ua_names cn ON cn.o_name = ua2.o_name
-                    WHERE ua2.deleted_at IS NULL
-                    UNION
-                    SELECT ua3.id
-                    FROM delegated_ua du
-                    JOIN isahl_auth.ngac_user_attribute ua3 ON ua3.id = du.id
-                    WHERE ua3.deleted_at IS NULL
-                )
-                SELECT oa.resource_type, ar.o_name, p.conditions
-                FROM effective_ua eu
+            // 有效 UA 集 = 判定链 PIP 单源
+            let denial_sql = r#"
+                SELECT oa.resource_type, oa.id, COALESCE(oa.fk_resource, 0), ar.o_name, p.conditions
+                FROM isahl_auth.effective_ua_ids($1) eu
                 JOIN isahl_auth.ngac_prohibition p ON p.fk_user_attribute = eu.ua_id
                 JOIN isahl_auth.ngac_object_attribute oa ON oa.id = p.fk_object_attribute
                 JOIN isahl_auth.ngac_access_right ar ON ar.id = ANY(p.ak_access_rights)
                 WHERE p.is_active AND p.deleted_at IS NULL AND oa.deleted_at IS NULL
-                "#,
-                COGNITION_CTE = common::ngac_org::COGNITION_CTE,
-                DELEGATED_CTE = common::ngac_org::DELEGATED_CTE
-            );
-            match sqlx::query_as::<_, (String, String, Option<serde_json::Value>)>(
-                sqlx::AssertSqlSafe(denial_sql.as_str()),
+                "#;
+            match sqlx::query_as::<_, (String, i64, i64, String, Option<serde_json::Value>)>(
+                denial_sql,
             )
             .bind(user_id)
             .fetch_all(pool.get_ref())
             .await
             {
                 Ok(rows) => {
-                    for (resource_type, action, conditions) in rows {
+                    for (resource_type, oa_id, fk_resource, action, conditions) in rows {
+                        // 逐行上下文（同 perm 侧）：prohibition 条件与真决策同语义
+                        let ctx = ConditionContext {
+                            now: Utc::now(),
+                            user_ua_names: user_ua_names.clone(),
+                            oa_closure_names: ancestor_closure(oa_id, &oa_anc)
+                                .iter()
+                                .filter_map(|id| oa_names.get(id).cloned())
+                                .collect(),
+                            rhai_eval: Some(ngac_host::rhai_condition_evaluator(
+                                user_id,
+                                format!("{resource_type}:{fk_resource}"),
+                                action.clone(),
+                            )),
+                        };
                         if !evaluate_conditions(&conditions, &ctx) {
                             // 条件不满足（失败封闭）→ 该条 prohibition 不生效，不扣减
                             continue;

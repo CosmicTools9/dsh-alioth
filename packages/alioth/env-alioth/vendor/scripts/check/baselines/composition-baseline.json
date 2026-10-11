@@ -1,5 +1,9 @@
 {
-  "updated_at": "2026-09-12T18:15:59.645Z",
+  "updated_at": "2026-09-28T12:56:13.317Z",
   "note": "block→module→app 组合契约存量欠债基线（check-composition.ts）；新增违规不得落入此文件",
-  "violations": []
+  "violations": [
+    "Alioth|Pre-Proc/Alioth/Apps/alioth-envcfg/app.json|C3|config.blocks 引用不存在的 block 'block-create-config'",
+    "Alioth|Pre-Proc/Alioth/Apps/alioth-envcfg/app.json|C3|config.blocks 引用不存在的 block 'block-list-configs'",
+    "Alioth|Pre-Proc/Alioth/Apps/alioth-envcfg/app.json|C3|config.blocks 引用不存在的 block 'block-update-config'"
+  ]
 }

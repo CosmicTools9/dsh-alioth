@@ -7,6 +7,8 @@ use rand::RngExt;
 use serde::Deserialize;
 use sqlx::PgPool;
 
+use crate::config::Config;
+
 #[derive(Debug, Deserialize)]
 pub struct SendCodeRequest {
     pub email: String,
@@ -35,9 +37,21 @@ fn generate_code() -> String {
 /// POST /auth/email/send-code
 pub async fn send_code(
     pool: web::Data<PgPool>,
+    config: web::Data<Config>,
     email_service: web::Data<Box<dyn EmailService>>,
     body: web::Json<SendCodeRequest>,
 ) -> Result<HttpResponse, AliothError> {
+    // purpose=login 部署级门禁（fail-closed，与 POST /auth/login/email-code 同一开关）：
+    // 关闭时 MUST NOT 落库/MUST NOT 投递登录验证码；其他用途不受影响。
+    if body.purpose == "login" && !config.email_code_login_enabled {
+        log::warn!("登录验证码请求被拒：未启用（SSO_EMAIL_CODE_LOGIN）");
+        return Ok(
+            HttpResponse::Forbidden().json(crate::auth::login::AuthError {
+                error: "EMAIL_CODE_LOGIN_DISABLED".to_string(),
+            }),
+        );
+    }
+
     // 基础邮箱格式校验
     if !body.email.contains('@') || body.email.len() < 3 {
         return Err(AliothError::BadRequest("Invalid email format".to_string()));

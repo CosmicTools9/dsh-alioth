@@ -16,22 +16,20 @@
  *
  * 判定: ns 本地实现的表 MUST NOT 出现在内核映射中。
  *
- * 模式:
- *   默认 / --fail     审计并输出违规，存在违规时退出码 1（阻断 pre-commit）
- *   --report         输出表→内核索引（供 AppAgent 生成前探测，不检查）
+ * 用法: bun scripts/check/check-shared-kernel.ts [--report] [ROOT]
  *
- * 用法:
- *   bun scripts/check/check-shared-kernel.ts [ROOT] [--report]
+ * 迁移（change `deepen-check-substrate` C1 + 报告缝，2026-10-05）：判定面（内核映射 + ns 壳扫描）与
+ * 输出面分离，且**单次遍历**把映射规模/ns 本地表计数经状态函数传入报告面；`--report` 由**检查自有旗标**
+ * 声明后经 `ctx.flags` 消费（旧读 `process.argv`），输出 `table\tcrate`（按表名排序）+ `# N …` 行；
+ * 违规块（stderr `❌ …` + `  - …` + 空行 + 修复行）与通过行逐字保留；`enforcement: 'always'`
+ * （旧：有违规无条件 `exit(1)`）。取根沿用旧语义（位置参数经 `resolve` 优先，回退基座仓库根）。
+ * 已知差异：`--self-test` 由基座统一承载（旧无自测 ⇒ 本迁移新增）。
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { gatewaySourcesKindDir } from '../lib/preproc-layout.mjs';
+import { existsSync, readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-
-const ROOT = resolve(process.argv.slice(2).find((a) => !a.startsWith('--')) || '.');
-const REPORT_ONLY = process.argv.includes('--report');
-
-const FRAMEWORK_DIR = join(ROOT, 'Framework/backend');
-const PREPROC_DIR = join(ROOT, 'Pre-Proc');
+import { gatewaySourcesKindDir } from '../lib/preproc-layout.mjs';
+import { defineCheck, type CheckContext, type Violation } from './lib/check-interface';
 
 /**
  * 共享表豁免表（allowlist）——同物理表多业务视图（dk 坐标区分，ALIOTH_ONTOLOGY_SPEC §4.3）。
@@ -42,10 +40,8 @@ const SHARED_TABLE_ALLOWLIST: Record<string, string> = {
     'GateTemplate 与 approval ApprovalFlow 共享 zc_id_process（门禁模板视图），dk 坐标 JE/FUA/↓_NA 区分（§4.3）',
 };
 
-
-
 /** 提取 Rust 源码中 AliothDbEntity 实现的 table_name 字面量（isahl.xxx） */
-function extractTables(file: string): string[] {
+export function extractTables(file: string): string[] {
   const src = readFileSync(file, 'utf8');
   const out: string[] = [];
   // 支持两种字面量格式：
@@ -54,7 +50,7 @@ function extractTables(file: string): string[] {
   const re = /fn\s+table_name\s*\(\s*\)\s*->\s*&'static\s+str\s*\{\s*"(?:\\"isahl\\"\s*\.\s*\\"([a-zA-Z0-9_"-]+)\\"|isahl\.([a-zA-Z0-9_"-]+))"/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) {
-    const table = m[1] ?? m[2];
+    const table = m[1] ?? m[2]!;
     out.push(`isahl.${table}`);
   }
   return out;
@@ -74,72 +70,122 @@ function walkRs(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// ── 1. 表→内核映射 ──────────────────────────────────────────────
-const kernelMap = new Map<string, string>(); // isahl.table -> crate
-if (existsSync(FRAMEWORK_DIR)) {
-  for (const crate of readdirSync(FRAMEWORK_DIR, { withFileTypes: true })) {
-    if (!crate.isDirectory()) continue;
-    const crateDir = join(FRAMEWORK_DIR, crate.name);
-    const srcDir = join(crateDir, 'src');
-    if (!existsSync(srcDir)) continue;
-    for (const file of walkRs(srcDir)) {
-      for (const table of extractTables(file)) {
-        if (!kernelMap.has(table)) kernelMap.set(table, crate.name);
-      }
-    }
-  }
-}
+/** 判定面（单次遍历）：内核映射 + ns 壳违规 + ns 本地表计数。 */
+export function sharedKernelState(ctx: CheckContext): {
+  kernelMap: Map<string, string>;
+  violations: Violation[];
+  nsLocalTables: number;
+} {
+  const root = resolve(ctx.argv[0] ?? ctx.root);
+  const FRAMEWORK_DIR = join(root, 'Framework/backend');
+  const PREPROC_DIR = join(root, 'Pre-Proc');
 
-if (REPORT_ONLY) {
-  const rows = [...kernelMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  for (const [table, crate] of rows) {
-    console.log(`${table}\t${crate}`);
-  }
-  console.log(`# ${rows.length} isahl 表由共享内核持有（Framework/backend）`);
-  process.exit(0);
-}
-
-// ── 2. ns 壳重复实现检测 ─────────────────────────────────────────
-const violations: string[] = [];
-let nsLocalTables = 0;
-
-if (existsSync(PREPROC_DIR)) {
-  for (const ns of readdirSync(PREPROC_DIR, { withFileTypes: true })) {
-    if (!ns.isDirectory()) continue;
-    const servicesDir = gatewaySourcesKindDir(ROOT, ns.name, 'Services');
-    if (!existsSync(servicesDir)) continue;
-    for (const svc of readdirSync(servicesDir, { withFileTypes: true })) {
-      if (!svc.isDirectory()) continue;
-      const srcDir = join(servicesDir, svc.name, 'backend/src');
+  // ── 1. 表→内核映射 ──────────────────────────────────────────────
+  const kernelMap = new Map<string, string>(); // isahl.table -> crate
+  if (existsSync(FRAMEWORK_DIR)) {
+    for (const crate of readdirSync(FRAMEWORK_DIR, { withFileTypes: true })) {
+      if (!crate.isDirectory()) continue;
+      const srcDir = join(FRAMEWORK_DIR, crate.name, 'src');
       if (!existsSync(srcDir)) continue;
       for (const file of walkRs(srcDir)) {
         for (const table of extractTables(file)) {
-          nsLocalTables += 1;
-          const owner = kernelMap.get(table);
-          if (owner) {
-            const allowKey = `${table}@${ns.name}/${svc.name}`;
-            if (SHARED_TABLE_ALLOWLIST[allowKey]) continue;
-            violations.push(
-              `isahl 表 ${table} 已有共享内核实现（Framework/backend/${owner}），` +
+          if (!kernelMap.has(table)) kernelMap.set(table, crate.name);
+        }
+      }
+    }
+  }
+
+  // ── 2. ns 壳重复实现检测 ─────────────────────────────────────────
+  const violations: Violation[] = [];
+  let nsLocalTables = 0;
+
+  if (existsSync(PREPROC_DIR)) {
+    for (const ns of readdirSync(PREPROC_DIR, { withFileTypes: true })) {
+      if (!ns.isDirectory()) continue;
+      const servicesDir = gatewaySourcesKindDir(root, ns.name, 'Services');
+      if (!existsSync(servicesDir)) continue;
+      for (const svc of readdirSync(servicesDir, { withFileTypes: true })) {
+        if (!svc.isDirectory()) continue;
+        const srcDir = join(servicesDir, svc.name, 'backend/src');
+        if (!existsSync(srcDir)) continue;
+        for (const file of walkRs(srcDir)) {
+          for (const table of extractTables(file)) {
+            nsLocalTables += 1;
+            const owner = kernelMap.get(table);
+            if (owner) {
+              const allowKey = `${table}@${ns.name}/${svc.name}`;
+              if (SHARED_TABLE_ALLOWLIST[allowKey]) continue;
+              const msg =
+                `isahl 表 ${table} 已有共享内核实现（Framework/backend/${owner}），` +
                 `但 ${ns.name}/Sources/Services/${svc.name} 仍含本地实现：${file}` +
-                `（若为共享表多视图，请登记 SHARED_TABLE_ALLOWLIST["${allowKey}"]）`,
-            );
+                `（若为共享表多视图，请登记 SHARED_TABLE_ALLOWLIST["${allowKey}"]）`;
+              violations.push({ path: 'ns-shell', message: msg, detail: msg });
+            }
           }
         }
       }
     }
   }
+  return { kernelMap, violations, nsLocalTables };
 }
 
-if (violations.length > 0) {
-  console.error(`❌ check-shared-kernel: ${violations.length} 处 ns 本地实现与共享内核重复`);
-  for (const v of violations) console.error(`  - ${v}`);
-  console.error(`\n修复: 将本地实现上移对应内核 crate（或删除），ns 壳仅保留 scope + 契约投影。`);
-  process.exit(1);
-}
+const check = defineCheck({
+  id: 'shared-kernel',
+  label: 'isahl 表实现单一性（共享内核）',
+  enforcement: 'always', // 旧：有违规无条件 exit(1)
+  flags: ['--report'],
+  predicate: (ctx) => sharedKernelState(ctx).violations,
+  report(ctx: CheckContext, { violations }, io) {
+    const { kernelMap, nsLocalTables } = sharedKernelState(ctx);
+    if (ctx.flags.has('--report')) {
+      const rows = [...kernelMap.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+      for (const [table, crate] of rows) io.out(`${table}\t${crate}\n`);
+      io.out(`# ${rows.length} isahl 表由共享内核持有（Framework/backend）\n`);
+      return 0;
+    }
+    if (violations.length > 0) {
+      io.err(`❌ check-shared-kernel: ${violations.length} 处 ns 本地实现与共享内核重复\n`);
+      for (const v of violations) io.err(`  - ${v.detail}\n`);
+      io.err('\n修复: 将本地实现上移对应内核 crate（或删除），ns 壳仅保留 scope + 契约投影。\n');
+      return 1;
+    }
+    io.out(
+      `✅ check-shared-kernel: ${kernelMap.size} 个 isahl 表由共享内核持有，` +
+        `扫描 ${nsLocalTables} 处 ns 本地表定义，零重复实现。\n`,
+    );
+    return 0;
+  },
+  selfTest() {
+    let failed = 0;
+    // 提取器（纯文本面）：两种字面量形态 + 非 table_name 面不命中
+    const dir = mkdtempSync(join(tmpdir(), 'shared-kernel-selftest-'));
+    try {
+      const cases: Array<[string, string, string[]]> = [
+        ['plain.rs', 'fn table_name() -> &\'static str { "isahl.zc_id_message" }\n', ['isahl.zc_id_message']],
+        ['quoted.rs', 'fn table_name() -> &\'static str { "\\"isahl\\".\\"zc_id_msgs-system\\"" }\n', ['isahl.zc_id_msgs-system']],
+        ['none.rs', 'fn other() -> &\'static str { "isahl.zc_id_lifecycle_r_primary-status" }\n', []],
+      ];
+      for (const [name, src, expect] of cases) {
+        const p = join(dir, name);
+        writeFileSync(p, src);
+        const got = extractTables(p);
+        if (JSON.stringify(got) !== JSON.stringify(expect)) {
+          failed += 1;
+          console.error(`shared-kernel selfTest: ${name} 期望 ${JSON.stringify(expect)} 实得 ${JSON.stringify(got)}`);
+        }
+      }
+      // 报告面排序口径（纯）：表名字典序
+      const rows = [['isahl.b', 'c1'], ['isahl.a', 'c2']] as Array<[string, string]>;
+      const sorted = [...rows].sort((a, b) => a[0].localeCompare(b[0])).map((r) => r[0]);
+      if (sorted.join(',') !== 'isahl.a,isahl.b') {
+        failed += 1;
+        console.error('shared-kernel selfTest: 排序口径错误');
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    return failed === 0 ? 0 : 1;
+  },
+});
 
-console.log(
-  `✅ check-shared-kernel: ${kernelMap.size} 个 isahl 表由共享内核持有，` +
-    `扫描 ${nsLocalTables} 处 ns 本地表定义，零重复实现。`,
-);
-process.exit(0);
+if (import.meta.main) process.exit(await check.main());

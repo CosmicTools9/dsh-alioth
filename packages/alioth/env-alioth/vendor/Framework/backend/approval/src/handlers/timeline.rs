@@ -48,7 +48,7 @@ pub async fn get_timeline(
     require_row_or_collection_access(
         pool.get_ref(),
         user_id,
-        "approval-instances",
+        "approval_instances",
         instance_id,
         "read",
     )

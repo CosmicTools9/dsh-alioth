@@ -112,39 +112,21 @@ impl CloudSmsService {
             }
         }
 
-        let row = sqlx::query_as::<_, (Value, Value)>(
-            r#"
-            SELECT settings, enc_fields
-            FROM isahl."zc_id_prot-sms_config"
-            WHERE (settings->>'public')::boolean IS NOT FALSE
-              AND deleted_at IS NULL
-            ORDER BY id
-            LIMIT 1
-            "#,
+        // 生效行经唯一解析点（enabled 门 + is_default 决胜 NULLS LAST；凭证字符串值已过注入解密器）
+        let active = crate::config_resolution::resolve_active(
+            &self.pool,
+            crate::config_resolution::ConfigFamily::Sms,
+            &|s| (self.decryptor)(s),
         )
-        .fetch_optional(&self.pool)
         .await
         .map_err(|e| AliothError::Internal(format!("Failed to load SMS config: {}", e)))?;
 
-        let (config, credentials) = match row {
-            Some((settings, enc_fields)) => {
-                let cfg: SmsConfig = serde_json::from_value(settings).map_err(|e| {
+        let (config, credentials) = match active {
+            Some(cfg) => {
+                let typed: SmsConfig = serde_json::from_value(cfg.settings).map_err(|e| {
                     AliothError::Internal(format!("Invalid SMS settings JSON: {}", e))
                 })?;
-
-                let enc_obj = enc_fields.as_object().ok_or_else(|| {
-                    AliothError::Internal("enc_fields is not a JSON object".to_string())
-                })?;
-
-                let mut decrypted = serde_json::Map::new();
-                for (k, v) in enc_obj {
-                    if let Some(s) = v.as_str() {
-                        decrypted.insert(k.clone(), Value::String((self.decryptor)(s)));
-                    } else {
-                        decrypted.insert(k.clone(), v.clone());
-                    }
-                }
-                (cfg, Value::Object(decrypted))
+                (typed, cfg.credentials)
             }
             None => {
                 return Err(AliothError::NotFound("sms_config".to_string()));

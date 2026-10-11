@@ -6,13 +6,10 @@
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::context;
 use common::messaging::MessagingService;
-use crud::repository::AliothRepository;
 use sqlx::PgPool;
 use std::sync::Arc;
 
 use crate::handlers::notify;
-use crate::models::CreateApprovalActionRequest;
-use crate::repositories::ApprovalActionRepository;
 
 /// POST /api/service/approval/approval-instances/{id}/remind
 pub async fn remind(
@@ -23,18 +20,10 @@ pub async fn remind(
 ) -> Result<HttpResponse, actix_web::Error> {
     let user_id = context::require_auth(&req)?;
     let instance_id = path.into_inner();
-    let repo = ApprovalActionRepository::new(pool.get_ref().clone());
-    repo.create(
-        CreateApprovalActionRequest {
-            summary: format!("remind:{instance_id}"),
-            code: Some("REMIND".to_string()),
-            // 催办留痕挂当前审批实例（fk_index 契约：fk_list → zc_id_oper-approve.id）
-            fk_list: Some(instance_id),
-        },
-        user_id,
-    )
-    .await
-    .map_err(actix_web::error::ErrorInternalServerError)?;
+    // 催办留痕（services 层收口；分层规约 BACKEND_FRAMEWORK §4.5）
+    crate::services::record_remind(pool.get_ref(), instance_id, user_id)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
 
     // P2-8：向当前审批人投递催办系统通知（fk_operator 回退 fk_subject）
     if let Some(operator) = notify::current_operator(pool.get_ref(), instance_id).await {

@@ -128,6 +128,10 @@ pub(crate) struct AppInstance {
     pub deployment_mode: Option<String>,
     /// 外部入口 URL（app.json `endpointUrl`，multi_process/remote 模式使用）
     pub endpoint_url: Option<String>,
+    /// 应用品牌（app.json `brand`：`primary` / `logo`）——原样透传，语义由前端解释；
+    /// ns 级 VI 声明面见 `Pre-Proc/{ns}/branding/brand.json`（本字段是 app 级 VI）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand: Option<serde_json::Value>,
 }
 
 /// GET /api/apps 响应条目（与前端 AppInfo 契约对齐）
@@ -149,6 +153,9 @@ pub struct AppInfoResponse {
     pub deployment_mode: Option<String>,
     pub modules: Vec<String>,
     pub config: AppInfoConfig,
+    /// 应用品牌（app.json `brand`，前端 app 卡片/应用视图消费）；缺省不下发
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -232,6 +239,8 @@ fn parse_single_app(value: &serde_json::Value, fallback_ns: Option<&str>) -> Opt
     let version = value["version"].as_str().map(|s| s.to_string());
     let deployment_mode = value["deploymentMode"].as_str().map(|s| s.to_string());
     let endpoint_url = value["endpointUrl"].as_str().map(|s| s.to_string());
+    // app 级 VI（app.json `brand`）：非对象值（如字符串/null）按缺失处理，避免下游拿到非契约形状
+    let brand = value.get("brand").filter(|v| v.is_object()).cloned();
     Some(AppInstance {
         namespace,
         modules,
@@ -243,6 +252,7 @@ fn parse_single_app(value: &serde_json::Value, fallback_ns: Option<&str>) -> Opt
         version,
         deployment_mode,
         endpoint_url,
+        brand,
     })
 }
 
@@ -337,6 +347,106 @@ fn aggregate_raw_apps_from_dir(deploy_path: &str) -> Vec<serde_json::Value> {
         }
     }
     raw
+}
+
+/// `/api/apps` 的 `services` 条目：本 ns 服务声明投影（数据源 = `service.json`）。
+///
+/// 用途（change fix-admin-approval-service-route-resolution）：前端解析**服务路由前缀**，
+/// 取代页面内硬编码 `/api/service/approval`——AVIC 的审批服务 id 是 `commitment`。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceInfo {
+    /// 服务 id（= 路由前缀段 `/api/service/{id}`）
+    pub id: String,
+    /// 逻辑能力族（`service.json` 的 `family`；缺省 null——不推断）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_crate: Option<String>,
+}
+
+/// 解析 `service.json` 文本 → `ServiceInfo`（无 `id` = 非法声明，跳过）。
+pub(crate) fn parse_service_decl(content: &str) -> Option<ServiceInfo> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
+    let id = v.get("id").and_then(|x| x.as_str())?.to_string();
+    Some(ServiceInfo {
+        id,
+        family: v
+            .get("family")
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+            .filter(|s| !s.is_empty()),
+        name: v.get("name").and_then(|x| x.as_str()).map(str::to_string),
+        backend_crate: v
+            .get("backendCrate")
+            .and_then(|x| x.as_str())
+            .map(str::to_string),
+    })
+}
+
+/// 读取本 ns 的服务声明清单。
+///
+/// - release（`DEPLOY_PATH`）：读 `{DEPLOY_PATH}/services.json`（打包期由
+///   `scripts/gen-ns-services-json.ts` 生成；缺省 → 空清单，前端按降级处理）；
+/// - dev：`NAMESPACE` 设定时扫描 `Pre-Proc/{ns}/Sources/Apps/Services/*/service.json`
+///   （Apps 位唯一；扁平位已按 D-049 退役，2026-10-11）；
+/// - `NAMESPACE` 未设 / 目录缺失 → 空清单（不推断、不猜测）。
+pub(crate) fn read_ns_services() -> Vec<ServiceInfo> {
+    if let Ok(deploy_path) = std::env::var("DEPLOY_PATH") {
+        let path = std::path::Path::new(&deploy_path).join("services.json");
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            return vec![];
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
+            common::telemetry::warn!("services.json 解析失败（{}）", path.display());
+            return vec![];
+        };
+        let arr = v
+            .get("services")
+            .and_then(|s| s.as_array())
+            .cloned()
+            .or_else(|| v.as_array().cloned())
+            .unwrap_or_default();
+        return arr
+            .iter()
+            .filter_map(|item| parse_service_decl(&item.to_string()))
+            .collect();
+    }
+
+    let namespace = std::env::var("NAMESPACE").unwrap_or_default();
+    if namespace.is_empty() {
+        return vec![];
+    }
+    let Some(pre_proc_dir) = resolve_pre_proc_dir() else {
+        return vec![];
+    };
+    scan_ns_services(&pre_proc_dir.join(&namespace))
+}
+
+/// 扫描单个 ns 根目录下的服务声明（`Sources/Apps/Services` 唯一位；扁平位已按 D-049 退役）。
+///
+/// 同 `id` 去重（先后序即优先级，与 `instantiate-ns-host.ts` 一致）；输出按 `id` 升序（确定性）。
+pub(crate) fn scan_ns_services(ns_root: &std::path::Path) -> Vec<ServiceInfo> {
+    let services_dir = ns_root.join("Sources").join("Apps").join("Services");
+    let Ok(entries) = std::fs::read_dir(&services_dir) else {
+        return vec![];
+    };
+    let mut out: Vec<ServiceInfo> = Vec::new();
+    for entry in entries.flatten() {
+        let decl = entry.path().join("service.json");
+        let Ok(content) = std::fs::read_to_string(&decl) else {
+            continue;
+        };
+        if let Some(info) = parse_service_decl(&content) {
+            if !out.iter().any(|s| s.id == info.id) {
+                out.push(info);
+            }
+        }
+    }
+    out.sort_by(|a, b| a.id.cmp(&b.id));
+    out
 }
 
 /// 读取应用发现数据（`Pre-Proc` 目录树 / `apps.json` 文件系统扫描）。
@@ -534,17 +644,9 @@ pub async fn get_active_routes(
                         let mut workspace_declarations = None;
 
                         if let Some(base) = preproc_dir.as_ref() {
-                            // Sources 全量镜像：优先 Sources/Apps（Gateway 侧），
-                            // 未迁移 namespace 回退扁平 Sources。
+                            // Sources 全量镜像：Sources/Apps（Gateway 侧唯一位;扁平位已按 D-049 退役）。
                             let ns_root = base.join(&ns);
-                            let sources = {
-                                let apps = ns_root.join("Sources").join("Apps");
-                                if apps.is_dir() {
-                                    apps
-                                } else {
-                                    ns_root.join("Sources")
-                                }
-                            };
+                            let sources = ns_root.join("Sources").join("Apps");
                             let path = sources.join("Modules").join(&id).join("module.json");
                             if let Ok(content) = std::fs::read_to_string(path) {
                                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
@@ -614,20 +716,33 @@ pub async fn list_apps(req: HttpRequest, pool: web::Data<sqlx::PgPool>) -> Resul
         .await?
         .into_iter()
         .filter(|a| visible.as_ref().is_none_or(|v| v.contains(&a.app_code)))
-        .map(|a| AppInfoResponse {
-            code: a.app_code,
-            name: a.name,
-            namespace: a.namespace,
-            description: a.description,
-            status: a.status,
-            version: a.version,
-            endpoint_url: a.endpoint_url,
-            deployment_mode: a.deployment_mode,
-            modules: a.modules.clone(),
-            config: AppInfoConfig { modules: a.modules },
-        })
+        .map(to_info_response)
         .collect();
-    Ok(HttpResponse::Ok().json(serde_json::json!({ "apps": apps })))
+    // 本 ns 服务声明投影（前端解析服务路由前缀；change fix-admin-approval-service-route-resolution）
+    let services = web::block(read_ns_services)
+        .await
+        .map_err(actix_web::error::ErrorInternalServerError)?;
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "apps": apps,
+        "services": services,
+    })))
+}
+
+/// `AppInstance` → `/api/apps` 响应条目（契约面单点：`brand` 必须到达响应，见 tests）
+fn to_info_response(a: AppInstance) -> AppInfoResponse {
+    AppInfoResponse {
+        code: a.app_code,
+        name: a.name,
+        namespace: a.namespace,
+        description: a.description,
+        status: a.status,
+        version: a.version,
+        endpoint_url: a.endpoint_url,
+        deployment_mode: a.deployment_mode,
+        modules: a.modules.clone(),
+        config: AppInfoConfig { modules: a.modules },
+        brand: a.brand,
+    }
 }
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
@@ -649,6 +764,71 @@ mod tests {
         assert_eq!(inst.namespace, "WZ");
         // code 字段优先（schema 权威）
         assert_eq!(inst.app_code, "ai-x");
+    }
+
+    #[test]
+    fn parse_app_brand_passthrough() {
+        // app 级 VI：brand 对象原样透传（app.json → /api/apps）
+        let app = parse_single_app(
+            &json!({ "code": "wz-yy-wms", "namespace": "WZ", "brand": { "primary": "262 70% 55%" } }),
+            Some("WZ"),
+        );
+        let inst = app.expect("brand 存在应加载");
+        assert_eq!(
+            inst.brand
+                .as_ref()
+                .and_then(|b| b.get("primary"))
+                .and_then(|v| v.as_str()),
+            Some("262 70% 55%")
+        );
+    }
+
+    #[test]
+    fn parse_app_brand_absent_stays_none() {
+        let app = parse_single_app(&json!({ "code": "ai-x", "namespace": "WZ" }), Some("WZ"));
+        let inst = app.expect("无 brand 应加载");
+        assert!(inst.brand.is_none());
+    }
+
+    #[test]
+    fn parse_app_brand_non_object_is_dropped() {
+        // 非契约形状（字符串/数组/null）按缺失处理：下游不得拿到非对象 brand
+        let app = parse_single_app(
+            &json!({ "code": "ai-x", "namespace": "WZ", "brand": "blue" }),
+            Some("WZ"),
+        );
+        let inst = app.expect("非对象 brand 应加载但丢弃字段");
+        assert!(inst.brand.is_none());
+    }
+
+    #[test]
+    fn api_apps_response_carries_brand_end_to_end() {
+        // 断头管道回归（2026-09-28）：app.json → AppInstance → /api/apps 响应，
+        // brand 必须在契约面上出现（此前解析后被 AppInfoResponse 丢弃）
+        let instance = parse_single_app(
+            &json!({
+                "code": "wz-yy-wms",
+                "namespace": "WZ",
+                "name": "易运仓储",
+                "config": { "modules": ["delivery"] },
+                "brand": { "primary": "262 70% 55%", "logo": "/branding/logo-wz.png" }
+            }),
+            Some("WZ"),
+        )
+        .expect("应加载");
+        let value = serde_json::to_value(to_info_response(instance)).expect("序列化响应条目");
+        assert_eq!(value["brand"]["primary"], json!("262 70% 55%"));
+        assert_eq!(value["brand"]["logo"], json!("/branding/logo-wz.png"));
+        assert_eq!(value["modules"], json!(["delivery"]));
+    }
+
+    #[test]
+    fn api_apps_response_omits_brand_when_absent() {
+        // 缺失 brand ⇒ 响应不含该键（前端回落默认样式的前提）
+        let instance = parse_single_app(&json!({ "code": "a", "namespace": "WZ" }), Some("WZ"))
+            .expect("应加载");
+        let value = serde_json::to_value(to_info_response(instance)).expect("序列化");
+        assert!(value.get("brand").is_none(), "无 brand 时不得下发：{value}");
     }
 
     #[test]
@@ -705,6 +885,38 @@ mod tests {
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].app_code, "ct-git");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_apps_json_carries_brand() {
+        // 生产路径（{DEPLOY_PATH}/apps.json 聚合）：brand 必须随实例进入 /api/apps 响应面
+        // （2026-09-28 修复「声明 → 解析 → 丢弃」断头管道）
+        let content = json!({
+            "appInstances": [
+                { "code": "wz-yy-wms", "namespace": "WZ", "brand": { "primary": "262 70% 55%" } },
+                { "code": "wz-tms", "namespace": "WZ" }
+            ]
+        })
+        .to_string();
+        let instances = parse_apps_json(&content);
+        assert_eq!(instances.len(), 2);
+        let with_brand = instances
+            .iter()
+            .find(|a| a.app_code == "wz-yy-wms")
+            .expect("含 brand 的 app 应在结果中");
+        assert_eq!(
+            with_brand
+                .brand
+                .as_ref()
+                .and_then(|b| b.get("primary"))
+                .and_then(|v| v.as_str()),
+            Some("262 70% 55%")
+        );
+        let without = instances
+            .iter()
+            .find(|a| a.app_code == "wz-tms")
+            .expect("无 brand 的 app 应在结果中");
+        assert!(without.brand.is_none());
     }
 
     #[test]
@@ -772,6 +984,109 @@ mod tests {
             vec!["repositories", "pipelines", "reviews"]
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── 服务声明投影（change fix-admin-approval-service-route-resolution）──────
+
+    #[test]
+    fn parse_service_decl_reads_id_family_and_metadata() {
+        let info = parse_service_decl(
+            r#"{ "id": "commitment", "family": "approval", "name": "审批承诺管理",
+                 "backendCrate": "avic-caasec-service-commitment" }"#,
+        )
+        .expect("合法声明应解析");
+        assert_eq!(info.id, "commitment");
+        assert_eq!(info.family.as_deref(), Some("approval"));
+        assert_eq!(info.name.as_deref(), Some("审批承诺管理"));
+        assert_eq!(
+            info.backend_crate.as_deref(),
+            Some("avic-caasec-service-commitment")
+        );
+    }
+
+    #[test]
+    fn parse_service_decl_without_family_is_none_not_inferred() {
+        // 未声明 family ⇒ None（不按 id 猜测）；前端据此走显式降级
+        let info = parse_service_decl(r#"{ "id": "approval", "name": "审批服务" }"#)
+            .expect("无 family 仍应解析");
+        assert_eq!(info.id, "approval");
+        assert!(info.family.is_none());
+    }
+
+    #[test]
+    fn parse_service_decl_rejects_missing_id_and_bad_json() {
+        assert!(parse_service_decl(r#"{ "name": "无 id" }"#).is_none());
+        assert!(parse_service_decl("{ not json").is_none());
+    }
+
+    #[test]
+    fn api_apps_response_serializes_services_camel_case() {
+        let svc = ServiceInfo {
+            id: "commitment".into(),
+            family: Some("approval".into()),
+            name: Some("审批承诺管理".into()),
+            backend_crate: None,
+        };
+        let value = serde_json::to_value(&svc).expect("序列化服务条目");
+        assert_eq!(value["id"], json!("commitment"));
+        assert_eq!(value["family"], json!("approval"));
+        assert_eq!(value["name"], json!("审批承诺管理"));
+        assert!(value.get("backendCrate").is_none(), "缺省字段不下发");
+    }
+
+    /// `scan_ns_services`：Apps 位优先、同 id 去重、按 id 升序、缺 id 跳过（change
+    /// fix-admin-approval-service-route-resolution 的取数面）。
+    #[test]
+    fn scan_ns_services_reads_apps_position_and_dedups() {
+        let dir = std::env::temp_dir().join(format!(
+            "ns-services-scan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let apps = dir.join("Sources").join("Apps").join("Services");
+        let legacy = dir.join("Sources").join("Services");
+        for (base, name, body) in [
+            (
+                &apps,
+                "commitment",
+                r#"{"id":"commitment","family":"approval","name":"审批承诺管理"}"#,
+            ),
+            (
+                &apps,
+                "authority",
+                r#"{"id":"authority","name":"权限服务"}"#,
+            ),
+            // 扁平位条目（已按 D-049 退役 ⇒ 该位不再被读取,同名条目不应出现）
+            (
+                &legacy,
+                "flat-only",
+                r#"{"id":"flat-only","name":"扁平位条目"}"#,
+            ),
+            // 缺 id ⇒ 跳过
+            (&apps, "broken", r#"{"name":"无 id"}"#),
+        ] {
+            let svc_dir = base.join(name);
+            std::fs::create_dir_all(&svc_dir).expect("mkdir service dir");
+            std::fs::write(svc_dir.join("service.json"), body).expect("write service.json");
+        }
+
+        let found = scan_ns_services(&dir);
+        assert_eq!(found.len(), 2, "缺 id 跳过 + 同 id 去重：{found:?}");
+        assert_eq!(found[0].id, "authority", "按 id 升序");
+        assert_eq!(found[1].id, "commitment");
+        assert_eq!(
+            found[1].family.as_deref(),
+            Some("approval"),
+            "Apps 位声明有效"
+        );
+        assert!(
+            !found.iter().any(|s| s.id == "flat-only"),
+            "扁平位条目 MUST 不被发现（D-049 退役）"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

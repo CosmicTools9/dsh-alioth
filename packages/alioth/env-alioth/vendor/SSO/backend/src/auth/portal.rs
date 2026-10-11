@@ -1,13 +1,16 @@
-//! 门户上下文 API + OpenAPI 密钥自助门户
+//! 门户上下文 API + 外部主体 API-KEY 签发面
 //!
 //! 1. 门户上下文：NGAC 属性驱动的双 Portal 决策（GATEWAY_DESIGN_SPEC.md §3.3），
 //!    经 `login::configure` 的 `/portal-context` 路由对外（本模块不再重复注册）。
-//! 2. 密钥自助门户（OPENAPI_SPEC §7 P3 缺口）：JWT 自然人自助
-//!    列表 / 创建 / 轮换 / 吊销**本人**的 `api_clients`，与管理面（admin/api_clients.rs）
-//!    共用 `api_clients_common` 的密钥生成 / 事务 / 订阅逻辑。
+//! 2. 外部主体签发面（`/auth/external/api-clients`，
+//!    change `move-apikey-issuance-to-external-portal`）：**仅**经外部入驻审批的
+//!    外部主体（`user_type='external'` 且 `status='active'`）可列表 / 创建 / 轮换 /
+//!    吊销**本人**的 `api_clients`，与管理面（admin/api_clients.rs）共用
+//!    `api_clients_common` 的密钥生成 / 事务 / 订阅逻辑。取得入口 = OpenActivity 门户；
+//!    Gateway MUST NOT 提供「以自持身份申请 API-KEY」的自助入口。
 //!
 //! 归属模型（见 openspec/changes/openapi-self-service-portal/ design.md D2）：
-//! 每个自助 client 同步创建独立服务用户（NGAC 主体，§2.2），归属信息以
+//! 每个签发 client 同步创建独立服务用户（NGAC 主体，§2.2），归属信息以
 //! `client_name = "user:<uid>:" + 用户名称` 前缀记录（DDL 无 owner 列且本 mission
 //! 禁改 migrations）；列表/鉴权均按此前缀过滤，响应中剥离前缀返回显示名。
 
@@ -110,15 +113,13 @@ pub async fn get_portal_context(
         Err(resp) => return resp,
     };
 
-    // 查询用户的 NGAC 属性
+    // 查询用户的 NGAC 属性（判定链 PIP 单源：直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包 + 时效）
     let attrs: Vec<String> = sqlx::query_scalar(
         r#"
         SELECT DISTINCT ua.o_name
-        FROM isahl_auth.ngac_user_rr_attribute rel
-        JOIN isahl_auth.ngac_user_attribute ua ON ua.id = rel.fk_user_attribute
-        WHERE rel.fk_user = $1
-          AND (rel.deleted_at IS NULL)
-          AND (rel.expires_at IS NULL OR rel.expires_at > NOW())
+        FROM isahl_auth.effective_ua_ids($1) e
+        JOIN isahl_auth.ngac_user_attribute ua ON ua.id = e.ua_id
+        WHERE ua.deleted_at IS NULL
         "#,
     )
     .bind(user_id)
@@ -217,7 +218,7 @@ mod portal_scope_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 密钥自助门户（OpenAPI 自助面，P3 缺口）
+// 外部主体 API-KEY 签发面（取得入口 = OpenActivity 门户）
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// 归属前缀：`user:<uid>:`——自助创建的 client 用 client_name 前缀标记归属。
@@ -226,8 +227,41 @@ fn ownership_prefix(user_id: i64) -> String {
     format!("user:{}:", user_id)
 }
 
+/// 外部主体门禁（change `move-apikey-issuance-to-external-portal` D2）：
+/// 仅 `user_type='external'` 且 `status='active'` 的账号可签发。
+/// **白名单式判定**——`pending` / `pending_approval` / `identity_submitted` / `disabled` /
+/// `rejected` 一律拒绝，新增状态 MUST NOT 静默放行。账号行缺失或查询失败 ⇒ fail-closed。
+///
+/// 响应：非 external → 403 `EXTERNAL_ONLY`；external 但未审批 → 403 `EXTERNAL_NOT_APPROVED`。
+async fn require_external_active(pool: &sqlx::PgPool, user_id: i64) -> Result<(), HttpResponse> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT user_type::text, status::text FROM isahl_auth.auth_users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or_else(|e| {
+        log::error!("require_external_active query failed: user={user_id} err={e}");
+        None
+    });
+
+    match row {
+        Some((user_type, status)) if user_type == "external" && status == "active" => Ok(()),
+        Some((user_type, _)) if user_type == "external" => {
+            Err(HttpResponse::Forbidden().json(serde_json::json!({
+                "error": "EXTERNAL_NOT_APPROVED",
+                "message": "external subject is not approved yet",
+            })))
+        }
+        _ => Err(HttpResponse::Forbidden().json(serde_json::json!({
+            "error": "EXTERNAL_ONLY",
+            "message": "API key issuance is available to external subjects only",
+        }))),
+    }
+}
+
 #[derive(Debug, Deserialize)]
-pub struct CreateSelfApiClientRequest {
+pub struct CreateExternalApiClientRequest {
     /// apikey | oauth2，缺省 apikey
     pub client_type: Option<String>,
     pub client_name: Option<String>,
@@ -236,7 +270,7 @@ pub struct CreateSelfApiClientRequest {
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct SelfApiClientResponse {
+pub struct ExternalApiClientResponse {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
@@ -250,10 +284,13 @@ pub struct SelfApiClientResponse {
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// 派生授权状态（非 DB 列）：scopes 空 ⇒ `pending`（待管理员授予），非空 ⇒ `granted`
+    #[sqlx(skip)]
+    pub authorization_status: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct SelfApiClientCreatedResponse {
+pub struct ExternalApiClientCreatedResponse {
     #[serde(with = "common::serde_zuid")]
     pub id: i64,
     pub client_id: String,
@@ -264,6 +301,8 @@ pub struct SelfApiClientCreatedResponse {
     #[serde(with = "common::serde_zuid")]
     pub fk_service_user: i64,
     pub enabled: bool,
+    /// 派生授权状态：见 ExternalApiClientResponse.authorization_status
+    pub authorization_status: String,
 }
 
 /// 校验 client 归属：存在（未软删）→ Ok；不存在 → 404；非本人 → 403。
@@ -294,10 +333,10 @@ async fn own_client_check(
     Ok(())
 }
 
-/// GET /auth/self/api-clients
+/// GET /auth/external/api-clients
 ///
-/// 当前登录用户自己的 api_client 列表（按归属前缀过滤，绝不返回他用户）。
-pub async fn list_self_api_clients(
+/// 当前外部主体自己的 api_client 列表（按归属前缀过滤，绝不返回他用户）。
+pub async fn list_external_api_clients(
     req: HttpRequest,
     pool: web::Data<sqlx::PgPool>,
     state: web::Data<AuthState>,
@@ -306,9 +345,12 @@ pub async fn list_self_api_clients(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+    if let Err(resp) = require_external_active(pool.get_ref(), user_id).await {
+        return resp;
+    }
     let prefix = ownership_prefix(user_id);
 
-    let clients: Vec<SelfApiClientResponse> = sqlx::query_as(
+    let clients: Vec<ExternalApiClientResponse> = sqlx::query_as(
         r#"
         SELECT id, client_id, client_type, client_name, scopes, fk_service_user,
                enabled, expires_at, last_used_at, created_at
@@ -322,7 +364,7 @@ pub async fn list_self_api_clients(
     .await
     .unwrap_or_else(|e| {
         // 诚实失败：与 admin 面一致，查询失败记录日志并返回空列表
-        log::error!("list_self_api_clients query failed: {}", e);
+        log::error!("list_external_api_clients query failed: {}", e);
         Vec::new()
     });
 
@@ -334,6 +376,11 @@ pub async fn list_self_api_clients(
                 .strip_prefix(&prefix)
                 .unwrap_or(&c.client_name)
                 .to_string();
+            c.authorization_status = if c.scopes.is_empty() {
+                "pending".to_string()
+            } else {
+                "granted".to_string()
+            };
             c
         })
         .collect::<Vec<_>>();
@@ -341,14 +388,14 @@ pub async fn list_self_api_clients(
     HttpResponse::Ok().json(serde_json::json!({ "clients": clients }))
 }
 
-/// POST /auth/self/api-clients
+/// POST /auth/external/api-clients
 ///
-/// 创建本人 OpenAPI 调用方。client_type 缺省 apikey；同步创建服务用户
+/// 创建本人 OpenAPI 调用方（仅外部主体）。client_type 缺省 apikey；同步创建服务用户
 /// （NGAC 主体）+ 默认 free 订阅（同一事务）；归属前缀强制写入 client_name；
 /// 明文 secret 仅此一次返回。
-pub async fn create_self_api_client(
+pub async fn create_external_api_client(
     req: HttpRequest,
-    body: web::Json<CreateSelfApiClientRequest>,
+    body: web::Json<CreateExternalApiClientRequest>,
     pool: web::Data<sqlx::PgPool>,
     state: web::Data<AuthState>,
 ) -> HttpResponse {
@@ -356,6 +403,9 @@ pub async fn create_self_api_client(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+    if let Err(resp) = require_external_active(pool.get_ref(), user_id).await {
+        return resp;
+    }
 
     let client_type = body
         .client_type
@@ -387,9 +437,25 @@ pub async fn create_self_api_client(
         }
     };
 
+    // 门户自助面 MUST NOT 自授通配（`*` / `*:{entity}`）——通配仅管理面经
+    // NGAC `openapi_admin:0` 可授（scope-grammar-single-source：纵深防御封口）。
+    if let Some(scopes) = body.scopes.as_ref() {
+        let wildcards: Vec<String> = scopes
+            .iter()
+            .filter(|s| common::openapi_scope::is_wildcard_scope(s))
+            .cloned()
+            .collect();
+        if !wildcards.is_empty() {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "INVALID_SCOPE",
+                "message": "通配 scope 不开放自助授予，请联系管理员经管理面授予",
+                "details": wildcards,
+            }));
+        }
+    }
+
     let prefix = ownership_prefix(user_id);
     let client_name = format!("{}{}", prefix, body.client_name.clone().unwrap_or_default());
-
     let created = match api_clients_common::create_api_client(
         pool.get_ref(),
         client_id.clone(),
@@ -407,15 +473,23 @@ pub async fn create_self_api_client(
                 "error": "Client ID already exists",
             }));
         }
+        Err(api_clients_common::CreateClientError::InvalidScope(invalid)) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "INVALID_SCOPE",
+                "message": "scope 文法外值（合法形 {action}:{entity}，action ∈ read/create/update/delete；留空=待授权）",
+                "details": invalid,
+            }));
+        }
         Err(e) => {
-            log::error!("create_self_api_client error: {:?}", e);
+            log::error!("create_external_api_client error: {:?}", e);
             return HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Failed to create client",
             }));
         }
     };
 
-    HttpResponse::Created().json(SelfApiClientCreatedResponse {
+    let requested_scopes = body.scopes.clone().unwrap_or_default();
+    HttpResponse::Created().json(ExternalApiClientCreatedResponse {
         id: created.id,
         client_id,
         client_type,
@@ -423,14 +497,19 @@ pub async fn create_self_api_client(
         secret,
         fk_service_user: created.fk_service_user,
         enabled: true,
+        authorization_status: if requested_scopes.is_empty() {
+            "pending".to_string()
+        } else {
+            "granted".to_string()
+        },
     })
 }
 
-/// POST /auth/self/api-clients/{id}/rotate-secret
+/// POST /auth/external/api-clients/{id}/rotate-secret
 ///
 /// 轮换本人 client 的密钥（apikey 同步替换 client_id，oauth2 仅覆盖 secret_hash）。
 /// 明文仅在此响应中返回一次；旧 secret 立即失效。
-pub async fn rotate_self_api_client_secret(
+pub async fn rotate_external_api_client_secret(
     req: HttpRequest,
     path: web::Path<i64>,
     pool: web::Data<sqlx::PgPool>,
@@ -440,6 +519,9 @@ pub async fn rotate_self_api_client_secret(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+    if let Err(resp) = require_external_active(pool.get_ref(), user_id).await {
+        return resp;
+    }
     let client_row_id = path.into_inner();
 
     if let Err(resp) = own_client_check(pool.get_ref(), user_id, client_row_id).await {
@@ -457,13 +539,13 @@ pub async fn rotate_self_api_client_secret(
             "error": "Client not found",
         })),
         Err(api_clients_common::ClientOpError::Hash(e)) => {
-            log::error!("rotate_self_api_client_secret hash error: {}", e);
+            log::error!("rotate_external_api_client_secret hash error: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Failed to hash secret",
             }))
         }
         Err(api_clients_common::ClientOpError::Db(e)) => {
-            log::error!("rotate_self_api_client_secret error: {}", e);
+            log::error!("rotate_external_api_client_secret error: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Rotate failed",
             }))
@@ -471,11 +553,11 @@ pub async fn rotate_self_api_client_secret(
     }
 }
 
-/// DELETE /auth/self/api-clients/{id}
+/// DELETE /auth/external/api-clients/{id}
 ///
 /// 吊销（软删除）本人 client，并挂起其 active 订阅。
 /// 服务用户保留（历史审计可解析），不再可签发令牌。
-pub async fn delete_self_api_client(
+pub async fn delete_external_api_client(
     req: HttpRequest,
     path: web::Path<i64>,
     pool: web::Data<sqlx::PgPool>,
@@ -485,6 +567,9 @@ pub async fn delete_self_api_client(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+    if let Err(resp) = require_external_active(pool.get_ref(), user_id).await {
+        return resp;
+    }
     let client_row_id = path.into_inner();
 
     if let Err(resp) = own_client_check(pool.get_ref(), user_id, client_row_id).await {
@@ -500,7 +585,7 @@ pub async fn delete_self_api_client(
             "error": "Client not found",
         })),
         Err(e) => {
-            log::error!("delete_self_api_client error: {}", e);
+            log::error!("delete_external_api_client error: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "error": "Delete failed",
             }))
@@ -508,18 +593,28 @@ pub async fn delete_self_api_client(
     }
 }
 
-/// 密钥自助门户路由（相对路径注册，lib.rs 在 `/auth` 与 `/api/auth` scope 双挂载，
+/// 外部主体签发面路由（相对路径注册，lib.rs 在 `/auth` 与 `/api/auth` scope 双挂载，
 /// 见 design.md D1）。portal-context 仍由 `login::configure` 的 `/portal-context`
 /// 路由对外，不在此重复注册。
+///
+/// 路径历史：原 `/self/api-clients`（任意已登录账号可用）→ `/external/api-clients`
+/// （仅经审批的外部主体），见 change `move-apikey-issuance-to-external-portal` D2。
+/// 旧路径 MUST NOT 保留为兼容别名（改名即让旧调用点 404，消灭隐性第二入口）。
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/self/api-clients", web::get().to(list_self_api_clients))
-        .route("/self/api-clients", web::post().to(create_self_api_client))
-        .route(
-            "/self/api-clients/{id}/rotate-secret",
-            web::post().to(rotate_self_api_client_secret),
-        )
-        .route(
-            "/self/api-clients/{id}",
-            web::delete().to(delete_self_api_client),
-        );
+    cfg.route(
+        "/external/api-clients",
+        web::get().to(list_external_api_clients),
+    )
+    .route(
+        "/external/api-clients",
+        web::post().to(create_external_api_client),
+    )
+    .route(
+        "/external/api-clients/{id}/rotate-secret",
+        web::post().to(rotate_external_api_client_secret),
+    )
+    .route(
+        "/external/api-clients/{id}",
+        web::delete().to(delete_external_api_client),
+    );
 }

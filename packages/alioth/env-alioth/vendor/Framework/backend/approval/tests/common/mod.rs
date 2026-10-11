@@ -1,6 +1,19 @@
 //! Framework/approval 集成测试共享辅助
 use sqlx::PgPool;
 
+/// 文件内 DB 测试串行锁（并行假失败治理，change fix-approval-runtime-chain-test-isolation）。
+///
+/// 根因：`auto_initiate::bound_published_flow` 的流程发现是**表/域级**语义
+/// （同表多范畴行共享「最新发布流程胜出」面 `ORDER BY p.updated_at DESC`）——
+/// 同文件并行的多个测试同表发布各自流程时，后发布会抢走先发布测试的发现结果。
+/// 这是域匹配设计的固有语义而非缺陷，故测试侧串行化（先例：framework-scheduler
+/// 集成测试的 serial_lock）。
+#[allow(dead_code)] // 共享测试辅助：部分测试文件未使用
+pub fn serial_lock() -> &'static tokio::sync::Mutex<()> {
+    static L: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    L.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// 生成唯一测试标识
 #[allow(dead_code)] // 共享测试辅助：部分测试文件未使用
 pub fn test_code(prefix: &str) -> String {
@@ -102,14 +115,13 @@ pub async fn grant_user_access(
     }
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .bind(format!("test-user-{}", user_id))
-    .bind(format!("test-user-{}@test.local", user_id))
     .execute(pool)
     .await?;
 
@@ -321,14 +333,13 @@ pub async fn ensure_role_member(
     };
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
     .bind(format!("role-user-{}", user_id))
-    .bind(format!("role-user-{}@test.local", user_id))
     .execute(pool)
     .await?;
     sqlx::query(

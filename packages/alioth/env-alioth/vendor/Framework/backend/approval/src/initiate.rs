@@ -165,51 +165,29 @@ pub async fn create_instance_tx(
 
     Ok(instance_id)
 }
-/// 行级 NGAC 注册（源自 contract `register_created_row_ngac`，提升为审批域共享实现）：
+/// 行级 NGAC 注册（授权写入**单源** = `common::ngac_grants`；consolidate-ngac-grant-authoring）：
 /// 自定义 create 路径必须显式注册行 OA + 创建者 UA 关联，否则 dock approve 的
-/// require_resource_access 行级判定不可见该实例。失败仅告警不阻断（注册可补，实例已落库）。
+/// `require_resource_access` 行级判定不可见该实例。失败仅告警不阻断（注册可补，实例已落库）。
 pub async fn register_created_row_ngac(
     pool: &PgPool,
     resource_type: &str,
     item_id: i64,
     user_id: i64,
 ) {
-    if let Err(e) = sqlx::query(
-        "INSERT INTO isahl_auth.ngac_object_attribute \
-         (o_name, fk_policy_class, resource_type, fk_resource, created_by_id) \
-         VALUES ($1, (SELECT id FROM isahl_auth.ngac_policy_class LIMIT 1), $2, $3, $4) \
-         ON CONFLICT(resource_type, fk_resource) DO NOTHING",
+    // 锚点单行（derive-creator-grants-from-lifecycle：创建者授权由派生层判定，不扇出关联）。
+    if let Err(e) = common::ngac_grants::ensure_resource_oa(
+        pool,
+        &common::ngac_grants::ResourceOaSpec {
+            o_name: format!("{resource_type}-{item_id}"),
+            resource_type,
+            resource_id: item_id,
+            resource_identifier: None,
+            created_by: Some(user_id),
+            policy_class_name: None,
+        },
     )
-    .bind(format!("{}-{}", resource_type, item_id))
-    .bind(resource_type)
-    .bind(item_id)
-    .bind(user_id)
-    .execute(pool)
     .await
     {
-        common::telemetry::warn!("approval NGAC OA 注册失败（{resource_type} {item_id}）: {e}");
-    }
-    if let Err(e) = sqlx::query(
-        "INSERT INTO isahl_auth.ngac_association \
-         (fk_user_attribute, fk_object_attribute, ak_access_rights, fk_policy_class, created_at) \
-         SELECT rr.fk_user_attribute, oa.id, \
-                ARRAY(SELECT id FROM isahl_auth.ngac_access_right WHERE o_name IN ('read','write','delete','update','create')), \
-                oa.fk_policy_class, NOW() \
-         FROM isahl_auth.ngac_user_rr_attribute rr \
-         JOIN isahl_auth.ngac_object_attribute oa \
-           ON oa.resource_type = $2 AND oa.fk_resource = $3 AND oa.deleted_at IS NULL \
-         WHERE rr.fk_user = $1 AND rr.deleted_at IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM isahl_auth.ngac_association a2 \
-               WHERE a2.fk_user_attribute = rr.fk_user_attribute AND a2.fk_object_attribute = oa.id AND a2.deleted_at IS NULL) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(user_id)
-    .bind(resource_type)
-    .bind(item_id)
-    .execute(pool)
-    .await
-    {
-        common::telemetry::warn!("approval NGAC 关联注册失败（{resource_type} {item_id}）: {e}");
+        common::telemetry::warn!("approval NGAC 锚点写入失败（{resource_type} {item_id}）: {e}");
     }
 }

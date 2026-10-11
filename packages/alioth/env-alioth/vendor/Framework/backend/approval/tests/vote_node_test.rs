@@ -381,6 +381,43 @@ async fn vote_abstain_triggers_auto_reject_when_quorum_unmet() {
     );
     // 未推进（end 无结论实例）
     assert_eq!(conclusion_count(&pool, flow_id).await, 0);
+    // 终局 MUST 物化可查询记录（fix-approval-error-branch-integrity）：
+    // 节点上存在系统身份的 rejected 实例（终局可从 DB 复原，不再只有进程内事件）
+    let verdict: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl."zc_id_oper-approve" oa
+           JOIN isahl.zc_id_operation_rr_event oe ON oe.ref_left = oa.id AND oe.deleted_at IS NULL
+           JOIN isahl."zc_id_lifecycle_r_primary-status" ls ON ls.ref_left = oa.id AND ls.deleted_at IS NULL
+           JOIN isahl."zc_id_stus-approve" s ON s.id = ls.ref_right AND s.deleted_at IS NULL
+           WHERE oa.deleted_at IS NULL AND s.code = 'rejected' AND oa.fk_operator = $1
+             AND oe.ref_right IN (
+               SELECT oe2.ref_right FROM isahl.zc_id_operation_rr_event oe2
+               JOIN isahl.zc_id_process_rr_operation rro
+                 ON rro.ref_right = oe2.ref_left AND rro.deleted_at IS NULL
+               WHERE rro.ref_left = $2)"#,
+    )
+    .bind(::common::SYSTEM_USER_ID)
+    .bind(flow_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(verdict, 1, "自动终局 MUST 物化为系统身份 rejected 实例");
+    let flow_refused: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FROM isahl."zc_id_deta-opinion" op
+           JOIN isahl."zc_id_oper-approve" oa ON oa.id = op.fk_list
+           JOIN isahl.zc_id_operation_rr_event oe ON oe.ref_left = oa.id AND oe.deleted_at IS NULL
+           WHERE op.deleted_at IS NULL AND op.notice = '审批驳回'
+             AND oa.fk_operator = $1 AND oe.ref_right IN (
+               SELECT oe2.ref_right FROM isahl.zc_id_operation_rr_event oe2
+               JOIN isahl.zc_id_process_rr_operation rro
+                 ON rro.ref_right = oe2.ref_left AND rro.deleted_at IS NULL
+               WHERE rro.ref_left = $2)"#,
+    )
+    .bind(::common::SYSTEM_USER_ID)
+    .bind(flow_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(flow_refused, 1, "自动终局 MUST 落驳回意见（终局原因可查）");
 }
 
 #[tokio::test]

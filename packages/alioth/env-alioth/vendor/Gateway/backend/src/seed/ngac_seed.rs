@@ -41,7 +41,8 @@ const APPROVAL_COLLECTIONS: &[(&str, &str)] = &[
 /// org 资源集合 OA（cover-org-resources-ngac / B-2）：identity-org org_tree 写端
 /// heal（ngac_org_ensure）将岗位/部门行 OA 挂到这些集合之下；operator UA 在集合上
 /// 持 read/create/update，行级 delete 走属权策略（见 ensure_org_resources）。
-const ORG_COLLECTIONS: &[&str] = &["positions", "departments", "organizations"];
+/// 清单**复用** `common::ngac_grants::ORG_RESOURCE_TYPES`（唯一清单，MUST NOT 复制第二份）。
+const ORG_COLLECTIONS: &[&str] = common::ngac_grants::ORG_RESOURCE_TYPES;
 
 /// NGAC 通用策略自检入口。
 pub async fn ensure(pool: &PgPool) -> SeedStats {
@@ -504,14 +505,17 @@ async fn ensure_ua_collection_rights_multi(
     Ok(created as i64)
 }
 
-/// org 三集合资源 ensure（幂等，cover-org-resources-ngac / B-2）——与 4d/4e 同构的
+/// org 集合资源 ensure（幂等，cover-org-resources-ngac / B-2）——与 4d/4e 同构的
 /// 单一收口入口：集合 OA（fk_resource=0）+ ownership 属权策略 + operator UA 集合关联。
+/// 资源类型清单 = `common::ngac_grants::ORG_RESOURCE_TYPES`（唯一清单，见 ORG_COLLECTIONS）。
 /// - OA：按 (resource_type, fk_resource=0) EXISTS 幂等，缺失补行（identity-org
 ///   ngac_org_ensure 行级 OA heal 的挂载点，模块 doc 约定由本模块预置）；
 /// - ownership 四件套（同 Deploy/AVIC-CAASEC/seed/ngac.sql 结构）：owner=operator
 ///   （建岗挂人写端角色，created_by_id 归属）、benefit/permit/access=employee
 ///   （组织成员行级归属，对应 ak_benefit_user/ak_permit_user/ak_access_user 三列表
-///   的 PDP owner_cte 推导）；NOT EXISTS（resource_type）防重复；
+///   的 PDP owner_cte 推导）；`enabled` 取**单源判定**
+///   `common::ngac_grants::ownership_enabled_default`（组织域 ⇒ true，与覆盖 ensure
+///   消费同一判定）；NOT EXISTS（resource_type）防重复；
 /// - 关联：operator → 三集合 read/create/update（INSERT..SELECT NOT EXISTS，
 ///   仿 ensure_ua_collection_rights_multi）——B-2「operator 建岗挂人放行」授权面。
 ///
@@ -553,6 +557,14 @@ async fn ensure_org_resources(pool: &PgPool) -> Result<i64, sqlx::Error> {
     }
 
     // 2. ownership 属权策略（每 resource_type 一行）
+    // `enabled` 按类型取**单源判定**（align-ngac-seed-vocabulary D2 /
+    // NGAC_SPEC §2.2.5b）：`common::ngac_grants::ownership_enabled_default`（组织域 ⇒ true）
+    // ——与覆盖 ensure 消费同一判定，MUST NOT 传字面值（两处 NOT EXISTS 首写者胜，
+    // 相反字面值会使启动序决定行级写权限）。
+    let org_enabled: Vec<bool> = ORG_COLLECTIONS
+        .iter()
+        .map(|rt| common::ngac_grants::ownership_enabled_default(rt))
+        .collect();
     let rows = sqlx::query(
         r#"
         INSERT INTO isahl_auth.ngac_ownership_policy
@@ -570,8 +582,8 @@ async fn ensure_org_resources(pool: &PgPool) -> Result<i64, sqlx::Error> {
                (SELECT id FROM isahl_auth.ngac_access_right WHERE o_name = 'read'),
                (SELECT id FROM isahl_auth.ngac_access_right WHERE o_name = 'write'),
                (SELECT id FROM isahl_auth.ngac_access_right WHERE o_name = 'delete'),
-               TRUE
-        FROM unnest($1::text[]) AS rt(resource_type)
+               rt.enabled
+        FROM unnest($1::text[], $2::bool[]) AS rt(resource_type, enabled)
         WHERE NOT EXISTS (
             SELECT 1 FROM isahl_auth.ngac_ownership_policy op
             WHERE op.resource_type = rt.resource_type
@@ -579,6 +591,7 @@ async fn ensure_org_resources(pool: &PgPool) -> Result<i64, sqlx::Error> {
         "#,
     )
     .bind(ORG_COLLECTIONS)
+    .bind(&org_enabled)
     .execute(pool)
     .await?
     .rows_affected();

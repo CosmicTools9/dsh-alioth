@@ -1,0 +1,456 @@
+//! EmpAgent admin agent 管理面 CRUD（move-chat-admin-agents-to-sso，双 SSO 形态同源）。
+//!
+//! 读写 isahl."zc_id_empl-agent" 配置行；settings JSONB 存 AgentConfig 可覆盖字段
+//! {system_prompt, capabilities, available_tools, icon, category, max_execution_steps, ...}；
+//! 物理列 code/notice(=name)/t_color_/soul。写路径经 Framework `crud::trigger` pool 版
+//! （与原 ln 侧 trigger_crud 签名一致，trigger-write-path 规约）；DELETE = 软删
+//! （deleted_at，裸 SQL——不走 delete_with_triggers 硬删链，语义与原实现一致）。
+//! Gateway 侧 AgentRouterAdapter 经 60s TTL DB 轮询热更（跨进程天然生效，无需失效广播）。
+//!
+//! 承载：本模块挂载于 `configure_protected_routes` 的
+//! `/api/chat-sessions/admin/agents` scope——embedded 形态随 ns 进程内挂载，
+//! remote 形态由独立 gateway-sso 进程承载 + Gateway 反代 `/api/chat-sessions/admin`
+//! 前缀（sso-remote-auth-proxy 规约）。守卫：`admin::handlers::require_admin`
+//! （NGAC admin 角色）。
+
+use actix_web::{web, HttpRequest, HttpResponse};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use std::collections::HashMap;
+
+use crate::admin::handlers::require_admin;
+use crate::AuthState;
+
+/// 校验 agent code 形状（小写字母/数字/下划线/连字符）
+fn valid_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= 64
+        && code
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+fn bad_request(code: &str, message: &str) -> HttpResponse {
+    HttpResponse::BadRequest().json(serde_json::json!({
+        "success": false,
+        "error": { "code": code, "message": message }
+    }))
+}
+
+fn internal_error(code: &str, message: &str) -> HttpResponse {
+    HttpResponse::InternalServerError().json(serde_json::json!({
+        "success": false,
+        "error": { "code": code, "message": message }
+    }))
+}
+
+/// R2（D2.5）内部错误泛化文案：DB/SQL 原文只进 telemetry，不透传响应。
+const GENERIC_INTERNAL_MSG: &str = "操作失败，请稍后重试";
+
+fn success<T: Serialize>(data: T) -> HttpResponse {
+    HttpResponse::Ok().json(serde_json::json!({ "success": true, "data": data }))
+}
+
+// ── 响应/请求类型 ─────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct AgentAdminResponse {
+    pub code: String,
+    pub name: Option<String>,
+    pub color: Option<String>,
+    pub soul: Option<String>,
+    pub settings: Value,
+    pub public: bool,
+    pub deleted: bool,
+}
+
+#[derive(Deserialize)]
+pub struct CreateAgentRequest {
+    pub code: String,
+    pub name: Option<String>,
+    pub color: Option<String>,
+    pub soul: Option<String>,
+    pub settings: Value,
+    pub public: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct PatchAgentRequest {
+    pub name: Option<String>,
+    pub color: Option<String>,
+    pub soul: Option<String>,
+    pub settings: Value,
+    pub public: Option<bool>,
+}
+
+/// 从 DB 行组装响应（settings.public 与顶层 public 一致化）
+fn row_to_response(
+    code: String,
+    notice: Option<String>,
+    color: Option<String>,
+    soul: Option<String>,
+    settings: Option<Value>,
+    deleted: bool,
+) -> AgentAdminResponse {
+    let settings = settings
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| json!({}));
+    let public = settings
+        .get("public")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    AgentAdminResponse {
+        code,
+        name: notice,
+        color,
+        soul,
+        settings,
+        public,
+        deleted,
+    }
+}
+
+// ── Handlers ─────────────────────────────────────────────
+
+/// GET /api/chat-sessions/admin/agents — 全部配置行（含软删标记）
+pub async fn list_agents(
+    pool: web::Data<PgPool>,
+    state: web::Data<AuthState>,
+    req: HttpRequest,
+) -> HttpResponse {
+    if let Err(resp) = require_admin(&req, pool.get_ref(), state.get_ref()).await {
+        return resp;
+    }
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<Value>,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
+        r#"SELECT code, notice, t_color_, soul, settings, deleted_at
+           FROM isahl."zc_id_empl-agent"
+           ORDER BY id ASC"#,
+    )
+    .fetch_all(pool.get_ref())
+    .await;
+    match rows {
+        Ok(rows) => {
+            let items: Vec<AgentAdminResponse> = rows
+                .into_iter()
+                .map(|(code, notice, color, soul, settings, deleted_at)| {
+                    row_to_response(code, notice, color, soul, settings, deleted_at.is_some())
+                })
+                .collect();
+            success(items)
+        }
+        Err(e) => {
+            common::telemetry::error!("admin agents: list failed: {}", e);
+            internal_error("DB_ERROR", GENERIC_INTERNAL_MSG)
+        }
+    }
+}
+
+/// POST /api/chat-sessions/admin/agents — 新建配置行
+pub async fn create_agent(
+    pool: web::Data<PgPool>,
+    state: web::Data<AuthState>,
+    req: HttpRequest,
+    body: web::Json<CreateAgentRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin(&req, pool.get_ref(), state.get_ref()).await {
+        return resp;
+    }
+    let code = body.code.trim().to_string();
+    if !valid_code(&code) {
+        return bad_request(
+            "INVALID_CODE",
+            "code 必须为 1-64 位小写字母/数字/下划线/连字符",
+        );
+    }
+    if let Value::Object(map) = &body.settings {
+        // 物理列不得经 settings 承载（add-agent-persona-channel D1）
+        for physical in ["code", "notice", "t_color_", "soul"] {
+            if map.contains_key(physical) {
+                return bad_request(
+                    "INVALID_SETTINGS",
+                    &format!("{physical} 属于物理列，不能写入 settings"),
+                );
+            }
+        }
+    }
+
+    let mut record = HashMap::new();
+    record.insert("code".to_string(), Value::String(code.clone()));
+    record.insert(
+        "notice".to_string(),
+        Value::String(body.name.clone().unwrap_or_else(|| code.clone())),
+    );
+    record.insert(
+        "t_color_".to_string(),
+        Value::String(body.color.clone().unwrap_or_else(|| "#6366f1".to_string())),
+    );
+    // 主体人格（物理列；缺省不写该列——add-agent-persona-channel D1/D2）
+    if let Some(soul) = &body.soul {
+        record.insert("soul".to_string(), Value::String(soul.clone()));
+    }
+    // settings 为 JSONB 配置对象：缺省/非对象（含 JSON null）→ {} 起底（同 patch 口径）
+    let mut settings = if body.settings.is_object() {
+        body.settings.clone()
+    } else {
+        json!({})
+    };
+    if let Value::Object(map) = &mut settings {
+        match body.public {
+            Some(p) => {
+                map.insert("public".to_string(), Value::Bool(p));
+            }
+            None => {
+                map.entry("public".to_string())
+                    .or_insert(Value::Bool(false));
+            }
+        }
+    }
+    record.insert("settings".to_string(), settings);
+
+    match crud::trigger::insert_with_triggers(pool.get_ref(), "zc_id_empl-agent", record, None)
+        .await
+    {
+        Ok(result_map) => {
+            let code = result_map
+                .get("code")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&code)
+                .to_string();
+            let notice = result_map
+                .get("notice")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let color = result_map
+                .get("t_color_")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let soul = result_map
+                .get("soul")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let settings = result_map.get("settings").cloned();
+            success(row_to_response(code, notice, color, soul, settings, false))
+        }
+        Err(e) => {
+            let msg = format!("{}", e);
+            if msg.contains("duplicate key") {
+                bad_request("CODE_EXISTS", &format!("agent code '{}' 已存在", code))
+            } else {
+                common::telemetry::error!("admin agents: create '{}' failed: {}", code, e);
+                internal_error("DB_ERROR", GENERIC_INTERNAL_MSG)
+            }
+        }
+    }
+}
+
+/// PATCH /api/chat-sessions/admin/agents/{code} — 更新（物理列 + settings 浅合并）
+pub async fn patch_agent(
+    pool: web::Data<PgPool>,
+    state: web::Data<AuthState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+    body: web::Json<PatchAgentRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin(&req, pool.get_ref(), state.get_ref()).await {
+        return resp;
+    }
+    let code = path.into_inner();
+    if !valid_code(&code) {
+        return bad_request("INVALID_CODE", "非法 code");
+    }
+
+    // 旧行（update_with_triggers 前置输入 + code 定位）
+    let old: Option<(Value,)> = sqlx::query_as(
+        r#"SELECT to_jsonb(e) AS record FROM isahl."zc_id_empl-agent" AS e
+           WHERE e.code = $1 AND e.deleted_at IS NULL"#,
+    )
+    .bind(&code)
+    .fetch_optional(pool.get_ref())
+    .await
+    .map_err(|e| common::telemetry::error!("admin agents: load '{}' failed: {}", code, e))
+    .ok()
+    .flatten();
+    let Some((old_json,)) = old else {
+        return bad_request("AGENT_NOT_FOUND", &format!("agent '{}' 不存在", code));
+    };
+    let old_map: HashMap<String, Value> = match serde_json::from_value(old_json) {
+        Ok(m) => m,
+        Err(e) => {
+            common::telemetry::error!("admin agents: row parse failed for '{}': {}", code, e);
+            return internal_error("DB_ERROR", GENERIC_INTERNAL_MSG);
+        }
+    };
+
+    let mut record = HashMap::new();
+    if let Some(name) = &body.name {
+        record.insert("notice".to_string(), Value::String(name.trim().to_string()));
+    }
+    if let Some(color) = &body.color {
+        record.insert("t_color_".to_string(), Value::String(color.clone()));
+    }
+    // 主体人格（物理列）：缺省 = 不变，空串 = 清空（add-agent-persona-channel D2）
+    if let Some(soul) = &body.soul {
+        record.insert("soul".to_string(), Value::String(soul.clone()));
+    }
+    // settings 浅合并（settings 键可含 public；null 值删除键）
+    // 物理列不得经 settings 承载（add-agent-persona-channel D1）——双端同判据
+    if let Value::Object(patch) = &body.settings {
+        for physical in ["code", "notice", "t_color_", "soul"] {
+            if patch.contains_key(physical) {
+                return bad_request(
+                    "INVALID_SETTINGS",
+                    &format!("{physical} 属于物理列，不能写入 settings"),
+                );
+            }
+        }
+    }
+    // settings 为 JSONB 配置对象：SQL NULL / 非对象 → 以 {} 起底——否则 NULL 会以
+    // text 绑定打到 jsonb 列（实测 `字段 "settings" 的类型为 jsonb, 但表达式的类型为 text`）。
+    let mut settings = old_map
+        .get("settings")
+        .filter(|v| v.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Value::Object(existing) = &mut settings {
+        if let Value::Object(patch) = &body.settings {
+            for (k, v) in patch {
+                if v.is_null() {
+                    existing.remove(k);
+                } else {
+                    existing.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        if let Some(p) = body.public {
+            existing.insert("public".to_string(), Value::Bool(p));
+        }
+    }
+    record.insert("settings".to_string(), settings);
+
+    match crud::trigger::update_with_triggers(
+        pool.get_ref(),
+        "zc_id_empl-agent",
+        old_map
+            .get("id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or_default(),
+        record,
+        &old_map,
+        None,
+    )
+    .await
+    {
+        Ok(result_map) => {
+            let code = result_map
+                .get("code")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&code)
+                .to_string();
+            let notice = result_map
+                .get("notice")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let color = result_map
+                .get("t_color_")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let soul = result_map
+                .get("soul")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let settings = result_map.get("settings").cloned();
+            success(row_to_response(code, notice, color, soul, settings, false))
+        }
+        Err(e) => {
+            common::telemetry::error!("admin agents: patch '{}' failed: {}", code, e);
+            internal_error("DB_ERROR", GENERIC_INTERNAL_MSG)
+        }
+    }
+}
+
+/// DELETE /api/chat-sessions/admin/agents/{code} — 软删（deleted_at；裸 SQL，
+/// 不走 delete_with_triggers 硬删链）
+pub async fn delete_agent(
+    pool: web::Data<PgPool>,
+    state: web::Data<AuthState>,
+    req: HttpRequest,
+    path: web::Path<String>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin(&req, pool.get_ref(), state.get_ref()).await {
+        return resp;
+    }
+    let code = path.into_inner();
+    let rows_affected = sqlx::query(
+        r#"UPDATE isahl."zc_id_empl-agent"
+           SET deleted_at = NOW()
+           WHERE code = $1 AND deleted_at IS NULL"#,
+    )
+    .bind(&code)
+    .execute(pool.get_ref())
+    .await;
+    match rows_affected {
+        Ok(res) if res.rows_affected() > 0 => HttpResponse::NoContent().finish(),
+        Ok(_) => bad_request("AGENT_NOT_FOUND", &format!("agent '{}' 不存在", code)),
+        Err(e) => {
+            common::telemetry::error!("admin agents: delete '{}' failed: {}", code, e);
+            internal_error("DB_ERROR", GENERIC_INTERNAL_MSG)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_code_shape() {
+        assert!(valid_code("contract-reviewer"));
+        assert!(valid_code("a"));
+        assert!(valid_code("agent_01"));
+        assert!(!valid_code(""));
+        assert!(!valid_code("Upper"));
+        assert!(!valid_code("含中文"));
+        assert!(!valid_code(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn row_to_response_normalizes_settings_and_public() {
+        // SQL NULL / 非对象 settings → {} 起底，public 缺省 false
+        let r = row_to_response(
+            "a".into(),
+            None,
+            None,
+            None,
+            Some(Value::String("not-object".into())),
+            false,
+        );
+        assert_eq!(r.settings, json!({}));
+        assert!(!r.public);
+
+        // settings.public 一致化到顶层
+        let settings = json!({"public": true, "system_prompt": "p"});
+        let r = row_to_response(
+            "b".into(),
+            Some("n".into()),
+            None,
+            Some("soul".into()),
+            Some(settings.clone()),
+            true,
+        );
+        assert!(r.public);
+        assert!(r.deleted);
+        assert_eq!(r.settings, settings);
+        assert_eq!(r.soul.as_deref(), Some("soul"));
+    }
+}

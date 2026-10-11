@@ -17,8 +17,7 @@ use log::{error, warn};
 use serde::Deserialize;
 use sqlx::PgPool;
 
-use crate::api::chat_sessions::adapters::db_llm_config::DbLlmConfigAdapter;
-use crate::api::chat_sessions::ports::LlmConfigPort;
+use crate::api::chat_sessions::turn;
 
 /// base64 载荷上限：解后 10MB → 编码后约 13.4MB，取 16MB（同 OA documents 上限先例量级）。
 const MAX_B64_BYTES: usize = 16 * 1024 * 1024;
@@ -106,11 +105,11 @@ async fn analyze(
         }
     };
 
-    // LLM 接入点复用 Gateway：DB 优先 env 兜底解析 LlmService
-    let adapter = DbLlmConfigAdapter::new(pool.get_ref().clone());
-    let service = match adapter.load_service().await {
+    // LLM 接入点（turn seam 单入口：approval::llm_assist 单实现；不可用 fail-closed）
+    let service = match turn::load_llm(pool.get_ref()).await {
         Ok(s) => s,
-        Err(msg) => {
+        Err(e) => {
+            let msg = e.to_string();
             warn!("识别服务 LLM 配置不可用: {msg}");
             return HttpResponse::ServiceUnavailable().json(serde_json::json!({
                 "code": "LLM_NOT_CONFIGURED",
@@ -126,6 +125,17 @@ async fn analyze(
         })),
         Err(e) => {
             error!("证书制式分析失败: {e}");
+            // 失败面判定单源（change consolidate-authoring-channel）：结论由作者通道类型承载；
+            // 响应形状保持既有对外契约（code=LLM_FAILED / 502）。
+            let verdict = common::authoring::AuthoringVerdict::from_messages(
+                "doc-recognition",
+                vec![e.to_string()],
+            );
+            debug_assert!(
+                verdict.is_blocking(),
+                "单据成形失败 MUST 属整体性（阻断）问题"
+            );
+            let _ = verdict.into_http_error();
             HttpResponse::BadGateway().json(serde_json::json!({
                 "code": "LLM_FAILED",
                 "message": e.to_string(),

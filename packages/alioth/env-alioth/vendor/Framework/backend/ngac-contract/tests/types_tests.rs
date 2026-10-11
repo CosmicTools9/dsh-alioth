@@ -1,23 +1,6 @@
 use ngac_contract::*;
 
 #[test]
-fn test_decision_display() {
-    assert_eq!(Decision::Permit.to_string(), "Permit");
-    assert_eq!(Decision::Deny.to_string(), "Deny");
-    assert_eq!(Decision::NotApplicable.to_string(), "NotApplicable");
-}
-
-#[test]
-fn test_decision_serde_roundtrip() {
-    let cases = vec![Decision::Permit, Decision::Deny, Decision::NotApplicable];
-    for d in cases {
-        let json = serde_json::to_string(&d).unwrap();
-        let back: Decision = serde_json::from_str(&json).unwrap();
-        assert_eq!(d, back);
-    }
-}
-
-#[test]
 fn test_pdp_check_request_serde() {
     let req = PdpCheckRequest {
         user_id: 42,
@@ -35,10 +18,12 @@ fn test_pdp_check_response_serde() {
     let resp = PdpCheckResponse {
         permitted: true,
         reason: "Owner access".to_string(),
+        obligations: vec!["audit-log".to_string()],
     };
     let json = serde_json::to_string(&resp).unwrap();
     let back: PdpCheckResponse = serde_json::from_str(&json).unwrap();
     assert!(back.permitted);
+    assert_eq!(back.obligations, vec!["audit-log".to_string()]);
 }
 
 #[test]
@@ -67,6 +52,7 @@ fn test_pdp_check_batch_response_serde() {
         results: vec![PdpCheckResponse {
             permitted: true,
             reason: "ok".to_string(),
+            obligations: Vec::new(),
         }],
     };
     let json = serde_json::to_string(&resp).unwrap();

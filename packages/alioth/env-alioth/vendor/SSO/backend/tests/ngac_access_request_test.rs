@@ -45,6 +45,10 @@ struct Fixture {
     admin_id: i64,
     admin_email: String,
     ua_id: i64,
+    /// 本测试专属集合级资源类型（`{rt}:0`）——MUST NOT 跨测试共享：`reject_path` 与
+    /// `full_loop_approve` 曾共用 `reqres:0`，一方的 cleanup 会删掉另一方在跑测试的 OA
+    /// （实测非确定性红：decide 报 "No matching access right found" / 管理列表非 200）。
+    rt: String,
 }
 
 async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
@@ -63,24 +67,33 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .await
     .expect("policy class");
 
-    // 申请用户 U（无 admin）
+    // 申请用户 U（无 admin）；username = 原显示名（唯一身份基点），邮箱唯一存储 = auth_user_emails
     let email = format!("req_user_{}@alioth.test", suffix);
+    let username = format!("req_user_{}", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&email)
-    .bind(format!("req_user_{}", suffix))
+    .bind(&username)
     .execute(pool)
     .await
     .expect("insert user");
     let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&username)
             .fetch_one(pool)
             .await
             .expect("fetch user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&email)
+    .execute(pool)
+    .await
+    .ok();
 
     // 前置清理：历史失败运行的残留（申请 + 指派；幂等重跑）
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_access_request WHERE fk_user = $1")
@@ -94,22 +107,31 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
 
     // 管理员 A（admin UA 关联）
     let admin_email = format!("req_admin_{}@alioth.test", suffix);
+    let admin_username = format!("req_admin_{}", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&admin_email)
-    .bind(format!("req_admin_{}", suffix))
+    .bind(&admin_username)
     .execute(pool)
     .await
     .expect("insert admin");
     let admin_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&admin_email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&admin_username)
             .fetch_one(pool)
             .await
             .expect("fetch admin");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(admin_id)
+    .bind(&admin_email)
+    .execute(pool)
+    .await
+    .ok();
     let _ = sqlx::query(
         "INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class, created_at, updated_at)
          VALUES ('admin', $1, NOW(), NOW())
@@ -120,8 +142,12 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .await
     .ok();
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        // 必须按策略类过滤：`o_name='admin'` 在每个策略类下各有一行；无过滤器时 LIMIT 1 可能取到
+        // 他测试残留的、他类 admin UA ⇒ 绑定到错类 UA 使 require_admin 的 NGAC 判定 Deny（非确定性 403）。
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");
@@ -155,20 +181,23 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .await
     .expect("target UA");
 
-    // 关联：target UA → reqres/read（集合级 OA）
+    // 关联：target UA → {rt}/read（集合级 OA；资源类型按 suffix 唯一，避免跨测试共享）
+    let rt = format!("reqres_{suffix}");
     let _ = sqlx::query(
         "INSERT INTO isahl_auth.ngac_object_attribute (o_name, fk_policy_class, resource_type, fk_resource, created_at, updated_at)
-         VALUES ($1, $2, 'reqres', 0, NOW(), NOW())
+         VALUES ($1, $2, $3, 0, NOW(), NOW())
          ON CONFLICT (resource_type, fk_resource) DO UPDATE SET deleted_at = NULL",
     )
-    .bind(format!("reqres-oa-{}", suffix))
+    .bind(format!("{rt}-oa"))
     .bind(pc)
+    .bind(&rt)
     .execute(pool)
     .await
     .ok();
     let oa: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type='reqres' AND fk_resource=0 LIMIT 1",
+        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type=$1 AND fk_resource=0 LIMIT 1",
     )
+    .bind(&rt)
     .fetch_one(pool)
     .await
     .expect("OA");
@@ -202,6 +231,7 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
         admin_id,
         admin_email,
         ua_id,
+        rt,
     }
 }
 
@@ -219,8 +249,9 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .execute(pool)
         .await;
     let _ = sqlx::query(
-        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type='reqres' AND fk_resource=0",
+        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type=$1 AND fk_resource=0",
     )
+    .bind(&f.rt)
     .execute(pool)
     .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_attribute WHERE id = $1")
@@ -229,6 +260,10 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
         .bind(f.admin_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(vec![f.user_id, f.admin_id])
         .execute(pool)
         .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
@@ -252,7 +287,7 @@ async fn access_request_full_loop_approve() {
                     .wrap(gateway_sso::auth::middleware::RequireAuth::new())
                     .configure(gateway_sso::ngac::pdp::configure_routes),
             )
-            .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
+            .configure(gateway_sso::admin::configure),
     )
     .await;
     let user_token = mint_token(&ast, f.user_id, &f.email);
@@ -264,7 +299,9 @@ async fn access_request_full_loop_approve() {
         test::TestRequest::post()
             .uri("/api/ngac/access-request")
             .insert_header(("Authorization", format!("Bearer {}", user_token)))
-            .set_json(json!({"resource_type": "reqres", "action": "read", "reason": "工作需要"}))
+            .set_json(
+                json!({"resource_type": f.rt.as_str(), "action": "read", "reason": "工作需要"}),
+            )
             .to_request(),
     )
     .await;
@@ -278,7 +315,7 @@ async fn access_request_full_loop_approve() {
         test::TestRequest::post()
             .uri("/api/ngac/access-request")
             .insert_header(("Authorization", format!("Bearer {}", user_token)))
-            .set_json(json!({"resource_type": "reqres", "action": "read"}))
+            .set_json(json!({"resource_type": f.rt.as_str(), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -289,7 +326,7 @@ async fn access_request_full_loop_approve() {
         &app,
         test::TestRequest::post()
             .uri("/api/ngac/access-request")
-            .set_json(json!({"resource_type": "reqres", "action": "read"}))
+            .set_json(json!({"resource_type": f.rt.as_str(), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -359,7 +396,9 @@ async fn access_request_full_loop_approve() {
         test::TestRequest::post()
             .uri("/api/ngac/pdp/decide")
             .insert_header(("Authorization", format!("Bearer {}", user_token)))
-            .set_json(json!({"user_id": f.user_id, "resource": "reqres:0", "action": "read"}))
+            .set_json(
+                json!({"user_id": f.user_id, "resource": format!("{}:0", f.rt), "action": "read"}),
+            )
             .to_request(),
     )
     .await;
@@ -418,7 +457,7 @@ async fn access_request_reject_path() {
                     .wrap(gateway_sso::auth::middleware::RequireAuth::new())
                     .configure(gateway_sso::ngac::pdp::configure_routes),
             )
-            .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
+            .configure(gateway_sso::admin::configure),
     )
     .await;
     let user_token = mint_token(&ast, f.user_id, &f.email);
@@ -429,7 +468,7 @@ async fn access_request_reject_path() {
         test::TestRequest::post()
             .uri("/api/ngac/access-request")
             .insert_header(("Authorization", format!("Bearer {}", user_token)))
-            .set_json(json!({"resource_type": "reqres", "action": "write"}))
+            .set_json(json!({"resource_type": f.rt.as_str(), "action": "write"}))
             .to_request(),
     )
     .await;

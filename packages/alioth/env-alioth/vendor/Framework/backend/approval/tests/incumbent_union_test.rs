@@ -34,13 +34,12 @@ fn tid(base: i64) -> i64 {
 async fn seed_account(pool: &PgPool, id: i64, username: &str) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, $3, $3 || '@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(id)
-    .bind(username)
     .bind(username)
     .execute(pool)
     .await

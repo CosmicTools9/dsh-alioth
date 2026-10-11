@@ -28,44 +28,6 @@ pub struct Config {
     #[serde(with = "common::serde_zuid")]
     pub jwt_refresh_expiry: i64,
 
-    /// OAuth Google Client ID
-    pub oauth_google_client_id: Option<String>,
-
-    /// OAuth Google Client Secret
-    pub oauth_google_client_secret: Option<String>,
-    /// 微信小程序「司机端」（fromType=driverWeChatApp）AppID；未配置 → 该 fromType 不可用
-    pub wechat_miniapp_driver_appid: Option<String>,
-
-    /// 微信小程序「司机端」AppSecret（敏感：env/enc 注入，禁落 git）
-    pub wechat_miniapp_driver_secret: Option<String>,
-
-    /// OAuth GitHub Client ID
-    pub oauth_github_client_id: Option<String>,
-
-    /// OAuth GitHub Client Secret
-    pub oauth_github_client_secret: Option<String>,
-
-    /// OAuth Microsoft Client ID
-    pub oauth_microsoft_client_id: Option<String>,
-
-    /// OAuth Microsoft Client Secret
-    pub oauth_microsoft_client_secret: Option<String>,
-
-    /// Microsoft Tenant ID
-    pub oauth_microsoft_tenant_id: Option<String>,
-
-    /// Okta Domain
-    pub oauth_okta_domain: Option<String>,
-
-    /// Okta Client ID
-    pub oauth_okta_client_id: Option<String>,
-
-    /// Okta Client Secret
-    pub oauth_okta_client_secret: Option<String>,
-
-    /// OAuth 回调 URL
-    pub oauth_redirect_url: String,
-
     /// OIDC OP issuer URL（discovery 的 `issuer` 与 id_token `iss` 声明）
     pub oidc_issuer: String,
 
@@ -96,6 +58,13 @@ pub struct Config {
     /// - "log"：dev 专用——邮件内容（含验证码）打印到日志，不实际投递。
     ///   未设置/非法值 → smtp（fail-closed，生产不允许隐式降级）。
     pub email_mode: String,
+
+    /// 邮箱验证码登录开关（env `SSO_EMAIL_CODE_LOGIN`）：**仅取值 `1` 为真**，未设置或其他取值
+    /// ⇒ 关闭（fail-closed）。关闭时 `POST /auth/login/email-code` 与
+    /// `POST /auth/email/send-code`（`purpose=login`）返回 `403 {"error":"EMAIL_CODE_LOGIN_DISABLED"}`，
+    /// 且 `GET /auth/mode` 广告 `email_code_login=false`（前端据此不渲染入口）。
+    /// `purpose=register` / `reset_password` 的验证码面不受影响。
+    pub email_code_login_enabled: bool,
 
     /// DB 连接池上限（fix-sso-auth-gaps G6）：env `SSO_DB_POOL_MAX`，默认 30。
     pub db_pool_max: u32,
@@ -153,24 +122,6 @@ impl Config {
             jwt_refresh_expiry: env::var("JWT_REFRESH_EXPIRY")
                 .unwrap_or_else(|_| "604800".to_string())
                 .parse()?,
-            oauth_google_client_id: env::var("OAUTH_GOOGLE_CLIENT_ID").ok(),
-            oauth_google_client_secret: env::var("OAUTH_GOOGLE_CLIENT_SECRET").ok(),
-            wechat_miniapp_driver_appid: env::var("WECHAT_MINIAPP_DRIVER_APPID")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            wechat_miniapp_driver_secret: env::var("WECHAT_MINIAPP_DRIVER_SECRET")
-                .ok()
-                .filter(|s| !s.is_empty()),
-            oauth_github_client_id: env::var("OAUTH_GITHUB_CLIENT_ID").ok(),
-            oauth_github_client_secret: env::var("OAUTH_GITHUB_CLIENT_SECRET").ok(),
-            oauth_microsoft_client_id: env::var("OAUTH_MICROSOFT_CLIENT_ID").ok(),
-            oauth_microsoft_client_secret: env::var("OAUTH_MICROSOFT_CLIENT_SECRET").ok(),
-            oauth_microsoft_tenant_id: env::var("OAUTH_MICROSOFT_TENANT_ID").ok(),
-            oauth_okta_domain: env::var("OAUTH_OKTA_DOMAIN").ok(),
-            oauth_okta_client_id: env::var("OAUTH_OKTA_CLIENT_ID").ok(),
-            oauth_okta_client_secret: env::var("OAUTH_OKTA_CLIENT_SECRET").ok(),
-            oauth_redirect_url: env::var("OAUTH_REDIRECT_URL")
-                .unwrap_or_else(|_| "http://localhost:9002/auth/callback".to_string()),
             oidc_issuer: env::var("OIDC_ISSUER")
                 .unwrap_or_else(|_| "http://localhost:9002".to_string()),
             oidc_client_id: env::var("OIDC_CLIENT_ID").ok(),
@@ -185,6 +136,10 @@ impl Config {
                 .unwrap_or_else(|_| "local".to_string()),
             identity_external_verify_url: env::var("IDENTITY_EXTERNAL_VERIFY_URL").ok(),
             email_mode: env::var("SSO_EMAIL_MODE").unwrap_or_else(|_| "smtp".to_string()),
+            // 取值语义同 `SSO_EMAIL_DEV_CODE`：仅 "1" 为真
+            email_code_login_enabled: env::var("SSO_EMAIL_CODE_LOGIN")
+                .map(|v| v == "1")
+                .unwrap_or(false),
             sso_jwt_public_key_prev: load_sso_jwt_public_key_prev()?,
             db_pool_max: env::var("SSO_DB_POOL_MAX")
                 .unwrap_or_else(|_| "30".to_string())

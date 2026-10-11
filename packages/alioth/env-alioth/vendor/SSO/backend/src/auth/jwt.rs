@@ -505,17 +505,13 @@ use time::Duration;
 /// 前缀 `{scope}_`，实现同 host 跨端口应用（GW/OpenActivity）cookie 命名空间隔离；
 /// 缺省 None = 存量 `access_token`/`refresh_token`（GW 与全量消费面零改动）。
 pub fn access_cookie_name(scope: Option<&str>) -> String {
-    match scope {
-        Some(s) if !s.is_empty() => format!("{s}_access_token"),
-        _ => "access_token".to_string(),
-    }
+    // 单一实现 = `common::csrf`（CSRF 校验侧按同一命名规则读取 cookie，
+    // 两侧 MUST NOT 各自维护命名副本）。
+    common::csrf::access_cookie_name(scope)
 }
 
 pub fn refresh_cookie_name(scope: Option<&str>) -> String {
-    match scope {
-        Some(s) if !s.is_empty() => format!("{s}_refresh_token"),
-        _ => "refresh_token".to_string(),
-    }
+    common::csrf::refresh_cookie_name(scope)
 }
 
 pub fn set_access_cookie(
@@ -530,6 +526,7 @@ pub fn set_access_cookie(
         token,
         "/",
         Duration::seconds(max_age_secs),
+        true,
     )
 }
 
@@ -549,6 +546,7 @@ pub fn set_refresh_cookie(
         token,
         "/api/auth/refresh",
         Duration::seconds(max_age_secs),
+        true,
     )
 }
 
@@ -560,11 +558,11 @@ pub fn clear_refresh_cookie(response: HttpResponse, scope: Option<&str>) -> Http
 /// Defaults to false so that HTTP deployments (including the bundled frontend
 /// server) work out of the box. Set COOKIE_SECURE=true explicitly when running
 /// behind an HTTPS reverse proxy.
+///
+/// 单一实现 = `common::csrf::cookie_secure_from_env`（CSRF cookie 与令牌 cookie
+/// 同档判据所在，MUST NOT 另立环境变量读取）。
 fn cookie_secure() -> bool {
-    std::env::var("COOKIE_SECURE")
-        .ok()
-        .map(|v| v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+    common::csrf::cookie_secure_from_env()
 }
 
 /// Choose SameSite policy based on cookie Secure flag.
@@ -572,11 +570,15 @@ fn cookie_secure() -> bool {
 /// Development (non-HTTPS, Secure=false) uses Lax so that cross-port requests on
 /// localhost still carry the cookie, preventing repeated login prompts after page
 /// refresh. Production (HTTPS, Secure=true) uses Strict for stronger CSRF protection.
+///
+/// 单一实现 = `common::csrf::same_site_for`（CSRF cookie 同档）；档位语义 1:1，
+/// 仅做**跨 crate 版本**类型映射——actix-web 转出的 `cookie`(0.16) 与本文件直接
+/// 依赖的 `cookie`(0.18) 是不同版本的同名类型，值语义一致（Strict/Lax/None）。
 fn cookie_same_site() -> cookie::SameSite {
-    if cookie_secure() {
-        cookie::SameSite::Strict
-    } else {
-        cookie::SameSite::Lax
+    match common::csrf::same_site_for(cookie_secure()) {
+        actix_web::cookie::SameSite::Strict => cookie::SameSite::Strict,
+        actix_web::cookie::SameSite::Lax => cookie::SameSite::Lax,
+        actix_web::cookie::SameSite::None => cookie::SameSite::None,
     }
 }
 
@@ -586,15 +588,45 @@ fn set_cookie(
     value: &str,
     path: &str,
     max_age: Duration,
+    http_only: bool,
 ) -> HttpResponse {
     use actix_web::http::header::SET_COOKIE;
     let mut cookie = Cookie::new(name, value);
     cookie.set_path(path);
-    cookie.set_http_only(true);
+    cookie.set_http_only(http_only);
     cookie.set_secure(cookie_secure());
     cookie.set_same_site(cookie_same_site());
     cookie.set_max_age(max_age);
     // Use append() so multiple Set-Cookie headers coexist (access_token + refresh_token)
+    response
+        .headers_mut()
+        .append(SET_COOKIE, cookie.to_string().parse().unwrap());
+    response
+}
+
+/// 与令牌同批签发 CSRF cookie（double-submit 前提，design.md §6）：
+/// 命名/属性全部取自 `common::csrf`（非 HttpOnly、`SameSite`/`Secure` 与令牌同档、
+/// `Path=/`、`Max-Age=CSRF_MAX_AGE_SECS`）——签发与校验 MUST 同一契约。
+///
+/// 调用点 = 每处下发 access/refresh 的位置（登录/MFA/refresh/OAuth/LDAP/注册/WebAuthn）。
+pub fn attach_csrf_cookie(mut response: HttpResponse, scope: Option<&str>) -> HttpResponse {
+    use actix_web::http::header::SET_COOKIE;
+    let cookie = common::csrf::csrf_cookie(
+        scope,
+        &common::csrf::new_csrf_token(),
+        common::csrf::cookie_secure_from_env(),
+    );
+    // append：与同批 access/refresh 的 Set-Cookie 共存
+    response
+        .headers_mut()
+        .append(SET_COOKIE, cookie.to_string().parse().unwrap());
+    response
+}
+
+/// 与登出/令牌清除同批清除 CSRF cookie（`Max-Age=0`，design.md §6/§7）。
+pub fn clear_csrf_cookie(mut response: HttpResponse, scope: Option<&str>) -> HttpResponse {
+    use actix_web::http::header::SET_COOKIE;
+    let cookie = common::csrf::csrf_clear_cookie(scope, common::csrf::cookie_secure_from_env());
     response
         .headers_mut()
         .append(SET_COOKIE, cookie.to_string().parse().unwrap());
@@ -627,42 +659,11 @@ fn clear_cookie(mut response: HttpResponse, name: &str, path: &str) -> HttpRespo
 /// 会串号（实测：同浏览器先登录运营端 isahl，再在门户以 oa-supp01 登录 → 门户 `/auth/me`
 /// 被 isahl cookie 抢先解析 → 门户显示 isahl）。显式 Bearer 代表「本应用自己的会话」，
 /// 任何环境 cookie 不得覆盖。
+///
+/// 单一实现 = `common::csrf::extract_token`（同时是 CSRF「实际完成鉴权的凭据来源」
+/// 判定 `resolve_credential` 的包装——提取优先级 MUST NOT 在此另立副本）。
 pub fn extract_token(req: &HttpRequest) -> Option<String> {
-    // 1. 调用方声明的 cookie scope 命名空间
-    if let Some(scope) = req
-        .headers()
-        .get("x-auth-cookie-scope")
-        .and_then(|v| v.to_str().ok())
-    {
-        if let Some(token) = cookie_token(req, &access_cookie_name(Some(scope))) {
-            return Some(token);
-        }
-    }
-
-    // 2. Authorization: Bearer（显式凭据优先于环境 cookie）
-    if let Some(token) = bearer_token(req) {
-        return Some(token);
-    }
-
-    // 3. 无前缀环境 cookie（向后兼容：纯 cookie 客户端与 SSO 自身 UI）
-    cookie_token(req, &access_cookie_name(None))
-}
-
-/// 读取非空 cookie 值（去空白；空串视为缺失）。
-fn cookie_token(req: &HttpRequest, name: &str) -> Option<String> {
-    req.cookie(name)
-        .map(|c| c.value().trim().to_string())
-        .filter(|v| !v.is_empty())
-}
-
-/// 提取 `Authorization: Bearer <jwt>`（缺头/异格式/空串 → None）。
-fn bearer_token(req: &HttpRequest) -> Option<String> {
-    req.headers()
-        .get(actix_web::http::header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|auth| auth.strip_prefix("Bearer "))
-        .map(|s| s.trim().to_string())
-        .filter(|v| !v.is_empty())
+    common::csrf::extract_token(req)
 }
 
 #[cfg(test)]
@@ -883,5 +884,97 @@ I7d2nOglc+s0JfFW+7E6o3tMBoGz/GrmiLGKH9XV+AejzNhYJZ3zEnEWjw==
             String::from_utf8_lossy(&derive_public_key(TEST_PRIVATE_KEY).unwrap()).trim()
         );
         assert_eq!(keys[1], TEST_PREV_PUBLIC_KEY);
+    }
+
+    // ------------------------------------------------------------ CSRF cookie 契约
+
+    /// 响应中的全部 `Set-Cookie` 值。
+    fn set_cookie_values(resp: &HttpResponse) -> Vec<String> {
+        resp.headers()
+            .get_all(actix_web::http::header::SET_COOKIE)
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// 取名字匹配的 `Set-Cookie` 值（不存在即失败）。
+    fn set_cookie_named(resp: &HttpResponse, name: &str) -> String {
+        set_cookie_values(resp)
+            .into_iter()
+            .find(|c| c.starts_with(&format!("{name}=")))
+            .unwrap_or_else(|| panic!("Set-Cookie `{name}` 缺失"))
+    }
+
+    /// 属性段（`Secure`/`SameSite`）——用于断言 csrf 与同批令牌同档（顺序无关）。
+    fn security_attrs(set_cookie: &str) -> Vec<String> {
+        let mut attrs: Vec<String> = set_cookie
+            .split(';')
+            .map(|s| s.trim().to_string())
+            .filter(|s| {
+                let low = s.to_ascii_lowercase();
+                low.starts_with("secure") || low.starts_with("samesite")
+            })
+            .collect();
+        attrs.sort();
+        attrs
+    }
+
+    /// ① 登录响应同批含 `csrf_token`：非 HttpOnly（前端可读）、`Path=/`、
+    /// `Max-Age>=604800`，且 `Secure`/`SameSite` 与同批令牌 cookie 同档。
+    #[test]
+    fn test_login_response_attaches_readable_csrf_cookie() {
+        let response = HttpResponse::Ok().finish();
+        let response = set_access_cookie(response, "at", 900, None);
+        let response = set_refresh_cookie(response, "rt", 604800, None);
+        let response = attach_csrf_cookie(response, None);
+
+        let csrf = set_cookie_named(&response, "csrf_token");
+        assert!(
+            !csrf.contains("HttpOnly"),
+            "CSRF cookie MUST NOT 置 HttpOnly（double-submit 前端须可读）: {csrf}"
+        );
+        assert!(csrf.contains("Path=/"), "{csrf}");
+        assert!(csrf.contains("Max-Age=604800"), "{csrf}");
+        // ≥256 bit CSPRNG base64url（32 字节无填充 = 43 字符）
+        let value = csrf
+            .split(';')
+            .next()
+            .unwrap()
+            .trim_start_matches("csrf_token=");
+        assert!(value.len() >= 43, "token 熵不足: {csrf}");
+
+        // 与令牌同档：Secure/SameSite 属性集合逐一相同；令牌仍 HttpOnly
+        let access = set_cookie_named(&response, "access_token");
+        assert!(access.contains("HttpOnly"));
+        assert_eq!(security_attrs(&csrf), security_attrs(&access));
+    }
+
+    /// ② scoped 命名：`x-auth-cookie-scope: oa` ⇒ `oa_csrf_token`（且不额外写缺省名）。
+    #[test]
+    fn test_csrf_cookie_follows_scope_naming() {
+        let response = attach_csrf_cookie(HttpResponse::Ok().finish(), Some("oa"));
+        let csrf = set_cookie_named(&response, "oa_csrf_token");
+        assert!(!csrf.contains("HttpOnly"), "{csrf}");
+        assert!(
+            !set_cookie_values(&response)
+                .iter()
+                .any(|c| c.starts_with("csrf_token=")),
+            "scoped 签发 MUST NOT 同时写缺省 csrf_token"
+        );
+    }
+
+    /// ③ 登出清除：与 access/refresh 同批清 csrf，`Max-Age=0`。
+    #[test]
+    fn test_logout_clears_csrf_cookie() {
+        let response = HttpResponse::Ok().finish();
+        let response = clear_access_cookie(response, Some("oa"));
+        let response = clear_refresh_cookie(response, Some("oa"));
+        let response = clear_csrf_cookie(response, Some("oa"));
+
+        let csrf = set_cookie_named(&response, "oa_csrf_token");
+        assert!(csrf.contains("Max-Age=0"), "{csrf}");
+        assert!(!csrf.contains("HttpOnly"), "{csrf}");
+        // 同批令牌也在清除（回归：三枚 Set-Cookie 共存）
+        assert!(set_cookie_named(&response, "oa_access_token").contains("Max-Age=0"));
+        assert!(set_cookie_named(&response, "oa_refresh_token").contains("Max-Age=0"));
     }
 }

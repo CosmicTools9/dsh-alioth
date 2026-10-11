@@ -1,38 +1,34 @@
 //! 认证标识候选解析（allow-duplicate-email-accounts 单一实现）
 //!
-//! 背景：email/phone 不再是唯一身份基点（同一 email MAY 属于多个账号，
-//! phone 从无唯一约束），故「标识 → 账号」从「至多一行」变为「候选集合」。
+//! 背景：email 不再是唯一身份基点（同一 email MAY 属于多个账号），故
+//! 「标识 → 账号」从「至多一行」变为「候选集合」。
 //! 全仓唯一解析实现集中于此——登录 / zchat / 密码重置 / OAuth 绑定 / SCIM
-//! MUST 经本模块取候选，MUST NOT 各自再写一份 `WHERE email = $1`（REUSE_FIRST）。
+//! MUST 经本模块取候选，MUST NOT 各自再写一份「按 email 找账号」的 SQL（REUSE_FIRST）。
 //!
 //! 唯一身份基点仍是 `username`（唯一约束），其候选集合大小恒 ≤ 1。
+//! email 的唯一存储 = `isahl_auth.auth_user_emails`（`auth_users` 无 email 冗余列，
+//! 见 `openspec/specs/auth-users-schema`）。
 
 use sqlx::PgPool;
 
 /// 候选解析使用的标识列（闭集；查询文本编译期固化，零运行期拼装）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentifierColumn {
-    /// 登录/重置标识推断出的 email（经 `auth_user_emails` ∪ `auth_users.email`）
+    /// 登录/重置标识推断出的 email（唯一存储 = `auth_user_emails`，
+    /// 取 `deleted_at IS NULL` 的全部行——账号级候选，非主邮箱投影）
     Email,
-    /// 手机号（`auth_users.phone`；该列无唯一约束，天然可多匹配）
-    Phone,
     /// 账号（唯一身份基点，大小恒 ≤ 1）
     Username,
 }
 
 impl IdentifierColumn {
-    /// 按标识文本自动判别（与既有登录判别口径一致：含 `@` → email；
-    /// 以 `+` 开头或纯数字/分隔符且长度 ≥ 8 → phone；其余 → username）。
+    /// 按标识文本自动判别（与既有登录判别口径一致：含 `@` → email；其余 → username）。
+    ///
+    /// 手机号不在此闭集：`auth_users` 从无 phone 列（手机号载体 = 联系方式链，
+    /// 另有 `/auth/phone/*` 验证码链路），故数值型标识按 username 解析。
     pub fn detect(identifier: &str) -> Self {
         if identifier.contains('@') {
             IdentifierColumn::Email
-        } else if identifier.starts_with('+')
-            || (identifier.len() >= 8
-                && identifier
-                    .chars()
-                    .all(|c| c.is_ascii_digit() || c == '-' || c == ' ' || c == '(' || c == ')'))
-        {
-            IdentifierColumn::Phone
         } else {
             IdentifierColumn::Username
         }
@@ -44,11 +40,7 @@ impl IdentifierColumn {
                 "SELECT id FROM isahl_auth.auth_users \
                  WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails \
                               WHERE email = $1 AND deleted_at IS NULL) \
-                    OR email = $1 \
                  ORDER BY id"
-            }
-            IdentifierColumn::Phone => {
-                "SELECT id FROM isahl_auth.auth_users WHERE phone = $1 ORDER BY id"
             }
             IdentifierColumn::Username => {
                 "SELECT id FROM isahl_auth.auth_users WHERE username = $1 ORDER BY id"

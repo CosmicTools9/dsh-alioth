@@ -8,6 +8,35 @@ use crate::bom::{dispatch_vehicle_plate, ensure_default_capacity_pool};
 use crate::models::DispatchParams;
 use crate::ontology::{resolve_ontology_coords, DkEntity};
 
+/// 委托整单重量聚合（分配上限校验）——**单一实现**（2026-09-29 check-sql-literal-single-source 检出原为两份
+/// 逐字重复副本）。排除 `DTL-LDG`（装载包装行挂同标量 ⇒ 聚合 ×2：列表接口已排除，此处保持一致，
+/// 否则整单 3000 吨被算成 6000 吨）。调用方各自绑定 `consignment_id`（`$1`）。
+const CONSIGNMENT_WEIGHT_SQL: &str = r#"SELECT agg.agg_w_total
+               FROM "isahl"."zc_id_orde-land" o
+               LEFT JOIN LATERAL (
+                   SELECT COALESCE(SUM(qt.mark::numeric), 0) AS agg_qty,
+                          COALESCE(SUM(am.mark::numeric), 0) AS agg_amount,
+                          COALESCE(SUM(wt.mark::numeric), 0) AS agg_w_total,
+                          COALESCE(SUM(vt.mark::numeric), 0) AS agg_v_total,
+                          COALESCE(SUM(at.mark::numeric), 0) AS agg_a_total,
+                          COALESCE(SUM(ts.mark::numeric), 0) AS agg_ts_total,
+                          COALESCE(SUM(dt.mark::numeric), 0) AS agg_d_total
+                   FROM "isahl"."zc_id_deta-trade_order" d
+                   LEFT JOIN "isahl"."zc_id_scale" qt ON qt.id = d.qk_qty
+                   LEFT JOIN "isahl"."zc_id_scal-amount" am ON am.id = d.qk_amount
+                   LEFT JOIN "isahl"."zc_id_scal-weight" wt ON wt.id = d.qk_w_qty
+                   LEFT JOIN "isahl"."zc_id_scal-volume" vt ON vt.id = d.qk_v_qty
+                   LEFT JOIN "isahl"."zc_id_scal-area" at ON at.id = d.qk_a_qty
+                   LEFT JOIN "isahl"."zc_id_scal-distance" ts ON ts.id = d.qk_ts_qty
+                   LEFT JOIN "isahl"."zc_id_scal-distance" dt ON dt.id = d.qk_d_qty
+                   WHERE d.fk_list = o.id AND d.deleted_at IS NULL
+                     AND (d.code NOT LIKE 'DTL-LDG-%'
+                          OR NOT EXISTS (SELECT 1 FROM "isahl"."zc_id_deta-trade_order" d2
+                                         WHERE d2.fk_list = o.id AND d2.code NOT LIKE 'DTL-LDG-%'
+                                           AND d2.deleted_at IS NULL))
+               ) agg ON true
+               WHERE o.id = $1 AND o.deleted_at IS NULL"#;
+
 /// 运单 B（运营组织）解析——**取单据所属客户委托链根的承运商槽**。
 ///
 /// **入参**可为**运单**（`WB-%`）或**委托**（`CNS-%`，含小委托 `CNS-…-S{n}`）：
@@ -101,9 +130,31 @@ pub async fn resolve_consignment_operator_org(
 ///
 /// `capacity_product_id = None` 时走围栏聚合路径（P1-3，设计文档 §5.2）：
 /// 从委托起运地推断围栏，Σ 该围栏下全部线路容量池可用量校验，扣减凭证落委托自身线路容量池。
+/// reservation 上限断言由入口设定：本入口（平台派车）MUST 施加 `Σ已派 + 本批 ≤ 基数`。
 pub async fn dispatch_vehicles_tx_inner(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     params: DispatchParams<'_>,
+) -> Result<Vec<(i64, i64, i64)>, ApiError> {
+    dispatch_vehicles_tx_with(tx, params, true).await
+}
+
+/// 门户来源派车（用户裁决 2026-10-08：「把门户的这个验证去掉」）——与
+/// [`dispatch_vehicles_tx_inner`] **同一事务体**（禁复制第二份），唯一差异 = **不施加
+/// reservation 上限断言**（Step 0e-1 的 `Σ已派 + 本批 > 基数` 拒绝跳过）。
+/// 下单扣减证据（`COM-OUT`）缺失时的拒绝**保留**：那是数据缺口，与「是否允许超额派车」无关。
+/// 平台派车入口口径不变。
+pub async fn dispatch_vehicles_tx_portal(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    params: DispatchParams<'_>,
+) -> Result<Vec<(i64, i64, i64)>, ApiError> {
+    dispatch_vehicles_tx_with(tx, params, false).await
+}
+
+/// 唯一事务体（外部 MUST 经 [`dispatch_vehicles_tx_inner`] / [`dispatch_vehicles_tx_portal`] 调用）。
+async fn dispatch_vehicles_tx_with(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    params: DispatchParams<'_>,
+    enforce_reservation_limit: bool,
 ) -> Result<Vec<(i64, i64, i64)>, ApiError> {
     let DispatchParams {
         consign_code,
@@ -267,37 +318,11 @@ pub async fn dispatch_vehicles_tx_inner(
 
     // 委托整单重量（分配上限校验）——批注轮 71 同款排除 DTL-LDG（装载包装行挂同标量
     // 致聚合 ×2：列表接口已排除，此处保持一致性，否则整单 3000 吨被算成 6000 吨）
-    let consignment_weight: Option<Decimal> = sqlx::query_scalar(
-        r#"SELECT agg.agg_w_total
-               FROM "isahl"."zc_id_orde-land" o
-               LEFT JOIN LATERAL (
-                   SELECT COALESCE(SUM(qt.mark::numeric), 0) AS agg_qty,
-                          COALESCE(SUM(am.mark::numeric), 0) AS agg_amount,
-                          COALESCE(SUM(wt.mark::numeric), 0) AS agg_w_total,
-                          COALESCE(SUM(vt.mark::numeric), 0) AS agg_v_total,
-                          COALESCE(SUM(at.mark::numeric), 0) AS agg_a_total,
-                          COALESCE(SUM(ts.mark::numeric), 0) AS agg_ts_total,
-                          COALESCE(SUM(dt.mark::numeric), 0) AS agg_d_total
-                   FROM "isahl"."zc_id_deta-trade_order" d
-                   LEFT JOIN "isahl"."zc_id_scale" qt ON qt.id = d.qk_qty
-                   LEFT JOIN "isahl"."zc_id_scal-amount" am ON am.id = d.qk_amount
-                   LEFT JOIN "isahl"."zc_id_scal-weight" wt ON wt.id = d.qk_w_qty
-                   LEFT JOIN "isahl"."zc_id_scal-volume" vt ON vt.id = d.qk_v_qty
-                   LEFT JOIN "isahl"."zc_id_scal-area" at ON at.id = d.qk_a_qty
-                   LEFT JOIN "isahl"."zc_id_scal-distance" ts ON ts.id = d.qk_ts_qty
-                   LEFT JOIN "isahl"."zc_id_scal-distance" dt ON dt.id = d.qk_d_qty
-                   WHERE d.fk_list = o.id AND d.deleted_at IS NULL
-                     AND (d.code NOT LIKE 'DTL-LDG-%'
-                          OR NOT EXISTS (SELECT 1 FROM "isahl"."zc_id_deta-trade_order" d2
-                                         WHERE d2.fk_list = o.id AND d2.code NOT LIKE 'DTL-LDG-%'
-                                           AND d2.deleted_at IS NULL))
-               ) agg ON true
-               WHERE o.id = $1 AND o.deleted_at IS NULL"#,
-    )
-    .bind(consignment_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .flatten();
+    let consignment_weight: Option<Decimal> = sqlx::query_scalar(CONSIGNMENT_WEIGHT_SQL)
+        .bind(consignment_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten();
     // reservation 基数合并（批注 52834cc1）：有 COM-OUT 凭证用下单扣减量，
     // 无凭证（下单时未配池）降级为委托整单重量——防超派底线保留，不再 fail-closed 硬拒
     let reservation: Option<Decimal> = reservation.or(consignment_weight);
@@ -369,7 +394,9 @@ pub async fn dispatch_vehicles_tx_inner(
                 .into(),
         ));
     };
-    if total_alloc + dispatched_before > reservation {
+    // 门户来源不设上限（用户裁决 2026-10-08）：`enforce_reservation_limit = false` 时跳过本拒绝，
+    // 仍先在下方读齐账目（保持同一读径与留痕）。
+    if enforce_reservation_limit && total_alloc + dispatched_before > reservation {
         return Err(ApiError::BadRequest(format!(
             "派车分配超 reservation：已派 {}吨 + 本批 {}吨 > 基数 {}吨",
             dispatched_before, total_alloc, reservation
@@ -490,36 +517,11 @@ pub async fn dispatch_vehicles_tx_inner(
     .fetch_optional(&mut **tx)
     .await?
     .flatten();
-    let consign_ton: Option<rust_decimal::Decimal> = sqlx::query_scalar(
-        r#"SELECT agg.agg_w_total FROM "isahl"."zc_id_orde-land" o
-               LEFT JOIN LATERAL (
-                   SELECT COALESCE(SUM(qt.mark::numeric), 0) AS agg_qty,
-                          COALESCE(SUM(am.mark::numeric), 0) AS agg_amount,
-                          COALESCE(SUM(wt.mark::numeric), 0) AS agg_w_total,
-                          COALESCE(SUM(vt.mark::numeric), 0) AS agg_v_total,
-                          COALESCE(SUM(at.mark::numeric), 0) AS agg_a_total,
-                          COALESCE(SUM(ts.mark::numeric), 0) AS agg_ts_total,
-                          COALESCE(SUM(dt.mark::numeric), 0) AS agg_d_total
-                   FROM "isahl"."zc_id_deta-trade_order" d
-                   LEFT JOIN "isahl"."zc_id_scale" qt ON qt.id = d.qk_qty
-                   LEFT JOIN "isahl"."zc_id_scal-amount" am ON am.id = d.qk_amount
-                   LEFT JOIN "isahl"."zc_id_scal-weight" wt ON wt.id = d.qk_w_qty
-                   LEFT JOIN "isahl"."zc_id_scal-volume" vt ON vt.id = d.qk_v_qty
-                   LEFT JOIN "isahl"."zc_id_scal-area" at ON at.id = d.qk_a_qty
-                   LEFT JOIN "isahl"."zc_id_scal-distance" ts ON ts.id = d.qk_ts_qty
-                   LEFT JOIN "isahl"."zc_id_scal-distance" dt ON dt.id = d.qk_d_qty
-                   WHERE d.fk_list = o.id AND d.deleted_at IS NULL
-                     AND (d.code NOT LIKE 'DTL-LDG-%'
-                          OR NOT EXISTS (SELECT 1 FROM "isahl"."zc_id_deta-trade_order" d2
-                                         WHERE d2.fk_list = o.id AND d2.code NOT LIKE 'DTL-LDG-%'
-                                           AND d2.deleted_at IS NULL))
-               ) agg ON true
-               WHERE o.id = $1 AND o.deleted_at IS NULL"#,
-    )
-    .bind(consignment_id)
-    .fetch_optional(&mut **tx)
-    .await?
-    .flatten();
+    let consign_ton: Option<rust_decimal::Decimal> = sqlx::query_scalar(CONSIGNMENT_WEIGHT_SQL)
+        .bind(consignment_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .flatten();
     // 缺口修复：派车运单明细货描 = 委托 comments（fallback notice）
     // remove-comments-json-embedding 降级（D2）：委托 comments 已文本化，直接读整列
     let consign_cargo: String = sqlx::query_scalar(

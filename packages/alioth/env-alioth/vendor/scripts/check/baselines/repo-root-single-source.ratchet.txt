@@ -1,0 +1,6 @@
+# 仓根解析单源——棘轮基线（只减不增；check-repo-root-single-source.ts）
+# 生成：bun scripts/check/check-repo-root-single-source.ts --write-baseline
+# 格式：文件路径（每行一个）；基线内文件只报归线，不算 FAIL。
+# shell 面（scripts/**/*.sh + .husky/*）已全部收敛到正本；此处冻结的是 **TS 面存量**
+# （scripts/check/** 等处的 spawnSync/execFile 内联解析），收敛后请删除对应行。
+scripts/check/check-i18n-coverage.ts

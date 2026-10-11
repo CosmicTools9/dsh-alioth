@@ -1,0 +1,16 @@
+# provider 代号跨面连通性豁免台账（门禁 `scripts/check/check-provider-code-alignment`）
+#
+# 语义：某代号出现在文件系统判定面（adapter / lmap / contract）但**适配器面缺席**时，
+#       本表 MUST 有该代号一行且理由非空 —— 豁免即归属裁决留痕，MUST NOT 成为无声兜底。
+# 行格式（TAB 分隔三段，不含行号）：<provider 代号>	<缺席面>	<理由>
+#
+# 过期判定：台账行的代号或面若已不再成立（代号消失 / 该面其实存在）⇒ 违规（删行）。
+#   过期判定**只在平台视图生效**（平台仓见全部挂载 ns；ns 仓只见本仓 —— 否则 WZ 仓会把
+#   SE 独有的 `sap` 行误报为过期）。判定面 = 门禁文档「多仓可见性」节。
+#
+# 审阅面：`bun scripts/check/check-provider-code-alignment.ts --dump-surfaces`（面矩阵唯一数据源）
+# 规约：openspec/specs/external-adapter-layer :: provider-code-surface-alignment
+#
+# 当前仅登记「适配器面缺席」一类（缺席面取值域 = adapter | lmap | contract）。
+carrier	adapter	auth_type=none：承运商出向按 code=carrier-{id} 直发 JSON（transport-dispatch/backend/src/carrier_outbound.rs），无签名/验签协议面，故不设 L-ADP 适配器（EXTERNAL_INTEGRATION_SPEC §8.2.1：none 认证用默认空实现）
+sap	adapter	SE 侧 SAP 出向由 sap-execution 服务内 integration/sap 经 outbound-client 治理层调用，未设独立 L-ADP 面（该集成不涉及 provider 特定签名协议）

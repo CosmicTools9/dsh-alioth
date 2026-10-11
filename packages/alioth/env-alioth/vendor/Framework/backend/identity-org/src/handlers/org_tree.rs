@@ -555,7 +555,7 @@ fn json_employee_list(v: &serde_json::Value) -> Vec<PositionEmployeeDto> {
 pub const POSITION_SELECT: &str = r#"SELECT p.id, p.notice::text, COALESCE(p.code, ''), COALESCE(p.comments, ''),
        p.fk_user, p.fk_parent AS parent_id,
        COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = p.ck_category AND c.deleted_at IS NULL), (SELECT c2.notice FROM isahl.zc_id_category c2 WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL), '') AS ck_category,
-       COALESCE(u.name::text, NULL) AS user_name,
+       COALESCE(u.display_name, u.username) AS user_name,
        COALESCE((SELECT json_agg(rp.ref_left ORDER BY rp.ref_left) FROM isahl."zc_id_subj-org_rr_position" rp WHERE rp.ref_right = p.id AND rp.deleted_at IS NULL), '[]'::json) AS org_ids,
        COALESCE((SELECT json_agg(ps.ref_right ORDER BY ps.ref_right) FROM isahl."zc_id_subj-post_rr_subordinate" ps WHERE ps.ref_left = p.id AND ps.deleted_at IS NULL), '[]'::json) AS sub_org_ids,
        COALESCE((SELECT json_agg(json_build_object(
@@ -1021,7 +1021,7 @@ pub async fn list_department_positions(
         r#"SELECT r.id AS rel_id, p.id, p.notice::text, p.code, p.comments,
                   p.fk_user, p.fk_parent AS parent_id,
                   COALESCE((SELECT c.code FROM isahl."zc_id_cate-position" c WHERE c.id = p.ck_category AND c.deleted_at IS NULL), (SELECT c2.notice FROM isahl.zc_id_category c2 WHERE c2.id = p.ck_category AND c2.deleted_at IS NULL), '') AS ck_category,
-                  COALESCE(u.name::text, NULL) AS user_name
+                  COALESCE(u.display_name, u.username) AS user_name
            FROM isahl."zc_id_subj-org_rr_position" r
            JOIN isahl."zc_id_subj-position" p ON p.id = r.ref_right
            LEFT JOIN isahl_auth.auth_users u ON u.id = p.fk_user
@@ -1241,9 +1241,9 @@ pub async fn list_users(
         name: Option<String>,
     }
     let items: Vec<UserItem> = sqlx::query_as(
-        r#"SELECT id, name FROM isahl_auth.auth_users
+        r#"SELECT id, COALESCE(display_name, username) AS name FROM isahl_auth.auth_users
            WHERE status = 'active' AND is_active
-           ORDER BY name LIMIT 200"#,
+           ORDER BY COALESCE(display_name, username) LIMIT 200"#,
     )
     .fetch_all(pool.get_ref())
     .await

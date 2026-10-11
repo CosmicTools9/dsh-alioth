@@ -7,9 +7,12 @@
 //! `ref_count` 由 DB 触发器维护；测试库未装触发器时其值为 NULL（按独占处理），
 //! 共享分支通过手动 `UPDATE ref_count = N` 模拟。
 //!
+//! 表级串行：本文件用例共享 `isahl."zc_id_scal-date"` / `zc_id_segm-date"` 两表并以全局 DELETE
+//! 清场 ⇒ 用例经 [`fresh_pool`] 的进程内互斥锁显式串行（**无需**调用方加 `--test-threads=1`）。
+//!
 //! Run with:
 //!   DATABASE_URL=postgres://isahl@localhost:5432/aliothstudio_test \
-//!   cargo test -p common --test scalar_ref_count_test -- --test-threads=1
+//!   cargo test -p common --test scalar_ref_count_test
 
 use common::scalar::{ScalarDateValue, ScalarService};
 use common::testing::{connect_test_db, setup_test_schema_light};
@@ -23,10 +26,16 @@ fn unique_notice(tag: &str) -> String {
     format!("{}-{}-{}", tag, std::process::id(), nanos % 1_000_000_000)
 }
 
-async fn fresh_pool() -> PgPool {
+async fn fresh_pool() -> (tokio::sync::MutexGuard<'static, ()>, PgPool) {
+    // 表级串行门：本文件用例共享 `zc_id_scal-date` / `zc_id_segm-date` 两表，且本函数以**全局
+    // DELETE** 清场、用例又依赖「表内同值行唯一」的语义 ⇒ 同一测试二进制内并行执行会互删夹具 /
+    // 复用他例同值行（2026-09-29 实测：`cargo test` 默认并行 6–7 例假红；`RUST_TEST_THREADS=1`
+    // 下 16/16 全绿）。此处以进程内异步互斥锁显式串行，使判据不依赖调用方的线程配置
+    // （跨 crate 的测试二进制由 cargo 默认串行执行，不受影响）。
+    let guard = TABLE_LOCK.lock().await;
     let pool = connect_test_db().await;
     setup_test_schema_light(&pool).await.unwrap();
-    // 清空标量表，避免跨测试/跨运行残留数据干扰复用判定（--test-threads=1 串行安全）
+    // 清场（串行门内安全）：跨测试/跨运行残留数据会干扰复用判定
     sqlx::query(r#"DELETE FROM isahl."zc_id_scal-date""#)
         .execute(&pool)
         .await
@@ -35,8 +44,11 @@ async fn fresh_pool() -> PgPool {
         .execute(&pool)
         .await
         .unwrap();
-    pool
+    (guard, pool)
 }
+
+/// 表级串行门（见 [`fresh_pool`]）：持锁期间独占两标量表，释放即交棒下一用例。
+static TABLE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// 插入一个 `zc_id_scal-date` 行，返回其 id（ref_count 由调用方设定）。
 async fn insert_scal_date(pool: &PgPool, date_text: &str, ref_count: i64) -> i64 {
@@ -103,7 +115,7 @@ async fn read_segm_date(pool: &PgPool, id: i64) -> ((Option<String>, Option<Stri
 #[tokio::test]
 async fn parse_date_time_accepts_date_only() {
     // 经 update_date_ref 无旧引用路径验证："YYYY-MM-DD" 解析成功且复用已有行
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let existing = insert_scal_date(&pool, "2026-05-05", 0).await;
     let svc = ScalarService::new(pool.clone());
 
@@ -114,7 +126,7 @@ async fn parse_date_time_accepts_date_only() {
 
 #[tokio::test]
 async fn parse_date_time_rejects_bad_format() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let svc = ScalarService::new(pool.clone());
     let err = svc.update_date_ref(None, "not-a-date").await.unwrap_err();
     let msg = err.to_string();
@@ -124,7 +136,7 @@ async fn parse_date_time_rejects_bad_format() {
 #[tokio::test]
 async fn parse_date_time_accepts_datetime_with_time() {
     // 时间部分进入 "time" 列：独占行原位修订后 "time" 应为 09:30:00
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_scal_date(&pool, "2026-01-15", 1).await;
     let svc = ScalarService::new(pool.clone());
 
@@ -150,7 +162,7 @@ async fn parse_date_time_accepts_datetime_with_time() {
 
 #[tokio::test]
 async fn update_date_ref_exclusive_revises_in_place() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_scal_date(&pool, "2026-01-15", 1).await; // 独占
     let svc = ScalarService::new(pool.clone());
 
@@ -162,7 +174,7 @@ async fn update_date_ref_exclusive_revises_in_place() {
 
 #[tokio::test]
 async fn update_date_ref_shared_inserts_new_row() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_scal_date(&pool, "2026-01-15", 2).await; // 共享
     let svc = ScalarService::new(pool.clone());
 
@@ -181,7 +193,7 @@ async fn update_date_ref_shared_inserts_new_row() {
 
 #[tokio::test]
 async fn update_date_ref_no_current_creates_row() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let svc = ScalarService::new(pool.clone());
 
     let id = svc.update_date_ref(None, "2026-04-01").await.unwrap();
@@ -193,7 +205,7 @@ async fn update_date_ref_no_current_creates_row() {
 async fn update_date_ref_invalid_current_id_falls_back_to_create() {
     // 当前 ID 指向不存在的行（如已软删）→ ref_count 读不到（NULL→0 <2），
     // 原位 UPDATE 不命中任何行，但仍返回原 ID——不 panic、不破坏。
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let svc = ScalarService::new(pool.clone());
     let ghost = i64::MAX - 42;
     let id = svc
@@ -206,7 +218,7 @@ async fn update_date_ref_invalid_current_id_falls_back_to_create() {
 #[tokio::test]
 async fn update_date_ref_shared_with_existing_value_reuses() {
     // 共享 + 新值已存在（另一行）→ 复用该行而非再插入
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let shared = insert_scal_date(&pool, "2026-01-15", 2).await;
     let existing = insert_scal_date(&pool, "2026-03-10", 1).await;
     let svc = ScalarService::new(pool.clone());
@@ -227,7 +239,7 @@ async fn update_date_ref_shared_with_existing_value_reuses() {
 async fn update_date_ref_exclusive_with_existing_value_reuses() {
     // 客观唯一：独占（ref_count<2）但新值已有行 → 也必须复用该行，
     // 绝不产生同值双行（日期是客观唯一计量尺，同 date 必须同 id）
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let mine = insert_scal_date(&pool, "2026-01-15", 1).await;
     let existing = insert_scal_date(&pool, "2026-03-10", 1).await;
     let svc = ScalarService::new(pool.clone());
@@ -246,7 +258,7 @@ async fn update_date_ref_exclusive_with_existing_value_reuses() {
 #[tokio::test]
 async fn update_date_ref_same_value_is_noop() {
     // 新值 == 旧值 → 复用当前行自身，ID 不变（no-op）
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_scal_date(&pool, "2026-01-15", 2).await;
     let svc = ScalarService::new(pool.clone());
 
@@ -258,7 +270,7 @@ async fn update_date_ref_same_value_is_noop() {
 
 #[tokio::test]
 async fn update_segm_date_ref_exclusive_revises_in_place() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_segm_date(&pool, "2026-01-15", 1).await;
     let svc = ScalarService::new(pool.clone());
 
@@ -274,7 +286,7 @@ async fn update_segm_date_ref_exclusive_revises_in_place() {
 
 #[tokio::test]
 async fn update_segm_date_ref_shared_inserts_new_row() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_segm_date(&pool, "2026-01-15", 2).await;
     let svc = ScalarService::new(pool.clone());
 
@@ -298,7 +310,7 @@ async fn update_segm_date_ref_shared_inserts_new_row() {
 #[tokio::test]
 async fn update_segm_date_ref_exclusive_with_existing_value_reuses() {
     // 客观唯一：独占但新值已有行 → 复用，不产生同值双行
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let mine = insert_segm_date(&pool, "2026-01-15", 1).await;
     let existing = insert_segm_date(&pool, "2026-03-10", 1).await;
     let svc = ScalarService::new(pool.clone());
@@ -319,7 +331,7 @@ async fn update_segm_date_ref_exclusive_with_existing_value_reuses() {
 
 #[tokio::test]
 async fn update_segm_date_ref_same_value_is_noop() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let row = insert_segm_date(&pool, "2026-01-15", 2).await;
     let svc = ScalarService::new(pool.clone());
 
@@ -332,7 +344,7 @@ async fn update_segm_date_ref_same_value_is_noop() {
 
 #[tokio::test]
 async fn update_segm_date_ref_no_current_creates_row() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let svc = ScalarService::new(pool.clone());
 
     let id = svc
@@ -348,7 +360,7 @@ async fn update_segm_date_ref_no_current_creates_row() {
 
 #[tokio::test]
 async fn find_or_create_segm_date_reuses_existing() {
-    let pool = fresh_pool().await;
+    let (_guard, pool) = fresh_pool().await;
     let existing = insert_segm_date(&pool, "2026-05-05", 1).await;
     let svc = ScalarService::new(pool.clone());
 

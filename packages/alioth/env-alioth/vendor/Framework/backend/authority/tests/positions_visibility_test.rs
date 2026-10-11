@@ -98,9 +98,9 @@ async fn position_options_expose_bridge_derived_incumbents() {
     // 活跃账号 + 任职自然人 + 岗位（标量空）+ 任职桥
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, $2, $2 || '@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(account)
@@ -195,9 +195,9 @@ async fn position_options_emit_one_row_per_incumbent_account() {
     for (id, tag) in [(acc_a, "a"), (acc_b, "b")] {
         sqlx::query(
             r#"INSERT INTO isahl_auth.auth_users
-               (id, name, username, email, user_type, is_active, created_at, updated_at,
+               (id, username, user_type, is_active, created_at, updated_at,
                 failed_login_attempts, notification_preferences)
-               VALUES ($1, $2, $2, $2 || '@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+               VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
                ON CONFLICT (id) DO NOTHING"#,
         )
         .bind(id)

@@ -140,6 +140,10 @@ pub struct CreateSessionRequest {
 ///    全部远程用户折进 `127.0.0.1` 同一个限流桶，`auth` 档 10 次/60 秒成了**全平台共享额度**，
 ///    该桶实测一分钟计数 190–262，任何人多试几次就把别人一起顶到 429；
 /// ② **可伪造**——任何客户端自带 `X-Forwarded-For: 1.2.3.4` 即被原样落库（限流无限开桶）。
+///
+/// 采信前另有 **IP 字面量校验**（fix-auth-ratelimit-bucket-split，见 [`parse_forwarded_ip`]）：
+/// 不可解析的转发值（任意串 / 空串 / `ip:port` / 逗号多值）一律忽略并回退 TCP 对端——
+/// MUST NOT 以任意字符串充当桶键，否则每个新串即新桶，限流可被无限绕过。
 pub(crate) fn client_ip(req: &actix_web::HttpRequest) -> Option<String> {
     client_ip_from_conn_info(&req.connection_info())
 }
@@ -162,13 +166,27 @@ fn parse_ip(raw: &str) -> Option<std::net::IpAddr> {
 
 /// [`client_ip`] 的纯判定（可单测）：对端非回环 ⇒ 只用对端；对端回环 ⇒ 采信转发值，缺失回退对端。
 fn resolve_client_ip(peer_ip: Option<std::net::IpAddr>, forwarded: Option<&str>) -> Option<String> {
+    // 转发值必须是 **IP 字面量**（fix-auth-ratelimit-bucket-split）：
+    // 任意字符串（`junks`、空串、`1.2.3.4:5678`、逗号多值串）直接当桶键时，
+    // 每个新串即新桶 ⇒ 限流可被无限绕过；不可解析一律忽略并回退 TCP 对端。
+    let forwarded_ip = forwarded.and_then(parse_forwarded_ip);
     match peer_ip {
         Some(ip) if !ip.is_loopback() => Some(ip.to_string()),
-        Some(ip) => forwarded
-            .map(|s| s.to_string())
-            .or_else(|| Some(ip.to_string())),
-        None => forwarded.map(|s| s.to_string()),
+        Some(ip) => forwarded_ip.or_else(|| Some(ip.to_string())),
+        None => forwarded_ip,
     }
+}
+
+/// 转发头值 → 规范 IP 串：`trim` 后必须整体可解析为 `IpAddr`，否则 `None`（忽略该值）。
+///
+/// 只接受单一 IP 字面量（含 IPv6 / IPv4-mapped 形态）；带端口、带引号、逗号多值、
+/// 任意串一律拒绝——可信跳的契约是**替换**为本跳看到的 socket 对端，多值串意味着
+/// 下游追加语义（可被客户端自报污染首值），故不做"取左起首个"的宽容解析。
+fn parse_forwarded_ip(raw: &str) -> Option<String> {
+    raw.trim()
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .map(|ip| ip.to_string())
 }
 
 /// 客户端 User-Agent（同上）。
@@ -729,6 +747,49 @@ mod tests {
             resolve_client_ip(None, Some("1.2.3.4")).as_deref(),
             Some("1.2.3.4"),
             "对端不可得 ⇒ 退让转发值（不臆造）"
+        );
+    }
+
+    /// 转发值 IP 字面量校验（fix-auth-ratelimit-bucket-split）：
+    /// 不可解析值 MUST 忽略并回退对端——否则每个新串即新桶，限流被无限绕过。
+    #[test]
+    fn resolve_client_ip_ignores_non_ip_forwarded_values() {
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        let remote: std::net::IpAddr = "203.0.113.9".parse().unwrap();
+
+        for bad in [
+            "junks",
+            "",
+            "   ",
+            "1.2.3.4:5678",
+            "1.2.3.4, 5.6.7.8",
+            "999.999.999.999",
+            "not-an-ip-with-dashes",
+        ] {
+            assert_eq!(
+                resolve_client_ip(Some(loopback), Some(bad)).as_deref(),
+                Some("127.0.0.1"),
+                "非法转发值 {:?} ⇒ MUST 回退 TCP 对端（不得成为桶键）",
+                bad
+            );
+            assert_eq!(
+                resolve_client_ip(Some(remote), Some(bad)).as_deref(),
+                Some("203.0.113.9"),
+                "非回环对端本就忽略转发头（{:?}）",
+                bad
+            );
+        }
+
+        // 合法形态仍采信：带空白、IPv6、IPv4-mapped
+        assert_eq!(
+            resolve_client_ip(Some(loopback), Some("  198.51.100.7  ")).as_deref(),
+            Some("198.51.100.7"),
+            "trim 后合法 ⇒ 采信"
+        );
+        assert_eq!(
+            resolve_client_ip(Some(loopback), Some("2001:db8::1")).as_deref(),
+            Some("2001:db8::1"),
+            "IPv6 字面量 ⇒ 采信"
         );
     }
 

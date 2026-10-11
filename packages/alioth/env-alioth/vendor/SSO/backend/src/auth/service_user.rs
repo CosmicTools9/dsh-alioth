@@ -7,12 +7,7 @@
 //!
 //! `ensure_service_user` 幂等：client_id 已存在则返回既有服务用户 id。
 
-/// 服务用户命名：`svc-<client_id>`（auth_users.name 唯一约束保证幂等锚点）。
-pub fn service_user_name(client_id: &str) -> String {
-    format!("svc-{}", client_id)
-}
-
-/// 服务用户唯一用户名：`svc:<client_id>`（auth_users.username 唯一约束）。
+/// 服务用户唯一用户名：`svc:<client_id>`（auth_users.username 唯一约束 = 幂等锚点）。
 pub fn service_user_username(client_id: &str) -> String {
     format!("svc:{}", client_id)
 }
@@ -21,7 +16,7 @@ pub fn service_user_username(client_id: &str) -> String {
 ///
 /// 服务用户属性：
 /// - `user_type='service'`：与自然人/系统用户区分，禁止交互登录
-/// - 无密码、无 email（email 唯一约束下服务用户不宜占用邮箱）
+/// - 无密码、无邮箱（邮箱唯一存储 = `auth_user_emails`，服务用户不占邮箱行）
 /// - `is_active=true`、`status='active'`
 ///
 /// 泛型 Acquire：调用方既可传 `&PgPool`（独立调用），也可传 `&mut *tx`
@@ -47,16 +42,15 @@ where
         return Ok(id);
     }
 
-    // 创建服务用户（name/username 双唯一约束；email 置 NULL 避免占用邮箱）
+    // 创建服务用户（username 唯一约束即幂等锚点；不写邮箱行）
     let row: (i64,) = sqlx::query_as(
         r#"INSERT INTO isahl_auth.auth_users
-           (name, username, email, password_hash, user_type, is_active, status,
+           (username, password_hash, user_type, is_active, status,
             display_name, created_at, updated_at, failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, NULL, NULL, 'service', TRUE, 'active',
-                   $3, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, NULL, 'service', TRUE, 'active',
+                   $2, NOW(), NOW(), 0, '{}'::jsonb)
            RETURNING id"#,
     )
-    .bind(service_user_name(client_id))
     .bind(service_user_username(client_id))
     .bind(client_name)
     .fetch_one(&mut *conn)
@@ -70,10 +64,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn service_user_names_unique_shape() {
-        assert_eq!(service_user_name("partner-a"), "svc-partner-a");
+    fn service_user_username_unique_shape() {
         assert_eq!(service_user_username("partner-a"), "svc:partner-a");
         // 不同 client_id 不产生同名冲突
-        assert_ne!(service_user_name("a"), service_user_name("b"));
+        assert_ne!(service_user_username("a"), service_user_username("b"));
     }
 }

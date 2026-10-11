@@ -19,8 +19,8 @@
 //! （`X-Api-Version` header，默认 `v1`），参与唯一约束：未来版本机制落地时
 //! 同 key 跨版本互不冲突。
 //!
-//! 挂载在 PEP + metering 内层（metering 外层 → 重放请求仍计量：replay 是
-//! 被服务的 API 调用，计入用量与配额）。
+//! 装配单源 = `openapi::governance`（PEP/metering 均在外层 → 重放请求仍计量：replay
+//! 是被服务的 API 调用，计入用量与配额；未通过 PEP 的请求不会到达本层）。
 
 use actix_web::{
     body::{to_bytes, EitherBody},

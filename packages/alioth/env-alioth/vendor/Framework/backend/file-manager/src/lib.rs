@@ -25,7 +25,7 @@ pub mod service;
 pub use error::FileError;
 pub use models::{DownloadResult, FileRecord, FileTableKind, UpdateRequest, UploadRequest};
 pub use repository::{FileRepository, SqlxFileRepository};
-pub use service::{BackendResolver, FileService};
+pub use service::{storage_key, BackendResolver, FileService};
 
 /// 多后端容器：`(scheme, backend)` 映射 + 默认上传后端。
 pub struct FileManager {

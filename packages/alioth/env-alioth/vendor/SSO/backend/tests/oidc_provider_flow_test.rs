@@ -1,4 +1,4 @@
-//! OIDC OP HTTP 全流程集成测试（fix-sso-id-default-heal：sso-gap-report 剩余项闭环）
+//! OIDC OP HTTP 全流程集成测试（fix-sso-id-default-heal 交付项：OIDC OP 端点装配全流程覆盖）
 //!
 //! 进程内 HTTP 全流程（此前仅 lib 级单测，无端点装配覆盖）：
 //! discovery 200 → 未认证 authorize 401 → Bearer 会话 authorize 302（code+state）
@@ -33,19 +33,6 @@ fn test_config() -> Config {
         ngac_preview_dir: None,
         jwt_access_expiry: 900,
         jwt_refresh_expiry: 604800,
-        oauth_google_client_id: None,
-        oauth_google_client_secret: None,
-        wechat_miniapp_driver_appid: None,
-        wechat_miniapp_driver_secret: None,
-        oauth_github_client_id: None,
-        oauth_github_client_secret: None,
-        oauth_microsoft_client_id: None,
-        oauth_microsoft_client_secret: None,
-        oauth_microsoft_tenant_id: None,
-        oauth_okta_domain: None,
-        oauth_okta_client_id: None,
-        oauth_okta_client_secret: None,
-        oauth_redirect_url: format!("{ISSUER}/auth/callback"),
         oidc_issuer: ISSUER.into(),
         oidc_client_id: None,
         oidc_redirect_uris: vec![RP_REDIRECT.into()],
@@ -53,6 +40,7 @@ fn test_config() -> Config {
         identity_verify_mode: "local".into(),
         identity_external_verify_url: None,
         email_mode: "smtp".into(),
+        email_code_login_enabled: false,
         sso_jwt_public_key_prev: None,
         db_pool_max: 30,
         workers: None,

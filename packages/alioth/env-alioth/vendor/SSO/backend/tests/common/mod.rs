@@ -41,6 +41,34 @@ pub fn test_auth_state() -> AuthState {
     }
 }
 
+/// 构造测试用的 `Config`（`email_code_login_enabled` = env `SSO_EMAIL_CODE_LOGIN` 语义值）。
+///
+/// 为什么用字面量而非 `Config::from_env()`：开关值需逐测试确定，且进程 env 在并行测试间
+/// 相互污染（同 `src/config.rs` 测试模块注释所述 set_var/remove_var 缺陷）——字面量构造
+/// 让「默认关闭 / 显式启用」两条路径都确定性可测。
+pub fn test_config(email_code_login_enabled: bool) -> gateway_sso::Config {
+    gateway_sso::Config {
+        server_addr: "0.0.0.0:9002".into(),
+        database_url: String::new(),
+        sso_jwt_private_key: String::new(),
+        encryption_key: "test-encryption-key".into(),
+        ngac_preview_dir: None,
+        jwt_access_expiry: 900,
+        jwt_refresh_expiry: 604800,
+        oidc_issuer: "http://localhost:9002".into(),
+        oidc_client_id: None,
+        oidc_redirect_uris: vec![],
+        log_level: "info".into(),
+        identity_verify_mode: "local".into(),
+        identity_external_verify_url: None,
+        email_mode: "smtp".into(),
+        email_code_login_enabled,
+        sso_jwt_public_key_prev: None,
+        db_pool_max: 30,
+        workers: None,
+    }
+}
+
 /// 全局幂等标志：每个测试 binary 只执行一次 schema 初始化，避免
 /// `CREATE TABLE/INDEX/TYPE` 在已存在的对象上产生并发冲突。
 static SETUP_DONE: OnceCell<()> = OnceCell::const_new();
@@ -259,21 +287,11 @@ async fn do_setup_schema(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>
     )
     .await?;
 
-    // 通知偏好列（迁移 016_add_notification_preferences.sql）。幂等，避免
-    // 在已迁移的测试库上重复执行失败；同时保证全新测试库拥有该列。
-    pool.execute(
-        "ALTER TABLE IF EXISTS isahl_auth.auth_users \
-         ADD COLUMN IF NOT EXISTS notification_preferences JSONB NOT NULL DEFAULT '{}'::jsonb",
-    )
-    .await?;
-
-    // SCIM external_id 存储列（auth_users.settings，dev 库 ad-hoc 增列未回写迁移；
-    // scim create_user/get_user 读写 settings->>'scim_external_id'）。幂等补列。
-    pool.execute(
-        "ALTER TABLE IF EXISTS isahl_auth.auth_users \
-         ADD COLUMN IF NOT EXISTS settings JSONB DEFAULT '{}'::jsonb",
-    )
-    .await?;
+    // auth_users 结构收敛 MUST 与生产同源（单一实现）：直接调用 crate 侧 ensure——
+    // 覆盖通知偏好列/settings、账号枚举类型（status/user_type）、ldap jsonb 与
+    // 冗余显示名/邮箱/LDAP 标记/绑定 DN 四列下线（openspec/specs/auth-users-schema）。
+    // MUST NOT 在夹具里手抄 ALTER（REUSE_FIRST：第二实现会随后续结构变更漂移）。
+    gateway_sso::ngac::ensure::ensure_ngac_extension_tables(pool).await;
 
     // 诊断：查看 gen_zuid 函数的 epoch_millis
     let func_src: Result<(String,), sqlx::Error> = sqlx::query_as(
@@ -356,39 +374,48 @@ async fn do_setup_schema(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>
 /// 排除 `username='system'`（seed 契约基础设施账号，bootstrap 测试依赖）。
 pub async fn cleanup_test_users(pool: &PgPool) -> Result<(), sqlx::Error> {
     // 覆盖范围：@alioth.test（多数集成测试）与 @test.local（reset_password_test / me_enrichment_test 等）。
-    sqlx::raw_sql(sqlx::AssertSqlSafe(
-        r#"
-        DELETE FROM isahl_auth.auth_user_emails WHERE fk_user IN (
-            SELECT id FROM isahl_auth.auth_users
-            WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-              AND username IS DISTINCT FROM 'system');
-        DELETE FROM isahl_auth.session_revocations WHERE user_id IN (
-            SELECT id FROM isahl_auth.auth_users
-            WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-              AND username IS DISTINCT FROM 'system');
-        DELETE FROM isahl_auth.ngac_access_request WHERE fk_user IN (
-            SELECT id FROM isahl_auth.auth_users
-            WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-              AND username IS DISTINCT FROM 'system');
-        DELETE FROM isahl_auth.ngac_binding_request WHERE fk_user IN (
-            SELECT id FROM isahl_auth.auth_users
-            WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-              AND username IS DISTINCT FROM 'system');
-        DELETE FROM isahl_auth.ngac_delegation WHERE fk_delegator IN (
-            SELECT id FROM isahl_auth.auth_users
-            WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-              AND username IS DISTINCT FROM 'system')
-            OR fk_delegatee IN (
-            SELECT id FROM isahl_auth.auth_users
-            WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-              AND username IS DISTINCT FROM 'system');
-        DELETE FROM isahl_auth.auth_users
-         WHERE (email LIKE '%@alioth.test' OR email LIKE '%@test.local')
-           AND username IS DISTINCT FROM 'system';
-        "#,
-    ))
-    .execute(pool)
+    // email 唯一存储 = auth_user_emails（auth_users.email 冗余列已下线）：待清理用户 id MUST 在本
+    // 语句块内先物化——邮箱行删除后无法再按 email 反查；且 auth_users（被引用行）MUST 后于其
+    // 邮箱行/依赖行删除（入边 FK 无 ON DELETE CASCADE）。单事务保持原 raw_sql 的原子性。
+    let mut tx = pool.begin().await?;
+    let user_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT DISTINCT e.fk_user FROM isahl_auth.auth_user_emails e \
+         JOIN isahl_auth.auth_users u ON u.id = e.fk_user \
+         WHERE (e.email LIKE '%@alioth.test' OR e.email LIKE '%@test.local') \
+           AND u.username IS DISTINCT FROM 'system'",
+    )
+    .fetch_all(&mut *tx)
     .await?;
+    if !user_ids.is_empty() {
+        sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+            .bind(&user_ids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM isahl_auth.session_revocations WHERE user_id = ANY($1)")
+            .bind(&user_ids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM isahl_auth.ngac_access_request WHERE fk_user = ANY($1)")
+            .bind(&user_ids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM isahl_auth.ngac_binding_request WHERE fk_user = ANY($1)")
+            .bind(&user_ids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "DELETE FROM isahl_auth.ngac_delegation \
+             WHERE fk_delegator = ANY($1) OR fk_delegatee = ANY($1)",
+        )
+        .bind(&user_ids)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+            .bind(&user_ids)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -403,17 +430,47 @@ pub async fn ensure_auth_users(pool: &PgPool) -> Result<(), Box<dyn std::error::
 
 /// 按 email 精确清理用户（依赖行先行——auth_user_emails 入边 FK 无
 /// ON DELETE CASCADE，先删子行再删主行，否则 DELETE 静默失败残留 → 固定邮箱重跑 409）。
+///
+/// email 唯一存储 = auth_user_emails（auth_users.email 冗余列已下线）：待清理用户 id MUST
+/// 在删邮箱行之前物化（事后无法再按 email 反查），删除按 id 收口（不再读 auth_users.email）。
 pub async fn cleanup_user_by_email(pool: &PgPool, email: &str) -> Result<(), sqlx::Error> {
+    let user_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1")
+            .bind(email)
+            .fetch_all(pool)
+            .await?;
+    // 子行全清（含该用户其余邮箱行，与 email 冗余列时代的 `fk_user IN (…)` 语义一致）
     sqlx::query(
         "DELETE FROM isahl_auth.auth_user_emails \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+         WHERE email = $1 OR fk_user = ANY($2)",
     )
     .bind(email)
+    .bind(&user_ids)
     .execute(pool)
     .await?;
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
-        .bind(email)
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+        .bind(&user_ids)
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Framework 内层门探针（establish-age-graph-analysis-plane 5.3 等价性守门）：
+/// `require_resource_access` 唯一实现的直调面——dry-run 预测 vs 真实写库后决策对比用。
+pub async fn permissions_probe(
+    pool: &PgPool,
+    user_id: i64,
+    resource_type: &str,
+    resource_id: i64,
+    action: &str,
+) -> bool {
+    ::common::permissions::require_resource_access(
+        pool,
+        user_id,
+        resource_type,
+        resource_id,
+        action,
+    )
+    .await
+    .is_ok()
 }

@@ -1,0 +1,21 @@
+[package]
+name = "ngac-host"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "NGAC 宿主侧求值器：资源作用域决策输入装配（闭包/上限/creator）+ 唯一策略图快照容器 + 决策输入 SQL（openspec extract-ngac-decision-host）"
+
+[dependencies]
+# 纯决策核心（ngac-host 消费其 evaluate_merge_in / decide_ordered / IndexedPolicyGraph）
+ngac-decision = { path = "../ngac-decision" }
+sqlx = { workspace = true }
+arc-swap = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Rhai 条件求值器（`conditions = {"rhai": …}` 第三形态的宿主侧唯一实现；
+# change wire-org-policy-declaration-fields §D1b）。决策核心 `ngac-decision` MUST NOT 依赖本 crate。
+runtime-engine = { path = "../runtime-engine" }
+tokio = { workspace = true }
+log = { workspace = true }

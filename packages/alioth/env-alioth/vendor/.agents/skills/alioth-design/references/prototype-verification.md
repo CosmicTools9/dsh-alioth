@@ -9,7 +9,7 @@
 | 目标                                       | CSS 文件                            | 布局类          | Vendor 路径深度        | `<link>` 路径                                                                                  |
 | ------------------------------------------ | ----------------------------------- | --------------- | ---------------------- | ---------------------------------------------------------------------------------------------- |
 | `Pre-Proc/{ns}/Prototypes/Modules/{name}/` | `prototype-base.css + 内联组件 CSS` | Tailwind 工具类 | 5 级 `../../../../../` | `../../../../../.agents/skills/alioth-design/references/prototype-base.css`                    |
-| `Meta/`                                    | `meta-layout.css`                   | `al-*`          | 3 级 `../../../`       | `../../../Framework/frontend/components/src/meta-layout.css`                                   |
+| `Meta/`                                    | `prototype-base.css + 内联组件 CSS` | Tailwind 工具类 | 3 级 `../../../`       | `../../../.agents/skills/alioth-design/references/prototype-base.css`                          |
 | `Gateway/`                                 | `prototype-base.css + 内联组件 CSS` | Tailwind 工具类 | —                      | 生产用 Tailwind（不直接引用此文件）；原型统一走 references/（已弃用 `tailwind-utilities.css`） |
 
 **路径验证公式**：
@@ -112,7 +112,7 @@ header.h-14
   └── 右侧: SearchSlot + InboxTrigger + ScheduleTrigger + ApprovalTrigger + UserMenu
 ```
 
-**WorkspaceDock** (来自 `Gateway/frontend/src/components/workspace/WorkspaceDock.tsx`):
+**WorkspaceDock** (来自 `Framework/frontend/components/src/components/workspace/WorkspaceDock.tsx`):
 
 ```jsx
 <WorkspaceDock slots={[inbox, schedule, approval]} />

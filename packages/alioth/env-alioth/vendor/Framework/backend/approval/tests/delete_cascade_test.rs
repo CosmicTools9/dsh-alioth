@@ -17,9 +17,9 @@ const USER_ID: i64 = 434343;
 async fn test_user(pool: &PgPool) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'cascade-test', 'cascade-test', 'cascade@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'cascade-test', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)

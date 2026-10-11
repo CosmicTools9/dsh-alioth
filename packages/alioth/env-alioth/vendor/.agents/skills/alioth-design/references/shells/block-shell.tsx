@@ -101,8 +101,8 @@ export function renderBlockShell(opts: BlockShellOpts): string {
     <div class="flex h-screen flex-col overflow-hidden bg-background">
       <header class="h-14 border-b flex items-center justify-between px-6 bg-background shrink-0">
         <div class="flex items-center gap-2 min-w-0 relative h-full">
-          <a href="#" class="flex items-center gap-2.5 text-foreground no-underline min-w-0">
-            <span class="text-lg font-bold whitespace-nowrap hidden sm:inline">Cosmic-Tools</span>
+          <a href="#" class="flex items-center gap-2.5 text-foreground no-underline min-w-0 overflow-hidden">
+            <span class="text-lg font-bold whitespace-nowrap hidden sm:inline truncate">Alioth Studio</span>
           </a>
           <div class="hidden sm:flex items-center h-full gap-0.5 pl-1 min-w-0">
             <a href="#" class="relative inline-flex items-center gap-1.5 px-3 py-1 text-[13px] font-medium no-underline transition-colors text-foreground bg-background border border-border border-b-transparent rounded-t-lg shadow-tab min-w-0 max-w-[42vw]" title="${title}">
@@ -122,7 +122,7 @@ export function renderBlockShell(opts: BlockShellOpts): string {
     })}
   </header>
       <div class="flex flex-1 min-h-0 overflow-hidden">
-        <aside class="hidden md:flex flex-col border-r bg-secondary shrink-0 w-60">
+        <aside data-shell-sidebar="" class="hidden md:flex flex-col border-r bg-secondary shrink-0 w-60">
           <nav class="flex flex-col gap-1 py-2 flex-1 overflow-y-auto">
             <div class="px-4 pt-3.5 pb-1 mb-1 text-[10px] font-bold uppercase tracking-[0.06em] text-muted-foreground/55">当前 Block</div>
             <a href="#" class="flex items-center gap-2.5 px-4 py-2 mx-2 rounded-lg text-sm font-medium bg-primary/10 text-primary font-semibold">${title}</a>
@@ -139,7 +139,7 @@ export function renderBlockShell(opts: BlockShellOpts): string {
                 <div id="root">${previewMode ? blockPreviewPlaceholder(title) : ''}</div>
               </div>
               <footer class="hidden md:flex h-10 border-t items-center justify-between px-4 md:px-6 text-xs text-muted-foreground shrink-0 bg-card">
-                <span class="overflow-hidden text-ellipsis whitespace-nowrap">© 2026 Cosmic-Tools</span>
+                <span class="overflow-hidden text-ellipsis whitespace-nowrap">© 2026 Alioth Studio</span>
                 <span class="hidden sm:inline overflow-hidden text-ellipsis whitespace-nowrap">0.1.1</span>
               </footer>
         </div>

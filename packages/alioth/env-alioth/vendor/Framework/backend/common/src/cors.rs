@@ -36,6 +36,11 @@ pub fn build_cors() -> Result<Cors, String> {
             header::AUTHORIZATION,
             header::ACCEPT,
             header::CONTENT_TYPE,
+            // change implement-csrf-protection（design.md §8）：
+            // ① X-CSRF-Token —— 前端携带面，缺此则跨域写请求 preflight 失败；
+            // ② x-auth-cookie-scope —— 既有 scoped cookie 隔离特性所需（此前遗漏，OA 跨域直连 preflight 失败）。
+            header::HeaderName::from_static(crate::csrf::CSRF_HEADER),
+            header::HeaderName::from_static(crate::csrf::SCOPE_HEADER),
         ])
         .supports_credentials()
         .max_age(3600);

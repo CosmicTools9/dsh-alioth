@@ -170,7 +170,9 @@ pub async fn options(req: HttpRequest, pool: web::Data<PgPool>) -> HttpResponse 
 #[derive(Debug, Deserialize)]
 pub struct PersonalBindingBody {
     pub real_name: String,
+    #[serde(with = "common::serde_zuid")]
     pub employer_org_id: i64,
+    #[serde(with = "common::serde_zuid")]
     pub position_id: i64,
 }
 
@@ -459,9 +461,11 @@ pub async fn bind_personal(
 pub struct EnterpriseBindingBody {
     pub company_name: String,
     pub representative_name: Option<String>,
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub parent_org_id: Option<i64>,
     /// m2o（fix-ngac-entity-binding-m2o）：绑定已有组织实体（可选）。
     /// 提供 entity_id + entity_table 时直接绑定该实体，不新建企业。
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub entity_id: Option<i64>,
     /// 已有组织实体的 entity_table（组织类白名单校验，见 is_org_table）。
     pub entity_table: Option<String>,

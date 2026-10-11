@@ -187,6 +187,13 @@ pub async fn create_api_client(
                 "error": "Client ID already exists"
             }));
         }
+        Err(CreateClientError::InvalidScope(invalid)) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "INVALID_SCOPE",
+                "message": "scope 文法外值（合法形 {action}:{entity} 或通配 *:{entity} / *）",
+                "details": invalid,
+            }));
+        }
         Err(CreateClientError::Insert(e)) => {
             log::error!("create_api_client insert error: {}", e);
             return HttpResponse::Conflict().json(serde_json::json!({
@@ -292,7 +299,20 @@ pub async fn update_api_client(
         sets.push(format!("client_name = ${}", idx));
         idx += 1;
     }
-    if body.scopes.is_some() {
+    if let Some(scopes) = body.scopes.as_ref() {
+        // 管理面同走单源文法（允许显式通配——NGAC openapi_admin:0 授信下的授予）
+        let invalid: Vec<String> = scopes
+            .iter()
+            .filter(|s| !common::openapi_scope::is_valid_scope(s))
+            .cloned()
+            .collect();
+        if !invalid.is_empty() {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "INVALID_SCOPE",
+                "message": "scope 文法外值（合法形 {action}:{entity} 或通配 *:{entity} / *）",
+                "details": invalid,
+            }));
+        }
         sets.push(format!("scopes = ${}::TEXT[]", idx));
         idx += 1;
     }

@@ -71,6 +71,12 @@ const SYNC_SET: readonly { readonly source: string; readonly dest: string }[] = 
   { source: 'scripts/check/check-module-blocks.mjs', dest: 'scripts/check/check-module-blocks.mjs' },
   { source: 'scripts/check/check-module-contract.mjs', dest: 'scripts/check/check-module-contract.mjs' },
   { source: 'scripts/check/check-shared-kernel.ts', dest: 'scripts/check/check-shared-kernel.ts' },
+  // The gate scripts above import a shared kit (`./lib/check-interface`,
+  // `./lib/gate-kit`, `./lib/baseline*`), and alioth-compose 1.5 / alioth-gui 1.6
+  // spawn the app-frontend isolation gate. Missing either ships a gate program
+  // that dies on module resolution at run time.
+  { source: 'scripts/check/lib', dest: 'scripts/check/lib' },
+  { source: 'scripts/check/check-app-frontend-isolation.ts', dest: 'scripts/check/check-app-frontend-isolation.ts' },
   // Prototype-chain gates + capability catalog (2026-09-22 catch-up). Each is
   // spawned by adapters that shipped without it:
   //   capability-catalog.ts          alioth-block 1.2 --check (alioth-block.yaml:29)

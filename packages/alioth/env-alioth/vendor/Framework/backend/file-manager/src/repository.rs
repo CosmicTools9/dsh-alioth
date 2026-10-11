@@ -31,6 +31,10 @@ pub trait FileRepository: Send + Sync {
     async fn find_by_id(&self, id: i64, user: Option<i64>)
         -> Result<Option<FileRecord>, FileError>;
 
+    /// 写面可见性查找（删除 / 改写的行级授权）：创建者或显式 `ak_*` 授权命中（`ROW_AUTH_WRITE`，
+    /// **不含**读面的「三列全空即开放」）。
+    async fn find_by_id_owned(&self, id: i64, user: i64) -> Result<Option<FileRecord>, FileError>;
+
     /// Soft-delete a file row (kind 由存储链解析)。
     async fn soft_delete(&self, id: i64, deleted_by_id: Option<i64>) -> Result<bool, FileError>;
 
@@ -68,8 +72,23 @@ impl SqlxFileRepository {
         Self { pool }
     }
 
-    /// 行级授权谓词片段（绑定 $user）。
-    const ROW_AUTH: &'static str = r#"
+    /// 行级授权谓词片段（绑定 $user）——**读**面（下载 / 列表 / 预签名）。
+    ///
+    /// 用户裁决 2026-10-08「平台要看到全部的」：**未声明 `ak_*` 限制的行**（门户 / 司机等外部身份
+    /// 上传的文件行不写授权列 ⇒ 三列全空）对同命名空间调用方**开放读取**；显式声明了限制的行仍按
+    /// 行级授权。跨命名空间仍由调用方 `verify_namespace`（存储链前缀）拦断。
+    const ROW_AUTH_READ: &'static str = r#"
+        AND (f.created_by_id = $USER
+             OR $USER = ANY(f.ak_access_user)
+             OR $USER = ANY(f.ak_permit_user)
+             OR $USER = ANY(f.ak_benefit_user)
+             OR (f.ak_access_user IS NULL AND f.ak_permit_user IS NULL
+                 AND f.ak_benefit_user IS NULL))
+    "#;
+
+    /// 行级授权谓词片段（绑定 $user）——**写**面（删除 / 改写）：创建者或显式 `ak_*` 授权命中。
+    /// 与读面的差异 = **不含**「三列全空即开放」那条（外部身份上传的行不得被任意人删除/改写）。
+    const ROW_AUTH_WRITE: &'static str = r#"
         AND (f.created_by_id = $USER
              OR $USER = ANY(f.ak_access_user)
              OR $USER = ANY(f.ak_permit_user)
@@ -114,7 +133,7 @@ impl SqlxFileRepository {
 
         let row = if let Some(uid) = user {
             // 行级授权谓词（$USER 从 $2 起）
-            let sql = format!("{base}{}", Self::ROW_AUTH.replace("$USER", "$2"));
+            let sql = format!("{base}{}", Self::ROW_AUTH_READ.replace("$USER", "$2"));
             sqlx::query_as::<_, FileRow>(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(id)
                 .bind(uid)
@@ -204,7 +223,7 @@ impl SqlxFileRepository {
         let mut param: usize = 0;
         if user.is_some() {
             param += 1;
-            sql.push_str(&Self::ROW_AUTH.replace("$USER", &format!("${param}")));
+            sql.push_str(&Self::ROW_AUTH_READ.replace("$USER", &format!("${param}")));
         }
         if namespace.is_some() {
             param += 1;
@@ -256,6 +275,24 @@ impl FileRepository for SqlxFileRepository {
         user: Option<i64>,
     ) -> Result<Option<FileRecord>, FileError> {
         self.fetch_file(id, user).await
+    }
+
+    /// 写面（删除 / 改写）可见性：**仅创建者**（`ROW_AUTH_WRITE`）；无 user ⇒ None。
+    async fn find_by_id_owned(&self, id: i64, user: i64) -> Result<Option<FileRecord>, FileError> {
+        let Some(kind) = self.resolve_kind(id).await? else {
+            return Ok(None);
+        };
+        let sql = format!(
+            "{}{}",
+            kind.sql().base_select,
+            Self::ROW_AUTH_WRITE.replace("$USER", "$2")
+        );
+        let row = sqlx::query_as::<_, FileRow>(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(id)
+            .bind(user)
+            .fetch_optional(&self.pool)
+            .await?;
+        self.decorate(row, kind).await
     }
 
     async fn soft_delete(&self, id: i64, deleted_by_id: Option<i64>) -> Result<bool, FileError> {

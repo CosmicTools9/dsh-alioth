@@ -38,6 +38,7 @@ async fn flow_branch_and_context_leaf_are_bare_under_public_search_path() {
             filter_value: None,
             sort_field: None,
             sort_order: None,
+            search: None,
         })
         .await
         .expect("list flows");

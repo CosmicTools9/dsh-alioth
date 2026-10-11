@@ -32,7 +32,6 @@ async fn create_test_tables(pool: &PgPool) {
             expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
             used_at TIMESTAMP WITH TIME ZONE,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
             CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (id),
             CONSTRAINT password_reset_tokens_user_id_fkey
                 FOREIGN KEY (user_id) REFERENCES isahl_auth.auth_users(id) ON DELETE CASCADE
@@ -64,46 +63,71 @@ async fn create_test_tables(pool: &PgPool) {
     .ok();
 }
 
-/// Generate a test user with a known password hash
+/// Generate a test user with a known password hash（email 落 auth_user_emails）
 async fn setup_user(pool: &PgPool, email: &str) -> i64 {
     // Idempotent upsert: tests run in parallel / across runs sharing the DB, so a bare
-    // INSERT collides on the unique email/name. Deriving name+username from the email
-    // keeps them unique per call; upsert-then-select is race-safe.
+    // INSERT collides on the unique username. Deriving username from the email keeps it
+    // unique per call; upsert-then-select is race-safe.
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.auth_users (id, name, username, email, password_hash, status, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), $1, $1, $1, 'old_hash', 'active', NOW(), NOW())
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO isahl_auth.auth_users (id, username, password_hash, status, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), $1, 'old_hash', 'active', NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
         "#,
     )
     .bind(email)
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar::<_, i64>(
+    let user_id: i64 = sqlx::query_scalar::<_, i64>(
         r#"
-        SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1
+        SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1
         "#,
     )
     .bind(email)
     .fetch_one(pool)
     .await
-    .expect("Failed to create/find test user")
+    .expect("Failed to create/find test user");
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, $2, TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 async fn cleanup_by_email(pool: &PgPool, email: &str) {
     sqlx::query(
         r#"
         DELETE FROM isahl_auth.password_reset_tokens
-        WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)
+        WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)
         "#,
     )
     .bind(email)
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
-        .bind(email)
+    // 邮箱行先行（auth_user_emails 入边 FK 无 ON DELETE CASCADE）：先取 id 再删
+    let user_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1")
+            .bind(email)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(&user_ids)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+        .bind(&user_ids)
         .execute(pool)
         .await
         .ok();
@@ -129,7 +153,7 @@ async fn test_request_reset_generates_token() {
 
     // Simulate request_reset: find user by email, generate token, insert
     let found_user: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1")
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)")
             .bind(email)
             .fetch_one(&pool)
             .await
@@ -142,8 +166,8 @@ async fn test_request_reset_generates_token() {
 
     let token_id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO isahl_auth.password_reset_tokens (user_id, token_hash, expires_at, created_at, updated_at)
-        VALUES ($1, $2, $3, NOW(), NOW())
+        INSERT INTO isahl_auth.password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, $2, $3)
         RETURNING id
         "#,
     )
@@ -196,8 +220,8 @@ async fn test_confirm_reset_changes_password() {
 
     let token_id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO isahl_auth.password_reset_tokens (user_id, token_hash, expires_at, created_at, updated_at)
-        VALUES ($1, $2, $3, NOW(), NOW())
+        INSERT INTO isahl_auth.password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, $2, $3)
         RETURNING id
         "#,
     )
@@ -246,13 +270,11 @@ async fn test_confirm_reset_changes_password() {
     .expect("Password update should succeed");
 
     // Step 4: Mark token as used
-    sqlx::query(
-        "UPDATE isahl_auth.password_reset_tokens SET used_at = NOW(), updated_at = NOW() WHERE id = $1",
-    )
-    .bind(token_id)
-    .execute(&pool)
-    .await
-    .expect("Token used flag update should succeed");
+    sqlx::query("UPDATE isahl_auth.password_reset_tokens SET used_at = NOW() WHERE id = $1")
+        .bind(token_id)
+        .execute(&pool)
+        .await
+        .expect("Token used flag update should succeed");
 
     // Step 5: Verify password hash changed
     let stored_hash: Option<String> =
@@ -309,8 +331,8 @@ async fn test_expired_token_is_rejected() {
 
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.password_reset_tokens (user_id, token_hash, expires_at, created_at, updated_at)
-        VALUES ($1, $2, $3, NOW(), NOW())
+        INSERT INTO isahl_auth.password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, $2, $3)
         "#,
     )
     .bind(user_id)
@@ -369,7 +391,7 @@ async fn test_request_reset_nonexistent_email_returns_empty() {
 
     // Simulate request_reset: try to find user by email
     let found: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1")
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)")
             .bind(nonexistent_email)
             .fetch_optional(&pool)
             .await

@@ -1,4 +1,4 @@
-//! LDAP 登录集成测试（fix-sso-id-default-heal：sso-gap-report 剩余项闭环）
+//! LDAP 登录集成测试（fix-sso-id-default-heal 交付项：LDAP 负路径集成覆盖）
 //!
 //! 负路径常跑（无需真实 LDAP server）：
 //! - 未配置 → 503「LDAP 认证未配置」
@@ -206,13 +206,30 @@ async fn ldap_login_real_server_full_flow() {
     assert_eq!(resp.status(), 200, "真实 LDAP 登录应 200");
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(!body["access_token"].as_str().unwrap_or_default().is_empty());
-    assert_eq!(body["user"]["is_ldap_user"], true);
+    // LDAP 绑定形态：`ldap = {"dn": …}`（非 LDAP 账号为 NULL）
+    let dn = body["user"]["ldap"]["dn"].as_str().unwrap_or_default();
+    assert!(!dn.is_empty(), "LDAP 登录响应 MUST 携带非空 ldap.dn");
 
     // 清理：配置 + 同步落库的 LDAP 用户（username/email 按 env 输入兜底清除）
     purge_configs(&pool, "it-ldap").await;
-    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = $1 OR email = $2")
-        .bind(&username)
-        .bind(format!("{username}@ldap.test"))
+    // 先删邮箱行（auth_user_emails 入边 FK 无 ON DELETE CASCADE），再删账号；
+    // 键与原语义一致：username 句柄 ∪ email 句柄
+    let ldap_email = format!("{username}@ldap.test");
+    let user_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users WHERE username = $1 \
+         UNION SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $2",
+    )
+    .bind(&username)
+    .bind(&ldap_email)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(&user_ids)
+        .execute(&pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+        .bind(&user_ids)
         .execute(&pool)
         .await;
 }

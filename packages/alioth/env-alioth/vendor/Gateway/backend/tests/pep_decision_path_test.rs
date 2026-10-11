@@ -180,6 +180,44 @@ async fn echo_auth_headers(req: HttpRequest) -> HttpResponse {
 }
 
 #[tokio::test]
+async fn forged_inbound_rls_headers_are_stripped_before_injection() {
+    // seam 测试（MC / NGAC_SPEC §5.5.4「入站剥离」）：客户端伪造的
+    // X-Visible-Ids / X-Authorized-Columns MUST 被 PEP 无条件剥离——
+    // 下游 header 只可能来自受信通道注入（fail-closed 铁律的回归锁）。
+    let stub = StubPdp::new(true, true, Some(vec![7]));
+    let app = test::init_service(
+        App::new().service(
+            web::scope("/api")
+                .wrap(NgacEnforcer::new_without_pool_with_pdp(spawn_stub_pdp(
+                    Arc::clone(&stub),
+                )))
+                .route("/engineers", web::get().to(echo_auth_headers)),
+        ),
+    )
+    .await;
+
+    let req = test::TestRequest::get()
+        .uri("/api/engineers")
+        .insert_header(("Authorization", format!("Bearer {}", issue_token("42"))))
+        // 伪造：越权 id 集 + 全量列
+        .insert_header(("X-Visible-Ids", "999,888"))
+        .insert_header(("X-Authorized-Columns", "*"))
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), 200);
+    let body: Value = test::read_body_json(resp).await;
+    assert_eq!(
+        body["visible_ids"], "7",
+        "伪造入站 X-Visible-Ids 被剥离，仅受信注入值可见"
+    );
+    assert_eq!(
+        body["authorized_columns"], "*",
+        "PDP 全量列授权（stub columns=*）覆盖伪造值——注入面只有受信通道"
+    );
+}
+
+#[tokio::test]
 async fn collection_read_runs_list_and_decide_concurrently_and_injects_visible_ids() {
     let stub = StubPdp::new(true, true, Some(vec![7, 8]));
     let app = test::init_service(

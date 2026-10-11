@@ -4,12 +4,12 @@
 //! 基础设施表由代码运行时 ensure 幂等自愈（对齐 Gateway seed
 //! `ensure_gateway_seed_self_check` 先例）。本模块自愈范围：
 //!
-//! 1. **扩展表建表**（业务扩展三张 + D-1 规范资产三张）：
+//! 1. **扩展表建表**（业务扩展三张 + D-1 权限规范三张）：
 //!    - `ngac_access_request`（权限申请，add-ngac-access-request）
 //!    - `ngac_delegation`（通用委托，add-ngac-delegation）
 //!    - `ngac_binding_request`（绑定申请，add-ngac-binding-request）
 //!    - `org_policy_class` / `org_policy_rule` / `org_policy_label`
-//!      （规范资产线，d1-org-policy-assets；state 链 CHECK + 审计列；
+//!      （权限规范线，d1-org-policy-assets；state 链 CHECK + 审计列；
 //!      label 表 code 主键，label_code 仅存 code 字符串不 FK 冻结域）
 //! 2. **030 版本信号自愈**：`ngac_policy_version` 兜底 + bump 触发器
 //!    （SQL 为代码内嵌资产 `ngac/sql/030_ngac_policy_version_signal.sql`，随 crate 编译；
@@ -55,7 +55,7 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
     }
     // 1. 扩展表（表 + 索引；编译期字面量，AssertSqlSafe 显式审计；
     //    多语句经 raw_sql 执行——prepared 协议不支持多语句）。
-    //    前三条：业务扩展表；后三条：D-1 规范资产表（org_policy_class/
+    //    前三条：业务扩展表；后三条：D-1 权限规范表（org_policy_class/
     //    rule/label，d1-org-policy-assets；rule 的 policy_class_id 依赖
     //    class 先建——同循环顺序保证）
     for stmt in [
@@ -114,7 +114,32 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
         );
         CREATE INDEX IF NOT EXISTS idx_ngac_binding_request_user
             ON isahl_auth.ngac_binding_request (fk_user, status) WHERE deleted_at IS NULL"#,
-        // 规范资产（D-1 org-policy-assets；DDL 概念见 ngac-org-phase-d1-spec §2）。
+        // NGAC 义务表（`ngac_obligation`，NGAC_SPEC §2.6）：**历史由仓外迁移引入**
+        // （2026-09-30 实测：本仓无其 CREATE TABLE；活库形态 = 12 列、**无 PK/索引**）。
+        // 此处为 **fresh 库**给出规范形态（PK + 读径部分索引）：否则新库无该表 ⇒
+        // 义务求值静默失效（`ngac/obligation.rs` 按空义务 fail-safe）。
+        // 已存在库由 `IF NOT EXISTS` 保持原样（存量库补 PK/索引需另立迁移，不在此隐式 ALTER）。
+        r#"CREATE TABLE IF NOT EXISTS isahl_auth.ngac_obligation (
+            id BIGINT PRIMARY KEY DEFAULT isahl.gen_next_zuid(),
+            o_name TEXT,
+            event_pattern TEXT,
+            response_ops JSONB DEFAULT '[]'::jsonb,
+            is_active BOOLEAN DEFAULT TRUE,
+            priority INTEGER DEFAULT 0,
+            conditions JSONB DEFAULT '{}'::jsonb,
+            phase TEXT NOT NULL DEFAULT 'post' CHECK (phase IN ('pre', 'post')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by_id BIGINT,
+            updated_by_id BIGINT,
+            deleted_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_ngac_obligation_active
+            ON isahl_auth.ngac_obligation (priority, id) WHERE is_active AND deleted_at IS NULL;
+        -- 存量库追加 pre/post 相位列（add-ngac-pre-obligations）：加性，默认 'post' ⇒ 语义不变。
+        ALTER TABLE isahl_auth.ngac_obligation
+            ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'post' CHECK (phase IN ('pre', 'post'))"#,
+        // 权限规范（D-1 org-policy-assets；DDL 概念见 ngac-org-phase-d1-spec §2）。
         // class：draft→in_review→active→retired 状态链 + 新版本链；部分唯一
         // (code WHERE deleted_at IS NULL AND state <> 'retired') 语义由服务层
         // 保证，此处落 (code, version) 全唯一 + state 部分索引
@@ -184,6 +209,38 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
         );
         CREATE INDEX IF NOT EXISTS idx_org_policy_label_active
             ON isahl_auth.org_policy_label (is_active) WHERE deleted_at IS NULL"#,
+        // SoD 冲突对（establish-age-graph-analysis-plane 任务 3.2；规约
+        // openspec/specs/ngac-graph-analysis :: sod-conflict-pair-configuration）：
+        // UA 级冲突对（无 rights 维——spec delta 口径）；检测 = 同一用户有效 UA
+        // 闭包内冲突对两侧（分析端点族 `ngac/analysis.rs` 唯一消费方）。
+        r#"CREATE TABLE IF NOT EXISTS isahl_auth.ngac_sod_pair (
+            id BIGINT PRIMARY KEY DEFAULT isahl.gen_next_zuid(),
+            o_name TEXT NOT NULL,
+            fk_ua_a BIGINT NOT NULL REFERENCES isahl_auth.ngac_user_attribute(id) ON DELETE CASCADE,
+            fk_ua_b BIGINT NOT NULL REFERENCES isahl_auth.ngac_user_attribute(id) ON DELETE CASCADE,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by_id BIGINT,
+            updated_by_id BIGINT,
+            deleted_at TIMESTAMPTZ,
+            CONSTRAINT ck_ngac_sod_pair_distinct CHECK (fk_ua_a <> fk_ua_b)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ngac_sod_pair_active
+            ON isahl_auth.ngac_sod_pair (id) WHERE is_active AND deleted_at IS NULL"#,
+        // 死面退役（drop-ngac-dead-schema，2026-10-06 用户裁决「删除全部死面」）：
+        // 全仓零读写对象幂等下线——任意存量库（含 pre/prod）下次启动自愈收敛；
+        // 恢复源 = Backup DDL 快照 + change design 逆语句。边界：业务根表
+        // zc_id_lifecycle 的 ak_* 属权列与 ngac_object_attribute.resource_identifier 不动。
+        r#"DROP TABLE IF EXISTS isahl_auth.ngac_resource_identifier;
+        ALTER TABLE isahl_auth.ngac_object_attribute DROP COLUMN IF EXISTS ak_permit_user;
+        ALTER TABLE isahl_auth.ngac_object_attribute DROP COLUMN IF EXISTS ak_benefit_user;
+        ALTER TABLE isahl_auth.ngac_object_attribute DROP COLUMN IF EXISTS ak_access_user;
+        ALTER TABLE isahl_auth.ngac_association DROP COLUMN IF EXISTS condition_expr"#,
+        // 关联到期列（change add-ngac-grant-revocation-and-expiry）：加性，NULL = 永不过期（语义不变）；
+        // 到期由决策侧装载面过滤（`ngac-host::load_policy_graph`）+ 快照到期重载。
+        r#"ALTER TABLE isahl_auth.ngac_association
+               ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"#,
     ] {
         if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(stmt)).execute(pool).await {
             log::warn!(
@@ -195,31 +252,69 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
         }
     }
 
-    // 1.5 auth_users 幂等自愈（schema 对齐 git 456b0fa51 版 001；isahl_auth
-    //    基础设施表由运行时 ensure 自愈——零 DDL 交付裁决范围）
+    // 1.4 账号枚举类型（openspec/specs/auth-users-schema：status/user_type 为原生枚举）。
+    //     MUST 先于 1.5 的 auth_users 建表——建表字面直接引用这两个类型。
     if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(
-        r#"CREATE TABLE IF NOT EXISTS isahl_auth.auth_users (
+        r#"DO $enums$
+        BEGIN
+            -- 并发自愈序列化：多进程（生产 N worker / 测试并行二进制）同时启动时，
+            -- check-then-act 的建类型/迁列 MUST 串行，否则竞争 duplicate_object / 42501。
+            -- 事务级锁（raw_sql = 单隐式事务）⇒ 语句结束自动释放。
+            PERFORM pg_advisory_xact_lock(hashtext('isahl_auth'), hashtext('auth_users'));
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+                 WHERE n.nspname = 'isahl_auth' AND t.typname = 'auth_user_status'
+            ) THEN
+                CREATE TYPE isahl_auth.auth_user_status AS ENUM
+                    ('active', 'pending', 'pending_approval', 'identity_submitted', 'disabled', 'rejected');
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+                 WHERE n.nspname = 'isahl_auth' AND t.typname = 'auth_user_type'
+            ) THEN
+                CREATE TYPE isahl_auth.auth_user_type AS ENUM
+                    ('standard', 'external', 'service', 'system');
+            END IF;
+        END
+        $enums$;"#,
+    ))
+    .execute(pool)
+    .await
+    {
+        log::warn!("ensure_ngac_extension_tables: 账号枚举类型自愈失败（重启后重试）: {}", e);
+    }
+
+    // 1.5 auth_users 幂等自愈（形态 = openspec/specs/auth-users-schema「凭据 + 状态 + 主体绑定」；
+    //     name/email/is_ldap_user/ldap_dn 已下线——LDAP 绑定 = ldap jsonb，邮箱唯一存储 =
+    //     auth_user_emails，显示名读径 = COALESCE(display_name, username)；
+    //     isahl_auth 基础设施表由运行时 ensure 自愈——零 DDL 交付裁决范围）
+    if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(
+        r#"SELECT pg_advisory_xact_lock(hashtext('isahl_auth'), hashtext('auth_users'));
+        CREATE TABLE IF NOT EXISTS isahl_auth.auth_users (
             id BIGINT PRIMARY KEY DEFAULT isahl.gen_next_zuid(),
             username TEXT UNIQUE,
-            name TEXT,
-            email TEXT,
             password_hash TEXT,
-            phone TEXT,
-            full_name TEXT,
-            avatar_url TEXT,
-            display_name TEXT,
-            is_active BOOLEAN DEFAULT true,
-            is_verified BOOLEAN DEFAULT false,
-            mfa_enabled BOOLEAN DEFAULT false,
-            mfa_secret TEXT,
-            mfa_bypass_codes TEXT[],
-            is_ldap_user BOOLEAN DEFAULT false,
-            ldap_dn TEXT,
-            entity_table TEXT,
-            entity_id BIGINT,
-            settings JSONB DEFAULT '{}',
+            status isahl_auth.auth_user_status DEFAULT 'active',
+            user_type isahl_auth.auth_user_type DEFAULT 'standard',
+            last_login_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by_id BIGINT,
+            updated_by_id BIGINT,
+            mfa_secret TEXT,
+            mfa_enabled BOOLEAN DEFAULT false,
+            mfa_bypass_codes TEXT[],
+            is_active BOOLEAN DEFAULT true,
+            display_name TEXT,
+            ldap JSONB,
+            entity_id BIGINT,
+            entity_table TEXT,
+            fk_policy_class BIGINT REFERENCES isahl_auth.ngac_policy_class (id),
+            settings JSONB DEFAULT '{}',
+            failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+            locked_until TIMESTAMPTZ,
+            notification_preferences JSONB NOT NULL DEFAULT '{}',
+            subscriptions JSONB NOT NULL DEFAULT '[]'
         );
         -- 邮箱 MUST NOT 全局唯一（allow-duplicate-email-accounts）：同一 email MAY 属于多个账号；
         -- 唯一身份基点 = username（其去重 + 唯一索引保留，见下）。
@@ -237,7 +332,7 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
         CREATE UNIQUE INDEX IF NOT EXISTS auth_users_username_key
             ON isahl_auth.auth_users (username);
         CREATE INDEX IF NOT EXISTS idx_auth_users_username ON isahl_auth.auth_users(username);
-        CREATE INDEX IF NOT EXISTS idx_auth_users_email ON isahl_auth.auth_users(email);
+        -- idx_auth_users_email / idx_auth_users_name / idx_auth_users_ldap 均随列下线（见 1.6 迁移块）
         CREATE INDEX IF NOT EXISTS idx_auth_users_active ON isahl_auth.auth_users(is_active);
         -- auth_user_emails：全局 email 唯一 → 账号内 (fk_user, email) 唯一。
         -- to_regclass 守卫：该表由 SSO migrations 034 建立，未迁移库 MUST NOT 阻断本段。
@@ -296,6 +391,117 @@ pub async fn ensure_ngac_extension_tables(pool: &PgPool) {
     .await
     {
         log::warn!("ensure_ngac_extension_tables: auth_users 自愈失败: {}", e);
+    }
+
+    // 1.6 auth_users 结构性迁移（openspec/specs/auth-users-schema）：未迁移库 → 目标形态。
+    //     顺序不变量：回填先于删列；枚举类型/域校验先于列类型转换。
+    //     独立 raw_sql（与 1.5 隔离）——域外值 fail-loud 时不连带回滚 1.5 的建表/索引自愈。
+    if let Err(e) = sqlx::raw_sql(sqlx::AssertSqlSafe(
+        r#"DO $mig$
+        DECLARE
+            v_bad text;
+        BEGIN
+            -- 并发自愈序列化（同 1.4）：迁移 DDL 与并发进程的 check-then-act 互斥
+            PERFORM pg_advisory_xact_lock(hashtext('isahl_auth'), hashtext('auth_users'));
+            -- ① LDAP：收敛到单列 jsonb（先加列，再回填旧两列）
+            ALTER TABLE isahl_auth.auth_users ADD COLUMN IF NOT EXISTS ldap JSONB;
+            IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'isahl_auth.auth_users'::regclass
+                        AND attname = 'ldap_dn' AND NOT attisdropped) THEN
+                UPDATE isahl_auth.auth_users
+                   SET ldap = jsonb_build_object('dn', ldap_dn)
+                 WHERE ldap IS NULL AND ldap_dn IS NOT NULL;
+            END IF;
+
+            -- ② 邮箱：唯一存储 = auth_user_emails（表缺失则建；回填 MUST 先于删列）
+            CREATE TABLE IF NOT EXISTS isahl_auth.auth_user_emails (
+                id BIGINT PRIMARY KEY DEFAULT isahl.gen_next_zuid(),
+                fk_user BIGINT NOT NULL REFERENCES isahl_auth.auth_users (id),
+                email TEXT NOT NULL,
+                is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+                verified BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                deleted_at TIMESTAMPTZ,
+                deleted_by_id BIGINT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_user_emails_fk_user_email
+                ON isahl_auth.auth_user_emails (fk_user, email) WHERE deleted_at IS NULL;
+            CREATE INDEX IF NOT EXISTS idx_auth_user_emails_user ON isahl_auth.auth_user_emails (fk_user);
+            CREATE INDEX IF NOT EXISTS idx_auth_user_emails_email ON isahl_auth.auth_user_emails (email);
+            IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'isahl_auth.auth_users'::regclass
+                        AND attname = 'email' AND NOT attisdropped) THEN
+                INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+                SELECT u.id, u.email, TRUE
+                  FROM isahl_auth.auth_users u
+                 WHERE u.email IS NOT NULL
+                   AND NOT EXISTS (SELECT 1 FROM isahl_auth.auth_user_emails e
+                                    WHERE e.fk_user = u.id AND e.email = u.email AND e.deleted_at IS NULL);
+            END IF;
+
+            -- ③ status → 原生枚举（类型探测守卫 => 可重放；域外值 fail-loud 待人工裁决）
+            IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'isahl_auth.auth_users'::regclass
+                        AND attname = 'status' AND NOT attisdropped)
+               AND (SELECT atttypid FROM pg_attribute
+                     WHERE attrelid = 'isahl_auth.auth_users'::regclass
+                       AND attname = 'status' AND NOT attisdropped)
+                   <> 'isahl_auth.auth_user_status'::regtype THEN
+                SELECT string_agg(DISTINCT status::text, ',') INTO v_bad
+                  FROM isahl_auth.auth_users
+                 WHERE status IS NOT NULL
+                   AND status::text NOT IN ('active', 'pending', 'pending_approval',
+                                            'identity_submitted', 'disabled', 'rejected');
+                IF v_bad IS NOT NULL THEN
+                    RAISE EXCEPTION 'auth_users.status 存在枚举域外值（%）——MUST 人工裁决后再迁移', v_bad;
+                END IF;
+                ALTER TABLE isahl_auth.auth_users ALTER COLUMN status DROP DEFAULT;
+                ALTER TABLE isahl_auth.auth_users
+                    ALTER COLUMN status TYPE isahl_auth.auth_user_status
+                    USING status::text::isahl_auth.auth_user_status;
+                ALTER TABLE isahl_auth.auth_users
+                    ALTER COLUMN status SET DEFAULT 'active'::isahl_auth.auth_user_status;
+            END IF;
+
+            -- ③′ user_type → 原生枚举（同上）
+            IF EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'isahl_auth.auth_users'::regclass
+                        AND attname = 'user_type' AND NOT attisdropped)
+               AND (SELECT atttypid FROM pg_attribute
+                     WHERE attrelid = 'isahl_auth.auth_users'::regclass
+                       AND attname = 'user_type' AND NOT attisdropped)
+                   <> 'isahl_auth.auth_user_type'::regtype THEN
+                SELECT string_agg(DISTINCT user_type::text, ',') INTO v_bad
+                  FROM isahl_auth.auth_users
+                 WHERE user_type IS NOT NULL
+                   AND user_type::text NOT IN ('standard', 'external', 'service', 'system');
+                IF v_bad IS NOT NULL THEN
+                    RAISE EXCEPTION 'auth_users.user_type 存在枚举域外值（%）——MUST 人工裁决后再迁移', v_bad;
+                END IF;
+                ALTER TABLE isahl_auth.auth_users ALTER COLUMN user_type DROP DEFAULT;
+                ALTER TABLE isahl_auth.auth_users
+                    ALTER COLUMN user_type TYPE isahl_auth.auth_user_type
+                    USING user_type::text::isahl_auth.auth_user_type;
+                ALTER TABLE isahl_auth.auth_users
+                    ALTER COLUMN user_type SET DEFAULT 'standard'::isahl_auth.auth_user_type;
+            END IF;
+
+            -- ④ 旧列与失效索引下线（回填已完成；DROP COLUMN 连带其唯一约束/索引）
+            DROP INDEX IF EXISTS isahl_auth.idx_auth_users_name;
+            DROP INDEX IF EXISTS isahl_auth.idx_auth_users_email;
+            DROP INDEX IF EXISTS isahl_auth.idx_auth_users_ldap;
+            ALTER TABLE isahl_auth.auth_users DROP COLUMN IF EXISTS name;
+            ALTER TABLE isahl_auth.auth_users DROP COLUMN IF EXISTS email;
+            ALTER TABLE isahl_auth.auth_users DROP COLUMN IF EXISTS is_ldap_user;
+            ALTER TABLE isahl_auth.auth_users DROP COLUMN IF EXISTS ldap_dn;
+
+            -- ⑤ LDAP 存在性部分索引（等价替换旧 idx_auth_users_ldap 的语义）
+            CREATE INDEX IF NOT EXISTS idx_auth_users_ldap
+                ON isahl_auth.auth_users (ldap) WHERE ldap IS NOT NULL;
+        END
+        $mig$;"#,
+    ))
+    .execute(pool)
+    .await
+    {
+        log::warn!("ensure_ngac_extension_tables: auth_users 结构性迁移失败（重启后重试）: {}", e);
     }
 
     // 2. 030 版本信号自愈（ngac_policy_version 兜底 + bump 触发器；SQL 为代码内嵌资产

@@ -4,5 +4,6 @@
 //! 本模块仅 re-export，保持 Gateway 既有调用面兼容。
 
 pub use common::audit::{
-    record_audit_event, record_audit_event_with_metadata, AuditError, Decision,
+    record_audit_event, record_audit_event_with_metadata, record_audit_event_with_obligations,
+    AuditError, Decision, DecisionAudit,
 };

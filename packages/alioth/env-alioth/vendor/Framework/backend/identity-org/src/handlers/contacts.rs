@@ -31,6 +31,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use common::context::require_auth;
 use common::data::ApiResponse;
 use common::permissions::require_resource_access;
+use common::search::like_pattern;
 use common::AliothError as ApiError;
 use crud::entity::AliothDbEntity;
 use crud::reference::build_refs_select_suffix;
@@ -395,7 +396,7 @@ fn push_keyword_filter(builder: &mut sqlx::QueryBuilder<sqlx::Postgres>, q: &Opt
     if kw.is_empty() {
         return;
     }
-    let pat = format!("%{}%", kw);
+    let pat = like_pattern(kw);
     builder.push(" AND (e.notice ILIKE ");
     builder.push_bind(pat.clone());
     builder.push(" OR e.code ILIKE ");
@@ -417,7 +418,7 @@ fn push_natural_keyword_filter(
     if kw.is_empty() {
         return;
     }
-    let pat = format!("%{}%", kw);
+    let pat = like_pattern(kw);
     builder.push(" AND (en.notice ILIKE ");
     builder.push_bind(pat.clone());
     builder.push(" OR en.code ILIKE ");

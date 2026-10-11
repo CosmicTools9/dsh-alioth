@@ -47,6 +47,11 @@ struct Fixture {
     u3: i64,
     u3_email: String,
     ua_id: i64,
+    /// 本测试专属集合级资源类型（`{rt}:0`）——MUST NOT 跨测试共享：两个测试曾共用
+    /// `deleggres:0`，一方 cleanup 删除该 OA 会令另一方 decide 失败（实测非确定性红，302 行）。
+    rt: String,
+    /// 本测试夹具后缀（UA/委托行命名基准；cleanup 按它限定，MUST NOT 用全局通配）。
+    suffix: String,
 }
 
 async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
@@ -68,26 +73,36 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     let mut emails = [String::new(), String::new(), String::new()];
     for (i, tag) in ["d1", "d2", "d3"].iter().enumerate() {
         let email = format!("deleg_{}_{}@alioth.test", tag, suffix);
+        let username = format!("deleg_{}_{}", tag, suffix);
         sqlx::query(
-            "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-             VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-             ON CONFLICT (name) DO NOTHING",
+            "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+             VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+             ON CONFLICT (username) DO NOTHING",
         )
-        .bind(&email)
-        .bind(format!("deleg_{}_{}", tag, suffix))
+        .bind(&username)
         .execute(pool)
         .await
         .expect("insert user");
         ids[i] =
-            sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-                .bind(&email)
+            sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+                .bind(&username)
                 .fetch_one(pool)
                 .await
                 .expect("fetch user");
+        sqlx::query(
+            "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+             VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+        )
+        .bind(ids[i])
+        .bind(&email)
+        .execute(pool)
+        .await
+        .ok();
         emails[i] = email;
     }
 
-    // UA X + 关联（X → deleggres/read）
+    // UA X + 关联（X → {rt}/read；资源类型按 suffix 唯一，避免跨测试共享）
+    let rt = format!("deleggres_{suffix}");
     let ua_name = format!("deleg-target-{}", suffix);
     let _ = sqlx::query(
         "INSERT INTO isahl_auth.ngac_user_attribute (o_name, fk_policy_class, created_at, updated_at)
@@ -118,17 +133,19 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .expect("seed step");
     let _ = sqlx::query(
         "INSERT INTO isahl_auth.ngac_object_attribute (o_name, fk_policy_class, resource_type, fk_resource, created_at, updated_at)
-         VALUES ($1, $2, 'deleggres', 0, NOW(), NOW())
+         VALUES ($1, $2, $3, 0, NOW(), NOW())
          ON CONFLICT (resource_type, fk_resource) DO UPDATE SET deleted_at = NULL",
     )
-    .bind(format!("deleggres-oa-{}", suffix))
+    .bind(format!("{rt}-oa"))
     .bind(pc)
+    .bind(&rt)
     .execute(pool)
     .await
     .expect("seed step");
     let oa: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type='deleggres' AND fk_resource=0 LIMIT 1",
+        "SELECT id FROM isahl_auth.ngac_object_attribute WHERE resource_type=$1 AND fk_resource=0 LIMIT 1",
     )
+    .bind(&rt)
     .fetch_one(pool)
     .await
     .expect("OA");
@@ -164,48 +181,72 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
         u3: ids[2],
         u3_email: emails[2].clone(),
         ua_id,
+        rt,
+        suffix: suffix.to_string(),
     }
 }
 
+/// 按 **suffix** 清理该测试的全部夹具行——幂等且覆盖上轮崩溃残留。
+///
+/// 为什么必须按名字而非 id：夹具用户 id 每 run 用 `gen_next_zuid()` 新生成，但用户名
+/// （`deleg_d{1,2,3}_{suffix}`）、UA 名（`deleg-target-{suffix}`）、资源类型（`deleggres_{suffix}`）
+/// 跨 run 恒定。上轮崩溃残留的**同名用户/UA/委托行**会被本轮 `ON CONFLICT DO NOTHING` + 按名 SELECT
+/// 复用 ⇒ 残留的活跃委托直接派生 UA，令「委托前 U2 无权限」这类断言**假放行**
+///（实测：按 id 清理时确定性红于 267 行 `permitted:true`）。
+async fn purge_fixture(pool: &PgPool, suffix: &str) {
+    let usernames = vec![
+        format!("deleg_d1_{suffix}"),
+        format!("deleg_d2_{suffix}"),
+        format!("deleg_d3_{suffix}"),
+    ];
+    let ua_name = format!("deleg-target-{suffix}");
+    let rt = format!("deleggres_{suffix}");
+    const STEPS: [&str; 6] = [
+        // 委托（委托方/被委托方按用户名解析；另按目标 UA 兜底）
+        "DELETE FROM isahl_auth.ngac_delegation WHERE fk_delegator IN \
+           (SELECT id FROM isahl_auth.auth_users WHERE username = ANY($1)) \
+         OR fk_delegatee IN (SELECT id FROM isahl_auth.auth_users WHERE username = ANY($1)) \
+         OR fk_user_attribute IN (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $2)",
+        // 绑定（按用户名解析 + 目标 UA）
+        "DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user IN \
+           (SELECT id FROM isahl_auth.auth_users WHERE username = ANY($1)) \
+         OR fk_user_attribute IN (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $2)",
+        // 关联（目标 UA）
+        "DELETE FROM isahl_auth.ngac_association WHERE fk_user_attribute IN \
+           (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $2)",
+        // 目标 UA（按名——覆盖旧 id 残留）
+        "DELETE FROM isahl_auth.ngac_user_attribute WHERE o_name = $2",
+        // 集合级 OA（按本测试资源类型）
+        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type = $3 AND fk_resource = 0",
+        // 用户 + 邮箱（按名）
+        "DELETE FROM isahl_auth.auth_user_emails WHERE fk_user IN \
+           (SELECT id FROM isahl_auth.auth_users WHERE username = ANY($1))",
+    ];
+    for sql in STEPS {
+        let _ = sqlx::query(sql)
+            .bind(&usernames)
+            .bind(&ua_name)
+            .bind(&rt)
+            .execute(pool)
+            .await;
+    }
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = ANY($1)")
+        .bind(&usernames)
+        .execute(pool)
+        .await;
+}
+
 async fn cleanup(pool: &PgPool, f: &Fixture) {
-    // 夹具用户 id 每 run 更新——按 id 清不到上轮崩溃残留；按 UA 名模式清扫委托（含历史 run）
-    let _ = sqlx::query(
-        "DELETE FROM isahl_auth.ngac_delegation WHERE fk_delegator = ANY($1) OR fk_delegatee = ANY($1) \
-         OR fk_user_attribute IN (SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name LIKE 'deleg-target-%')",
-    )
-    .bind(vec![f.u1, f.u2, f.u3])
-    .execute(pool)
-    .await;
-    let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
-        .bind(f.u1)
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM isahl_auth.ngac_association WHERE fk_user_attribute = $1")
-        .bind(f.ua_id)
-        .execute(pool)
-        .await;
-    let _ = sqlx::query(
-        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type='deleggres' AND fk_resource=0",
-    )
-    .execute(pool)
-    .await;
-    let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_attribute WHERE id = $1")
-        .bind(f.ua_id)
-        .execute(pool)
-        .await;
-    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
-        .bind(vec![f.u1, f.u2, f.u3])
-        .execute(pool)
-        .await;
+    purge_fixture(pool, &f.suffix).await;
 }
 
 #[tokio::test]
 async fn delegation_grant_revoke_and_boundaries() {
     let pool = connect().await;
     {
-        // 开头清理：上轮崩溃留下的活跃委托仍在时间窗内会派生 UA（预检假放行实测）
-        let pre = seed(&pool, "c1-pre").await;
-        cleanup(&pool, &pre).await;
+        // 开头清理：上轮崩溃留下的活跃委托仍在时间窗内会派生 UA（预检假放行实测）。
+        // MUST 按 suffix 清（同名行跨 run 恒定），旧实现只清 "c1-pre" 前缀 ⇒ 清不到 "c1" 残留。
+        purge_fixture(&pool, "c1").await;
     }
     let f = seed(&pool, "c1").await;
     let ast = common::test_auth_state();
@@ -232,7 +273,7 @@ async fn delegation_grant_revoke_and_boundaries() {
             .uri("/api/ngac/pdp/decide")
             // 收紧后 decide 需 Bearer 且 sub==被问主体（enforce_decision_subject）
             .insert_header(("Authorization", format!("Bearer {}", t2)))
-            .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
+            .set_json(json!({"user_id": f.u2, "resource": format!("{}:0", f.rt), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -278,7 +319,7 @@ async fn delegation_grant_revoke_and_boundaries() {
         test::TestRequest::post()
             .uri("/api/ngac/pdp/decide")
             .insert_header(("Authorization", format!("Bearer {}", t2)))
-            .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
+            .set_json(json!({"user_id": f.u2, "resource": format!("{}:0", f.rt), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -397,7 +438,7 @@ async fn delegation_grant_revoke_and_boundaries() {
         test::TestRequest::post()
             .uri("/api/ngac/pdp/decide")
             .insert_header(("Authorization", format!("Bearer {}", t2)))
-            .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
+            .set_json(json!({"user_id": f.u2, "resource": format!("{}:0", f.rt), "action": "read"}))
             .to_request(),
     )
     .await;
@@ -425,8 +466,8 @@ async fn delegation_grant_revoke_and_boundaries() {
 async fn delegation_outside_window_inactive() {
     let pool = connect().await;
     {
-        let pre = seed(&pool, "c2-pre").await;
-        cleanup(&pool, &pre).await;
+        // 同 c1：按 suffix 清本测试残留（旧实现清 "c2-pre" ⇒ 清不到 "c2"）
+        purge_fixture(&pool, "c2").await;
     }
     let f = seed(&pool, "c2").await;
     let ast = common::test_auth_state();
@@ -464,7 +505,7 @@ async fn delegation_outside_window_inactive() {
         test::TestRequest::post()
             .uri("/api/ngac/pdp/decide")
             .insert_header(("Authorization", format!("Bearer {}", t_u2)))
-            .set_json(json!({"user_id": f.u2, "resource": "deleggres:0", "action": "read"}))
+            .set_json(json!({"user_id": f.u2, "resource": format!("{}:0", f.rt), "action": "read"}))
             .to_request(),
     )
     .await;

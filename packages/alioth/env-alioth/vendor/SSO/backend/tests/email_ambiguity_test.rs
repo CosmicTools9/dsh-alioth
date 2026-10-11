@@ -50,11 +50,14 @@ async fn shared_email_login_returns_account_selection_challenge() {
     }
 
     // 注册落 pending_approval → 激活后方可登录
-    sqlx::query("UPDATE isahl_auth.auth_users SET status = 'active' WHERE email = $1")
-        .bind(&email)
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE isahl_auth.auth_users SET status = 'active' \
+         WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
+    )
+    .bind(&email)
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // 2. 以共享邮箱登录：200 择账号挑战（无令牌、无会话、候选含两账号）
     let req = test::TestRequest::post()
@@ -86,8 +89,9 @@ async fn shared_email_login_returns_account_selection_challenge() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 401, "全不匹配 MUST 401");
     let counters: Vec<i32> = sqlx::query_scalar(
-        "SELECT COALESCE(failed_login_attempts, 0)::int FROM isahl_auth.auth_users \
-         WHERE email = $1 ORDER BY id",
+        "SELECT COALESCE(u.failed_login_attempts, 0)::int FROM isahl_auth.auth_users u \
+         WHERE u.id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1) \
+         ORDER BY u.id",
     )
     .bind(&email)
     .fetch_all(&pool)

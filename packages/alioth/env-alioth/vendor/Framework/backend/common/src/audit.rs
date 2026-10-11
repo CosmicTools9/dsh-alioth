@@ -64,6 +64,51 @@ pub async fn record_audit_event_with_metadata(
     decision: &Decision,
     metadata: serde_json::Value,
 ) -> Result<(), AuditError> {
+    record_audit_event_with_obligations(
+        pool,
+        DecisionAudit {
+            user_id,
+            subject: subject.to_string(),
+            object_path: object_path.to_string(),
+            operation: operation.to_string(),
+            decision: decision.clone(),
+            metadata,
+            obligations: Vec::new(),
+        },
+    )
+    .await
+}
+
+/// 决策审计写入（义务携带版，wire-obligations-into-pep-audit / NGAC_SPEC §2.6）：
+/// PEP 消费 PDP decide 响应的 `obligations` 后经本函数落 `obligations_triggered`——
+/// 与 SSO 决策审计（`pdp/audit.rs` 内 `evaluate_obligations`）**同源对称**，
+/// 审计消费方不再有「Gateway 行恒空 / SSO 行带义务」的面分裂。
+/// 决策审计参数（wire-obligations-into-pep-audit）：把 8 参收拢为结构体——
+/// 调用方（PEP `spawn_audit_event`）与测试同读一组字段，接口面不随字段增长膨胀。
+pub struct DecisionAudit {
+    pub user_id: i64,
+    pub subject: String,
+    pub object_path: String,
+    pub operation: String,
+    pub decision: Decision,
+    pub metadata: serde_json::Value,
+    /// PDP 下发的义务算子（空 = 业务事件恒空语义）。
+    pub obligations: Vec<String>,
+}
+
+pub async fn record_audit_event_with_obligations(
+    pool: &PgPool,
+    audit: DecisionAudit,
+) -> Result<(), AuditError> {
+    let DecisionAudit {
+        user_id,
+        subject,
+        object_path,
+        operation,
+        decision,
+        metadata,
+        obligations,
+    } = audit;
     // 验证输入
     if user_id <= 0 {
         return Err(AuditError::ValidationError(
@@ -86,7 +131,7 @@ pub async fn record_audit_event_with_metadata(
         ));
     }
 
-    let decision_str = match decision {
+    let decision_str = match &decision {
         Decision::Permit => "permit",
         Decision::Deny => "deny",
         Decision::NotApplicable => "not_applicable",
@@ -107,11 +152,11 @@ pub async fn record_audit_event_with_metadata(
     )
     .bind(audit_id)
     .bind(user_id)
-    .bind(subject)
-    .bind(object_path)
-    .bind(operation)
+    .bind(&subject)
+    .bind(&object_path)
+    .bind(&operation)
     .bind(decision_str)
-    .bind(Vec::<String>::new()) // obligations_triggered (varchar[])
+    .bind(obligations) // obligations_triggered（PDP 下发或空——决策审计同源对称）
     .bind(Option::<String>::None) // ip_address (可选)
     .bind(Option::<String>::None) // user_agent (可选)
     .bind(metadata) // 业务 metadata（jsonb 既有列）

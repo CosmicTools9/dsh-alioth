@@ -33,6 +33,18 @@ dev_find_encryption_key() {
     echo "$nearest_key"
 }
 
+# 单钥 CBC 解密尝试（成功输出明文、退出 0；失败非零）。xxd 优先、缺则 od（与 env-vault.sh 同判据）。
+dev_decrypt_with_key() {
+    local key_file="$1" iv="$2" ciphertext="$3"
+    local key_hex
+    if command -v xxd >/dev/null 2>&1; then
+        key_hex=$(openssl enc -base64 -d -in "$key_file" | xxd -p -c 64)
+    else
+        key_hex=$(openssl enc -base64 -d -in "$key_file" | od -An -v -tx1 | tr -d ' \n')
+    fi
+    openssl enc -aes-256-cbc -d -a -A -nosalt -K "$key_hex" -iv "$iv" <<< "$ciphertext"
+}
+
 # decrypt_env_file <env_file>：逐行处理 KEY=VALUE（enc: CBC 解密 / 明文直传）
 decrypt_env_file() {
     local env_file="$1"
@@ -47,8 +59,16 @@ decrypt_env_file() {
         return 0
     fi
 
-    local key_hex
-    key_hex=$(openssl enc -base64 -d -in "$key_file" | xxd -p -c 64)
+    # keyring：active 优先，依次追加同 root 的 previous 钥（轮换过渡期旧密文仍可解——无停机窗口）
+    local -a key_files=("$key_file")
+    local prev_dir
+    prev_dir="$(dirname "$key_file")/.encryption_keyring/previous"
+    if [[ -d "$prev_dir" ]]; then
+        local kf
+        for kf in "$prev_dir"/*.key; do
+            [[ -f "$kf" ]] && key_files+=("$kf")
+        done
+    fi
 
     local line key value iv ciphertext plaintext
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -71,8 +91,15 @@ decrypt_env_file() {
                 # ② padding 恰好合法（~1/256）：输出二进制垃圾——下游 cargo build-script
                 #   env::vars() 遇非 UTF-8 环境变量直接 panic（2026-09-16 实证：.encryption_key
                 #   重建后 LLM_API_KEY 解出 32 字节垃圾，meta-backend 全量构建崩于 libm）。
-                if ! plaintext=$(openssl enc -aes-256-cbc -d -a -A -nosalt -K "$key_hex" -iv "$iv" <<< "$ciphertext" 2>/dev/null); then
-                    printf 'decrypt-env: %s 解密失败（密钥失配?），已跳过\n' "$key" >&2
+                local ok=false kf2
+                for kf2 in "${key_files[@]}"; do
+                    if plaintext=$(dev_decrypt_with_key "$kf2" "$iv" "$ciphertext" 2>/dev/null); then
+                        ok=true
+                        break
+                    fi
+                done
+                if [[ "$ok" != true ]]; then
+                    printf 'decrypt-env: %s 解密失败（active/previous 钥均失配?），已跳过\n' "$key" >&2
                     continue
                 fi
                 if [[ -n "$plaintext" ]]; then

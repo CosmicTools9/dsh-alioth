@@ -33,11 +33,18 @@ use sqlx::{AssertSqlSafe, PgConnection, PgPool};
 /// 委托派生 CTE（add-ngac-delegation D2，B-0 收编）——与认知派生同构：被委托人
 /// 的有效 UA 集并入 active 且时间窗内的委托 UA。委托源在 SSO 侧（PEP 侧上下文
 /// 提示不含委托派生）。消费方 MUST 引用本常量，禁止复制。参数约定：`$1` = 被委托人。
+///
+/// **授权方活跃判据**（harden-ngac-delegation-dead-principal）：委托行除自身
+/// `status='active'` + 时间窗外，其授权方账号（`fk_delegator`）`auth_users.is_active`
+/// MUST 为真——禁用账号 MUST NOT 经委托链持续向被委托人供权（与 `COGNITION_CTE` 语义
+/// 变体的 is_active 过滤同向，见 `ngac_org.rs` 认知/通知变体）。只读账号态，MUST NOT
+/// 改写委托行 `status`（重新启用即恢复供给）。
 pub const DELEGATED_CTE: &str = r#"
 delegated_ua AS (
     SELECT ua.id
     FROM isahl_auth.ngac_delegation d
     JOIN isahl_auth.ngac_user_attribute ua ON ua.id = d.fk_user_attribute AND ua.deleted_at IS NULL
+    JOIN isahl_auth.auth_users du ON du.id = d.fk_delegator AND du.is_active = TRUE
     WHERE d.fk_delegatee = $1 AND d.status = 'active' AND d.deleted_at IS NULL
       AND d.date_st <= NOW() AND d.date_ed > NOW()
 )
@@ -95,6 +102,10 @@ cognition_ua_names AS (
     WHERE vt.code IS NOT NULL AND vt.code <> ''
 )
 "#;
+
+// conditions 求值器（`ConditionContext` / `evaluate_conditions`）唯一实现已上移
+// `ngac-decision` crate（openspec extract-ngac-decision-core）：消费方直接
+// `use ngac_decision::{...}`，本模块不再持有副本。
 
 /// 认知派生 UA 自动确保（add-ngac-cognition-derived-ua D2，B-0 收编）：
 /// 首次遇到未物化的 `position:{类别code}` / `view:{code}` 名时幂等创建 UA 行，
@@ -224,9 +235,9 @@ pub async fn migrate_legacy_position_associations(pool: &PgPool) -> sqlx::Result
         ins AS (
             INSERT INTO isahl_auth.ngac_association
                 (fk_user_attribute, fk_object_attribute, ak_access_rights,
-                 fk_policy_class, conditions, condition_expr)
+                 fk_policy_class, conditions)
             SELECT d.dst_ua_id, a.fk_object_attribute, a.ak_access_rights,
-                   a.fk_policy_class, a.conditions, a.condition_expr
+                   a.fk_policy_class, a.conditions
             FROM dst d
             JOIN isahl_auth.ngac_association a
                 ON a.fk_user_attribute = d.src_ua_id AND a.deleted_at IS NULL
@@ -304,6 +315,67 @@ pub async fn cognition_derived_user_holders(
         "#,
     )
     .bind(o_name)
+    .fetch_all(pool)
+    .await
+}
+
+/// 属权派生 UA 持有者反向解析（NGAC_SPEC §2.2.6，2026-09-30）。
+///
+/// 语义：对**指定资源行**（`resource_type` + `fk_resource`）由 `ngac_ownership_policy` 派生
+/// 出 `ua_id` 的用户集合——owner（`created_by_id`）/ benefit（`ak_benefit_user`）/
+/// permit（`ak_permit_user`）/ access（`ak_access_user`）四路，`op.enabled = TRUE` 且
+/// 目标属性 id 命中该路。返回 (user_id, username)。
+///
+/// 与 [`cognition_derived_user_holders`] 同构：**反向解析**（不是正向派生），供访问审查把
+/// 「属权派生持有者」并入 UA 成员清单（否则审查会漏报属权授予）。属权随资源行变化 ⇒
+/// MUST 传具体 `fk_resource`；集合级（`fk_resource = 0`）无属权派生（无对应 `zc_id_lifecycle` 行）。
+pub async fn ownership_derived_user_holders(
+    pool: &PgPool,
+    resource_type: &str,
+    fk_resource: i64,
+    ua_id: i64,
+) -> sqlx::Result<Vec<(i64, Option<String>)>> {
+    sqlx::query_as::<_, (i64, Option<String>)>(
+        r#"
+        WITH ownership_users AS (
+            SELECT r.created_by_id AS fk_user
+            FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r
+            WHERE op.resource_type = $1 AND r.id = $2 AND op.enabled = TRUE
+              AND op.owner_attr_id = $3
+
+            UNION
+
+            SELECT bu AS fk_user
+            FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r,
+                 unnest(r.ak_benefit_user) AS bu
+            WHERE op.resource_type = $1 AND r.id = $2 AND op.enabled = TRUE
+              AND op.benefit_attr_id = $3
+
+            UNION
+
+            SELECT pu
+            FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r,
+                 unnest(r.ak_permit_user) AS pu
+            WHERE op.resource_type = $1 AND r.id = $2 AND op.enabled = TRUE
+              AND op.permit_attr_id = $3
+
+            UNION
+
+            SELECT au
+            FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r,
+                 unnest(r.ak_access_user) AS au
+            WHERE op.resource_type = $1 AND r.id = $2 AND op.enabled = TRUE
+              AND op.access_attr_id = $3
+        )
+        SELECT DISTINCT u.id, u.username
+        FROM ownership_users ou
+        JOIN isahl_auth.auth_users u ON u.id = ou.fk_user
+        ORDER BY u.id
+        "#,
+    )
+    .bind(resource_type)
+    .bind(fk_resource)
+    .bind(ua_id)
     .fetch_all(pool)
     .await
 }
@@ -692,7 +764,9 @@ async fn ensure_department_chain(pool: &PgPool, org_id: i64) -> Result<Option<i6
     if collection_oa.is_none() {
         // Gateway 通用层种子未就绪（启动竞态/降级部署）——行 OA 树暂孤立，
         // 根节点空祖先（fail-closed），seed 自愈后由后续 heal 收敛。
-        log::warn!("ngac_org: departments:0 集合 OA 缺失（Gateway ngac_seed 未自愈）——部门子集树暂挂空祖先");
+        log::warn!(
+            "ngac_org: departments:0 集合 OA 缺失（Gateway ngac_seed 未自愈）——部门子集树暂挂空祖先"
+        );
     }
     // chain 逆序 = 顶层（根）→ 本节点；parent_anchor 跟踪上一级（更近根）OA id
     let mut parent_anchor: Option<i64> = collection_oa;
@@ -769,3 +843,6 @@ pub async fn heal_department_scope(pool: &PgPool, org_id: i64) {
         log::warn!("ngac_org: 部门 {org_id} 子集 OA ensure 失败: {e}");
     }
 }
+
+// 策略图装载（`load_policy_graph`）与 OA 闭包（`oa_closure_rows`）已迁 `ngac-host`
+// （openspec extract-ngac-decision-host）：消费方直接 `use ngac_host::{...}`。

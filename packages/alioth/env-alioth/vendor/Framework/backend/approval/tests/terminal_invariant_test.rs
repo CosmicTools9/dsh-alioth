@@ -42,9 +42,9 @@ macro_rules! build_app {
 async fn test_user(pool: &sqlx::PgPool) -> i64 {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'tguard', 'tguard', 'tguard@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'tguard', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)

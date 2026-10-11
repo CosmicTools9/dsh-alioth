@@ -11,7 +11,7 @@
 //!   8. IDEM-008 X-Api-Version 维度隔离（同 key 跨版本互不冲突）
 //!   9. IDEM-009 非法 X-Api-Version → 400
 //!
-//! 依赖真实测试库（aliothstudio_test，含迁移 033 的表）。测试数据自建自清。
+//! 依赖真实测试库（aliothstudio_test，含 `api_idempotency_keys` 表——结构随参考库重放）。测试数据自建自清。
 
 use actix_web::{test, web, App, HttpResponse};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
@@ -63,12 +63,11 @@ async fn create_test_client(pool: &PgPool, suffix: &str) -> (String, i64) {
     let client_id = format!("idem_test_{}", suffix);
     let svc_user = sqlx::query_scalar::<_, i64>(
         "INSERT INTO isahl_auth.auth_users \
-         (name, username, email, password_hash, user_type, is_active, status, \
+         (username, password_hash, user_type, is_active, status, \
           created_at, updated_at, failed_login_attempts, notification_preferences) \
-         VALUES ($1, $2, NULL, NULL, 'service', TRUE, 'active', NOW(), NOW(), 0, '{}'::jsonb) \
+         VALUES ($1, NULL, 'service', TRUE, 'active', NOW(), NOW(), 0, '{}'::jsonb) \
          RETURNING id",
     )
-    .bind(format!("svc-{}", client_id))
     .bind(format!("svc:{}", client_id))
     .fetch_one(pool)
     .await

@@ -54,8 +54,8 @@ async fn seed(pool: &PgPool) {
         (USER_NO_INFO, Some(ENTITY_NO_INFO)),
     ] {
         sqlx::query(
-            r#"INSERT INTO isahl_auth.auth_users (id, name, username, entity_table, entity_id)
-               VALUES ($1, $2, $2, 'zc_id_empl-natural', $3)"#,
+            r#"INSERT INTO isahl_auth.auth_users (id, username, entity_table, entity_id)
+               VALUES ($1, $2, 'zc_id_empl-natural', $3)"#,
         )
         .bind(user_id)
         .bind(format!("contact-resolution-{user_id}"))

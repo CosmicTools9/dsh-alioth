@@ -6,5 +6,6 @@
 
 pub mod handler;
 pub mod locale;
+pub mod schema;
 
 pub use handler::register;

@@ -222,12 +222,13 @@ mod tests {
         assert_eq!(resp.status(), actix_web::http::StatusCode::NO_CONTENT);
 
         // verify disabled in DB
-        let status: (Option<String>, Option<bool>) =
-            sqlx::query_as("SELECT status, is_active FROM isahl_auth.auth_users WHERE id = $1")
-                .bind(id.parse::<i64>().unwrap())
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let status: (Option<String>, Option<bool>) = sqlx::query_as(
+            "SELECT status::text, is_active FROM isahl_auth.auth_users WHERE id = $1",
+        )
+        .bind(id.parse::<i64>().unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(status.0.as_deref(), Some("disabled"));
         assert_eq!(status.1, Some(false));
 

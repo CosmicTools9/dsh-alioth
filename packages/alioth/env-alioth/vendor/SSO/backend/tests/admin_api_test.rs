@@ -99,12 +99,12 @@ struct TestUsers {
 async fn setup_users(pool: &PgPool) -> TestUsers {
     // Create a regular user (no admin UA). Idempotent upsert: tests run in parallel
     // within this binary and share the DB, so a bare INSERT collides on the unique
-    // email/name. upsert-then-select is race-safe across runs and threads.
+    // username. upsert-then-select is race-safe across runs and threads.
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), 'regular_user', 'regular_user', 'regular@test.local', 'active', true, NOW(), NOW())
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), 'regular_user', 'active', true, NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
         "#,
     )
     .execute(pool)
@@ -112,19 +112,31 @@ async fn setup_users(pool: &PgPool) -> TestUsers {
     .ok();
     let regular: i64 = sqlx::query_scalar(
         r#"
-        SELECT id FROM isahl_auth.auth_users WHERE email = 'regular@test.local' LIMIT 1
+        SELECT id FROM isahl_auth.auth_users WHERE username = 'regular_user' LIMIT 1
         "#,
     )
     .fetch_one(pool)
     .await
     .expect("Failed to create/find regular user");
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails（auth_users 无 email 列）
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, 'regular@test.local', TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(regular)
+    .execute(pool)
+    .await
+    .ok();
 
     // Create an admin user (idempotent, see above)
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), 'admin_user', 'admin_user', 'admin@test.local', 'active', true, NOW(), NOW())
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), 'admin_user', 'active', true, NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
         "#,
     )
     .execute(pool)
@@ -132,12 +144,24 @@ async fn setup_users(pool: &PgPool) -> TestUsers {
     .ok();
     let admin: i64 = sqlx::query_scalar(
         r#"
-        SELECT id FROM isahl_auth.auth_users WHERE email = 'admin@test.local' LIMIT 1
+        SELECT id FROM isahl_auth.auth_users WHERE username = 'admin_user' LIMIT 1
         "#,
     )
     .fetch_one(pool)
     .await
     .expect("Failed to create/find admin user");
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, 'admin@test.local', TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(admin)
+    .execute(pool)
+    .await
+    .ok();
 
     // Create 'admin' UA and assign to the admin user.
     // Idempotent upsert: the unique partial index (o_name, fk_policy_class) WHERE deleted_at IS NULL
@@ -194,13 +218,27 @@ async fn cleanup(pool: &PgPool) {
     // 那会删除 005/019 seed 的 UA 与关联，破坏其他并行测试。
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users \
+         WHERE fk_user IN (SELECT fk_user FROM isahl_auth.auth_user_emails \
                            WHERE email IN ('regular@test.local', 'admin@test.local'))",
     )
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email IN ('regular@test.local', 'admin@test.local')")
+    // auth_user_emails 入边 FK 无 ON DELETE CASCADE：先删邮箱行，再删账号
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT fk_user FROM isahl_auth.auth_user_emails \
+         WHERE email IN ('regular@test.local', 'admin@test.local')",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(&ids)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+        .bind(&ids)
         .execute(pool)
         .await
         .ok();
@@ -286,9 +324,14 @@ async fn test_list_users_returns_all_users() {
     // 用户挤占 LIMIT 窗口导致新创建用户被截断（109 用户 > LIMIT 50 曾致误报）。
     let rows: Vec<(i64, String, Option<String>, Option<String>)> = sqlx::query_as(
         r#"
-        SELECT id, name, email, status
-        FROM isahl_auth.auth_users
-        ORDER BY id DESC
+        SELECT u.id,
+               COALESCE(u.display_name, u.username),
+               (SELECT e.email FROM isahl_auth.auth_user_emails e
+                 WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+                 ORDER BY e.is_primary DESC, e.id LIMIT 1),
+               u.status::text
+        FROM isahl_auth.auth_users u
+        ORDER BY u.id DESC
         LIMIT 50 OFFSET 0
         "#,
     )
@@ -318,11 +361,12 @@ async fn test_create_user_via_db() {
         .await
         .expect("Failed to setup schema");
 
-    // Same SQL pattern as create_user() handler
+    // Same SQL pattern as create_user() handler。原 `name` 值落 `username`
+    //（username 为唯一锚点）；邮箱唯一存储 = isahl_auth.auth_user_emails。
     let new_id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO isahl_auth.auth_users (name, email, password_hash, created_at, updated_at)
-        VALUES ('new_user', 'new@test.local', 'hashed_password', NOW(), NOW())
+        INSERT INTO isahl_auth.auth_users (username, password_hash, created_at, updated_at)
+        VALUES ('new_user', 'hashed_password', NOW(), NOW())
         RETURNING id
         "#,
     )
@@ -332,12 +376,28 @@ async fn test_create_user_via_db() {
 
     assert!(new_id > 0, "New user should get a valid ID");
 
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, 'new@test.local', TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(new_id)
+    .execute(&pool)
+    .await
+    .expect("Email row INSERT should succeed");
+
     // Verify user was created with correct data
     let (name, email, is_active): (String, Option<String>, bool) = sqlx::query_as(
         r#"
-        SELECT name, email, COALESCE(is_active, true)
-        FROM isahl_auth.auth_users
-        WHERE id = $1
+        SELECT COALESCE(display_name, username),
+               (SELECT e.email FROM isahl_auth.auth_user_emails e
+                 WHERE e.fk_user = a.id AND e.deleted_at IS NULL
+                 ORDER BY e.is_primary DESC, e.id LIMIT 1),
+               COALESCE(is_active, true)
+        FROM isahl_auth.auth_users a
+        WHERE a.id = $1
         "#,
     )
     .bind(new_id)
@@ -353,7 +413,12 @@ async fn test_create_user_via_db() {
     );
     assert!(is_active, "New user should be active by default");
 
-    // Cleanup
+    // Cleanup（先删邮箱行：auth_user_emails 入边 FK 无 ON DELETE CASCADE）
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(new_id)
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(new_id)
         .execute(&pool)
@@ -372,23 +437,38 @@ async fn test_create_user_email_lookup() {
 
     let email = "duplicate@test.local";
 
-    // Create first user
-    sqlx::query(
+    // Create first user（原 `name` 值落 `username`；邮箱落 auth_user_emails）
+    let first_id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO isahl_auth.auth_users (name, email, password_hash, created_at, updated_at)
-        VALUES ('first', $1, 'hash', NOW(), NOW())
+        INSERT INTO isahl_auth.auth_users (username, password_hash, created_at, updated_at)
+        VALUES ('first', 'hash', NOW(), NOW())
+        RETURNING id
         "#,
     )
+    .fetch_one(&pool)
+    .await
+    .expect("First user creation should succeed");
+
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, $2, TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(first_id)
     .bind(email)
     .execute(&pool)
     .await
-    .expect("First user creation should succeed");
+    .expect("Email row INSERT should succeed");
 
     // Try to create second user with same email (no UNIQUE constraint on email
     // in the current schema, but we test the business rule: duplicate detection)
     let existing: Option<i64> = sqlx::query_scalar(
         r#"
-        SELECT id FROM isahl_auth.auth_users WHERE email = $1
+        SELECT id FROM isahl_auth.auth_users
+        WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)
+        LIMIT 1
         "#,
     )
     .bind(email)
@@ -401,9 +481,14 @@ async fn test_create_user_email_lookup() {
         "Pre-existing user should be found by email"
     );
 
-    // Cleanup
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
-        .bind(email)
+    // Cleanup（先删邮箱行再删账号，顺序满足 FK）
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(first_id)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
+        .bind(first_id)
         .execute(&pool)
         .await
         .ok();

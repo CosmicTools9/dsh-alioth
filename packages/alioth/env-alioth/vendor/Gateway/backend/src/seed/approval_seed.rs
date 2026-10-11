@@ -14,27 +14,19 @@
 //!   归属桥（code=图内编号、`next-ops` 对象形态）；流程行 `meta.nodes` 承载 start
 //!   定位契约（initiate_flow 解析 type='start' 的图内编号）。
 
+use common::registration_approval::{
+    ApprovalChannelSpec, APPROVAL_CHANNELS, INTERNAL_REGISTRATION_CHANNEL, USER_VERIFY_CHANNEL,
+};
 use sqlx::PgPool;
 
 use super::SeedStats;
 
-/// 注册审批实例/事件 code（register.rs 双写契约，不变）
-pub const REGISTRATION_APPROVAL_CODE: &str = "user-register-approval";
-
-/// 用户实名审核流程模板 code（zc_id_appr-user_verify 叶表）
-pub const VERIFY_FLOW_CODE: &str = "FLOW-USER-VERIFY";
-/// 访问授权流程模板 code（zc_id_appr-authorization 叶表）
-pub const AUTHORIZATION_FLOW_CODE: &str = "FLOW-AUTHORIZATION";
-
-/// 外部主体入驻流程模板 code（add-dual-register-channels：
-/// /auth/register/external 通道专用，与内部 FLOW-AUTHORIZATION 分流）
-pub const EXTERNAL_SUBJECT_FLOW_CODE: &str = "FLOW-EXTERNAL-SUBJECT";
-/// 实名审核事件 code（identity.rs 写入契约）
-pub const USER_VERIFY_CODE: &str = "user-verify";
-/// 访问授权事件 code（register.rs 双写契约，不变）
-pub const AUTHORIZATION_CODE: &str = "user-register-approval";
-/// 外部主体入驻审批事件 code（register.rs 外部通道写契约）
-pub const EXTERNAL_SUBJECT_APPROVAL_CODE: &str = "external-subject-register-approval";
+// 审批通道映射（event_code → flow_code / leaf_table / notice、comments 文案模板）
+// **单源** = `common::registration_approval`（wire-registration-approval-closure D3）：
+// 三通道（内部注册 / 外部主体入驻 / 实名审核）的事件 code、流程模板、事件叶表与文案
+// MUST 从该表取，MUST NOT 在本文件复制字面值——写入端（SSO `auth/register.rs`）与
+// 自检端（本文件）同源 ⇒ 外部通道自动进入 `oper→even` 重建覆盖，无 `_ => None`
+// 缺省分支（对齐 approval-leaf-template delta「重建目标 MUST 取自通道映射表」）。
 
 /// 注册审批 SLA 时长（zc_id_scal-duration o_number）——自检侧消费值：
 /// 供给方为模型级种子 seed-auth-approval-flows.sql（fix-register-binding-flow-gaps）。
@@ -49,16 +41,12 @@ pub async fn ensure(pool: &PgPool) -> SeedStats {
     // ns 级 seed-cosmic-approval-flows.sql——启动时序 replay_model_seeds /
     // replay_ns_seeds 先行供给，组件仅留运行面自检。
     //
-    // 审批事件一致性自检（注册/外部入驻/实名审核，add-approval-leaf-template-seeds）：
-    // 内部注册与访问授权共用 code "user-register-approval"（register.rs 双写契约）；
-    // 外部入驻审批（add-dual-register-channels）为独立 code，
-    // 映射独立流程 FLOW-EXTERNAL-SUBJECT，故三 code 各自遍历。
-    for code in [
-        REGISTRATION_APPROVAL_CODE,
-        EXTERNAL_SUBJECT_APPROVAL_CODE,
-        USER_VERIFY_CODE,
-    ] {
-        let (existing, broken, backfilled, rebound) = self_check_approvals(pool, code).await;
+    // 审批事件一致性自检（注册/外部入驻/实名审核）：遍历**通道映射表**（三 code
+    // 同等待遇，遍历面 = `common::registration_approval::APPROVAL_CHANNELS`，新增通道
+    // 只在映射表登记即自动纳入；wire-registration-approval-closure 1.3）。
+    for channel in APPROVAL_CHANNELS {
+        let (existing, broken, backfilled, rebound) = self_check_approvals(pool, channel).await;
+        let code = channel.event_code;
         stats.existing += existing as usize;
         stats.healed += backfilled as usize + rebound as usize;
         if broken > 0 {
@@ -80,21 +68,21 @@ pub async fn ensure(pool: &PgPool) -> SeedStats {
 /// - 模板绑定回填：event 有 code 但 tpl_id IS NULL 且模板存在 → 回填（rebound；
 ///   fk_process 已物理移除——事件↔流程归属经节点主体行桥链反查，无事件侧归属列）
 ///
-/// 事件 code → 流程模板 code 映射（决定模板绑定回填目标；与写入契约一致）：
+/// 事件 code → 流程模板 code 映射、事件叶表与文案模板（决定断链重建目标与回填目标）
+/// 全部取自**通道映射表** `common::registration_approval`（与写入契约同源）：
 /// - user-register-approval（注册/访问授权共用，approvals/apply、register.rs 均绑）→ FLOW-AUTHORIZATION
+/// - external-subject-register-approval（外部入驻）→ FLOW-EXTERNAL-SUBJECT
 /// - user-verify → FLOW-USER-VERIFY
 ///
 /// 返回 (实例总数, 断链数, 补建数, 回填数)
-async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64, i64) {
-    // 事件 code → 流程模板 code（回填目标；与写入契约一致：
-    // - user-verify → FLOW-USER-VERIFY
-    // - user-register-approval（注册/访问授权共用）→ FLOW-AUTHORIZATION（approvals/apply、
-    //   register.rs 均绑此流程，fix-approval-event-adaptive-write 统一）
-    let flow_code: &str = match event_code {
-        USER_VERIFY_CODE => VERIFY_FLOW_CODE,
-        EXTERNAL_SUBJECT_APPROVAL_CODE => EXTERNAL_SUBJECT_FLOW_CODE,
-        _ => AUTHORIZATION_FLOW_CODE,
-    };
+async fn self_check_approvals(
+    pool: &PgPool,
+    channel: &ApprovalChannelSpec,
+) -> (i64, i64, i64, i64) {
+    // 通道四要素（事件 code / 流程模板 code / 叶表 / 文案模板）全部取自映射表——
+    // 无本地 code→要素 match、无缺省分支（三通道同等待遇；wire-registration-approval-closure 1.2）。
+    let event_code = channel.event_code;
+    let flow_code = channel.flow_code;
 
     let instance_count: i64 = sqlx::query_scalar(
         r#"SELECT COUNT(*) FROM isahl."zc_id_oper-approve"
@@ -123,56 +111,48 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
 
     // oper→even 自愈（fix-approval-event-adaptive-write）：断链 oper 实例
     // （rr_event 桥缺失）按 oper 字段重建缺失 even 事件并回填桥行。
-    // 事件写入叶表按事件 code 分派（见下方 heal_binding）——禁写域父表 even-approve
+    // 绑定 = **通道映射表条目本身**（流程模板 code + 事件叶表）——三通道（内部注册 /
+    // 外部主体入驻 / 实名审核）同等待遇，无 `_ => None` 缺省分支
+    // （wire-registration-approval-closure 1.2/1.3；对齐 approval-leaf-template delta
+    // 「重建目标 MUST 取自通道映射表」）。事件写入叶表——禁写域父表 even-approve
     // （§8.5「INSERT 必须落叶表」，门禁 check-leaf-insert.ts）。
     // 叶表探测失败/缺失均不静默：warn 后跳过 oper→even 自愈，但尾部 even→oper
     // 补建/rebound/SLA/broken_after 照常执行（fix-approval-event-adaptive-write 契约）。
-    // oper→even 自愈绑定分派（与写入契约同构）：事件 code → (流程模板 code, 事件叶表)。
-    // - user-register-approval（注册/访问授权共用，register.rs / approvals/apply 写入）
-    //   → FLOW-AUTHORIZATION + zc_id_appr-authorization 叶表
-    // - user-verify（identity.rs 实名审核写入）→ FLOW-USER-VERIFY + zc_id_appr-user_verify 叶表
-    // 其余 code（external-subject-register-approval）不参与重建，断链维持告警人工核查。
-    let heal_binding: Option<(&str, &str)> = match event_code {
-        REGISTRATION_APPROVAL_CODE => Some((AUTHORIZATION_FLOW_CODE, "zc_id_appr-authorization")),
-        USER_VERIFY_CODE => Some((VERIFY_FLOW_CODE, "zc_id_appr-user_verify")),
-        _ => None,
-    };
+    let heal_flow_code = channel.flow_code;
+    let leaf_table = channel.leaf_table;
     // 叶表探测可用性（探测失败/叶表缺失均置 false：跳过 oper→even 自愈并 warn，不静默）
     let mut leaf_check_ok = true;
-    let leaf_table_exists: bool = match heal_binding {
-        Some((_, leaf_table)) => {
-            match sqlx::query_scalar("SELECT to_regclass('isahl.' || quote_ident($1)) IS NOT NULL")
-                .bind(leaf_table)
-                .fetch_one(pool)
-                .await
-            {
-                Ok(true) => true,
-                // 叶表缺失（探测成功但不存在）：§8.5「INSERT 必须落叶表」——禁降级写域父表
-                // zc_id_even-approve（门禁 check-leaf-insert.ts），保持断链告警人工核查
-                Ok(false) => {
-                    if broken_count > 0 {
-                        common::telemetry::warn!(
+    let leaf_table_exists: bool = {
+        match sqlx::query_scalar("SELECT to_regclass('isahl.' || quote_ident($1)) IS NOT NULL")
+            .bind(leaf_table)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(true) => true,
+            // 叶表缺失（探测成功但不存在）：§8.5「INSERT 必须落叶表」——禁降级写域父表
+            // zc_id_even-approve（门禁 check-leaf-insert.ts），保持断链告警人工核查
+            Ok(false) => {
+                if broken_count > 0 {
+                    common::telemetry::warn!(
                             "seed[approval]: {event_code} 事件叶表 {leaf_table} 不存在（跳过 oper→even 自愈，保持断链告警）"
                         );
-                    }
-                    leaf_check_ok = false;
-                    false
                 }
-                // 探测失败（schema/权限错误）不静默当无叶表——跳过自愈并告警
-                Err(e) => {
-                    common::telemetry::warn!(
+                leaf_check_ok = false;
+                false
+            }
+            // 探测失败（schema/权限错误）不静默当无叶表——跳过自愈并告警
+            Err(e) => {
+                common::telemetry::warn!(
                         "seed[approval]: {event_code} 事件叶表 {leaf_table} 探测失败（跳过 oper→even 自愈，保持断链告警）: {e}"
                     );
-                    leaf_check_ok = false;
-                    false
-                }
+                leaf_check_ok = false;
+                false
             }
         }
-        None => false,
     };
     let mut healed_to_event: i64 = 0;
-    // oper→even 自愈按事件 code 分派正确接收方（heal_binding）：user-register-approval
-    // → FLOW-AUTHORIZATION，user-verify → FLOW-USER-VERIFY（fix-user-verify-self-heal）；
+    // oper→even 自愈接收方 = 通道映射表声明的流程模板 + 叶表（heal_flow_code / leaf_table，
+    // 三通道同等待遇；fix-user-verify-self-heal / wire-registration-approval-closure 1.2）；
     // 叶表探测失败/缺失时跳过（无法安全写入目标表）。
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID；
     // 本函数两处 oper-approve INSERT（自愈环内 register-context、尾部补建）复用同一结果。
@@ -187,11 +167,9 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
             }
         };
 
-    if let Some((heal_flow_code, leaf_table)) =
-        heal_binding.filter(|_| broken_count > 0 && leaf_check_ok && leaf_table_exists)
-    {
-        // 模板绑定目标：user-register-approval 事件绑 FLOW-AUTHORIZATION 的 approve 节点
-        // 模板（与 approvals/apply、register.rs 写入契约一致）
+    if broken_count > 0 && leaf_check_ok && leaf_table_exists {
+        // 模板绑定目标：事件绑通道流程模板（heal_flow_code）的 approve 节点模板
+        // （与 approvals/apply、register.rs 写入契约一致）
         let flow_binding: Option<(i64, Option<i64>)> = sqlx::query_as(
             r#"
         SELECT p.id,
@@ -282,20 +260,20 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
             );
                 continue;
             };
-            // applicant_name 从 notice 提取（"用户 <name> 访问授权审批"）
-            // applicant_name 从 notice 提取（写侧 notice 契约：register/apply
-            // "用户 <name> 访问授权审批"；user-verify "用户 <id> 实名审核"）
-            let notice_tail = match event_code {
-                USER_VERIFY_CODE => " 实名审核",
-                _ => " 访问授权审批",
-            };
+            // notice 前缀/后缀 = 通道 notice_tpl 的 `{}` 两侧（映射表单源；三通道同待遇，
+            // 不再按 code 硬取后缀）。comments 同为通道模板 + 用户 id 溯主后缀。
+            let (name_prefix, name_suffix) =
+                channel.notice_tpl.split_once("{}").unwrap_or(("", ""));
             let applicant_name = notice
-                .strip_prefix("用户 ")
-                .and_then(|s| s.strip_suffix(notice_tail))
+                .strip_prefix(name_prefix)
+                .and_then(|s| s.strip_suffix(name_suffix))
                 .unwrap_or("用户")
                 .to_string();
             // comments 为纯文本语义（remove-comments-json-embedding）：人类可读申请人摘要
-            let comments = format!("申请人：{applicant_name}（用户 id {applicant_id}）");
+            let comments = format!(
+                "{}（用户 id {applicant_id}）",
+                channel.comments_tpl.replace("{}", &applicant_name)
+            );
 
             // 事务包裹：事件 INSERT + rr_event 桥行回填原子（崩溃不产生孤儿事件/重复事件）
             let mut tx = match pool.begin().await {
@@ -321,7 +299,7 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                             continue;
                         }
                     };
-                if leaf_table == "zc_id_appr-user_verify" {
+                if leaf_table == USER_VERIFY_CHANNEL.leaf_table {
                     // 实名审核叶表（identity.rs 写入契约：fk_process/tpl_id/_f_/_t_/qk_sla）
                     sqlx::query_scalar(
                             r#"
@@ -375,8 +353,8 @@ async fn self_check_approvals(pool: &PgPool, event_code: &str) -> (i64, i64, i64
                     // fk_process 列已物理移除（2026-08-30）：事件↔流程归属经桥链——
                     // 'register-context' 上下文 oper 行（每流程复用）+
                     // process_rr_operation 归属桥 + rr_event 模板桥
-                    if let Some((flow_id, _)) =
-                        flow_binding.filter(|_| event_code == REGISTRATION_APPROVAL_CODE)
+                    if let Some((flow_id, _)) = flow_binding
+                        .filter(|_| channel.event_code == INTERNAL_REGISTRATION_CHANNEL.event_code)
                     {
                         let ctx_oper: Option<i64> = sqlx::query_scalar(
                             r#"SELECT rro.ref_right FROM isahl.zc_id_process_rr_operation rro

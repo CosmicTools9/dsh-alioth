@@ -21,16 +21,25 @@ async fn setup_pool() -> PgPool {
 
 async fn create_test_user(pool: &PgPool, tag: &str) -> i64 {
     let email = format!("gaps_{}_{}@test.local", tag, uuid::Uuid::new_v4().simple());
-    sqlx::query_scalar(
-        "INSERT INTO isahl_auth.auth_users (name, username, email, password_hash, status, user_type, is_active, created_at, updated_at) \
-         VALUES ($1, $2, $3, 'hash', 'active', 'standard', true, NOW(), NOW()) RETURNING id",
+    // name/email 冗余列已下线：username 为唯一身份基点，email 唯一存储 = auth_user_emails
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl_auth.auth_users (username, password_hash, status, user_type, is_active, created_at, updated_at) \
+         VALUES ($1, 'hash', 'active', 'standard', true, NOW(), NOW()) RETURNING id",
     )
-    .bind(&email)
     .bind(format!("{}_{}", tag, uuid::Uuid::new_v4().simple()))
-    .bind(&email)
     .fetch_one(pool)
     .await
-    .expect("create test user")
+    .expect("create test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 async fn delete_user(pool: &PgPool, user_id: i64) {
@@ -261,6 +270,17 @@ async fn client_credentials_requires_active_subscription() {
         "expected SUBSCRIPTION_INACTIVE, got {:?}",
         body
     );
+    // 失败路径 MUST NOT 记录使用时间（审计列语义：只有成功签发才算「用过」）
+    let after_reject: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_used_at FROM isahl_auth.api_clients WHERE id = $1")
+            .bind(client_id_i64)
+            .fetch_one(&pool)
+            .await
+            .expect("read last_used_at");
+    assert!(
+        after_reject.is_none(),
+        "401 路径 MUST NOT 更新 last_used_at，实得 {after_reject:?}"
+    );
 
     // 2. 补激活订阅 → 200 签发
     let plan_id: i64 = sqlx::query_scalar(
@@ -287,6 +307,17 @@ async fn client_credentials_requires_active_subscription() {
     );
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert!(body["access_token"].as_str().is_some());
+    // 成功签发 MUST 记录 last_used_at（管理面凭此识别长期未用/僵尸凭据）
+    let issued_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_used_at FROM isahl_auth.api_clients WHERE id = $1")
+            .bind(client_id_i64)
+            .fetch_one(&pool)
+            .await
+            .expect("read last_used_at");
+    assert!(
+        issued_at.is_some(),
+        "200 签发路径 MUST 更新 last_used_at（审计列）"
+    );
 
     // 3. 订阅过期 → 再次 401
     sqlx::query("UPDATE isahl_auth.api_subscriptions SET expires_at = NOW() - INTERVAL '1 day' WHERE fk_client = $1")
@@ -299,6 +330,17 @@ async fn client_credentials_requires_active_subscription() {
         resp.status().as_u16(),
         401,
         "expired subscription must be rejected"
+    );
+    // 失败路径 MUST NOT 覆盖已记录的使用时间
+    let after_expiry: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT last_used_at FROM isahl_auth.api_clients WHERE id = $1")
+            .bind(client_id_i64)
+            .fetch_one(&pool)
+            .await
+            .expect("read last_used_at");
+    assert_eq!(
+        after_expiry, issued_at,
+        "401（订阅过期）MUST NOT 更新 last_used_at"
     );
 
     // 清理
@@ -360,13 +402,15 @@ async fn register_accepts_unverified_email() {
         "EMAIL_NOT_VERIFIED must not be returned, got {:?}",
         body
     );
-    // 用户行已落库
-    let user_id: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1")
-            .bind(&email)
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
+    // 用户行已落库（email 唯一存储 = auth_user_emails）
+    let user_id: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users \
+          WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1) LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
     let user_id = user_id.expect("user row must be created for unverified email");
 
     // 清理

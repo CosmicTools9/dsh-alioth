@@ -12,6 +12,7 @@
 use actix_web::{
     body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+    http::header::{HeaderName, HeaderValue},
     Error, HttpResponse,
 };
 use base64::Engine;
@@ -20,15 +21,22 @@ use serde_json::json;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 /// 订阅解析缓存 TTL（60s —— 订阅变更低频，容忍 1 分钟延迟）
 const SUBSCRIPTION_CACHE_TTL: Duration = Duration::from_secs(60);
-/// 计量写入队列容量（请求侧不阻塞：满则丢弃计数，仅记日志）
+/// 计量写入队列容量（请求侧不阻塞：满则丢弃**并记账**——MUST NOT 静默丢弃）
 const METERING_QUEUE_CAPACITY: usize = 4096;
 /// 配额检查缓存 TTL（5s —— 窗口计数低频变化，容忍短延迟）
 const QUOTA_CHECK_CACHE_TTL: Duration = Duration::from_secs(5);
+/// 空闲令牌桶回收阈值（超过该时长未使用的桶在下一次清扫时回收——桶表 MUST 有界）
+const BUCKET_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+/// 桶清扫触发步长（每 N 次限流检查触发一次空闲淘汰；避免每请求全表扫描）
+const BUCKET_SWEEP_EVERY: u64 = 256;
+/// 计量丢弃告警步长（首次 + 每累计 N 条输出一次 warn）
+const METERING_DROP_WARN_EVERY: u64 = 100;
 
 /// 订阅信息（client → subscription → plan 配额）
 #[derive(Clone, Debug)]
@@ -54,9 +62,10 @@ struct QuotaCacheEntry {
     cached_at: Instant,
 }
 
-/// 计量写入队列（批量 INSERT）
+/// 计量写入队列（批量 INSERT）；`dropped` = 排队满导致的累计丢弃数（MUST NOT 静默）
 struct MeteringQueue {
     tx: std::sync::mpsc::SyncSender<UsageRecord>,
+    dropped: Arc<AtomicU64>,
 }
 
 /// 单条计量记录
@@ -67,11 +76,15 @@ struct UsageRecord {
     method: String,
     status: u16,
     latency_ms: i64,
+    /// 来源 IP（无法确定/非法 ⇒ `None` → NULL；MUST NOT 伪造）
+    client_ip: Option<String>,
 }
 
 /// API Usage 计量中间件。
 ///
-/// 挂载在 PEP 内层（/api scope），仅处理经 PEP 认证的请求。
+/// 装配单源 = `openapi::governance`（执行序 Metrics → PEP → **metering** → idempotency；
+/// 按 actix「后注册者先执行」以逆序登记）——仅处理经 PEP 认证的请求；历史倒置缺陷
+/// 与修复见 change `fix-openapi-review-findings` §1。
 pub struct ApiUsageMiddleware {
     pool: PgPool,
     /// client_id → SubscriptionInfo 缓存
@@ -80,69 +93,225 @@ pub struct ApiUsageMiddleware {
     quota_cache: Arc<RwLock<HashMap<(String, String), QuotaCacheEntry>>>,
     /// client_id → 令牌桶（per-plan 限流：容量/补率来自订阅 plan）
     rate_buckets: Arc<RwLock<HashMap<String, RateBucket>>>,
+    /// 限流检查计数（驱动空闲桶清扫节奏）
+    bucket_ops: Arc<AtomicU64>,
     /// 计量写入队列
     queue: Arc<MeteringQueue>,
 }
 
-/// 令牌桶（per-client，容量/补率来自 plan）
+/// 令牌桶（per-client，容量/补率来自 plan）。
+///
+/// **plan 新鲜度**：桶记录建桶时的 plan 参数，检查时与当前订阅 plan 比对，不一致即**重建**
+/// （套餐升降级无需进程重启即生效）。桶表由 `maybe_sweep_buckets` 空闲淘汰保持有界。
 #[derive(Clone)]
 struct RateBucket {
     tokens: f64,
     capacity: f64,
     refill_rate: f64,
     last_refill: Instant,
+    /// 建桶时的 plan burst（与当前订阅 plan 比对用）
+    plan_burst: i64,
+    /// 建桶时的 plan RPS（毫秒粒度比较，避免 f64 直比）
+    plan_rps_millis: i64,
+}
+
+/// 限流检查结果：**放行与 429 共用同一取值口径**（`X-RateLimit-*` 三头 MUST 同源）。
+struct RateLimitOutcome {
+    limit: i64,
+    remaining: u64,
+    /// 桶重置的 Unix 秒（429 ⇒ 距补出一个令牌的时刻；放行 ⇒ 当前时刻）
+    reset_at: i64,
+}
+
+/// 写 `X-RateLimit-Limit/Remaining/Reset` 三头（放行与 429 共用；MUST NOT 各写一套公式）。
+fn insert_rate_limit_headers(
+    headers: &mut actix_web::http::header::HeaderMap,
+    outcome: &RateLimitOutcome,
+) {
+    for (name, value) in [
+        ("x-ratelimit-limit", outcome.limit.to_string()),
+        ("x-ratelimit-remaining", outcome.remaining.to_string()),
+        ("x-ratelimit-reset", outcome.reset_at.to_string()),
+    ] {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_lowercase(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            headers.insert(name, value);
+        }
+    }
 }
 
 impl RateBucket {
-    fn new(capacity: f64, refill_rate: f64) -> Self {
+    fn new(info: &SubscriptionInfo) -> Self {
+        let capacity = info.burst.max(1) as f64;
+        let refill_rate = info.rate_limit_rps.max(0.1);
         Self {
             tokens: capacity,
             capacity,
             refill_rate,
             last_refill: Instant::now(),
+            plan_burst: info.burst.max(1) as i64,
+            plan_rps_millis: (refill_rate * 1000.0).round() as i64,
         }
     }
 
-    fn try_consume(&mut self) -> bool {
+    /// 与当前订阅 plan 参数一致？（不一致 ⇒ 调用方重建该桶）
+    fn matches_plan(&self, info: &SubscriptionInfo) -> bool {
+        self.plan_burst == info.burst.max(1) as i64
+            && self.plan_rps_millis == (info.rate_limit_rps.max(0.1) * 1000.0).round() as i64
+    }
+
+    /// 消费一个令牌：返回消费后剩余令牌数（不足 ⇒ `None`，不消费）。
+    fn try_consume(&mut self) -> Option<u64> {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_refill).as_secs_f64();
         self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.capacity);
         self.last_refill = now;
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
-            true
+            Some(self.tokens.floor() as u64)
         } else {
-            false
+            None
         }
     }
+}
+
+/// 桶检查（**纯函数**：只依赖桶表 + 订阅信息 ⇒ 单测与生产同源）：
+/// plan 参数与建桶时不一致即**重建**（套餐升降级即时生效——受订阅解析缓存 TTL 约束）。
+fn rate_limit_check(
+    buckets: &mut HashMap<String, RateBucket>,
+    client_id: &str,
+    info: &SubscriptionInfo,
+    now_unix: i64,
+) -> (RateLimitOutcome, bool) {
+    let limit = info.burst.max(1) as i64;
+    let retry_after = (limit as f64 / info.rate_limit_rps.max(0.1)).ceil() as i64;
+    let bucket = buckets
+        .entry(client_id.to_string())
+        .and_modify(|b| {
+            if !b.matches_plan(info) {
+                // 套餐变更（升/降级）⇒ 以新 plan 参数重建
+                *b = RateBucket::new(info);
+            }
+        })
+        .or_insert_with(|| RateBucket::new(info));
+    match bucket.try_consume() {
+        Some(remaining) => (
+            RateLimitOutcome {
+                limit,
+                remaining,
+                reset_at: now_unix,
+            },
+            true,
+        ),
+        None => (
+            RateLimitOutcome {
+                limit,
+                remaining: 0,
+                reset_at: now_unix + retry_after,
+            },
+            false,
+        ),
+    }
+}
+
+/// 距下一个 UTC 日 0 点的秒数（≥1）。
+fn seconds_until_next_utc_day() -> i64 {
+    let now = chrono::Utc::now();
+    let tomorrow = (now.date_naive() + chrono::Days::new(1))
+        .and_hms_opt(0, 0, 0)
+        .expect("次日 0 点恒可构造");
+    let target = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(tomorrow, chrono::Utc);
+    (target - now).num_seconds().max(1)
+}
+
+/// 距下一个月 1 日 0 点的秒数（≥1）。
+fn seconds_until_next_utc_month() -> i64 {
+    use chrono::Datelike;
+    let now = chrono::Utc::now();
+    let (year, month) = if now.month() == 12 {
+        (now.year() + 1, 1)
+    } else {
+        (now.year(), now.month() + 1)
+    };
+    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .expect("次月 1 日恒可构造")
+        .and_hms_opt(0, 0, 0)
+        .expect("0 点恒可构造");
+    let target = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(first, chrono::Utc);
+    (target - now).num_seconds().max(1)
+}
+
+/// 配额超限的 `Retry-After`（秒）= 距**判定窗口**重置：日 → 次日 0 点；月 → 次月 1 日 0 点；
+/// 两者皆超取更晚者。MUST NOT 返回固定常量（月度配额下 1 小时是错误承诺）。
+fn quota_retry_after(day_exceeded: bool, month_exceeded: bool) -> i64 {
+    let day = if day_exceeded {
+        seconds_until_next_utc_day()
+    } else {
+        0
+    };
+    let month = if month_exceeded {
+        seconds_until_next_utc_month()
+    } else {
+        0
+    };
+    day.max(month).max(1)
 }
 
 impl ApiUsageMiddleware {
     pub fn new(pool: PgPool) -> Self {
         let (tx, rx) = std::sync::mpsc::sync_channel(METERING_QUEUE_CAPACITY);
-        let queue = Arc::new(MeteringQueue { tx });
+        let dropped = Arc::new(AtomicU64::new(0));
+        let queue = Arc::new(MeteringQueue {
+            tx,
+            dropped: dropped.clone(),
+        });
         // 计量 worker：批量写入，失败仅记日志（计量不影响主请求路径）
-        spawn_metering_worker(pool.clone(), rx);
+        spawn_metering_worker(pool.clone(), rx, dropped);
         Self {
             pool,
             subscriptions: Arc::new(RwLock::new(HashMap::new())),
             quota_cache: Arc::new(RwLock::new(HashMap::new())),
             rate_buckets: Arc::new(RwLock::new(HashMap::new())),
+            bucket_ops: Arc::new(AtomicU64::new(0)),
             queue,
         }
     }
 
-    /// per-plan 限流检查（Gap B 修复）：按 client 令牌桶，容量/补率来自订阅 plan。
-    /// 返回剩余令牌数（供 X-RateLimit-Remaining 头）；超限返回 None。
-    fn check_rate_limit(&self, client_id: &str, info: &SubscriptionInfo) -> Option<u64> {
+    /// per-plan 限流检查（Gap B 修复）：按 client 令牌桶，容量/补率来自**当前**订阅 plan
+    /// （plan 变更即重建桶 ⇒ 升降级无需重启生效）。
+    /// 返回 `(outcome, allowed)`：`outcome` 同时供放行响应头与 429 响应头（同源取值）。
+    fn check_rate_limit(
+        &self,
+        client_id: &str,
+        info: &SubscriptionInfo,
+    ) -> (RateLimitOutcome, bool) {
+        let now_unix = chrono::Utc::now().timestamp();
+        let result = {
+            let mut buckets = self.rate_buckets.write().unwrap();
+            rate_limit_check(&mut buckets, client_id, info, now_unix)
+        };
+        self.maybe_sweep_buckets();
+        result
+    }
+
+    /// 空闲桶淘汰（每 `BUCKET_SWEEP_EVERY` 次检查触发一次）——桶表 MUST 有界
+    /// （client 删除/长期静默后其桶最迟 `BUCKET_IDLE_TTL` 被回收）。
+    fn maybe_sweep_buckets(&self) {
+        if !self
+            .bucket_ops
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(BUCKET_SWEEP_EVERY)
+        {
+            return;
+        }
         let mut buckets = self.rate_buckets.write().unwrap();
-        let bucket = buckets.entry(client_id.to_string()).or_insert_with(|| {
-            RateBucket::new(info.burst.max(1) as f64, info.rate_limit_rps.max(0.1))
-        });
-        if bucket.try_consume() {
-            Some(bucket.tokens.floor() as u64)
-        } else {
-            None
+        let before = buckets.len();
+        buckets.retain(|_, b| b.last_refill.elapsed() < BUCKET_IDLE_TTL);
+        let removed = before - buckets.len();
+        if removed > 0 {
+            log::debug!("metering: evicted {} idle rate-limit bucket(s)", removed);
         }
     }
 
@@ -210,30 +379,33 @@ impl ApiUsageMiddleware {
         Some(info)
     }
 
-    /// 配额检查（日/月窗口 COUNT，5s 缓存）。
-    async fn check_quota(&self, client_id: &str, info: &SubscriptionInfo) -> bool {
+    /// 配额检查（日/月窗口 COUNT，5s 缓存）：`None` = 放行；`Some(retry_after)` = 超限，
+    /// 值为**距判定窗口重置**的秒数（日 → 次日 0 点；月 → 次月 1 日 0 点；两者皆超取更晚者）。
+    async fn check_quota(&self, client_id: &str, info: &SubscriptionInfo) -> Option<i64> {
         if info.quota_daily <= 0 && info.quota_monthly <= 0 {
-            return true; // 不限配额
+            return None; // 不限配额
         }
         let day_key = format!("{}:d", client_id);
         let month_key = format!("{}:m", client_id);
 
-        // 缓存命中（日）
+        // 缓存命中：仅「超限」结论可复用（放行结论不缓存 ⇒ 窗口开闸不被延迟 5s）
         {
             let cache = self.quota_cache.read().unwrap();
-            if let Some(e) = cache.get(&(day_key.clone(), "d".into())) {
-                if e.cached_at.elapsed() < QUOTA_CHECK_CACHE_TTL && !e.passed {
-                    return false;
-                }
-            }
-            if let Some(e) = cache.get(&(month_key.clone(), "m".into())) {
-                if e.cached_at.elapsed() < QUOTA_CHECK_CACHE_TTL && !e.passed {
-                    return false;
-                }
+            let day_exceeded = cache
+                .get(&(day_key.clone(), "d".into()))
+                .map(|e| e.cached_at.elapsed() < QUOTA_CHECK_CACHE_TTL && !e.passed)
+                .unwrap_or(false);
+            let month_exceeded = cache
+                .get(&(month_key.clone(), "m".into()))
+                .map(|e| e.cached_at.elapsed() < QUOTA_CHECK_CACHE_TTL && !e.passed)
+                .unwrap_or(false);
+            if day_exceeded || month_exceeded {
+                return Some(quota_retry_after(day_exceeded, month_exceeded));
             }
         }
 
-        let mut ok = true;
+        let mut day_exceeded = false;
+        let mut month_exceeded = false;
         if info.quota_daily > 0 {
             let daily: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM isahl_auth.api_usage
@@ -244,10 +416,10 @@ impl ApiUsageMiddleware {
             .await
             .unwrap_or(0);
             if daily >= info.quota_daily {
-                ok = false;
+                day_exceeded = true;
             }
         }
-        if ok && info.quota_monthly > 0 {
+        if info.quota_monthly > 0 {
             let monthly: i64 = sqlx::query_scalar(
                 r#"SELECT COUNT(*) FROM isahl_auth.api_usage
                    WHERE fk_subscription = $1 AND requested_at >= date_trunc('month', NOW())"#,
@@ -257,26 +429,30 @@ impl ApiUsageMiddleware {
             .await
             .unwrap_or(0);
             if monthly >= info.quota_monthly {
-                ok = false;
+                month_exceeded = true;
             }
         }
+        let exceeded = day_exceeded || month_exceeded;
 
         let mut cache = self.quota_cache.write().unwrap();
         cache.insert(
             (day_key, "d".into()),
             QuotaCacheEntry {
-                passed: ok,
+                passed: !day_exceeded,
                 cached_at: Instant::now(),
             },
         );
         cache.insert(
             (month_key, "m".into()),
             QuotaCacheEntry {
-                passed: ok,
+                passed: !month_exceeded,
                 cached_at: Instant::now(),
             },
         );
-        ok
+        if !exceeded {
+            return None;
+        }
+        Some(quota_retry_after(day_exceeded, month_exceeded))
     }
 
     /// 从请求解析服务令牌 client_id（不验签 —— PEP 已验）。
@@ -315,7 +491,15 @@ impl ApiUsageMiddleware {
     /// 入队计量记录（满则丢弃，不阻塞请求）。
     fn enqueue(&self, record: UsageRecord) {
         if let Err(e) = self.queue.tx.try_send(record) {
-            log::warn!("api_usage queue full, dropping metering record: {}", e);
+            // 丢弃 MUST NOT 静默：首次 + 每累计 N 条告警（累计数可供运维对账缺口）
+            let dropped = self.queue.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+            if dropped == 1 || dropped.is_multiple_of(METERING_DROP_WARN_EVERY) {
+                log::warn!(
+                    "api_usage queue full: dropped {} metering record(s) so far ({})",
+                    dropped,
+                    e
+                );
+            }
         }
     }
 }
@@ -327,6 +511,7 @@ impl Clone for ApiUsageMiddleware {
             subscriptions: self.subscriptions.clone(),
             quota_cache: self.quota_cache.clone(),
             rate_buckets: self.rate_buckets.clone(),
+            bucket_ops: self.bucket_ops.clone(),
             queue: self.queue.clone(),
         }
     }
@@ -401,23 +586,23 @@ where
             };
 
             // 配额检查 + per-plan 限流（仅服务令牌；超限 → 429 不进入 handler）
+            let mut rate_headers: Option<RateLimitOutcome> = None;
             if let Some(info) = &subscription {
                 if let Some(cid) = &client_id {
-                    // per-plan 限流（Gap B）：容量/补率来自订阅 plan
-                    let remaining = inner.check_rate_limit(cid, info);
-                    if remaining.is_none() {
+                    // per-plan 限流：容量/补率来自**当前**订阅 plan（变更即重建桶）
+                    let (outcome, allowed) = inner.check_rate_limit(cid, info);
+                    if !allowed {
                         let retry_after =
-                            (info.burst.max(1) as f64 / info.rate_limit_rps.max(0.1)).ceil() as u64;
+                            (outcome.reset_at - chrono::Utc::now().timestamp()).max(0);
                         return Ok(req
                             .into_response(
                                 HttpResponse::TooManyRequests()
                                     .insert_header(("Retry-After", retry_after.to_string()))
-                                    .insert_header(("X-RateLimit-Limit", info.burst.to_string()))
+                                    .insert_header(("X-RateLimit-Limit", outcome.limit.to_string()))
                                     .insert_header(("X-RateLimit-Remaining", "0"))
                                     .insert_header((
                                         "X-RateLimit-Reset",
-                                        (chrono::Utc::now().timestamp() as u64 + retry_after)
-                                            .to_string(),
+                                        outcome.reset_at.to_string(),
                                     ))
                                     .json(json!({
                                         "error": "RATE_LIMITED",
@@ -426,12 +611,12 @@ where
                             )
                             .map_into_right_body());
                     }
-                    // 配额检查（Gap A 已保证订阅有效）
-                    if !inner.check_quota(cid, info).await {
+                    // 配额检查（Gap A 已保证订阅有效）：`Retry-After` 按判定窗口重置时刻
+                    if let Some(retry_after) = inner.check_quota(cid, info).await {
                         return Ok(req
                             .into_response(
                                 HttpResponse::TooManyRequests()
-                                    .insert_header(("Retry-After", "3600"))
+                                    .insert_header(("Retry-After", retry_after.to_string()))
                                     .json(json!({
                                         "error": "QUOTA_EXCEEDED",
                                         "message": "Daily or monthly quota exceeded",
@@ -439,10 +624,25 @@ where
                             )
                             .map_into_right_body());
                     }
+                    // 放行 ⇒ 成功响应同样携带限流头（第三方可自适应；与 429 同源取值）
+                    rate_headers = Some(outcome);
                 }
             }
 
-            let res = svc.call(req).await;
+            // 来源 IP：actix `ConnectionInfo::realip_remote_addr`（框架口径——存在
+            // `X-Forwarded-For`/`Forwarded` 时取其首值，否则回退对端地址；信任链归部署面
+            // 代理配置）。仅作**审计**列，MUST NOT 用作授权/限流判定输入。
+            // 无法确定或非法 ⇒ NULL（MUST NOT 伪造）。
+            let client_ip = req
+                .connection_info()
+                .realip_remote_addr()
+                .and_then(|s| s.parse::<std::net::IpAddr>().ok())
+                .map(|ip| ip.to_string());
+
+            let mut res = svc.call(req).await;
+            if let (Some(outcome), Ok(response)) = (rate_headers.as_ref(), res.as_mut()) {
+                insert_rate_limit_headers(response.headers_mut(), outcome);
+            }
             let status = res.as_ref().map(|r| r.status().as_u16()).unwrap_or(500);
             let latency_ms = start.elapsed().as_millis() as i64;
 
@@ -454,6 +654,7 @@ where
                     method,
                     status,
                     latency_ms,
+                    client_ip,
                 });
             }
 
@@ -463,7 +664,11 @@ where
 }
 
 /// 计量 worker：批量消费队列，批量 INSERT + 周期归档（Gap G）。
-fn spawn_metering_worker(pool: PgPool, rx: std::sync::mpsc::Receiver<UsageRecord>) {
+fn spawn_metering_worker(
+    pool: PgPool,
+    rx: std::sync::mpsc::Receiver<UsageRecord>,
+    dropped: Arc<AtomicU64>,
+) {
     std::thread::spawn(move || {
         // 归档计时：每 6 小时删 90 天前 api_usage（幂等）
         let mut last_archive = Instant::now();
@@ -489,6 +694,7 @@ fn spawn_metering_worker(pool: PgPool, rx: std::sync::mpsc::Receiver<UsageRecord
             if last_archive.elapsed() >= ARCHIVE_INTERVAL {
                 last_archive = Instant::now();
                 let pool_clone = pool.clone();
+                let dropped_clone = dropped.clone();
                 std::thread::spawn(move || {
                     let rt = match tokio::runtime::Runtime::new() {
                         Ok(r) => r,
@@ -507,9 +713,11 @@ fn spawn_metering_worker(pool: PgPool, rx: std::sync::mpsc::Receiver<UsageRecord
                         .await
                         {
                             Ok(r) => log::info!(
-                                "api_usage retention: purged {} rows older than {} days",
+                                "api_usage retention: purged {} rows older than {} days \
+                                 (metering records dropped so far: {})",
                                 r.rows_affected(),
-                                RETENTION_DAYS
+                                RETENTION_DAYS,
+                                dropped_clone.load(Ordering::Relaxed)
                             ),
                             Err(e) => log::error!("api_usage retention purge error: {}", e),
                         }
@@ -542,14 +750,15 @@ fn spawn_metering_worker(pool: PgPool, rx: std::sync::mpsc::Receiver<UsageRecord
                     for r in &batch {
                         let res = sqlx::query(
                             r#"INSERT INTO isahl_auth.api_usage
-                               (fk_subscription, route, method, status, latency_ms, requested_at)
-                               VALUES ($1, $2, $3, $4, $5, NOW())"#,
+                               (fk_subscription, route, method, status, latency_ms, client_ip, requested_at)
+                               VALUES ($1, $2, $3, $4, $5, $6::inet, NOW())"#,
                         )
                         .bind(r.subscription_id)
                         .bind(&r.route)
                         .bind(&r.method)
                         .bind(r.status as i16)
                         .bind(r.latency_ms)
+                        .bind(r.client_ip.as_deref())
                         .execute(&mut *tx)
                         .await;
                         if let Err(e) = res {
@@ -563,4 +772,91 @@ fn spawn_metering_worker(pool: PgPool, rx: std::sync::mpsc::Receiver<UsageRecord
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn info(
+        code: &str,
+        burst: i32,
+        rps: f64,
+        quota_daily: i64,
+        quota_monthly: i64,
+    ) -> SubscriptionInfo {
+        SubscriptionInfo {
+            subscription_id: 1,
+            plan_code: code.to_string(),
+            rate_limit_rps: rps,
+            burst,
+            quota_daily,
+            quota_monthly,
+            tier: 0,
+        }
+    }
+
+    /// 配额等待时间按窗口：仅日超限 ⇒ ≤ 24h；仅月超限 ⇒ ≥ 24h 且 ≤ 31 天。
+    #[test]
+    fn quota_retry_after_follows_window() {
+        let day_only = quota_retry_after(true, false);
+        assert!((1..=24 * 3600).contains(&day_only), "day: {day_only}");
+
+        let month_only = quota_retry_after(false, true);
+        assert!(
+            (24 * 3600..=31 * 24 * 3600).contains(&month_only),
+            "month: {month_only}"
+        );
+
+        // 两者皆超限 ⇒ 取更晚者
+        assert_eq!(quota_retry_after(true, true), day_only.max(month_only));
+    }
+
+    /// UTC 窗口边界有界（≥1s、日 ≤24h、月 ≤31 天）。
+    #[test]
+    fn utc_window_boundaries_are_bounded() {
+        assert!((1..=24 * 3600).contains(&seconds_until_next_utc_day()));
+        assert!((1..=31 * 24 * 3600).contains(&seconds_until_next_utc_month()));
+    }
+
+    /// 桶随 plan 变更重建：同 client 按 burst=1 耗尽后，改判 burst=10 ⇒ MUST 立即放行
+    /// （套餐升降级无需进程重启；订阅信息缓存 TTL 之外即时可见）。
+    #[test]
+    fn rate_limit_check_rebuilds_bucket_on_plan_change() {
+        let mut buckets: HashMap<String, RateBucket> = HashMap::new();
+        let free = info("free", 1, 0.0001, 0, 0);
+
+        let (first, allowed) = rate_limit_check(&mut buckets, "c1", &free, 1_000);
+        assert!(allowed && first.limit == 1 && first.remaining == 0);
+
+        let (second, allowed) = rate_limit_check(&mut buckets, "c1", &free, 1_000);
+        assert!(!allowed, "burst=1 已耗尽 ⇒ 拒绝");
+        assert_eq!(second.remaining, 0);
+        assert!(second.reset_at > 1_000, "429 的 reset 必须在未来");
+
+        let pro = info("pro", 10, 5.0, 0, 0);
+        let (third, allowed) = rate_limit_check(&mut buckets, "c1", &pro, 1_001);
+        assert!(allowed, "套餐变更 MUST 即时生效（桶按新 plan 重建）");
+        assert_eq!(third.limit, 10);
+        assert_eq!(third.remaining, 9);
+    }
+
+    /// `matches_plan` 检测容量与补率两类变更。
+    #[test]
+    fn bucket_plan_freshness_detects_change() {
+        let free = info("free", 5, 1.0, 0, 0);
+        let bucket = RateBucket::new(&free);
+        assert!(bucket.matches_plan(&free));
+        assert!(!bucket.matches_plan(&info("pro", 100, 50.0, 0, 0)));
+        assert!(!bucket.matches_plan(&info("free2", 5, 2.0, 0, 0)));
+    }
+
+    /// 桶消费语义：容量内返回剩余；耗尽返回 None（不消费）。
+    #[test]
+    fn bucket_consumes_until_exhausted() {
+        let mut bucket = RateBucket::new(&info("tiny", 2, 0.0001, 0, 0));
+        assert_eq!(bucket.try_consume(), Some(1));
+        assert_eq!(bucket.try_consume(), Some(0));
+        assert_eq!(bucket.try_consume(), None);
+    }
 }

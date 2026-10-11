@@ -22,3 +22,4 @@ sqlparser = "0.63"
 
 approval = { path = "../approval" }
 llm = { path = "../llm" }
+common = { path = "../common" }

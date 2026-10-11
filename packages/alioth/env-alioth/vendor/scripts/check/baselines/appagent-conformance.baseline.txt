@@ -1,0 +1,10 @@
+# AppAgent 持久化一致性套件基线（SPEC_ENFORCEMENT_SUBSTRATE §基线切分）
+# 格式: <mode> <case-id>          （mode ∈ resident | reopen）
+# 语义: 本条 = **存量失败**（已测量、已知、暂不阻断）。门禁 check-appagent-conformance-baseline.ts
+#       只拦「相对本基线的新增失败」；每修复一条 MUST 移除对应行（独立提交/变更单落地）。
+# 记录方式: bun scripts/check/check-appagent-conformance-baseline.ts --record
+#           （或跑 cargo test -p app-agent --test appagent_conformance_test 生成报告后 --record）
+#
+# 当前状态（2026-10-03 首测）：5 用例 × 2 模式 = 10 项全过 ⇒ 无存量失败行。
+# 说明: 空基线 ≠ 无套件——套件本体在 Meta/backend/app-agent/tests/conformance/，
+#       报告落 .tmp/appagent-conformance-report.txt。

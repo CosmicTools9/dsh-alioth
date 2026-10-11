@@ -36,9 +36,9 @@ pub fn register(cfg: &mut web::ServiceConfig) {
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct SubjectBankCard {
-    #[serde(with = "i64_string")]
+    #[serde(with = "common::serde_zuid")]
     pub id: i64,
-    #[serde(with = "i64_string")]
+    #[serde(with = "common::serde_zuid")]
     pub subject_id: i64,
     /// 账户名/户名（zc_id_stor-acc-bank.name）
     pub name: String,
@@ -65,19 +65,6 @@ pub struct UpsertBankCardRequest {
     /// 开户机构主体 id（zc_id_subjects 行；可空——未登记开户机构时省略或传 null）
     #[serde(default, with = "common::serde_zuid::opt")]
     pub trustee_id: Option<i64>,
-}
-
-mod i64_string {
-    use serde::{Deserialize, Serializer};
-
-    pub fn serialize<S: Serializer>(v: &i64, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&v.to_string())
-    }
-
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
-        let s = String::deserialize(d)?;
-        s.parse::<i64>().map_err(serde::de::Error::custom)
-    }
 }
 
 /// 账号掩码：长度 > 8 时前 4 + `***` + 后 4，否则原样

@@ -1,6 +1,6 @@
 name: alioth-compose
 description: "应用组装 — app.json(全字段对齐 app.schema.json) + extensions/*.yaml + ESM 原型构建与校验"
-version: "2.3"
+version: "2.4"
 default_tools: [todo]
 tracks:
   - name: 应用组装验证
@@ -33,7 +33,7 @@ tracks:
             output_glob: "Pre-Proc/{ns}/Prototypes/Apps/{app}/a-v*.html"
             timeout_sec: 180
       - id: "1.5"
-        instruction: "组装完整性确认 — compose-report.json 已由 Composing 状态代码确定性生成（纯派生数据，禁止手写/重写）；用 read_file 确认其存在且 app/modules/extensions 字段与实际产物一致，然后输出 completed: true"
+        instruction: "组装完整性确认 — compose-report.json 已由 Composing 状态代码确定性生成（纯派生数据，禁止手写/重写）；用 read_file 确认其存在且 app/modules/extensions 字段与实际产物一致，然后输出 completed: true。另（MUST — ADR D-047）：app.json 的 config.modules/config.blocks 是前端 App 隔离的定义面，其完备性由本步末位门禁判定——磁盘上的模块/Block 前端 MUST 被某 App 声明且作为平台 workspace 成员的依赖图入账（违规即组装未完成）；登记链与禁止形态见 skill://alioth-gui §前端依赖供给与 App 隔离。"
         tools: [read_file]
         schema: {type: object, required: [compose_report]}
         gates:
@@ -41,6 +41,11 @@ tracks:
           - program: "bun"
             args: ["scripts/check/check-nav-hrefs.ts", "--fail", "--ns", "{ns}"]
             timeout_sec: 120
+          - program: "bun"
+            args: ["scripts/check/check-app-frontend-isolation.ts", "--fail", "--ns", "{ns}"]
+            timeout_sec: 120
 source:
-  content_sha256: 67a2108d2585f973bf94b093f10e2940228e80b3fd7e47b7903ec2a068b3592f
-  # 2026-09-24 重记：SKILL.md 经 ee2bf5b72a 禁令文本指针化，typed Track/Step/gate 内容未变（join-loop 收尾核验）
+  content_sha256: 424d779d4089129d960e150e31f061569e99504a369a01e6b64163a119edb5dd
+  # 2026-10-08 重记：RSI 收尾（cae52e7a31）改写 flows 树形图后核验（finish-rsi-loop）
+  # 2026-10-04 重记：SKILL.md description 收紧为判别式路由提示（fix-skill-routing-collisions）
+  # 2026-10-02 重记：SKILL.md 补 config.blocks 实况与 App 隔离判据（align-agent-surfaces-with-frontend-isolation）

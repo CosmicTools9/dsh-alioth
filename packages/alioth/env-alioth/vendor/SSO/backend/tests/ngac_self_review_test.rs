@@ -43,22 +43,31 @@ struct Fixture {
 /// 认知用户 + 派生 UA + 关联（view: UA → cogme/read）全链路
 async fn seed_cognition_user_with_grant(pool: &PgPool, suffix: &str) -> Fixture {
     let email = format!("self_review_{}@alioth.test", suffix);
+    let username = format!("self_review_{}", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&email)
-    .bind(format!("self_review_{}", suffix))
+    .bind(&username)
     .execute(pool)
     .await
     .expect("insert user");
     let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&username)
             .fetch_one(pool)
             .await
             .expect("fetch user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&email)
+    .execute(pool)
+    .await
+    .ok();
 
     // 前置清理：重跑残留（同 email 历史 雇员行 / 任职桥 / 视角关联行与标签），
     // 保证派生集只由本次 fixture 决定——否则历史 雇员行 仍可派生 UA，令「任职终止即撤销」断言假失败
@@ -279,17 +288,21 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .bind(format!("view:{}", f.tag_code))
         .execute(pool)
         .await;
-    let _ = sqlx::query(
-        "DELETE FROM isahl_auth.ngac_object_attribute WHERE resource_type='cogme' AND fk_resource=0",
-    )
-    .execute(pool)
-    .await;
+    // `cogme:0` OA **MUST NOT 删除**：该资源类型是断言语义的一部分（`resource_type == "cogme"`
+    // 与 `cogme:0` 决策请求），故为跨测试共享行；旧实现在 cleanup 删除它 ⇒ 兄弟测试的
+    // association 目标消失（实测非确定性红：355「cogme 行」/438「派生 read 应放行」）。
+    // 共享行由 seed 的 `ON CONFLICT (resource_type, fk_resource) DO UPDATE SET deleted_at = NULL`
+    // 幂等复用，无需清理。
     let _ = sqlx::query("DELETE FROM isahl.\"zc_id_subj-position\" WHERE id = $1")
         .bind(f.position_id)
         .execute(pool)
         .await;
     let _ = sqlx::query("DELETE FROM isahl.\"zc_id_empl-natural\" WHERE id = $1")
         .bind(f.employee_id)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(f.user_id)
         .execute(pool)
         .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")

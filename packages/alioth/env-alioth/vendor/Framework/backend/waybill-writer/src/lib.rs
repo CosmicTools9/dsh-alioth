@@ -21,5 +21,7 @@ pub mod dispatch;
 pub mod models;
 pub mod ontology;
 
-pub use dispatch::{dispatch_vehicles_tx_inner, resolve_consignment_operator_org};
+pub use dispatch::{
+    dispatch_vehicles_tx_inner, dispatch_vehicles_tx_portal, resolve_consignment_operator_org,
+};
 pub use models::{DispatchParams, VehicleAllocation};

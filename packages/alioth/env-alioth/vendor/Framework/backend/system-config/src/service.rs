@@ -5,7 +5,7 @@
 
 use crate::crypto;
 use crate::models::{
-    ConfigCategoryListResponse, CreateSystemConfigRequest, SystemConfig, SystemConfigSafeResponse,
+    ConfigCategoryListResponse, CreateSystemConfigRequest, SystemConfigSafeResponse,
     UpdateSystemConfigRequest,
 };
 use crate::repository::SystemConfigRepository;
@@ -44,6 +44,7 @@ where
     pub async fn create(
         &self,
         mut req: CreateSystemConfigRequest,
+        actor_id: Option<i64>,
     ) -> Result<SystemConfigSafeResponse, SystemConfigError> {
         self.validate_request(&req).await?;
 
@@ -62,7 +63,7 @@ where
 
         let config = self
             .repo
-            .insert(&req)
+            .insert(&req, actor_id)
             .await
             .map_err(SystemConfigError::Database)?;
         Ok(SystemConfigSafeResponse::from(config))
@@ -72,6 +73,7 @@ where
         &self,
         id: i64,
         mut req: UpdateSystemConfigRequest,
+        actor_id: Option<i64>,
     ) -> Result<Option<SystemConfigSafeResponse>, SystemConfigError> {
         let existing = self
             .repo
@@ -106,7 +108,7 @@ where
 
         let config = self
             .repo
-            .update(id, &req)
+            .update(id, &req, actor_id)
             .await
             .map_err(SystemConfigError::Database)?;
         Ok(config.map(SystemConfigSafeResponse::from))
@@ -145,58 +147,6 @@ where
             .into_iter()
             .map(SystemConfigSafeResponse::from)
             .collect())
-    }
-
-    // ============================================
-    // Decryption API (for internal service use)
-    // ============================================
-
-    pub async fn get_full_config(
-        &self,
-        id: i64,
-    ) -> Result<Option<SystemConfig>, SystemConfigError> {
-        let mut config = self
-            .repo
-            .find_by_id(id)
-            .await
-            .map_err(SystemConfigError::Database)?;
-        if let Some(ref mut c) = config {
-            self.decrypt_credentials(c)?;
-        }
-        Ok(config)
-    }
-
-    pub async fn get_full_config_by_code(
-        &self,
-        code: &str,
-    ) -> Result<Option<SystemConfig>, SystemConfigError> {
-        let mut config = self
-            .repo
-            .find_by_code(code)
-            .await
-            .map_err(SystemConfigError::Database)?;
-        if let Some(ref mut c) = config {
-            self.decrypt_credentials(c)?;
-        }
-        Ok(config)
-    }
-
-    // ============================================
-    // Helpers
-    // ============================================
-
-    fn decrypt_credentials(&self, config: &mut SystemConfig) -> Result<(), SystemConfigError> {
-        if let Some(ref mut creds) = config.credentials {
-            let keys = schema::get_sensitive_keys(
-                config._f_.as_deref().unwrap_or(""),
-                config._t_.as_deref().unwrap_or(""),
-            );
-            let keys_ref: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
-            if !keys_ref.is_empty() {
-                crypto::decrypt_json_fields(creds, &keys_ref).map_err(SystemConfigError::Crypto)?;
-            }
-        }
-        Ok(())
     }
 
     async fn validate_request(

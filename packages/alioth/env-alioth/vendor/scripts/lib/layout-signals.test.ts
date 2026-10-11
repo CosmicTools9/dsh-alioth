@@ -164,6 +164,9 @@ describe('探针表达式（结构性约束）', () => {
 
   test('重叠判定 MUST 先按裁剪祖先收敛 rect（可滚动条带屏外项不参与）', () => {
     // 判据：探针源码含裁剪收敛函数、按 overflow 判定、且重叠循环用收敛后的 rects
+    // 刻意截断不计（2026-10-07）：truncate/line-clamp 属设计意图 ⇒ 不得回退为「凡 overflow:hidden 即计数」
+    expect(LAYOUT_PROBE).toContain('deliberateTruncate');
+    expect(LAYOUT_PROBE).toContain("cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap'");
     expect(LAYOUT_PROBE).toContain('const clipRect =');
     expect(LAYOUT_PROBE).toContain("cs.overflowX !== 'visible'");
     expect(LAYOUT_PROBE).toContain('const rects = nodes.map(clipRect)');

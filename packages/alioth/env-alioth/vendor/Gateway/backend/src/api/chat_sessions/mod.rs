@@ -11,13 +11,13 @@
 //! Routes: /api/chat-sessions/*
 
 pub mod adapters;
-#[cfg(feature = "sso")]
-pub mod admin_agents;
 mod attachment_parse;
+pub mod context_envelope;
 pub mod memory_scope;
 pub mod memory_store;
 mod orchestrator;
 pub mod ports;
+pub mod turn;
 pub mod ws_handler;
 
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse, Result};
@@ -34,14 +34,15 @@ use crate::i18n::I18nManagerRef;
 
 use self::adapters::{
     agent_dispatch::AgentRouterAdapter,
-    db_ai_contact::DbAIContactAdapter,
     db_llm_config::{self, DbLlmConfigAdapter},
     db_message::SqlxMessageAdapter,
     db_message_meta,
-    db_session::SqlxSessionAdapter,
+    db_session::{DbRoutingHistory, SqlxSessionAdapter},
 };
+use self::context_envelope::ChatContextEnvelope;
 use self::orchestrator::{
-    CreateSessionInput, DefaultSessionOrchestrator, SessionOrchestrator, TurnInput,
+    CreateSessionInput, DbTurnEnvironment, DefaultSessionOrchestrator, SessionOrchestrator,
+    TokioBackgroundScheduler, TurnDependencies, TurnInput,
 };
 use self::ports::{LlmConfigPort, MessageStorePort, SessionStorePort};
 // ============================================
@@ -145,6 +146,10 @@ pub struct CreateMessageRequest {
     /// Message-level page/entity context (design D1): when present, the
     /// session's page_context snapshot is replaced in the same turn.
     pub context: Option<Value>,
+    /// 知识注入结果（顶层兄弟字段，wire 规范，D5）
+    pub knowledge_context: Option<String>,
+    /// Agent 路由提示（顶层兄弟字段，wire 规范，D5）
+    pub suggested_agent: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -372,6 +377,17 @@ fn extract_user_id(req: &HttpRequest) -> Result<i64, actix_web::Error> {
 
 static SHARED_ORCHESTRATOR: OnceLock<Arc<DefaultSessionOrchestrator>> = OnceLock::new();
 
+/// 组装一个聊天编排器（design D3 组合根）：端口 + env 由调用方注入 ⇒ 可被测试
+/// 替换为假实现。生产路径 [`build_orchestrator`] 用真实适配器 + `DbTurnEnvironment`
+/// 调用本函数（`OnceLock` 仅作生产缓存）。
+pub fn build_orchestrator_with(
+    pool: PgPool,
+    i18n: I18nManagerRef,
+    deps: TurnDependencies,
+) -> Arc<DefaultSessionOrchestrator> {
+    Arc::new(DefaultSessionOrchestrator::new(pool, i18n, deps))
+}
+
 fn build_orchestrator(pool: &PgPool, i18n: I18nManagerRef) -> Arc<DefaultSessionOrchestrator> {
     let pool = pool.clone();
     SHARED_ORCHESTRATOR
@@ -379,17 +395,29 @@ fn build_orchestrator(pool: &PgPool, i18n: I18nManagerRef) -> Arc<DefaultSession
             let session_store = Arc::new(SqlxSessionAdapter::new(pool.clone()));
             let message_store = Arc::new(SqlxMessageAdapter::new(pool.clone()));
             let llm_config = Arc::new(DbLlmConfigAdapter::new(pool.clone()));
-            let agent_dispatch = Arc::new(AgentRouterAdapter::new(pool.clone()));
-            let ai_contact = Arc::new(DbAIContactAdapter::new(pool.clone()));
-            Arc::new(DefaultSessionOrchestrator::new(
+            // 后台 job 派发 seam（D2）：生产实现逐字保留原 4 个 fire-and-forget 任务体。
+            let background = Arc::new(TokioBackgroundScheduler::new(
+                pool.clone(),
+                session_store.clone(),
+                llm_config.clone(),
+            ));
+            let agent_dispatch = Arc::new(AgentRouterAdapter::new(
+                pool.clone(),
+                Arc::new(DbRoutingHistory::new(pool.clone())),
+            ));
+            let env = Arc::new(DbTurnEnvironment::new(pool.clone()));
+            build_orchestrator_with(
                 pool,
                 i18n,
-                session_store,
-                message_store,
-                llm_config,
-                agent_dispatch,
-                ai_contact,
-            ))
+                TurnDependencies {
+                    session_store,
+                    message_store,
+                    llm_config,
+                    agent_dispatch,
+                    background,
+                    env,
+                },
+            )
         })
         .clone()
 }
@@ -632,11 +660,19 @@ pub async fn add_message(
 
     let orchestrator = build_orchestrator(pool.get_ref(), i18n_manager.get_ref().clone());
 
+    // D5 写侧：顶层兄弟字段与 context 折为规范单深度形态后再存入会话快照。
+    let context = ChatContextEnvelope::from_parts(
+        req.context.clone(),
+        req.knowledge_context.clone(),
+        req.suggested_agent.clone(),
+    )
+    .to_session_context();
+
     match orchestrator
         .add_message(
             session_id,
             &req.content,
-            req.context.clone(),
+            context,
             req.attachments.clone(),
             req.knowledge_refs.clone(),
             user_id,
@@ -1252,19 +1288,9 @@ pub async fn execute_action(
 // ============================================
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
-    // D2.17 agent 管理面（NGAC admin 守卫在 handler 内，SSO-only）。
-    // MUST 先于 /chat-sessions 主 scope 注册——actix-web 4 的 scope 前缀匹配
-    // 不回退（实测：主 scope 的 /{id} 通配先吃 "admin" 段 → 后注册 admin scope
-    // 404）。长前缀先行是 actix scope 并列的可靠次序。
-    #[cfg(feature = "sso")]
-    cfg.service(
-        web::scope("/chat-sessions/admin/agents")
-            .route("", web::get().to(admin_agents::list_agents))
-            .route("", web::post().to(admin_agents::create_agent))
-            .route("/{code}", web::patch().to(admin_agents::patch_agent))
-            .route("/{code}", web::delete().to(admin_agents::delete_agent)),
-    );
-
+    // EmpAgent admin/agents 管理面已下沉 gateway-sso crate（move-chat-admin-agents-to-sso）：
+    // embedded 形态经 host 组合根 gateway_sso::facade::routes::configure_protected_routes 挂载，remote 形态
+    // 由独立 SSO 进程承载 + Gateway 反代 /api/chat-sessions/admin 前缀（同规约）。
     cfg.service(
         web::scope("/chat-sessions")
             .route("", web::post().to(create_session))
@@ -1385,7 +1411,7 @@ mod tests {
     async fn llm_unconfigured_preflight_returns_503_with_code() {
         let raw = format!(
             "{} LLM_API_KEY not configured. Add an LLM provider in System Config > LLM",
-            db_llm_config::LLM_UNCONFIGURED_MARKER
+            approval::llm_assist::LLM_UNCONFIGURED_MARKER
         );
         let resp = llm_unconfigured_rejection(&raw).expect("未配置 MUST 前置拒绝");
         assert_eq!(
@@ -1402,7 +1428,7 @@ mod tests {
         assert!(parsed.get("error").is_none(), "MUST NOT 使用 error 包装");
         // 用户可见文案 MUST NOT 含内部哨兵
         let msg = parsed["message"].as_str().unwrap();
-        assert!(!msg.contains(db_llm_config::LLM_UNCONFIGURED_MARKER));
+        assert!(!msg.contains(approval::llm_assist::LLM_UNCONFIGURED_MARKER));
     }
 
     /// 非未配置类失败不前置拒绝（DB 故障维持既有异步失败语义）。
@@ -1417,7 +1443,7 @@ mod tests {
     fn llm_failure_visible_text_strips_marker() {
         let raw = format!(
             "{} LLM_API_KEY not configured.",
-            db_llm_config::LLM_UNCONFIGURED_MARKER
+            approval::llm_assist::LLM_UNCONFIGURED_MARKER
         );
         assert_eq!(
             db_llm_config::visible_message(&raw),

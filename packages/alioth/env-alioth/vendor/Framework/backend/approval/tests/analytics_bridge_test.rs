@@ -25,14 +25,13 @@ fn unique_approver() -> (i64, String) {
 async fn seed_approver(pool: &sqlx::PgPool, id: i64, username: &str) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, $2, $3, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(id)
     .bind(username)
-    .bind(format!("{username}@test.local"))
     .execute(pool)
     .await
     .unwrap();

@@ -27,7 +27,8 @@ export interface ViewportSignals {
   realOverlap: number;
   /** 文档级横向溢出像素（遥测：实测三页全 0，shell 隐藏溢出） */
   hOverflow: number;
-  /** 文本裁切元素数（遥测） */
+  /** 文本裁切元素数（遥测；**不含刻意截断**——`truncate`（ellipsis + nowrap）与 `-webkit-line-clamp`
+   *  属设计意图，2026-10-07 起不计入，否则壳 chrome 的省略号标签恒产生假阳性） */
   clipped: number;
   /** 取证样本（≤5 条） */
   samples?: { vstack: string[]; overlap: string[] };
@@ -57,9 +58,9 @@ export interface DimensionScore {
   score: number | null;
 }
 
-export const DESKTOP_VIEWPORT = 'desktop';
+export const DESKTOP_VIEWPORT = "desktop";
 /** 窄档（相对 desktop 取 Δ 的档位） */
-export const NARROW_VIEWPORTS = ['tablet', 'mobile'] as const;
+export const NARROW_VIEWPORTS = ["tablet", "mobile"] as const;
 
 /** 逐字竖排的窄屏劣化阈值（实测：干净页 Δ=0，异常页 Δ≥8 ⇒ 3 留 2.6 倍余量） */
 export const VSTACK_DELTA_THRESHOLD = 3;
@@ -163,7 +164,20 @@ export const LAYOUT_PROBE = `(() => {
       if (ix <= 1 || iy <= 1) continue;
       const small = Math.min(ra.width * ra.height, rb.width * rb.height);
       if (small <= 0 || (ix * iy) / small <= 0.25) continue;
-      if (overlapSamples.length < 12) overlapSamples.push(label(a) + ' × ' + label(b));
+      if (overlapSamples.length < 12)
+        overlapSamples.push(
+          label(a) +
+            ' × ' +
+            label(b) +
+            ' @ [' +
+            [ra.left, ra.top, ra.width, ra.height].map((n) => Math.round(n)).join(',') +
+            ']×[' +
+            [rb.left, rb.top, rb.width, rb.height].map((n) => Math.round(n)).join(',') +
+            '] overlap=' +
+            Math.round(ix) +
+            'x' +
+            Math.round(iy),
+        );
       if (overlapSamples.length >= 12) break;
     }
     if (overlapSamples.length >= 12) break;
@@ -193,33 +207,56 @@ export const LAYOUT_PROBE = `(() => {
         if (vstackSamples.length < 12) vstackSamples.push(label(el) + '[' + t.slice(0, 6) + ' w=' + Math.round(el.clientWidth) + ' fs=' + Math.round(fs) + ' lines=' + lines + ']');
       }
     }
-    if (el.scrollWidth > el.clientWidth + 2 && (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.textOverflow === 'ellipsis')) clipped++;
+    // 刻意截断不计（2026-10-07 修正）：truncate 惯用式（ellipsis + nowrap）与 -webkit-line-clamp
+    // 属设计意图（省略号即呈现形态），此前被计入 clipped ⇒ 壳 chrome 的品牌/块名标签恒假阳性。
+    // 注意：本探针整体是模板字面量 ⇒ 注释内 MUST NOT 出现反引号。
+    const deliberateTruncate =
+      (cs.textOverflow === 'ellipsis' && cs.whiteSpace === 'nowrap') ||
+      Boolean(cs.webkitLineClamp && cs.webkitLineClamp !== 'none');
+    if (
+      !deliberateTruncate &&
+      el.scrollWidth > el.clientWidth + 2 &&
+      (cs.overflow === 'hidden' || cs.overflowX === 'hidden' || cs.textOverflow === 'ellipsis')
+    )
+      clipped++;
   }
 
   return { vw, vstack: vstackSamples.length, realOverlap: overlapSamples.length, hOverflow, clipped, samples: { vstack: vstackSamples.slice(0, 5), overlap: overlapSamples.slice(0, 5) } };
 })()`;
 
 /** 命中硬判据的窄档（Δ 维度）；无 desktop 基准时返回空（信息不足不下结论） */
-export function narrowViolations(metrics: ViewportMetrics[]): NarrowViolation[] {
-  const desktop = metrics.find((m) => m.viewport === DESKTOP_VIEWPORT && m.ready);
+export function narrowViolations(
+  metrics: ViewportMetrics[],
+): NarrowViolation[] {
+  const desktop = metrics.find(
+    (m) => m.viewport === DESKTOP_VIEWPORT && m.ready,
+  );
   if (!desktop) return [];
   const out: NarrowViolation[] = [];
   for (const m of metrics) {
     if (!m.ready) continue;
     if (!(NARROW_VIEWPORTS as readonly string[]).includes(m.viewport)) continue;
     const vstackDelta = Math.max(0, m.signals.vstack - desktop.signals.vstack);
-    const overlapDelta = Math.max(0, m.signals.realOverlap - desktop.signals.realOverlap);
+    const overlapDelta = Math.max(
+      0,
+      m.signals.realOverlap - desktop.signals.realOverlap,
+    );
     const signals: string[] = [];
-    if (vstackDelta >= VSTACK_DELTA_THRESHOLD) signals.push('vstack');
-    if (overlapDelta >= OVERLAP_DELTA_THRESHOLD) signals.push('overlap');
-    if (signals.length > 0) out.push({ viewport: m.viewport, vstackDelta, overlapDelta, signals });
+    if (vstackDelta >= VSTACK_DELTA_THRESHOLD) signals.push("vstack");
+    if (overlapDelta >= OVERLAP_DELTA_THRESHOLD) signals.push("overlap");
+    if (signals.length > 0)
+      out.push({ viewport: m.viewport, vstackDelta, overlapDelta, signals });
   }
   return out;
 }
 
 /** 总分：三信号模型 + 窄屏劣化扣项 */
-export function scoreFrom(input: { hardErrors: number; violations: number }): number {
-  const hard = HARD_ERROR_DEDUCTION * Math.min(input.hardErrors, HARD_ERROR_CAP);
+export function scoreFrom(input: {
+  hardErrors: number;
+  violations: number;
+}): number {
+  const hard =
+    HARD_ERROR_DEDUCTION * Math.min(input.hardErrors, HARD_ERROR_CAP);
   const narrow = NARROW_DEDUCTION * Math.min(input.violations, NARROW_CAP);
   return Math.max(SCORE_MIN, SCORE_BASE - hard - narrow);
 }
@@ -228,11 +265,21 @@ export function scoreFrom(input: { hardErrors: number; violations: number }): nu
  * 六维分：仅保留有机械信号支撑的维度；无信号者置 `null`（"未测量"），
  * 不再用固定 `Math.min(score, 85)` 编造。
  */
-export function dimensionsFrom(metrics: ViewportMetrics[], violations: NarrowViolation[]): DimensionScore[] {
+export function dimensionsFrom(
+  metrics: ViewportMetrics[],
+  violations: NarrowViolation[],
+): DimensionScore[] {
   const ready = metrics.filter((m) => m.ready);
   const hasSignals = ready.length > 0;
   if (!hasSignals) {
-    return ['Layout', 'Typography', 'Color', 'Responsive', 'Interactive', 'Content'].map((name) => ({ name, score: null }));
+    return [
+      "Layout",
+      "Typography",
+      "Color",
+      "Responsive",
+      "Interactive",
+      "Content",
+    ].map((name) => ({ name, score: null }));
   }
   const maxOverlap = Math.max(...ready.map((m) => m.signals.realOverlap));
   const maxVstack = Math.max(...ready.map((m) => m.signals.vstack));
@@ -241,33 +288,42 @@ export function dimensionsFrom(metrics: ViewportMetrics[], violations: NarrowVio
     score: Math.max(SCORE_MIN, SCORE_BASE - penalty),
   });
   return [
-    dim('Layout', 5 * Math.min(maxOverlap, 4)),
-    dim('Typography', 5 * Math.min(maxVstack, 4)),
-    { name: 'Color', score: null },
-    dim('Responsive', 10 * Math.min(violations.length, 4)),
-    { name: 'Interactive', score: null },
-    { name: 'Content', score: null },
+    dim("Layout", 5 * Math.min(maxOverlap, 4)),
+    dim("Typography", 5 * Math.min(maxVstack, 4)),
+    { name: "Color", score: null },
+    dim("Responsive", 10 * Math.min(violations.length, 4)),
+    { name: "Interactive", score: null },
+    { name: "Content", score: null },
   ];
 }
 
 /** 维度最低分：跳过 `null`（未测量）——与 check-visual-verify.ts 既有语义一致 */
 export function minDimensionScore(dims: DimensionScore[]): number {
-  const nums = dims.map((d) => d.score).filter((s): s is number => typeof s === 'number');
+  const nums = dims
+    .map((d) => d.score)
+    .filter((s): s is number => typeof s === "number");
   return nums.length === 0 ? Infinity : Math.min(...nums);
 }
 
 /** 解析基线文件（每行：`<相对路径>` 或 `<相对路径>#<viewport>`；`#` 起为注释） */
 export function parseBaseline(text: string): Set<string> {
   const out = new Set<string>();
-  for (const raw of text.split('\n')) {
+  for (const raw of text.split("\n")) {
     const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
+    if (!line || line.startsWith("#")) continue;
     out.add(line);
   }
   return out;
 }
 
 /** 违规是否已在基线内（基线项可为整体路径，或 `路径#视口` 精确到档） */
-export function isBaselined(baseline: Set<string>, reportPath: string, violation: NarrowViolation): boolean {
-  return baseline.has(reportPath) || baseline.has(`${reportPath}#${violation.viewport}`);
+export function isBaselined(
+  baseline: Set<string>,
+  reportPath: string,
+  violation: NarrowViolation,
+): boolean {
+  return (
+    baseline.has(reportPath) ||
+    baseline.has(`${reportPath}#${violation.viewport}`)
+  );
 }

@@ -2,7 +2,7 @@
 
 > **单一事实源**：本文件定义原型壳的导航菜单模式能力。
 > **实现**：`.agents/skills/alioth-design/references/gateway-shell.tsx`（`MENU_MODES` / `MenuModePicker` / `MenuModeSwatch` / `NavPills` / `IconRail` / `SecondaryNavColumn` / `NavDrawer`）。
-> **生产边界**：生产前端（`Gateway/frontend`、`Framework/frontend/components`）**未采用**本能力——`MainLayout` / `Navigation` / `ModuleLayout` 的导航形态仍为单一分组侧栏（`docs/specs/MODULE_SPEC.md` §6 / §11.11）。本能力服务于**原型表达与设计探索**；生产采用需另立 change（含 `app.json` schema 与 Gateway 渲染路径）。
+> **生产边界**：生产 Gateway **已采用**本能力（原「未采用」陈述已由 `adopt-navigation-menu-modes` 落地推翻）——App 视角六模式实现于 `Gateway/frontend/src/atoms/navigation-mode-atoms.ts` + `src/components/layout/{Navigation,NavBars}.tsx`，规约正本 = `openspec/specs/gateway-navigation-modes`，设置入口 = 个人中心「导航」tab（`?tab=navigation`），偏好为 per-browser localStorage（MUST NOT 写 `app.json` 或 DB）。仍在原型面之外的只有**模块级壳**：生产 `Framework/frontend/composables/src/layout/ModuleLayout.tsx` + `Framework/frontend/components/src/components/layout/MainNav.tsx` 不接收 `menuMode`——模块恒以 `embedded` 形式经 `setModuleSidebar` 把 `navItems` 推给 Gateway 渲染，其独立预览形态仍为单一分组侧栏（`docs/specs/MODULE_SPEC.md` §6 / §11.11）。
 >
 > 层间适用性与各层承载方式见下「各层用法」。
 
@@ -10,8 +10,8 @@
 
 | 层 | 承载方式 |
 | --- | --- |
-| **Module**（主使用层） | `GatewayShell` 直传 `menuMode` / `collapsedShowText`；`embedded` 分支自行组合 `Navigation` / `IconRail` / `SecondaryNavColumn`，且**顶栏级导航**（`category` 分类 pills、`top` / `topDual` 导航项）由 Module 顶部 `nav[aria-label="主导航"]`（`h-11`）承载——embedded 组合没有自有 TopBar |
-| **App**（TopBar-only 契约） | App 不传 `navGroups`、不渲染导航；以**受控透传**承载：App 持布局偏好状态，经 `menuMode` / `collapsedShowText` / `onMenuModeChange` / `onCollapsedShowTextChange` 下发 embedded Module，由 Module 页面内的 `MenuModePicker` 驱动变更（参考实现：`Pre-Proc/Alioth/Prototypes/Apps/shell-menu-modes/`） |
+| **Module**（主使用层） | `GatewayShell` 直传 `menuMode` / `collapsedShowText`；`embedded` 分支自行组合 `Navigation` / `IconRail` / `SecondaryNavColumn`，且**顶栏级导航**（`top` 的导航项 pills / `topDual` 第二行；`category` 的切换控件在分类列内）由 Module 顶部 `nav[aria-label="主导航"]`（`h-11`）承载——embedded 组合没有自有 TopBar |
+| **App**（壳承载导航，契约 change `revise-app-prototype-nav-hosting`） | **App 壳渲染导航**（与生产同构：Gateway 壳渲染模块推送的导航槽）——App 持 `navGroups` + `activeId` / `onSelect` 交给 `GatewayShell`，壳按 `menuMode` 渲染顶栏内联丸 / `topDual` 第二行 / 导航列；MUST NOT 用 `hideNavigation` 关闭、MUST NOT 渲染第二套导航。被承载 Module 以 `embedded` 只渲染页面内容（MUST NOT 渲染 `NavPills` / `IconRail` / `SecondaryNavColumn` / `<Navigation>` / `<Footer>`）。布局偏好与导航数据均受控透传，由 Module 页面内的 `MenuModePicker` 驱动变更（参考实现：`Pre-Proc/Alioth/Prototypes/Apps/shell-menu-modes/`；红线由 `prototype-tool.js#preCheckApp/preCheckModule` 校验） |
 | **Block**（content-only） | 不适用：standalone 预览无 `navGroups` 且渲染选择器属「不出壳」红线；embedded 时随 Module 模式变化，**不得假设固定可用宽度** |
 
 Module 的受控/非受控双形态：`menuMode` / `collapsedShowText` 传入即受控（变更经回调上抛），不传用内部状态——Module 独立预览自洽，App 组合可控（参考实现：`Pre-Proc/Alioth/Prototypes/Modules/shell-menu-modes/`）。
@@ -34,7 +34,7 @@ Module 的受控/非受控双形态：`menuMode` / `collapsedShowText` 传入即
 
 - `menuMode?: MenuMode` —— `'sidebar' | 'category' | 'dual' | 'top' | 'grouped' | 'topDual'`，默认 `'grouped'`（= 本能力引入前的导航形态，零回归）。
 - `collapsedShowText?: boolean` —— 默认 `false`；仅作用于**二级导航列**（见下）。
-- `NavGroup.icon?: string` —— 分类 pill / 图标栏 / 顶栏分类的图标；缺省回退该组首项 `icon`，再回退 `box`。
+- `NavGroup.icon?: string` —— 图标栏 / 分类列分组头 / 分组标题的图标；缺省回退该组首项 `icon`，再回退 `box`。
 - **与 App/Module 模式正交**：App/Module 模式仍由 `moduleTabs` 存在性判定（`openspec/specs/shell-decomposition`），`menuMode` 不承担该语义、不引入 `mode` prop。
 - `hideNavigation={true}` 优先级最高：任何 `menuMode` 都不渲染导航列 / 导航条 / 顶栏导航。
 
@@ -44,14 +44,23 @@ Module 的受控/非受控双形态：`menuMode` / `collapsedShowText` 传入即
 | --- | --- | --- | --- | --- |
 | `sidebar` | 单栏菜单 | 顶栏 + 单列侧栏（**扁平**项，无分组标题） | `w-60` | 侧栏底部 |
 | `grouped`（默认） | 分组菜单 | 顶栏 + 单列侧栏（**分组标题**） | `w-60` | 侧栏底部 |
-| `category` | 分类导航 | 顶栏承载**分类** pills + 分类列（当前分类的项） | `w-60` | 分类列底部 |
-| `dual` | 双栏菜单 | **图标栏**（分组图标，`w-16` 常驻）+ 二级列（当前分类的项） | 二级列 `w-60` | **图标栏**底部 |
-| `top` | 顶部菜单 | 顶栏内联**全部项**（无侧栏） | — | 无 |
+| `category` | 分类导航 | **分类列（单开手风琴）**：列内分组头可点击、同一次只展开一组、仅展开组列出项（**顶栏无分类丸**） | `w-60` | 分类列底部 |
+| `dual` | 双栏菜单 | **图标栏**（分组图标；仅图标 `w-16` / 展开 `w-56` 常驻）+ 二级列（当前分类的项） | 二级列 `w-60` | **图标栏**底部 |
+| `top` | 顶部菜单 | 顶栏内联可视项（无侧栏）+ **「更多」菜单**承载溢出（Priority+） | — | 无 |
 | `topDual` | 顶栏双行 | 顶栏（品牌/搜索/操作）+ 第二行导航条 `h-11`（无侧栏） | — | 无 |
 
-- **当前分类派生**：由 `activeId` 反查所属 `navGroups[i]`；点击分类 pill / 图标栏按钮时以点击值为准并 `onSelect(该组首项 id)`，`activeId` 变化即复位。
+> **无回落（2026-10-05 用户裁决）**：六模式的呈现**只由 `menuMode` 偏好决定**，数据形态（分组数 / 项数）MUST NOT 改变生效模式、MUST NOT 回落为 `grouped`。边界形态 MUST 由组件与样式承载（契约 = `openspec/specs/shell-navigation-modes#menu-mode-boundary-data-shapes`；生产落地同 `gateway-navigation-modes#production-six-mode-rendering`）：
+>
+> - **单分组**：`category` 仍渲染分类列（列内含恰 1 个分组头，同一次展开该组）；`dual` 仍渲染图标栏 + 二级列（图标栏常驻并承载折叠钮）——MUST NOT 隐藏结构或改渲染为 `grouped`。
+> - **多项目（溢出承载 = Priority+「更多」菜单）**：`top` 内联槽放得下的项内联、**放不下的进「更多」下拉**（点击触发、`aria-haspopup="menu"`、当前项被折叠时触发器呈激活态）；MUST NOT 以横向滚动条承载内联溢出、MUST NOT 截断丢项（「可视项 + 菜单项 = 全部项」）。`topDual` 的第二行为**整行**承载，可横向滚动且滚动可见。判定数据/依据见基准 `docs/specs/NAV_MENU_BENCHMARK.md`（Ant Design `overflowedIndicator` / PatternFly overflow / Salesforce More）。
+> - **图标栏两态（`dual`，对齐 M3 expanded rail）**：仅图标态 `w-16` / 展开态 `w-56`（图标 + 标签，标签 MUST NOT 截断）——展开由 `collapsedShowText` 偏好驱动；条目命中区高度 MUST ≥ `40px`。
+> - **命中区**：顶栏导航丸高度 MUST ≥ `36px`。
+> - **面包屑**（同排不可变形且不可溢出，两者同时成立）：MUST 单行（`flex-nowrap` + `whitespace-nowrap`）、MUST 可收缩并在超长时**省略**末段（`min-w-0` + `truncate`）——MUST NOT 换行成竖排，也 MUST NOT 把右侧簇挤出视口。
+> - **判定数据**：`ct-wms-menu-modes` 画廊提供 1/3 分组 × 9/33 项**边界压力位**（`?shape=` 深链）——真实 ct 模块只有 1–2 分组 / 1–3 项，压不出边界形态。
+
+- **当前分类派生**：由 `activeId` 反查所属 `navGroups[i]`；点击分类列分组头 / 图标栏按钮时以点击值为准并 `onSelect(该组首项 id)`，`activeId` 变化即复位。
 - **移动端**：`<md` 恒以抽屉呈现（`NavDrawer`，含分组标题），模式只影响 `≥md` 的呈现。
-- **顶栏内联槽**：`TopBar` 的 `navInline`（`top` 传全部项、`category` 传分类）；`topDual` 的导航条是 `TopBar` 的兄弟节点（`nav[aria-label="主导航"]`，`h-11`）。
+- **顶栏内联槽**：`TopBar` 的 `navInline`（仅 `top` 传全部项，含 Priority+「更多」折叠；`category` **不**经顶栏——其切换在分类列内）；`topDual` 的导航条是 `TopBar` 的兄弟节点（`nav[aria-label="主导航"]`，`h-11`）。
 
 ## 折叠语义（`collapsedShowText`）
 
@@ -59,7 +68,7 @@ Module 的受控/非受控双形态：`menuMode` / `collapsedShowText` 传入即
 | --- | --- | --- | --- |
 | **主侧栏**（`sidebar` / `grouped`） | `w-60` | `w-16` 仅图标 | `w-16` 仅图标（**不受开关影响**） |
 | **二级列**（`category` 分类列 / `dual` 二级列） | `w-60` | `w-16` 仅图标 | `w-56` 图标 + 文字 |
-| `dual` 图标栏 | `w-16` | `w-16`（常驻不折叠） | `w-16` |
+| `dual` 图标栏 | `w-16` 仅图标 | `w-16`（不受折叠影响） | `w-56`（图标 + 标签） |
 
 主侧栏不受开关影响是**硬约束**：`docs/specs/MODULE_SPEC.md` §11.11.3 的 Sidebar Token（展开 240px / 折叠 64px 仅图标 / `PanelLeft`↔`PanelRight` 图标语义）明文「同时约束 React 组件实现与 HTML 原型设计」。让主侧栏「折叠保留文字」须先修订该 Token（另案），不得在本能力内松动。
 

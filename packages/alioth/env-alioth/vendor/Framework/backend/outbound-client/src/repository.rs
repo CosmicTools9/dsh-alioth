@@ -1,4 +1,9 @@
-//! 出向调用方注册表与计量数据访问（isahl_auth.outbound_*）。
+//! 出向调用方注册表与凭据数据访问（`isahl_auth.outbound_client`）。
+//!
+//! 列集为 **provider 中立**形态（`outbound-provider-abstraction`）：`code`（行键）、
+//! `provider`（派发键）、`auth_type`、`base_url`、`config`（jsonb，provider 私有配置）、
+//! `app_secret_enc`（密文）。单 provider 的字段 MUST 落在 `config` 内——本模块是唯一
+//! 读写该表的实现面。
 
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -16,7 +21,7 @@ impl OutboundRepository {
         Self { pool }
     }
 
-    /// 列出出向调用方配置（不返回 app_secret 明文）
+    /// 列出出向调用方配置（不返回密文，仅 `hasSecret` 标记）
     pub async fn list_clients(&self) -> Result<Vec<Value>, ApiError> {
         let rows = sqlx::query_as::<
             _,
@@ -24,15 +29,17 @@ impl OutboundRepository {
                 i64,
                 String,
                 String,
+                String,
                 Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
+                Value,
+                bool,
                 bool,
                 i32,
             ),
         >(
-            "SELECT id, code, provider, base_url, app_id, tenant_id, account_id, enabled, version \
+            "SELECT id, code, provider, auth_type, base_url, config, \
+                    (app_secret_enc IS NOT NULL AND app_secret_enc <> '') AS has_secret, \
+                    enabled, version \
              FROM isahl_auth.outbound_client WHERE deleted_at IS NULL \
              ORDER BY code",
         )
@@ -46,10 +53,10 @@ impl OutboundRepository {
                     id,
                     code,
                     provider,
+                    auth_type,
                     base_url,
-                    app_id,
-                    tenant_id,
-                    account_id,
+                    config,
+                    has_secret,
                     enabled,
                     version,
                 )| {
@@ -57,11 +64,10 @@ impl OutboundRepository {
                         "id": id.to_string(),
                         "code": code,
                         "provider": provider,
+                        "authType": auth_type,
                         "baseUrl": base_url,
-                        "appId": app_id, // id-json-ok（Option<String>，非 i64 id）
-                        "tenantId": tenant_id, // id-json-ok（Option<String>，非 i64 id）
-                        "accountId": account_id, // id-json-ok（Option<String>，非 i64 id）
-                        "hasSecret": true,
+                        "config": config,
+                        "hasSecret": has_secret,
                         "enabled": enabled,
                         "version": version,
                     })
@@ -70,82 +76,114 @@ impl OutboundRepository {
             .collect())
     }
 
-    /// 创建出向调用方（app_secret 密文入库）；返回新 id
-    #[allow(clippy::too_many_arguments)] // 客户端字段为领域固定维度
+    /// 取某 provider 的首个 enabled 行 code（无 ⇒ `None`）。
+    ///
+    /// 供消费方在只知 provider 代号（如 `wechat-pay`）时定位注册行——消费方 MUST NOT
+    /// 自行写注册表 SQL（凭据/注册表读写唯一实现 = 本模块）。
+    pub async fn first_enabled_code_for_provider(
+        &self,
+        provider_id: &str,
+    ) -> Result<Option<String>, ApiError> {
+        sqlx::query_scalar(
+            "SELECT code FROM isahl_auth.outbound_client \
+             WHERE provider = $1 AND enabled = TRUE AND deleted_at IS NULL \
+             ORDER BY code LIMIT 1",
+        )
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(ApiError::from_sqlx)
+    }
+
+    /// 取某注册行的 `(provider, auth_type)`（行不存在/已软删 ⇒ `None`）。
+    ///
+    /// 供管理面**保存期成员校验**读取「载荷未覆盖的维度」：部分更新时生效值 = 载荷值 ?? 本行值。
+    /// 消费方 MUST NOT 自行写注册表 SQL（注册表读写唯一实现 = 本模块）。
+    pub async fn provider_auth_for_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<(String, String)>, ApiError> {
+        sqlx::query_as(
+            "SELECT provider, auth_type FROM isahl_auth.outbound_client \
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(ApiError::from_sqlx)
+    }
+
+    /// 创建出向调用方（凭据密文可空——`auth_type='none'` 的 provider 无凭据）；
+    /// `code` 已存在（含软删行）⇒ 409。
     pub async fn create_client(
         &self,
         code: &str,
         provider: &str,
+        auth_type: &str,
         base_url: &str,
-        app_id: &str,
-        app_secret_enc: &str,
-        tenant_id: &str,
-        account_id: &str,
+        config: &Value,
+        app_secret_enc: Option<&str>,
     ) -> Result<i64, ApiError> {
-        let id = sqlx::query_scalar::<_, i64>(
+        let id: Option<i64> = sqlx::query_scalar(
             "INSERT INTO isahl_auth.outbound_client \
-             (code, provider, base_url, app_id, app_secret_enc, tenant_id, account_id, enabled, version) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, 1) \
+             (code, provider, auth_type, base_url, config, app_secret_enc, enabled, version) \
+             VALUES ($1, $2, $3, $4, $5, $6, TRUE, 1) \
+             ON CONFLICT (code) DO NOTHING \
              RETURNING id",
         )
         .bind(code)
         .bind(provider)
+        .bind(auth_type)
         .bind(base_url)
-        .bind(app_id)
+        .bind(config)
         .bind(app_secret_enc)
-        .bind(tenant_id)
-        .bind(account_id)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await
         .map_err(ApiError::from_sqlx)?;
-        Ok(id)
+        id.ok_or_else(|| ApiError::Conflict(format!("出向调用方 code 已存在: {code}")))
     }
 
-    /// 更新出向调用方（凭据轮换 version+1 + 新密文；其余字段可部分更新）
-    #[allow(clippy::too_many_arguments)] // 客户端字段为领域固定维度
+    /// 更新出向调用方（部分更新；提供密文时 `version+1` 表示凭据轮换）。
+    ///
+    /// 行不存在/已软删 ⇒ 404。
+    #[allow(clippy::too_many_arguments)] // 部分更新字段为注册表固定维度
     pub async fn update_client(
         &self,
         id: i64,
+        provider: Option<&str>,
+        auth_type: Option<&str>,
         base_url: Option<&str>,
-        app_id: Option<&str>,
+        config: Option<&Value>,
         app_secret_enc: Option<&str>,
-        tenant_id: Option<&str>,
-        account_id: Option<&str>,
         enabled: Option<bool>,
     ) -> Result<(), ApiError> {
-        if app_secret_enc.is_some() {
-            sqlx::query(
-                "UPDATE isahl_auth.outbound_client SET version = version + 1, updated_at = NOW() \
-                 WHERE id = $1 AND deleted_at IS NULL",
-            )
-            .bind(id)
-            .execute(&self.pool)
-            .await
-            .map_err(ApiError::from_sqlx)?;
-        }
-        if let Some(v) = base_url {
-            sqlx::query("UPDATE isahl_auth.outbound_client SET base_url = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
-                .bind(v).bind(id).execute(&self.pool).await.map_err(ApiError::from_sqlx)?;
-        }
-        if let Some(v) = app_id {
-            sqlx::query("UPDATE isahl_auth.outbound_client SET app_id = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
-                .bind(v).bind(id).execute(&self.pool).await.map_err(ApiError::from_sqlx)?;
-        }
-        if let Some(v) = app_secret_enc {
-            sqlx::query("UPDATE isahl_auth.outbound_client SET app_secret_enc = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
-                .bind(v).bind(id).execute(&self.pool).await.map_err(ApiError::from_sqlx)?;
-        }
-        if let Some(v) = tenant_id {
-            sqlx::query("UPDATE isahl_auth.outbound_client SET tenant_id = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
-                .bind(v).bind(id).execute(&self.pool).await.map_err(ApiError::from_sqlx)?;
-        }
-        if let Some(v) = account_id {
-            sqlx::query("UPDATE isahl_auth.outbound_client SET account_id = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
-                .bind(v).bind(id).execute(&self.pool).await.map_err(ApiError::from_sqlx)?;
-        }
-        if let Some(v) = enabled {
-            sqlx::query("UPDATE isahl_auth.outbound_client SET enabled = $1, updated_at = NOW() WHERE id = $2 AND deleted_at IS NULL")
-                .bind(v).bind(id).execute(&self.pool).await.map_err(ApiError::from_sqlx)?;
+        let rotated = app_secret_enc.is_some();
+        let affected = sqlx::query(
+            "UPDATE isahl_auth.outbound_client SET \
+                provider = COALESCE($2, provider), \
+                auth_type = COALESCE($3, auth_type), \
+                base_url = COALESCE($4, base_url), \
+                config = COALESCE($5, config), \
+                app_secret_enc = COALESCE($6, app_secret_enc), \
+                enabled = COALESCE($7, enabled), \
+                version = version + CASE WHEN $8 THEN 1 ELSE 0 END, \
+                updated_at = NOW() \
+             WHERE id = $1 AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(provider)
+        .bind(auth_type)
+        .bind(base_url)
+        .bind(config)
+        .bind(app_secret_enc)
+        .bind(enabled)
+        .bind(rotated)
+        .execute(&self.pool)
+        .await
+        .map_err(ApiError::from_sqlx)?
+        .rows_affected();
+        if affected == 0 {
+            return Err(ApiError::NotFound(format!("出向调用方不存在: {id}")));
         }
         Ok(())
     }

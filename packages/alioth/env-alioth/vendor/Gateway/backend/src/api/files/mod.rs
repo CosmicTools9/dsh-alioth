@@ -37,13 +37,11 @@ pub struct FilesState {
     pool: PgPool,
 }
 
-/// 活库存储配置行（`isahl.zc_id_prot-oss_config` 投影）。
-/// provider 读 `settings->>'provider'`（`_t_` 是 lifecycle 自动维度列，业务禁止使用）。
-#[derive(Debug, sqlx::FromRow)]
+/// 活库存储配置行（由 `ActiveConfig` 投影；凭证已由解析点解密）。
+/// provider 由解析点投影（`_t_` 是 lifecycle 自动维度列，业务禁止使用）。
+#[derive(Debug)]
 struct StorageConfigRow {
     id: i64,
-    code: Option<String>,
-    provider: Option<String>,
     settings: Option<Value>,
     enc_fields: Option<Value>,
 }
@@ -58,15 +56,12 @@ impl FilesState {
     /// enabled/is_default）→ 后端映射 → FileManager（scheme 路由）。
     /// 无任何 storage 配置 → 兜底本地磁盘。
     pub async fn from_live_db(pool: PgPool) -> Self {
-        let rows = sqlx::query_as::<_, StorageConfigRow>(
-            r#"
-            SELECT id, code, settings->>'provider' AS provider, settings, enc_fields
-            FROM isahl."zc_id_prot-oss_config"
-            WHERE deleted_at IS NULL
-            ORDER BY updated_at DESC
-            "#,
+        // 生效行经唯一解析点（enabled 门 + is_default 决胜 NULLS LAST；凭证已解密）
+        let configs = common::config_resolution::list_active(
+            &pool,
+            common::config_resolution::ConfigFamily::Storage,
+            &system_config::crypto::decrypt_prefixed,
         )
-        .fetch_all(&pool)
         .await
         .unwrap_or_default();
 
@@ -74,45 +69,29 @@ impl FilesState {
             String,
             Arc<dyn framework_file_manager::backend::StorageBackend>,
         )> = Vec::new();
+        // 决胜序已表达默认语义：首个成功构建的后端即默认后端
         let mut default_scheme: Option<String> = None;
-        let mut default_override = false;
 
-        for row in rows {
-            // settings 内嵌 enabled 标志（缺省视为未启用）
-            let enabled = row
-                .settings
-                .as_ref()
-                .and_then(|s| s.get("enabled"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            if !enabled {
+        for cfg in configs {
+            let Some(provider) = cfg.provider.clone() else {
                 continue;
-            }
-            let Some(provider) = row.provider.clone() else {
-                continue;
+            };
+            let row = StorageConfigRow {
+                id: cfg.id,
+                settings: Some(cfg.settings.clone()),
+                enc_fields: Some(cfg.credentials.clone()),
             };
             match build_backend(&provider, &row, &pool).await {
                 Ok((scheme, backend)) => {
                     if default_scheme.is_none() {
                         default_scheme = Some(scheme.clone());
                     }
-                    // settings 内嵌 is_default 覆盖默认
-                    let is_default = row
-                        .settings
-                        .as_ref()
-                        .and_then(|s| s.get("is_default"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false);
-                    if is_default && !default_override {
-                        default_scheme = Some(scheme.clone());
-                        default_override = true;
-                    }
                     backends.push((scheme, backend));
                 }
                 Err(e) => {
                     common::telemetry::warn!(
                         "files: storage config {} ({provider}) 构造失败: {e}",
-                        row.code.clone().unwrap_or_default()
+                        cfg.code.clone().unwrap_or_default()
                     );
                 }
             }
@@ -272,9 +251,7 @@ async fn build_backend(
                 .and_then(|v| v.as_str())
                 .ok_or("secret_key 缺失")?
                 .to_string();
-            // 敏感凭证 AES-256-GCM 加密（enc: 前缀），解密后构造后端
-            let access_key = system_config::crypto::decrypt_prefixed(&access_key);
-            let secret_key = system_config::crypto::decrypt_prefixed(&secret_key);
+            // 凭证已由解析点（list_active 注入 decrypt_prefixed）解密，此处直接用明文
             let region = settings
                 .get("region")
                 .and_then(|v| v.as_str())

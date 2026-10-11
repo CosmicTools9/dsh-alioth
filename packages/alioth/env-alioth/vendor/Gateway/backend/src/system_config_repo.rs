@@ -21,17 +21,20 @@ macro_rules! live_fields {
              COALESCE((settings->>'enabled')::boolean, false) AS enabled, \
              COALESCE((settings->>'is_default')::boolean, false) AS is_default, \
              settings->>'domain_' AS domain_, \
-             COALESCE((settings->>'public')::boolean, false) AS public, \
              created_at, updated_at, created_by_id, updated_by_id, deleted_at"
         )
     };
 }
 
-/// 七族配置表 → 分类 + 编译期 SQL（表名与投影同源；新增族 = 加一行）
+/// 八族配置表 → 分类 + 编译期 SQL（表名与投影同源；新增族 = 加一行）
 ///
 /// 投影语义（见 [`live_fields`]）：`_f_` 由分类字面量派生（勿读物理列）；
 /// `_t_`（provider）读 `settings->>'provider'`；enc_fields → credentials；
-/// settings 内嵌 enabled/is_default/domain_/public。
+/// settings 内嵌 enabled/is_default/domain_。
+///
+/// **code 作用域**（env 族一表两分类，amap-system-config-category）：env 配置族表
+/// 同时承载 approval 与 amap 两分类，第三参为编译期 code 谓词（WHERE 追加片段），
+/// 两作用域互斥——`integration:amap` 行 MUST 标 `amap`、不得混入 approval。
 struct ConfigFamilySql {
     category: &'static str,
     select_by_code: &'static str,
@@ -42,7 +45,10 @@ struct ConfigFamilySql {
 }
 
 macro_rules! config_family {
-    ($category:literal, $table:literal) => {
+    ($category:literal, $table:literal $(,)?) => {
+        config_family!($category, $table, "")
+    };
+    ($category:literal, $table:literal, $scope:literal $(,)?) => {
         ConfigFamilySql {
             category: $category,
             select_by_code: concat!(
@@ -50,14 +56,18 @@ macro_rules! config_family {
                 live_fields!($category),
                 " FROM isahl.\"",
                 $table,
-                "\" WHERE code = $1 AND deleted_at IS NULL LIMIT 1"
+                "\" WHERE code = $1 AND deleted_at IS NULL",
+                $scope,
+                " LIMIT 1"
             ),
             select_by_id: concat!(
                 "SELECT ",
                 live_fields!($category),
                 " FROM isahl.\"",
                 $table,
-                "\" WHERE id = $1 AND deleted_at IS NULL LIMIT 1"
+                "\" WHERE id = $1 AND deleted_at IS NULL",
+                $scope,
+                " LIMIT 1"
             ),
             insert_sql: concat!(
                 "INSERT INTO isahl.\"",
@@ -73,8 +83,10 @@ macro_rules! config_family {
                 "\" SET \
                  notice = COALESCE($2, notice), code = COALESCE($3, code), \
                  comments = COALESCE($4, comments), enc_fields = COALESCE($5, enc_fields), \
-                 settings = $6, updated_at = NOW() \
-                 WHERE id = $1 AND deleted_at IS NULL RETURNING ",
+                 settings = $6, updated_by_id = COALESCE($7, updated_by_id), updated_at = NOW() \
+                 WHERE id = $1 AND deleted_at IS NULL",
+                $scope,
+                " RETURNING ",
                 live_fields!($category)
             ),
             soft_delete_sql: concat!(
@@ -82,7 +94,8 @@ macro_rules! config_family {
                 $table,
                 "\" \
                  SET deleted_at = NOW(), updated_at = NOW() \
-                 WHERE id = $1 AND deleted_at IS NULL"
+                 WHERE id = $1 AND deleted_at IS NULL",
+                $scope
             ),
         }
     };
@@ -95,18 +108,28 @@ const CONFIG_FAMILIES: &[ConfigFamilySql] = &[
     config_family!("webhook", "zc_id_prot-webhook_config"),
     config_family!("storage", "zc_id_prot-oss_config"),
     config_family!("sms", "zc_id_prot-sms_config"),
-    config_family!("approval", "zc_id_prot-env_config"),
+    // env 族一表两分类：code 作用域互斥（approval:% ↔ integration:amap）
+    config_family!(
+        "approval",
+        "zc_id_prot-env_config",
+        " AND code LIKE 'approval:%'"
+    ),
+    config_family!(
+        "amap",
+        "zc_id_prot-env_config",
+        " AND code = 'integration:amap'"
+    ),
 ];
 
-/// 七族全量 UNION 列表 SQL（编译期固化；族成员与投影同源）
+/// 八族全量 UNION 列表 SQL（编译期固化；族成员、投影与 code 作用域同源）
 macro_rules! live_config_union_sql {
-    ($first_c:literal, $first_t:literal $(, $c:literal, $t:literal)* $(,)?) => {
+    ($first_c:literal, $first_t:literal, $first_s:literal $(, $c:literal, $t:literal, $s:literal)* $(,)?) => {
         concat!(
             "SELECT * FROM (SELECT ", live_fields!($first_c), " FROM isahl.\"", $first_t,
-            "\" WHERE deleted_at IS NULL",
+            "\" WHERE deleted_at IS NULL", $first_s,
             $(
                 " UNION ALL SELECT ", live_fields!($c), " FROM isahl.\"", $t,
-                "\" WHERE deleted_at IS NULL"
+                "\" WHERE deleted_at IS NULL", $s
             ),*
             , ") c ORDER BY updated_at DESC LIMIT $1 OFFSET $2"
         )
@@ -116,18 +139,28 @@ macro_rules! live_config_union_sql {
 const CONFIG_LIST_SQL: &str = live_config_union_sql!(
     "llm",
     "zc_id_prot-llm_config",
+    "",
     "email",
     "zc_id_prot-email_config",
+    "",
     "im",
     "zc_id_prot-im_config",
+    "",
     "webhook",
     "zc_id_prot-webhook_config",
+    "",
     "storage",
     "zc_id_prot-oss_config",
+    "",
     "sms",
     "zc_id_prot-sms_config",
+    "",
     "approval",
     "zc_id_prot-env_config",
+    " AND code LIKE 'approval:%'",
+    "amap",
+    "zc_id_prot-env_config",
+    " AND code = 'integration:amap'",
 );
 
 /// 分类 code → 族（`_f_` 值域）
@@ -135,14 +168,13 @@ fn family_of_category(category: &str) -> Option<&'static ConfigFamilySql> {
     CONFIG_FAMILIES.iter().find(|f| f.category == category)
 }
 
-/// 从请求合并 provider/enabled/is_default/public/domain_ 进 settings。
+/// 从请求合并 provider/enabled/is_default/domain_ 进 settings。
 /// `_t_` 请求字段（provider 业务枚举）并入 settings，不写物理 `_t_` 列。
 fn merge_request_flags(
     settings: &mut serde_json::Value,
     provider: Option<&str>,
     enabled: bool,
     is_default: bool,
-    public: bool,
     domain_: Option<&str>,
 ) {
     if settings.as_object().is_none() {
@@ -154,7 +186,6 @@ fn merge_request_flags(
     }
     obj.insert("enabled".into(), serde_json::json!(enabled));
     obj.insert("is_default".into(), serde_json::json!(is_default));
-    obj.insert("public".into(), serde_json::json!(public));
     if let Some(d) = domain_ {
         obj.insert("domain_".into(), serde_json::json!(d));
     }
@@ -188,7 +219,11 @@ impl SystemConfigRepository for SystemConfigRepo {
         Ok(None)
     }
 
-    async fn insert(&self, req: &CreateSystemConfigRequest) -> Result<SystemConfig, Error> {
+    async fn insert(
+        &self,
+        req: &CreateSystemConfigRequest,
+        actor_id: Option<i64>,
+    ) -> Result<SystemConfig, Error> {
         let Some(fam) = req._f_.as_deref().and_then(family_of_category) else {
             return Err(Error::Protocol(format!("不支持的配置分类: {:?}", req._f_)));
         };
@@ -201,7 +236,6 @@ impl SystemConfigRepository for SystemConfigRepo {
             req._t_.as_deref(),
             req.enabled,
             req.is_default,
-            req.public,
             req.domain_.as_deref(),
         );
         // 不写 `_f_`/`_t_` 物理列（lifecycle 自动维度，业务禁止赋值）。
@@ -211,7 +245,7 @@ impl SystemConfigRepository for SystemConfigRepo {
             .bind(&req.comments)
             .bind(&req.credentials) // service 层已加密 → enc_fields
             .bind(&settings)
-            .bind(None::<i64>) // created_by_id 由 handler 层后续补充（现状一致）
+            .bind(actor_id) // created_by_id = 操作者（PEP RequestContext；None 仅测试/脚本路径）
             .fetch_one(&self.pool)
             .await
     }
@@ -232,7 +266,7 @@ impl SystemConfigRepository for SystemConfigRepo {
     }
 
     async fn list(&self, limit: i64, offset: i64) -> Result<Vec<SystemConfig>, Error> {
-        // 七族全量 UNION ALL（分类 = 编译期字面量；provider 读 settings->>'provider'）
+        // 八族全量 UNION ALL（分类 = 编译期字面量；env 族两支按 code 作用域互斥）
         sqlx::query_as::<_, SystemConfig>(CONFIG_LIST_SQL)
             .bind(limit)
             .bind(offset)
@@ -244,6 +278,7 @@ impl SystemConfigRepository for SystemConfigRepo {
         &self,
         id: i64,
         req: &UpdateSystemConfigRequest,
+        actor_id: Option<i64>,
     ) -> Result<Option<SystemConfig>, Error> {
         let Some(f) = req._f_.as_deref() else {
             return Err(Error::Protocol("更新请求缺少 _f_ 分类".into()));
@@ -284,9 +319,6 @@ impl SystemConfigRepository for SystemConfigRepo {
             if let Some(d) = &domain_ {
                 obj.insert("domain_".into(), serde_json::json!(d));
             }
-            if let Some(p) = req.public.or(existing.public) {
-                obj.insert("public".into(), serde_json::json!(p));
-            }
         }
         let row = sqlx::query_as::<_, SystemConfig>(fam.update_sql)
             .bind(id)
@@ -295,6 +327,7 @@ impl SystemConfigRepository for SystemConfigRepo {
             .bind(&req.comments)
             .bind(&req.credentials)
             .bind(&settings)
+            .bind(actor_id) // updated_by_id = 操作者（COALESCE 保幂等：None 不改写既有值）
             .fetch_optional(&self.pool)
             .await?;
         if let Some(mut cfg) = row {

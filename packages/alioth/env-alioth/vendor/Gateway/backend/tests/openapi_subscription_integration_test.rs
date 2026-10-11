@@ -17,12 +17,11 @@ async fn create_test_client(pool: &PgPool, suffix: &str) -> (String, i64, i64) {
     let client_id = format!("sub_test_{}", suffix);
     let svc_user: i64 = sqlx::query_scalar(
         "INSERT INTO isahl_auth.auth_users \
-         (name, username, email, password_hash, user_type, is_active, status, \
+         (username, password_hash, user_type, is_active, status, \
           created_at, updated_at, failed_login_attempts, notification_preferences) \
-         VALUES ($1, $2, NULL, NULL, 'service', TRUE, 'active', NOW(), NOW(), 0, '{}'::jsonb) \
+         VALUES ($1, NULL, 'service', TRUE, 'active', NOW(), NOW(), 0, '{}'::jsonb) \
          RETURNING id",
     )
-    .bind(format!("svc-{}", client_id))
     .bind(format!("svc:{}", client_id))
     .fetch_one(pool)
     .await

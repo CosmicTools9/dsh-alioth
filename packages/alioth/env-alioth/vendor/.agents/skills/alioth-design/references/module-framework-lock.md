@@ -92,16 +92,16 @@ createModuleLayout({
 | ---------- | -------------------------------------------- | ------------------------------------- |
 | 2026-06-21 | system-dev `App.tsx` + MODULE_SPEC.md §11.11 | 首次框架锁定，固化双模式 + 布局 Token |
 
-#### 11.8 App.tsx 标准模式（参考：system-settings）
+#### 11.8 App.tsx 标准模式（参考：system-approve）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/frontend/src/App.tsx`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/frontend/src/App.tsx`
 
 ```tsx
 import { Routes, Route, Navigate } from 'react-router';
 import { ModuleI18nShell } from '@alioth/i18n';
 import { componentsZhCN, componentsEn } from '@alioth/components';
 import { createModuleLayout } from '@alioth/composables';
-import type { MainNavItem } from '@alioth/composables';
+import type { MainNavItem } from '@alioth/components';
 import { useT } from '@alioth/i18n';
 import zhCNDict from './locales/zh-CN.json';
 import enDict from './locales/en.json';
@@ -165,45 +165,32 @@ export default function App() {
 | `accentBarColor` | MUST 提供 hex 色值                                    | Gateway `--primary` 同步换色 |
 | `accentBarStyle` | `"solid"`                                             | 3px 实色条                   |
 
-#### 11.9 NavItem 与 i18n 键结构模式（参考：system-settings locale）
+#### 11.9 NavItem 与 i18n 键结构模式（参考：system-approve locale）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/frontend/src/locales/{zh-CN,en}.json`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/frontend/src/locales/{zh-CN,en}.json`
 
 ```json
 {
-  "{module}": {
-    "module": {
-      "title": "英文标题",
-      "subtitle": "中文描述"
-    },
-    "nav": {
-      "{blockId}": "导航标签",
-      "group-{name}": "导航分组名"
-    },
-    "scene": {
-      "{block-id}": "Scene 显示名"
-    },
-    "page": {
-      "{block-id}": {
-        "h2": "页面标题",
-        "searchPlaceholder": "...",
-        "col{Field}": "列名"
-      }
-    },
-    "common": {
-      "new": "新建",
-      "edit": "编辑",
-      "save": "保存",
-      "cancel": "取消",
-      "search": "搜索",
-      "loading": "加载中…",
-      "empty": "暂无数据",
-      "confirmDeleteTitle": "确认删除 {name}？",
-      "confirmDeleteMessage": "此操作不可撤销。"
-    }
-  }
+  "{module}.module.title": "英文标题",
+  "{module}.module.subtitle": "中文描述",
+  "{module}.nav.{blockId}": "导航标签",
+  "{module}.nav.group-{name}": "导航分组名",
+  "{module}.page.{block-id}.h2": "页面标题",
+  "{module}.page.{block-id}.searchPlaceholder": "...",
+  "{module}.page.{block-id}.col{Field}": "列名",
+  "{module}.common.new": "新建",
+  "{module}.common.edit": "编辑",
+  "{module}.common.save": "保存",
+  "{module}.common.cancel": "取消",
+  "{module}.common.search": "搜索",
+  "{module}.common.loading": "加载中…",
+  "{module}.common.empty": "暂无数据",
+  "{module}.common.confirmDeleteTitle": "确认删除 {name}？",
+  "{module}.common.confirmDeleteMessage": "此操作不可撤销。"
 }
 ```
+
+> **2026-10-11 校准**：键为**扁平点号**形态（键名自带 `{module}.` 前缀），**不是**嵌套对象。实测全 61 个 ns 模块 `locales/zh-CN.json` 均为扁平（0 嵌套）；第二段家族第一梯队 = `page`（2971 键）/ `common`（646）/ `nav`（171），其余（`list`/`detail`/`action`/`status`…）按模块自定。旧文档的嵌套写法与 `scene` 家族（全仓 0 命中）均已无实例。
 
 **键结构规则**：
 
@@ -211,49 +198,35 @@ export default function App() {
 | ------ | ------------------------------------------------------ | ---------------------------------- |
 | module | `{module}.module.{title,subtitle}`                     | 模块元数据，用于 `getModuleConfig` |
 | nav    | `{module}.nav.{blockId}` / `{module}.nav.group-{name}` | 导航项标签 + 分组名                |
-| scene  | `{module}.scene.{block-id}`                            | Scene 显示名                       |
 | page   | `{module}.page.{block-id}.{key}`                       | 页面级文案（标题、列名、占位符）   |
 | common | `{module}.common.{key}`                                | 通用操作按钮、提示                 |
 
-#### 11.10 主题色注入模式（参考：system-settings theme.css）
+#### 11.10 主题色注入模式（参考：system-approve theme.css）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/frontend/src/theme.css.txt`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/frontend/src/theme.css`
 
-模块的自有主题色通过**原始 CSS 文件**注入，不经过 Tailwind：  
-（Vite 的 `?raw` 后缀绕过 Tailwind 处理，保留原生 CSS 变量定义）
+模块的自有主题色通过**独立原始 CSS 文件**声明，不经过 Tailwind：
 
 ```tsx
-// App.tsx — 模块入口处注入
-import themeCss from './theme.css.txt?raw';
-import { useEffect } from 'react';
-
-export default function App() {
-  useEffect(() => {
-    const el =
-      document.getElementById('{module}-theme') ||
-      (() => {
-        const s = document.createElement('style');
-        s.id = '{module}-theme';
-        document.head.appendChild(s);
-        return s;
-      })();
-    el.textContent = themeCss;
-  }, []);
-  // ...
-}
+// App.tsx — 模块入口处普通载入（Vite 打成 CSS chunk；壳侧 MicroFrontendLoader 动态 import 注入）
+import './theme.css';
 ```
 
-**CSS scoping 规则**：
+> **2026-10-11 校准**：旧通道 `import themeCss from './theme.css.txt?raw'` + `document.createElement('style')` 手写注入**已退役**——全 ns 模块前端实测 **0 处** `?raw` 代码引用（部分 ns 的 `env.d.ts` 仍留 `*.css?raw` / `*.css.txt?raw` 遗留声明，勿再新增）。
+
+**CSS scoping 规则**（根类 = `.mod-{module}`；实测 ns 模块 theme.css：`.mod-*` 1272 处 vs 旧 `.{module}-page` 30 处）：
 
 ```css
-/* 所有规则用 .{module}-page 前缀隔离，不泄漏到全局 */
-.{module}-page {
+/* 所有规则用 .mod-{module} 根类隔离，不泄漏到全局（实例：system-approve/frontend/src/theme.css） */
+.mod-{module} {
   --primary: H S L%;       /* HSL 色值，无逗号 */
   --primary-foreground: H S L%;
-  --primary-bg: H S L% / A;  /* 透明度 */
+  --primary-bg: H S L% / A;  /* MUST 裸分量（消费式 = hsl(var(--primary-bg))）；写 hsl(...) 会双包装失效 */
   --color-primary: hsl(H S L%);  /* resoloved JSX inline 用法 */
 }
 ```
+
+> **`--primary-bg` 取值契约（2026-10-11 裁决，change `normalize-primary-bg-token-form`）**：消费式实测 6/6 为 `hsl(var(--primary-bg))` ⇒ 值 MUST 是**裸分量 + `/ α`**。写 `hsl(var(--primary)/8%)` 会解析成 `hsl(hsl(...))` 而失效（render 级实测 = `rgba(0,0,0,0)`；3 个 ns 仓 system-approve 与平台通用暗色规则曾犯此错，已修）。**跨模块通用覆写**（无法写死模块分量）只能写 `var(--primary) / α`——token 替换后仍是裸分量，同式有效（实例：`theme-base.css` 的 `.dark [class^='mod-']`）。
 
 **必填 CSS 变量**（MUST）：
 
@@ -266,9 +239,9 @@ export default function App() {
 | `--muted` / `--muted-foreground`                      | 禁用态                     | 次要文字                 |
 | `--color-*`（完整 resoloved set）                     | JSX inline style 用        | Tailwind 不可用时        |
 
-#### 11.11 module.json 字段模式（参考：system-settings）
+#### 11.11 module.json 字段模式（参考：system-approve）
 
-**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-settings/module.json`
+**权威参考**：`Pre-Proc/Alioth/Sources/Apps/Modules/system-approve/module.json`
 
 ```json
 {
@@ -283,14 +256,17 @@ export default function App() {
   "icon": "Xxx",
   "hasBackend": false,
   "hasFrontend": true,
-  "hasWebview": true,
-  "scenes": [{ "id": "scene-xxx", "group": "分组名" }]
+  "prototypeVersion": "m-v{N}",
+  "blockAssembly": { "blocks": [{ "id": "{blockId}", "label": "中文名", "group": "分组名", "order": 0 }], "navigation": { "groups": [] } }
 }
 ```
+
+> **2026-10-11 校准**：键面 MUST 与**磁盘事实**一致（门禁 `scripts/check/check-module-manifest-consistency.ts`：`id` / `namespace` / `hasFrontend` / `hasBackend` / `prototypeVersion`）。实测 61 个 ns 模块：`category` 61、`prototypeVersion` 60、`blockAssembly` 59；`hasWebview` 33（**遗留可选键**）、`scenes[]` **0 命中**（已退役，勿新增）。
 
 #### 11.12 修订历史
 
 | 日期       | 来源                                         | 说明                                                    |
 | ---------- | -------------------------------------------- | ------------------------------------------------------- |
 | 2026-06-21 | system-dev `App.tsx` + MODULE_SPEC.md §11.11 | 首次框架锁定，固化双模式 + 布局 Token                   |
-| 2026-06-21 | system-settings `App.tsx`                    | 标准 App.tsx 模式、i18n 键结构、主题色注入、module.json |
+| 2026-06-21 | system-approve `App.tsx`                    | 标准 App.tsx 模式、i18n 键结构、主题色注入、module.json |
+| 2026-10-11 | change `fix-stale-skill-refs` 复检校准                        | 样例模块 `system-settings`→`system-approve`（5 个 ns 仓全无此模块，`theme.css.txt` 无实例）；11.8 `MainNavItem` 归属改 `@alioth/components`；11.9 键改**扁平点号**（61/61 模块实测）并删 `scene` 家族（0 命中）；11.10 删退役的 `?raw`/`.css.txt` 注入通道、根类改 `.mod-{module}`（1272 vs 30）；11.11 module.json 键面写实（含 `prototypeVersion`/`blockAssembly`，删 `scenes[]`） |

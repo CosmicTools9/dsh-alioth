@@ -21,12 +21,14 @@
 //!   写件落库的合同行天然获得行级属性，不再依赖各调用方记得注册）；业务组装（标量服务、
 //!   起讫桥 `rr_stop`、坐标解析器、桥路由 goods/deal/demand、业务校验）留在各 ns。
 
+pub mod billing_basis;
 pub mod contract;
 pub mod mirror;
 pub mod models;
 pub mod ngac;
 pub mod product;
 
+pub use billing_basis::{billing_expression, write_billing_basis_chain_tx, BillingBasisInput};
 pub use contract::{
     insert_contract_pair_tx, insert_contract_row_tx, insert_mirror_of_contract_tx,
     insert_parties_tx, resolve_party_names,

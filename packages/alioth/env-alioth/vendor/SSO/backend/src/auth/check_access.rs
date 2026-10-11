@@ -111,6 +111,11 @@ pub async fn check_access(
         }
     };
 
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
+
     let user_id: i64 = match claims.sub.parse() {
         Ok(id) => id,
         Err(_) => {
@@ -120,16 +125,14 @@ pub async fn check_access(
         }
     };
 
-    // 查询用户的 NGAC 属性；DB 错误 → fail-closed 500
-    // （MUST NOT 落空属性集进兜底分支——否则 DB 抖动即「全路径放行」）
+    // 查询用户的 NGAC 属性（判定链 PIP 单源：直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包 + 时效）；
+    // DB 错误 → fail-closed 500（MUST NOT 落空属性集进兜底分支——否则 DB 抖动即「全路径放行」）
     let attrs: Vec<String> = match sqlx::query_scalar(
         r#"
         SELECT DISTINCT ua.o_name
-        FROM isahl_auth.ngac_user_rr_attribute rel
-        JOIN isahl_auth.ngac_user_attribute ua ON ua.id = rel.fk_user_attribute
-        WHERE rel.fk_user = $1
-          AND (rel.deleted_at IS NULL)
-          AND (rel.expires_at IS NULL OR rel.expires_at > NOW())
+        FROM isahl_auth.effective_ua_ids($1) e
+        JOIN isahl_auth.ngac_user_attribute ua ON ua.id = e.ua_id
+        WHERE ua.deleted_at IS NULL
         "#,
     )
     .bind(user_id)
@@ -173,12 +176,28 @@ pub async fn check_access(
         // /apps/{code}/... → App OA association decide；无 OA/无关联 → 拒绝（fail-closed）。
         // admin 豁免与 PDP list §6.2 同语义。
         PathAccess::AppRoute(code) => {
-            if attrs.iter().any(|a| a == "admin") {
-                return HttpResponse::Ok().json(CheckAccessResponse {
-                    allowed: true,
-                    redirect: None,
-                    reason: None,
-                });
+            // admin 豁免与 PDP list §6.2 同语义；判据唯一实现 = common::permissions::is_admin_user
+            // （有效 UA 集：直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包，含时效过滤）。此前用本处
+            // 直派属性集判定，比决策面窄（consolidate-ngac-admin-predicate）。
+            match common::permissions::is_admin_user(pool.get_ref(), user_id).await {
+                Ok(true) => {
+                    return HttpResponse::Ok().json(CheckAccessResponse {
+                        allowed: true,
+                        redirect: None,
+                        reason: None,
+                    });
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    log::error!(
+                        "check-access: admin predicate failed for user {}: {}",
+                        user_id,
+                        e
+                    );
+                    return HttpResponse::InternalServerError().json(AuthError {
+                        error: "Internal error".to_string(),
+                    });
+                }
             }
             let oa_id: Option<i64> = match sqlx::query_scalar(
                 r#"SELECT fk_resource FROM isahl_auth.ngac_object_attribute

@@ -308,6 +308,11 @@ pub struct CreateApprovalInstanceRequest {
     #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_approve: Option<i64>,
+    /// 重提链：本实例「再申请」的来源实例 id（可选；双形态反序列化兼容字符串/数字）。
+    /// 持久化于本实例行 `meta.original_id`（免 DDL），富化端点回带为 `original_id`。
+    #[serde(default)]
+    #[serde(with = "common::serde_zuid::opt")]
+    pub original_id: Option<i64>,
     pub comments: Option<String>, // 表单数据 JSON
 }
 
@@ -437,7 +442,7 @@ impl HasReferenceJoins for ApprovalInstance {
                     target_key: "id",
                 },
                 target_table: "isahl_auth.auth_users",
-                display_fields: &["name", "username"],
+                display_fields: &["display_name", "username"],
             },
         ]
     }
@@ -456,7 +461,7 @@ impl HasReferenceJoins for ApprovalAction {
                     target_key: "id",
                 },
                 target_table: "isahl_auth.auth_users",
-                display_fields: &["name", "username"],
+                display_fields: &["display_name", "username"],
             },
             ReferenceJoin {
                 name: "instance",

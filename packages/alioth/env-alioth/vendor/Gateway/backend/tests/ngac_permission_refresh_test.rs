@@ -16,7 +16,7 @@ const TEST_POLICY_CLASS: i64 = -940101;
 const TEST_ATTRIBUTE: i64 = -940201;
 const TEST_ASSIGNMENT: i64 = -940301;
 
-/// 自清 fixture（属性关系 → 属性 → 策略类 → 用户）。
+/// 自清 fixture（属性关系 → 属性 → 策略类 → 邮箱 → 用户）。
 async fn cleanup(pool: &PgPool) {
     let _ = sqlx::query(r#"DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE id = $1"#)
         .bind(TEST_ASSIGNMENT)
@@ -34,6 +34,10 @@ async fn cleanup(pool: &PgPool) {
         .bind(TEST_POLICY_CLASS)
         .execute(pool)
         .await;
+    let _ = sqlx::query(r#"DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1"#)
+        .bind(TEST_USER)
+        .execute(pool)
+        .await;
     let _ = sqlx::query(r#"DELETE FROM isahl_auth.auth_users WHERE id = $1"#)
         .bind(TEST_USER)
         .execute(pool)
@@ -42,13 +46,21 @@ async fn cleanup(pool: &PgPool) {
 
 async fn insert_user(pool: &PgPool) {
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, password_hash)
-           VALUES ($1, 'task-9.2', 'task-9.2', 'task-9.2@test.local', 'x')"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, password_hash)
+           VALUES ($1, 'task-9.2', 'x')"#,
     )
     .bind(TEST_USER)
     .execute(pool)
     .await
     .expect("insert auth user");
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+           VALUES ($1, 'task-9.2@test.local', TRUE)"#,
+    )
+    .bind(TEST_USER)
+    .execute(pool)
+    .await
+    .expect("insert auth user email");
 }
 
 #[tokio::test]

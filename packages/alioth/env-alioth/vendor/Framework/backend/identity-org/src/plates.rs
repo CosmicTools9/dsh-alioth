@@ -13,7 +13,7 @@
 //!
 //! 模型事实：车辆 ⊂ `zc_id_carrier` ⊂ `zc_id_entity`（`pg_inherits` 闭包），故
 //! `isahl_meta.meta_fields` 在 `zc_id_stor-ctn-vehicle.identity`（m2n，junction-only）声明的
-//! 桥正是本件；用户 2026-09-21 裁决确认该桥用法合规（`Pre-Proc/WZ/model-center-requests.md §R12`）。
+//! 桥正是本件；用户 2026-09-21 裁决确认该桥用法合规（`.planning/model-center-requests.md §R12`）。
 //!
 //! 调用方（平台号牌端点 / 车辆写径 / 门户登记）MUST 走本件，禁各自拼 SQL。
 

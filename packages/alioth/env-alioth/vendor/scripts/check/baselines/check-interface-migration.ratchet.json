@@ -1,0 +1,6 @@
+{
+  "rule_reference": "openspec/specs/precommit-execution",
+  "note": "检查接口迁移棘轮（**只减不增**）：未迁移检查路径清单 + `count` 冻结计数。迁移完成即从本清单删行；`count` 由 `--write --accept-new` 显式受理增长时更新；新检查 MUST 走 defineCheck（不在本清单即强制）。判据 = scripts/check/check-check-interface-migration.ts",
+  "count": 0,
+  "unmigrated": []
+}

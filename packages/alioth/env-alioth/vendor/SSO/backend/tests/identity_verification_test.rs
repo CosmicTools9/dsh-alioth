@@ -89,29 +89,48 @@ async fn create_test_tables(pool: &PgPool) {
 
 async fn setup_user(pool: &PgPool) -> i64 {
     // Idempotent upsert: tests run in parallel / across runs sharing the DB, so a bare
-    // INSERT collides on the unique email/name. upsert-then-select is race-safe.
+    // INSERT collides on the unique username. upsert-then-select is race-safe.
     sqlx::query(
         r#"
-        INSERT INTO isahl_auth.auth_users (id, name, username, email, status, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), 'identity_test', 'identity_test', 'identity@test.local', 'pending', NOW(), NOW())
-        ON CONFLICT (name) DO NOTHING
+        INSERT INTO isahl_auth.auth_users (id, username, status, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), 'identity_test', 'pending', NOW(), NOW())
+        ON CONFLICT (username) DO NOTHING
         "#,
     )
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar::<_, i64>(
+    let user_id = sqlx::query_scalar::<_, i64>(
         r#"
-        SELECT id FROM isahl_auth.auth_users WHERE email = 'identity@test.local' LIMIT 1
+        SELECT id FROM isahl_auth.auth_users WHERE username = 'identity_test' LIMIT 1
         "#,
     )
     .fetch_one(pool)
     .await
-    .expect("Failed to create/find test user")
+    .expect("Failed to create/find test user");
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails（auth_users 无 email 列）
+    sqlx::query(
+        r#"
+        INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+        VALUES ($1, 'identity@test.local', TRUE, NOW(), NOW())
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 async fn cleanup_user(pool: &PgPool, user_id: i64) {
     sqlx::query("DELETE FROM isahl_auth.identity_verifications WHERE user_id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .ok();
+    // auth_user_emails 入边 FK 无 ON DELETE CASCADE：先删邮箱行再删账号
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
         .bind(user_id)
         .execute(pool)
         .await
@@ -323,7 +342,7 @@ async fn test_entity_backfill_on_verify() {
 
     // Also verify user status was updated (from identity.rs:280-285)
     let user_status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+        sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
             .bind(user_id)
             .fetch_optional(&pool)
             .await

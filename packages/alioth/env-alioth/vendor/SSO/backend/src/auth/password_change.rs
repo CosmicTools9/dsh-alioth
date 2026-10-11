@@ -29,22 +29,14 @@ pub async fn change_password(
     state: web::Data<super::AuthState>,
     body: web::Json<ChangePasswordRequest>,
 ) -> HttpResponse {
-    // 1. 验证 token 提取用户
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
-        None => match req
-            .headers()
-            .get(actix_web::http::header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|auth| auth.strip_prefix("Bearer "))
-        {
-            Some(token) => token.to_string(),
-            None => {
-                return HttpResponse::Unauthorized().json(AuthError {
-                    error: "No authentication token".to_string(),
-                })
-            }
-        },
+    // 1. 验证 token 提取用户（单一实现 = `common::csrf`；delta auth「不内联提取」）
+    let access_token = match common::csrf::extract_token(&req) {
+        Some(token) => token,
+        None => {
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "No authentication token".to_string(),
+            })
+        }
     };
 
     let claims: Claims = match decode_token_any(&access_token, &state.verification_keys()) {
@@ -56,6 +48,11 @@ pub async fn change_password(
             });
         }
     };
+
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
 
     let user_id: i64 = match claims.sub.parse() {
         Ok(id) => id,
@@ -200,11 +197,10 @@ mod tests {
         let suffix = uuid::Uuid::new_v4().to_string();
 
         let user_id: i64 = sqlx::query_scalar(
-            "INSERT INTO isahl_auth.auth_users (name, email, password_hash, status)
-             VALUES ($1, $2, 'argon2-placeholder', 'active') RETURNING id",
+            "INSERT INTO isahl_auth.auth_users (username, password_hash, status)
+             VALUES ($1, 'argon2-placeholder', 'active') RETURNING id",
         )
         .bind(format!("pc_test_{}", suffix))
-        .bind(format!("pc_test_{}@example.com", suffix))
         .fetch_one(&pool)
         .await
         .expect("插入测试用户失败");

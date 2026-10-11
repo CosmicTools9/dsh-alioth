@@ -31,7 +31,8 @@ struct GraphUserAttributeRow {
     o_name: String,
     fk_policy_class: Option<i64>,
     ancestor_ids: Vec<i64>,
-    property: serde_json::Value,
+    /// jsonb NULLABLE（DB 真值）——NULL ⇒ None。
+    property: Option<serde_json::Value>,
 }
 
 /// UA 节点：`derived_from='cognition'` 即本体认知派生（position:/view:）。
@@ -138,12 +139,40 @@ pub struct GraphAccessRight {
 pub struct GraphSnapshot {
     /// `ngac_policy_version` 当前版本（提案-确认的陈旧检测用）。
     pub version: i64,
+    /// AGE 投影健康（fail-visible，establish-age-graph-analysis-plane 任务 2.2）：
+    /// best-effort 附加——对账函数不可用（AGE 未部署）时 `graph_ready=false`，
+    /// 不影响快照主体（snapshot-contract-stability：AGE 不可用时端点行为零变化）。
+    pub projection: ProjectionHealth,
     pub policy_classes: Vec<GraphPolicyClass>,
     pub user_attributes: Vec<GraphUserAttribute>,
     pub object_attributes: Vec<GraphObjectAttribute>,
     pub associations: Vec<GraphAssociation>,
     pub prohibitions: Vec<GraphProhibition>,
     pub access_rights: Vec<GraphAccessRight>,
+}
+
+/// 投影健康面（规约 `ngac-graph-analysis` :: `analysis-projection-health-shape` 的
+/// 快照载体形态；分析端点族同构消费 `ngac::freshness::DriftReport`）。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ProjectionHealth {
+    pub graph_ready: bool,
+    pub drifted_entities: i64,
+    pub projection_drift: i64,
+    /// 漂移非零 ⇒ 图分析结论陈旧（消费方 MUST 呈现告警，不以新鲜结论形态展示）。
+    pub stale: bool,
+}
+
+impl ProjectionHealth {
+    /// 关系单源直读 ⇒ 恒当前（NGAC 侧图投影已退役；change `retire-ngac-age-graph-projection`）。
+    fn probe(_pool: &PgPool) -> Self {
+        let r = crate::ngac::freshness::DriftReport::fresh();
+        Self {
+            graph_ready: r.graph_ready,
+            drifted_entities: r.drifted_entities,
+            projection_drift: r.projection_drift,
+            stale: r.stale(),
+        }
+    }
 }
 
 /// 聚合图快照（唯一实现）。顺序查询单连接；任一查询失败整体失败（fail-closed，
@@ -154,6 +183,9 @@ pub async fn graph_snapshot(pool: &PgPool) -> sqlx::Result<GraphSnapshot> {
     )
     .fetch_one(pool)
     .await?;
+
+    // 投影健康面：best-effort（对账面不可用 ⇒ 未就绪形态，不失败——见字段注释）
+    let projection = ProjectionHealth::probe(pool);
 
     let policy_classes = sqlx::query_as::<_, GraphPolicyClass>(
         r#"
@@ -224,14 +256,16 @@ pub async fn graph_snapshot(pool: &PgPool) -> sqlx::Result<GraphSnapshot> {
         .map(|r| {
             let derived_from = r
                 .property
-                .get("derived_from")
+                .as_ref()
+                .and_then(|p| p.get("derived_from"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             // description 与 derived_from 同源：property JSONB（admin 列表端点
             // property->>'description' 语义，change refactor-ngac-admin-nl-graph 对齐）
             let description = r
                 .property
-                .get("description")
+                .as_ref()
+                .and_then(|p| p.get("description"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let (holder_count, holders) = holder_map
@@ -267,12 +301,8 @@ pub async fn graph_snapshot(pool: &PgPool) -> sqlx::Result<GraphSnapshot> {
     )
     .fetch_all(pool)
     .await?;
-    let types: std::collections::HashSet<String> = oa_rows
-        .iter()
-        .filter_map(|r| r.resource_type.clone())
-        .filter(|t| !t.is_empty())
-        .collect();
-    let meta_names = super::display::meta_display_names(pool, &types).await;
+    // 展示名：链 2（`isahl_meta` 查询）已删（2026-09-29，容器边界）⇒ 传空 map，由链 3 承担
+    let meta_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let object_attributes = oa_rows
         .into_iter()
         .map(|r| {
@@ -354,6 +384,7 @@ pub async fn graph_snapshot(pool: &PgPool) -> sqlx::Result<GraphSnapshot> {
 
     Ok(GraphSnapshot {
         version,
+        projection,
         policy_classes,
         user_attributes,
         object_attributes,

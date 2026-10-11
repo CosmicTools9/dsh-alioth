@@ -9,8 +9,9 @@ use common::testing::connect_test_db;
 use contract_writer::{
     create_contract_transport_product_tx, insert_contract_pair_tx, insert_contract_row_tx,
     insert_mirror_of_contract_tx, insert_product_pair_tx, insert_product_row_tx,
-    resolve_mirror_ids_tx, soft_delete_contract_tx, soft_delete_mirror_tx, ContractLeaf,
-    ContractParty, ContractProductInput, ContractRowInput, ProductPairInput, ProductRowInput,
+    insert_product_stops_tx, resolve_mirror_ids_tx, soft_delete_contract_tx, soft_delete_mirror_tx,
+    ContractLeaf, ContractParty, ContractProductInput, ContractRowInput, ProductPairInput,
+    ProductRowInput,
 };
 
 const SCENE: &str = "TD";
@@ -157,9 +158,9 @@ async fn ensure_ngac_policy_class(pool: &PgPool) {
     }
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES (1, 'test-user-1', 'test-user-1', 'test-user-1@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES (1, 'test-user-1', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .execute(pool)
@@ -319,6 +320,20 @@ async fn contract_pair_lands_opposite_leaves_with_same_parties() {
     let mut expect_ngac = vec![main_id, mirror_id];
     expect_ngac.sort_unstable();
     assert_eq!(ngac_rows, expect_ngac, "主/镜像合同行均须有行级 NGAC");
+
+    // derive-creator-grants-from-lifecycle：锚点保留、**零创建者关联扇出**——创建者授权由
+    // 判定时刻派生（common::ngac_org），contract-row-ngac 修正案的合同链断言。
+    let assoc_rows: i64 = sqlx::query_scalar(
+        r#"SELECT count(*) FROM isahl_auth.ngac_association a
+           JOIN isahl_auth.ngac_object_attribute oa ON oa.id = a.fk_object_attribute
+           WHERE oa.resource_type = 'contracts' AND oa.fk_resource = ANY($1)
+             AND a.deleted_at IS NULL"#,
+    )
+    .bind(vec![main_id, mirror_id])
+    .fetch_one(&pool)
+    .await
+    .expect("contract row assoc count");
+    assert_eq!(assoc_rows, 0, "合同链不得物化创建者关联（派生层负责）");
 
     // 镜像草稿状态桥（字典在场时）
     if draft.is_some() {
@@ -766,6 +781,135 @@ async fn contract_product_assembly_writes_stops_and_bridge() {
 
     drop(conn);
     purge(&pool, "T-CW-ASM").await;
+}
+
+/// 产品起讫活行（类别短码 + 地点，按类别序）——起讫桥 upsert 断言用。
+async fn live_stops(pool: &PgPool, product_id: i64) -> Vec<(String, i64)> {
+    sqlx::query_as::<_, (String, i64)>(
+        r#"SELECT ct.code, s.ref_right FROM isahl."zc_id_prod-transport_rr_stop" s
+           JOIN isahl."zc_id_cate-traffic" ct ON ct.id = s.ck_category
+          WHERE s.ref_left = $1 AND s.deleted_at IS NULL ORDER BY ct.code"#,
+    )
+    .bind(product_id)
+    .fetch_all(pool)
+    .await
+    .expect("live stops")
+}
+
+/// 产品起讫软删行数（重写前置软删的计数；用于「零 churn」断言）。
+async fn retired_stops(pool: &PgPool, product_id: i64) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        r#"SELECT count(*) FROM isahl."zc_id_prod-transport_rr_stop"
+          WHERE ref_left = $1 AND deleted_at IS NOT NULL"#,
+    )
+    .bind(product_id)
+    .fetch_one(pool)
+    .await
+    .expect("retired stops")
+}
+
+/// 产品起讫桥写径 = **按类别 upsert**（fix-inquiry-reentry-upsert / `wz-transport-stop-bridge::stop-bridge-writer-upsert`）：
+/// 改起讫即原地生效（同类别恒一行活行），只给起点时 MUST NOT 动既有讫点行，重放同值零 churn。
+#[tokio::test]
+async fn product_stops_writer_upserts_by_category() {
+    let pool = connect_test_db().await;
+    let code = unique_code("STUPS");
+    let a = ensure_subject(&pool, "T-CW-SUBJ-A").await;
+    let b = ensure_subject(&pool, "T-CW-SUBJ-B").await;
+    let mut conn = pool.acquire().await.expect("acquire");
+
+    let parties = vec![
+        ContractParty {
+            subject_id: Some(a),
+            name: "甲方".into(),
+            period_id: None,
+        },
+        ContractParty {
+            subject_id: Some(b),
+            name: "乙方".into(),
+            period_id: None,
+        },
+    ];
+    let (main_id, _mirror_id) = insert_contract_pair_tx(
+        &mut conn,
+        &row_input(&code, ContractLeaf::Sales, parties, None),
+    )
+    .await
+    .expect("contract pair");
+    let product_id = create_contract_transport_product_tx(
+        &mut conn,
+        &ContractProductInput {
+            contract_id: main_id,
+            is_sales: true,
+            is_order: false,
+            contract_code: &code,
+            notice: "起讫桥 upsert 测试产品",
+            comments: "自动化测试",
+            demand_subject: a,
+            provider_subject: b,
+            line_id: 1,
+            vehicle_form_id: Some(1),
+            origin_place_id: 1,
+            dest_place_id: 2,
+            price_id: None,
+            weight_id: None,
+            period_id: None,
+            valid_segm_id: None,
+            fn_code: "↓.GG",
+            scene_code: "GC",
+            factor_code: FACTOR,
+            user_id: 1,
+        },
+    )
+    .await
+    .expect("contract product");
+    let product_code: String = sqlx::query_scalar(
+        r#"SELECT code FROM isahl."zc_id_prod-freight_road-sales" WHERE id = $1"#,
+    )
+    .bind(product_id)
+    .fetch_one(&pool)
+    .await
+    .expect("product code");
+    // 1. 首次（合同产品组装已写 1/2）⇒ 起点 1 / 讫点 2
+    assert_eq!(
+        live_stops(&pool, product_id).await,
+        vec![("ST-ARRIVE".to_string(), 2), ("ST-DEPART".to_string(), 1)]
+    );
+    // 2. 改起讫 ⇒ 原地更新（同类别恒一行活行，旧行转软删）
+    insert_product_stops_tx(&mut conn, product_id, &product_code, Some(3), Some(4), 1)
+        .await
+        .expect("upsert stops");
+    assert_eq!(
+        live_stops(&pool, product_id).await,
+        vec![("ST-ARRIVE".to_string(), 4), ("ST-DEPART".to_string(), 3)]
+    );
+    assert_eq!(
+        retired_stops(&pool, product_id).await,
+        2,
+        "旧起讫行 MUST 转软删"
+    );
+    // 3. 只给起点 ⇒ 讫点行 MUST NOT 被动（非目标类别不参与重写）
+    insert_product_stops_tx(&mut conn, product_id, &product_code, Some(5), None, 1)
+        .await
+        .expect("origin-only upsert");
+    assert_eq!(
+        live_stops(&pool, product_id).await,
+        vec![("ST-ARRIVE".to_string(), 4), ("ST-DEPART".to_string(), 5)],
+        "只给起点 MUST NOT 删除既有讫点行"
+    );
+    // 4. 重放同值 ⇒ 零 churn
+    let before = retired_stops(&pool, product_id).await;
+    insert_product_stops_tx(&mut conn, product_id, &product_code, Some(5), None, 1)
+        .await
+        .expect("replay");
+    assert_eq!(
+        retired_stops(&pool, product_id).await,
+        before,
+        "同值重放 MUST 零写入"
+    );
+
+    drop(conn);
+    purge(&pool, "T-CW-STUPS").await;
 }
 
 /// 主合约级联软删：产品（含起讫桥）+ 明细/合同方/状态桥 + 合约行；镜像不受影响。

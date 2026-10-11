@@ -43,16 +43,25 @@ async fn social_account_list_and_unlink() {
     common::setup_schema(&pool).await.ok();
 
     // 真实用户（user_oauth_accounts.user_id 有 FK → auth_users，不可用假 id）
+    // name/email 冗余列已下线：username 为唯一身份基点，email 唯一存储 = auth_user_emails
     let email = format!("social_{}@test.local", uuid::Uuid::new_v4().simple());
     let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
-         VALUES (isahl.gen_next_zuid(), $1, $1, $2, 'active', true, NOW(), NOW()) RETURNING id",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at) \
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW()) RETURNING id",
     )
-    .bind(&email)
     .bind(&email)
     .fetch_one(&pool)
     .await
     .expect("create test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&email)
+    .execute(&pool)
+    .await
+    .ok();
     let provider_id = 99101i64;
 
     sqlx::query(

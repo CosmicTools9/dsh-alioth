@@ -83,7 +83,7 @@ pub async fn category_id_by_code(pool: &PgPool, code: &str) -> Result<i64, ApiEr
     // 字典缺项 → 自动创建（notice 用 code 原文；前端 CERT_TYPE_OPTIONS 的 PASSPORT/OTHER 免维护）
     let new_id: i64 = sqlx::query_scalar(
         "INSERT INTO \"isahl\".\"zc_id_cate-identity\" (id, code, notice, created_by_id) \
-         VALUES (isahl.gen_next_zuid(), $1, $1, 1) RETURNING id",
+         VALUES (isahl.gen_next_uid(33), $1, $1, 1) RETURNING id",
     )
     .bind(code)
     .fetch_one(pool)

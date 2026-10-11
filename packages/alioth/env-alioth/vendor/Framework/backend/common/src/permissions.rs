@@ -1,28 +1,135 @@
-use crate::ngac_org::COGNITION_CTE;
+use crate::ngac_org::{COGNITION_CTE, DELEGATED_CTE};
 use crate::AliothError;
+use ngac_host::ADMIN_UA_NAME;
 use sqlx::{AssertSqlSafe, PgPool};
 
-// 认知链推导 CTE 消费方（NGAC_SPEC §2.2.3 消费同源义务）：推导链唯一实现 =
-// `crate::ngac_org::COGNITION_CTE`（B-0 consolidate-ngac-cognition-source 收编），
-// 本模块引用常量拼装，禁止复制 SQL。`$1` = fk_user。
+// 判定链 PIP 段单源：`crate::ngac_org::{COGNITION_CTE, DELEGATED_CTE}`（NGAC_SPEC §2.2.3/§2.2.4
+// 消费同源义务）拼装为 DB 函数 `isahl_auth.effective_ua_ids`（本模块，见 `effective_ua_ids_fn_ddl`）；
+// 本模块其余 SQL 消费该函数，禁止复制闭包/时效 SQL。`$1` = fk_user（DDL 内替换为 `p_uid`）。
 
-/// 认知派生 UA 行 id 并入 user_attrs（读侧派生——UA 行由 SSO PDP auto-ensure 物化，
-/// 供管理面 association；本决策仅 JOIN 已物化行；未物化 = 无关联 = fail-closed）。
-const COGNITION_UA_UNION: &str = r#"
-            UNION
-            SELECT ua.id as ua_id, 0 as depth
-            FROM cognition_ua_names cn
-            INNER JOIN isahl_auth.ngac_user_attribute ua
-                ON ua.o_name = cn.o_name AND ua.deleted_at IS NULL"#;
+/// 有效 UA 集函数的 SQL 面形式（**判定链 PIP 段唯一实现**：DB 函数 `isahl_auth.effective_ua_ids(bigint)`）。
+///
+/// 语义（NGAC_SPEC §2.2.3 认知派生 + §2.2.4 委托派生 + §6.2 闭包）= 直派（`deleted_at IS NULL`
+/// 且 `expires_at` 未过期）∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包（depth ≤ 10，仅未软删节点）。
+/// Rust 面唯一实现 = `SSO/ngac/pip.rs::get_inherited_user_attributes`（取结构化 UA 行供 PDP），
+/// 二者同源于 `ngac_org` 的 CTE 常量。消费方 MUST 调用本函数（或经 Rust 唯一实现），MUST NOT 手写闭包/时效。
+pub const EFFECTIVE_UA_IDS_FN: &str = "isahl_auth.effective_ua_ids";
 
-pub async fn require_resource_access(
-    pool: &PgPool,
-    user_id: i64,
-    resource_type: &str,
-    resource_id: i64,
-    action: &str,
-) -> Result<(), AliothError> {
-    // Skip all NGAC checks if the isahl_auth schema doesn't exist
+/// 生成 `isahl_auth.condition_ts(text)` 的 `CREATE OR REPLACE FUNCTION` DDL（幂等）。
+///
+/// **NGAC 条件时间解析的安全唯一实现**：非法/空文本 ⇒ `NULL`（调用方据此**失败封闭**：
+/// 条件视为不满足）。`p_text::timestamptz` 在异常时返回 NULL，其行为与
+/// `ngac_decision::evaluate_conditions` 的 `parse_iso8601` 一致（解析失败 ⇒ 不满足）。
+pub const CONDITION_TS_FN: &str = "isahl_auth.condition_ts";
+
+pub fn condition_ts_fn_ddl() -> String {
+    format!(
+        r#"CREATE OR REPLACE FUNCTION {CONDITION_TS_FN}(p_text text)
+           RETURNS timestamptz
+           LANGUAGE plpgsql IMMUTABLE AS $fn$
+           BEGIN
+             IF p_text IS NULL OR btrim(p_text) = '' THEN
+               RETURN NULL;
+             END IF;
+             RETURN p_text::timestamptz;
+           EXCEPTION WHEN others THEN
+             RETURN NULL;
+           END
+           $fn$"#,
+    )
+}
+
+/// 生成 `isahl_auth.effective_ua_ids(bigint)` 的 `CREATE OR REPLACE FUNCTION` DDL（幂等；CTE 常量单源）。
+///
+/// **指派级条件（`ngac_user_rr_attribute.conditions`）接线（2026-10-10 `wire-ngac-zero-consumer-faces`）**：
+/// 解析点无资源/动作上下文 ⇒ 仅 §2.4 的**时间窗**（`not_before` / `not_after`）可求值，其余键
+/// （`rhai` / `user_attr_in` / `object_attr_in`）在该点**不可求值** ⇒ 失败封闭（该指派不生效 ⇒
+/// 该 UA 不进入有效集）；写径按同键集校验（400，`SSO/ngac/pip.rs`）⇒ 两者合并即「键集契约」。
+/// 时间语义与 `ngac_decision::evaluate_conditions` 逐条一致（`not_before`：`now >= nb`；
+/// `not_after`：`now <= na`；值非法 ⇒ 不满足）。
+pub fn effective_ua_ids_fn_ddl() -> String {
+    format!(
+        r#"CREATE OR REPLACE FUNCTION isahl_auth.effective_ua_ids(p_uid bigint)
+           RETURNS TABLE(ua_id bigint)
+           LANGUAGE sql STABLE AS $fn$
+             WITH RECURSIVE {cognition},
+             {delegated},
+             ua_ids AS (
+               SELECT ur.fk_user_attribute AS ua_id, 0 AS depth
+               FROM isahl_auth.ngac_user_rr_attribute ur
+               WHERE ur.fk_user = p_uid
+                 AND ur.deleted_at IS NULL
+                 AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+                 AND (
+                      COALESCE(ur.conditions, '{{}}'::jsonb) = '{{}}'::jsonb
+                   OR (
+                        (NOT ur.conditions ? 'not_before'
+                         OR (isahl_auth.condition_ts(ur.conditions->>'not_before') IS NOT NULL
+                             AND isahl_auth.condition_ts(ur.conditions->>'not_before') <= NOW()))
+                    AND (NOT ur.conditions ? 'not_after'
+                         OR (isahl_auth.condition_ts(ur.conditions->>'not_after') IS NOT NULL
+                             AND isahl_auth.condition_ts(ur.conditions->>'not_after') >= NOW()))
+                    AND NOT (ur.conditions ?| ARRAY['rhai','user_attr_in','object_attr_in'])
+                      )
+                 )
+               UNION
+               SELECT ua.id, 0
+               FROM cognition_ua_names cn
+               INNER JOIN isahl_auth.ngac_user_attribute ua
+                 ON ua.o_name = cn.o_name AND ua.deleted_at IS NULL
+               UNION
+               SELECT ua.id, 0
+               FROM delegated_ua du
+               INNER JOIN isahl_auth.ngac_user_attribute ua
+                 ON ua.id = du.id AND ua.deleted_at IS NULL
+               UNION ALL
+               SELECT unnest(ua.ancestor_ids)::BIGINT AS ua_id, ids.depth + 1
+               FROM isahl_auth.ngac_user_attribute ua
+               INNER JOIN ua_ids ids ON ua.id = ids.ua_id
+               WHERE ids.depth < 10 AND ua.deleted_at IS NULL
+             )
+             SELECT DISTINCT ua_id FROM ua_ids
+           $fn$"#,
+        cognition = COGNITION_CTE.replace("$1", "p_uid"),
+        delegated = DELEGATED_CTE.replace("$1", "p_uid"),
+    )
+}
+
+/// admin 判据（**判定链 handler 门 / PDP 豁免的 admin 输入**）：DB 函数 `isahl_auth.is_admin(bigint)`。
+///
+/// 实现 MUST 建立在 [`EFFECTIVE_UA_IDS_FN`] 之上（同一条链，不重复闭包/时效逻辑）。
+/// 为什么是 DB 函数而不是 Rust 侧 SQL 片段：调用方（跨 SSO/Gateway 的内嵌查询）需要
+/// 「某用户是 admin」这一**字面**谓词；返回片段再由调用方 `format!` 拼接会被
+/// `check-dynamic-table-name.ts` 判为动态列位插值，且违反「判定与执行共用同一实现」。
+pub const ADMIN_PREDICATE_FN: &str = "isahl_auth.is_admin";
+
+/// 生成 `isahl_auth.is_admin(bigint)` 的 `CREATE OR REPLACE FUNCTION` DDL（幂等；基于有效 UA 集函数）。
+///
+/// 注意：函数体 SQL 里 MUST 字面书写 `isahl_auth.effective_ua_ids`（MUST NOT 用 `format!` 插值——
+/// 表/函数位插值会被 `check-dynamic-table-name.ts` 判为动态分派）；与 [`EFFECTIVE_UA_IDS_FN`]
+/// 的一致性由本文件内相邻声明 + 单测保证。
+pub fn admin_predicate_fn_ddl() -> String {
+    format!(
+        r#"CREATE OR REPLACE FUNCTION isahl_auth.is_admin(p_uid bigint) RETURNS boolean
+           LANGUAGE sql STABLE AS $fn$
+             SELECT EXISTS (
+               SELECT 1
+               FROM isahl_auth.effective_ua_ids(p_uid) e
+               INNER JOIN isahl_auth.ngac_user_attribute a ON a.id = e.ua_id
+               WHERE a.o_name = '{ADMIN_UA_NAME}' AND a.deleted_at IS NULL
+             )
+           $fn$"#,
+    )
+}
+
+/// 幂等建立判定链 PIP 段的所有 DB 函数（`effective_ua_ids` → `is_admin`；顺序不可反）。
+/// 启动期由 SSO / Gateway `build_server` 各调一次；`isahl_auth` 缺失 ⇒ 静默跳过。
+///
+/// 并发安全：`CREATE OR REPLACE FUNCTION` 同一函数会在系统目录上撞车，PG 直接报
+/// `tuple concurrently updated`（实测：并行测试/多进程首用 ensure 同时进入）。
+/// 本函数是 `is_admin_user` 的前置，失败 ⇒ admin 判定 **fail-closed** ⇒ 管理者被误判 403。
+/// 故 DDL MUST 在事务内先取 advisory 锁（`NGAC_PREDICATE_FN_LOCK`，事务结束自动释放）。
+pub async fn ensure_ngac_predicate_fns(pool: &PgPool) -> Result<(), AliothError> {
     if !sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT FROM information_schema.schemata WHERE schema_name='isahl_auth')",
     )
@@ -32,168 +139,102 @@ pub async fn require_resource_access(
     {
         return Ok(());
     }
-    // From here on, isahl_auth schema is guaranteed to exist
-    let owner_cte = r#"
-        UNION
-        SELECT op.owner_attr_id as ua_id, 0 as depth
-        FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r
-        WHERE op.resource_type = $2 AND r.id = $3
-          AND r.created_by_id = $1 AND op.enabled = TRUE
-        UNION
-        SELECT op.benefit_attr_id as ua_id, 0 as depth
-        FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r
-        WHERE op.resource_type = $2 AND r.id = $3
-          AND $1 = ANY(r.ak_benefit_user) AND op.enabled = TRUE
-        UNION
-        SELECT op.permit_attr_id as ua_id, 0 as depth
-        FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r
-        WHERE op.resource_type = $2 AND r.id = $3
-          AND $1 = ANY(r.ak_permit_user) AND op.enabled = TRUE
-        UNION
-        SELECT op.access_attr_id as ua_id, 0 as depth
-        FROM isahl_auth.ngac_ownership_policy op, isahl.zc_id_lifecycle r
-        WHERE op.resource_type = $2 AND r.id = $3
-          AND $1 = ANY(r.ak_access_user) AND op.enabled = TRUE
-    "#
-    .to_string();
-
-    let sql = format!(
-        "WITH RECURSIVE {cog_cte},
-        user_attrs AS (
-            SELECT fk_user_attribute as ua_id, 0 as depth
-            FROM isahl_auth.ngac_user_rr_attribute
-            WHERE fk_user = $1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
-            {owner}
-            {cog_union}
-            UNION ALL
-            SELECT unnest(ua.ancestor_ids)::BIGINT as ua_id, depth + 1
-            FROM isahl_auth.ngac_user_attribute ua
-            INNER JOIN user_attrs AS ua_cte ON ua.id = ua_cte.ua_id
-            WHERE ua_cte.depth < 10 AND ua.deleted_at IS NULL
-        ),
-        resource_attrs AS (
-            SELECT id as oa_id, 0 as depth
-            FROM isahl_auth.ngac_object_attribute
-            WHERE resource_type = $2 AND fk_resource = $3 AND deleted_at IS NULL
-            UNION ALL
-            -- 通配资源（resource_type='*'）：覆盖所有实体类型
-            SELECT id as oa_id, 0 as depth
-            FROM isahl_auth.ngac_object_attribute
-            WHERE resource_type = '*' AND deleted_at IS NULL
-            UNION ALL
-            -- 全局对象属性回落：具体资源无属性时使用 fk_resource=0 的全局属性
-            SELECT id as oa_id, 0 as depth
-            FROM isahl_auth.ngac_object_attribute
-            WHERE resource_type = $2 AND fk_resource = 0 AND deleted_at IS NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM isahl_auth.ngac_object_attribute
-                  WHERE resource_type = $2 AND fk_resource = $3 AND deleted_at IS NULL
-              )
-            UNION ALL
-            SELECT unnest(oa.ancestor_ids)::BIGINT as oa_id, depth + 1
-            FROM isahl_auth.ngac_object_attribute oa
-            INNER JOIN resource_attrs AS ra_cte ON oa.id = ra_cte.oa_id
-            WHERE ra_cte.depth < 10 AND oa.deleted_at IS NULL
-        )
-        -- M218 framework-prohibition：deny-overrides 分支复用同一闭包 CTE（单 SQL 双列）。
-        -- Framework 仅评估无条件 prohibition（conditions 为空）；条件式 prohibition
-        -- 由 SSO PDP decide 全量评估（documented boundary）。
-        SELECT EXISTS(
-            SELECT 1 FROM isahl_auth.ngac_association a
-            INNER JOIN user_attrs AS ua ON a.fk_user_attribute = ua.ua_id
-            INNER JOIN resource_attrs AS ra ON a.fk_object_attribute = ra.oa_id
-            WHERE a.deleted_at IS NULL
-              AND EXISTS(SELECT 1 FROM isahl_auth.ngac_access_right ar
-                         WHERE ar.id = ANY(a.ak_access_rights) AND ar.o_name = $4)
-        ) AS permitted,
-        EXISTS(
-            SELECT 1 FROM isahl_auth.ngac_prohibition p
-            JOIN user_attrs ua ON p.fk_user_attribute = ua.ua_id
-            JOIN resource_attrs ra ON p.fk_object_attribute = ra.oa_id
-            WHERE p.deleted_at IS NULL AND p.is_active
-              AND (p.conditions IS NULL OR p.conditions = '{{}}'::jsonb)
-              AND EXISTS(SELECT 1 FROM isahl_auth.ngac_access_right ar
-                         WHERE ar.id = ANY(p.ak_access_rights) AND ar.o_name = $4)
-        ) AS prohibited",
-        cog_cte = COGNITION_CTE,
-        owner = owner_cte,
-        cog_union = COGNITION_UA_UNION,
-    );
-
-    let (permitted, prohibited): (bool, bool) =
-        sqlx::query_as::<_, (bool, bool)>(AssertSqlSafe(sql.as_str()))
-            .bind(user_id)
-            .bind(resource_type)
-            .bind(resource_id)
-            .bind(action)
-            .fetch_one(pool)
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AliothError::Internal(format!("ensure ngac predicate fns: begin: {}", e)))?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(NGAC_PREDICATE_FN_LOCK)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AliothError::Internal(format!("ensure ngac predicate fns: lock: {}", e)))?;
+    for (fn_name, ddl) in [
+        (CONDITION_TS_FN, condition_ts_fn_ddl()),
+        (EFFECTIVE_UA_IDS_FN, effective_ua_ids_fn_ddl()),
+        (ADMIN_PREDICATE_FN, admin_predicate_fn_ddl()),
+    ] {
+        sqlx::query(AssertSqlSafe(ddl.as_str()))
+            .execute(&mut *tx)
             .await
-            .map_err(|e| AliothError::Internal(format!("Permission check: {}", e)))?;
+            .map_err(|e| AliothError::Internal(format!("ensure {}: {}", fn_name, e)))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| AliothError::Internal(format!("ensure ngac predicate fns: commit: {}", e)))?;
+    Ok(())
+}
 
-    // M218 语义顺序（deny-overrides，对齐 SSO PDP decide）：prohibition 无条件优先，
-    // 先于 admin 豁免判定——prohibition 对 admin 同样生效。prohibited/permitted 单 SQL
-    // 同算，判定不依赖提前返回。
-    if prohibited {
-        return Err(AliothError::Forbidden(format!(
-            "Access denied: user {} is prohibited '{}' on {}:{}",
-            user_id, action, resource_type, resource_id
-        )));
-    }
-    if permitted {
-        return Ok(());
-    }
-    // Admin 治理豁免降级为**兜底**（NGAC_SPEC §6.2，与 decide.rs「遍历后兜底」一致）：
-    // 仅在无 prohibition 且无 association 命中（NotApplicable 态）时放行——admin 绕过
-    // 的是「无策略」而非显式 prohibition。注：认知派生名（position:/view: 前缀）不可能
-    // 等于 'admin'，admin 判定无需并入认知。此查询仅两者皆否时执行。
-    let is_admin: bool = sqlx::query_scalar(
-        r#"
-        WITH RECURSIVE user_attrs AS (
-            SELECT fk_user_attribute AS ua_id, 0 AS depth
-            FROM isahl_auth.ngac_user_rr_attribute
-            WHERE fk_user = $1 AND deleted_at IS NULL
-              AND (expires_at IS NULL OR expires_at > NOW())
-            UNION ALL
-            SELECT unnest(ua.ancestor_ids)::BIGINT AS ua_id, depth + 1
-            FROM isahl_auth.ngac_user_attribute ua
-            INNER JOIN user_attrs AS ua_cte ON ua.id = ua_cte.ua_id
-            WHERE ua_cte.depth < 10 AND ua.deleted_at IS NULL
-        )
-        SELECT EXISTS(
-            SELECT 1 FROM user_attrs ua
-            INNER JOIN isahl_auth.ngac_user_attribute a ON a.id = ua.ua_id
-            WHERE a.o_name = 'admin' AND a.deleted_at IS NULL
-        )
-        "#,
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| AliothError::Internal(format!("Admin check: {}", e)))?;
-    if is_admin {
-        return Ok(());
-    }
+/// advisory lock 键（全局唯一、跨进程有效）：NGAC 断言函数 ensure 串行化用（见上）。
+const NGAC_PREDICATE_FN_LOCK: i64 = 0x4E47_4143_5052_0001_u64 as i64;
 
-    // Bootstrap 判定（fail-open 条件收窄，Phase C hardening）：到达此处意味着
-    // !prohibited && !permitted && !admin。仅当整库从未种入任何 NGAC 策略（无 default
-    // policy class **且** association 表空）时才按 bootstrap 期放行；任一条件不满足即
-    // deny——防「policy class 已种（种子事务成功）但 association 种子部分失败 → 表空」
-    // 窗口被误判为从未初始化而 fail-open。
-    let bootstrap: (bool,) = sqlx::query_as(
-        "SELECT ((SELECT COUNT(*) FROM isahl_auth.ngac_policy_class WHERE o_name='default') = 0)
-                AND ((SELECT COUNT(*) FROM isahl_auth.ngac_association WHERE deleted_at IS NULL) = 0)",
+/// 本进程内「已确保函数存在」标记（成功才置位；失败下次重试，幂等 DDL 无副作用）。
+static ADMIN_FN_ENSURED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// NGAC admin UA 判定（**唯一实现**，形态 = 调 DB 函数 `isahl_auth.is_admin($1)`）。
+///
+/// 语义见 [`ADMIN_PREDICATE_FN`]（直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包，含时效过滤），
+/// 与 [`require_resource_access`] 的 admin 治理兜底同源（NGAC_SPEC §6.2「遍历后兜底」）。
+/// `isahl_auth` schema 缺失 ⇒ `false`（fail-closed：无 NGAC 面即无 admin 身份）。
+pub async fn is_admin_user(pool: &PgPool, user_id: i64) -> Result<bool, AliothError> {
+    if !sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT FROM information_schema.schemata WHERE schema_name='isahl_auth')",
     )
     .fetch_one(pool)
     .await
-    .map_err(|e| AliothError::Internal(format!("Bootstrap: {}", e)))?;
+    .unwrap_or(false)
+    {
+        return Ok(false);
+    }
+    if ADMIN_FN_ENSURED.get().is_none() {
+        // 未确保前先确保（幂等）；失败即 fail-closed（false），不把「函数缺失」当「非 admin」以外的语义
+        match ensure_ngac_predicate_fns(pool).await {
+            Ok(()) => {
+                let _ = ADMIN_FN_ENSURED.set(());
+            }
+            Err(e) => {
+                crate::telemetry::warn!("ensure {} failed: {}", ADMIN_PREDICATE_FN, e);
+                return Ok(false);
+            }
+        }
+    }
+    sqlx::query_scalar::<_, bool>("SELECT isahl_auth.is_admin($1)")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| AliothError::Internal(format!("Admin check: {}", e)))
+}
 
-    if !bootstrap.0 {
-        return Err(AliothError::Forbidden(format!(
+pub async fn require_resource_access(
+    pool: &PgPool,
+    user_id: i64,
+    resource_type: &str,
+    resource_id: i64,
+    action: &str,
+) -> Result<(), AliothError> {
+    // isahl_auth 未启用（未部署 NGAC 面）⇒ 跳过全部 NGAC 检查。
+    if !sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT FROM information_schema.schemata WHERE schema_name='isahl_auth')",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    // 决策语义 + 输入装配 + 编排唯一实现 = `ngac-host::Evaluator`（openspec
+    // extract-ngac-decision-host）：ceiling → bootstrap → UA/OA 闭包 → 合并 →
+    // creator 翻转 → 决策序。本函数只做**终态映射**（fail-closed）。
+    match ngac_host::Evaluator::global()
+        .decide(pool, user_id, resource_type, resource_id, action)
+        .await
+    {
+        Ok(ngac_decision::Decision::Permit) => Ok(()),
+        Ok(_) => Err(AliothError::Forbidden(format!(
             "Access denied: user {} lacks '{}' on {}:{}",
             user_id, action, resource_type, resource_id
-        )));
+        ))),
+        Err(e) => Err(AliothError::Internal(format!("NGAC decide: {}", e))),
     }
-    Ok(())
 }
 
 /// 行级判定拒绝时回落集合级（fk_resource=0）判定（fix-avic-fd-e2e D7）。
@@ -216,10 +257,10 @@ pub async fn require_row_or_collection_access(
     match require_resource_access(pool, user_id, resource_type, resource_id, action).await {
         Ok(()) => Ok(()),
         Err(first @ AliothError::Forbidden(_)) => {
-            // 集合级回落双形尝试：调用方（approval crate 动作端点）硬编码连字符
-            // resource_type，而种子/引擎注册的集合 OA 多为下划线形（resource_registry
-            // PEP 归一化 vs permissions.rs 字面精确匹配的既有错位——monitor 双侧注册
-            // 注释在案）。两形任一命中即放行。
+            // 集合级回落双形尝试（历史兜底）：注册面（种子/引擎）的集合 OA `resource_type` 为下划线形
+            // （如 `approval_instances`），而调用面历史上出现过连字符形（如 `approval-instances`）。
+            // 2026-10-10 清理：`Framework/backend/approval/src/handlers/*` 五处调用点已统一为注册形；
+            // 本兜底保留作通用护栏（新调用点若误用连字符仍可命中），两形任一命中即放行。
             let alt: String = resource_type.replace('-', "_");
             let candidates = if alt == resource_type {
                 vec![0i64]
@@ -244,3 +285,29 @@ pub async fn require_row_or_collection_access(
         Err(e) => Err(e),
     }
 }
+
+#[cfg(test)]
+mod admin_predicate_tests {
+    use super::*;
+    use ngac_host::attr_names_include_admin;
+
+    /// 名字集恰为 `{admin}`：别名（含 `superadmin`）MUST NOT 构成管理员
+    /// （用户裁决 2026-09-29；后端实现在此收敛前从未认过 `superadmin`）。
+    #[test]
+    fn admin_name_set_is_exactly_admin() {
+        assert_eq!(ADMIN_UA_NAME, "admin");
+        assert!(attr_names_include_admin(["admin"]));
+        assert!(attr_names_include_admin(["employee", "admin"]));
+        assert!(!attr_names_include_admin(["superadmin"]));
+        assert!(!attr_names_include_admin(["Admin"]));
+        assert!(!attr_names_include_admin([] as [&str; 0]));
+        let near_miss = String::from("admin-ops");
+        assert!(!attr_names_include_admin([near_miss.as_str()]));
+    }
+}
+
+// 原 `sql_template_invariants`（对「判定 SQL 模板 + format! 片段拼接」的源码级不变量
+// 测试）随任务 4.3 的重写一并退役：候选规则装配 SQL 已删除（决策语义收敛
+// `ngac-decision` crate，剩余模板只拼接 `{ownership}` 单片段且不再注入策略规则）。
+// 运行期兜底断言 `tests/permissions_runtime_test.rs::judgment_sql_never_yields_internal_error`
+// 继续守「判定链不产生 Internal」面。

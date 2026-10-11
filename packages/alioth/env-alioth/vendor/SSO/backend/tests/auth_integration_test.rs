@@ -82,13 +82,13 @@ async fn test_register_and_login_lifecycle() {
     // 登录至少不应 500（由于 password hash 格式问题，可能 401，但不应崩溃）
     assert_ne!(status, 500, "Login should not crash with 500");
 
-    // 最终清理：删除用户及关联的 session/token
-    sqlx::query("DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)")
+    // 最终清理：删除用户及关联的 session/token（邮箱唯一存储 = auth_user_emails）
+    sqlx::query("DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)")
         .bind(test_email)
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)")
+    sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)")
         .bind(test_email)
         .execute(&pool)
         .await
@@ -105,16 +105,25 @@ async fn test_session_manager_create_session() {
 
     let test_email = "test-session@alioth.test";
 
-    // 插入用户
+    // 插入用户（原 `name` 值落 `username`；邮箱落 auth_user_emails）
     let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl_auth.auth_users (id, username, name, email, password_hash, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), 'sessiontest', 'Session Test', $1, 'hash', NOW(), NOW())
-        RETURNING id"
+        "INSERT INTO isahl_auth.auth_users (id, username, password_hash, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), 'sessiontest', 'hash', NOW(), NOW())
+        RETURNING id",
     )
-    .bind(test_email)
     .fetch_one(&pool)
     .await
     .expect("Failed to insert test user");
+
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(test_email)
+    .execute(&pool)
+    .await
+    .ok();
 
     eprintln!("🔍 Inserted user_id: {}", user_id);
 
@@ -231,6 +240,7 @@ async fn test_email_verification_flow() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(common::test_config(false)))
             .app_data(web::Data::new(auth_state.clone()))
             .app_data(web::Data::new(
                 Box::new(MockEmailService) as Box<dyn ::common::EmailService>
@@ -313,18 +323,12 @@ async fn test_register_with_username_password_only() {
         "register with username+password only should succeed"
     );
 
-    // 用户落库：username 锚点，email 为 NULL，auth_user_emails 无行
-    let row: Option<(i64, Option<String>)> =
-        sqlx::query_as("SELECT id, email FROM isahl_auth.auth_users WHERE username = $1")
-            .bind(username)
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
-    let (uid, email) = row.expect("user should exist after register");
-    assert!(
-        email.is_none(),
-        "no-email user should have NULL auth_users.email"
-    );
+    // 用户落库：username 锚点；邮箱唯一存储 = auth_user_emails，此处无未删行
+    let uid: i64 = sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1")
+        .bind(username)
+        .fetch_one(&pool)
+        .await
+        .expect("user should exist after register");
     let email_cnt: i64 =
         sqlx::query_scalar("SELECT count(*) FROM isahl_auth.auth_user_emails WHERE fk_user = $1 AND deleted_at IS NULL")
             .bind(uid)
@@ -348,7 +352,15 @@ async fn test_register_with_username_password_only() {
         "duplicate username should 409"
     );
 
-    // 清理
+    // 清理（先删邮箱行再删账号，顺序满足 FK；username-only 用户通常无邮箱行）
+    sqlx::query(
+        "DELETE FROM isahl_auth.auth_user_emails \
+         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE username = $1)",
+    )
+    .bind(username)
+    .execute(&pool)
+    .await
+    .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = $1")
         .bind(username)
         .execute(&pool)
@@ -405,15 +417,23 @@ async fn test_register_with_unverified_email_succeeds() {
         body
     );
 
-    // 用户行落库且 email 落库
-    let row: Option<(i64, Option<String>)> =
-        sqlx::query_as("SELECT id, email FROM isahl_auth.auth_users WHERE username = $1")
-            .bind(&test_username)
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
-    let (_, stored_email) = row.expect("user row must be created for unverified email");
-    assert_eq!(stored_email.as_deref(), Some(test_email.as_str()));
+    // 用户行落库且邮箱落 auth_user_emails（主邮箱读径 = 子查询）
+    let stored_email: Option<String> = sqlx::query_scalar(
+        "SELECT (SELECT e.email FROM isahl_auth.auth_user_emails e \
+          WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+          ORDER BY e.is_primary DESC, e.id LIMIT 1) \
+         FROM isahl_auth.auth_users u WHERE u.username = $1",
+    )
+    .bind(&test_username)
+    .fetch_optional(&pool)
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(
+        stored_email.as_deref(),
+        Some(test_email.as_str()),
+        "email must be stored in auth_user_emails"
+    );
 
     // 清理
     common::cleanup_user_by_email(&pool, &test_email).await.ok();
@@ -429,6 +449,7 @@ async fn test_email_send_code_invalid_format() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(common::test_config(false)))
             .app_data(web::Data::new(
                 Box::new(MockEmailService) as Box<dyn ::common::EmailService>
             ))
@@ -545,18 +566,27 @@ async fn test_phone_send_code_invalid_format() {
 // 邮箱验证码登录 + 密码重置（add-password-reset-and-auth-fixes）
 // ============================================================================
 
-/// 插入 active 测试用户，返回 user_id
+/// 插入 active 测试用户，返回 user_id（email 落 auth_user_emails）
 async fn insert_active_user(pool: &PgPool, username: &str, email: &str) -> i64 {
-    sqlx::query_scalar(
-        "INSERT INTO isahl_auth.auth_users (id, username, name, email, status, password_hash, created_at, updated_at)
-        VALUES (isahl.gen_next_zuid(), $1, $1, $2, 'active', 'unused-hash', NOW(), NOW())
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO isahl_auth.auth_users (id, username, status, password_hash, created_at, updated_at)
+        VALUES (isahl.gen_next_zuid(), $1, 'active', 'unused-hash', NOW(), NOW())
         RETURNING id"
     )
     .bind(username)
-    .bind(email)
     .fetch_one(pool)
     .await
-    .expect("Failed to insert test user")
+    .expect("Failed to insert test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 async fn cleanup_email_code_users(pool: &PgPool, email: &str) {
@@ -566,28 +596,40 @@ async fn cleanup_email_code_users(pool: &PgPool, email: &str) {
         .await
         .ok();
     sqlx::query(
-        "DELETE FROM isahl_auth.password_reset_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.password_reset_tokens WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(email)
     .execute(pool)
     .await
     .ok();
     sqlx::query(
-        "DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(email)
     .execute(pool)
     .await
     .ok();
     sqlx::query(
-        "DELETE FROM isahl_auth.refresh_token_blocklist WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.refresh_token_blocklist WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(email)
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
-        .bind(email)
+    // 邮箱行先行（auth_user_emails 入边 FK 无 ON DELETE CASCADE）——先取 id 再删
+    let user_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1")
+            .bind(email)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(&user_ids)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+        .bind(&user_ids)
         .execute(pool)
         .await
         .ok();
@@ -608,6 +650,7 @@ async fn test_email_code_login_flow() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(common::test_config(true)))
             .app_data(web::Data::new(auth_state.clone()))
             .app_data(web::Data::new(
                 Box::new(MockEmailService) as Box<dyn ::common::EmailService>
@@ -644,7 +687,8 @@ async fn test_email_code_login_flow() {
         "Wrong code should be 401"
     );
     let attempts: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(failed_login_attempts, 0) FROM isahl_auth.auth_users WHERE email = $1",
+        "SELECT COALESCE(u.failed_login_attempts, 0) FROM isahl_auth.auth_users u \
+         WHERE u.id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(test_email)
     .fetch_one(&pool)
@@ -696,6 +740,7 @@ async fn test_email_code_login_multi_account_rejected() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(common::test_config(true)))
             .app_data(web::Data::new(auth_state.clone()))
             .app_data(web::Data::new(
                 Box::new(MockEmailService) as Box<dyn ::common::EmailService>
@@ -713,6 +758,99 @@ async fn test_email_code_login_multi_account_rejected() {
         resp.status().as_u16(),
         400,
         "Multi-account email must be rejected with 400"
+    );
+
+    cleanup_email_code_users(&pool, test_email).await;
+}
+
+/// 邮箱验证码登录**默认关闭**（gate-email-code-login-by-env）：
+/// 开关未启用（`SSO_EMAIL_CODE_LOGIN` 缺省语义）时，投递端与签发端 MUST 均 403 且
+/// MUST NOT 落库/签发会话；`purpose=register` 的验证码面 MUST NOT 受影响（用途隔离）。
+#[tokio::test]
+async fn test_email_code_login_disabled_by_default() {
+    let pool = setup_pool().await;
+    common::setup_schema(&pool)
+        .await
+        .expect("Failed to setup schema");
+
+    let test_email = "emailcode-disabled@alioth.test";
+    cleanup_email_code_users(&pool, test_email).await;
+    insert_active_user(&pool, "emailcodedisabled", test_email).await;
+
+    let auth_state = common::test_auth_state();
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(common::test_config(false)))
+            .app_data(web::Data::new(auth_state.clone()))
+            .app_data(web::Data::new(
+                Box::new(MockEmailService) as Box<dyn ::common::EmailService>
+            ))
+            .service(web::scope("/auth").configure(auth::login::configure)),
+    )
+    .await;
+
+    // 1. 投递端：关闭态请求登录验证码 → 403 且 MUST NOT 落库
+    let send_req = test::TestRequest::post()
+        .uri("/auth/email/send-code")
+        .set_json(json!({"email": test_email, "purpose": "login"}))
+        .to_request();
+    let send_resp = test::call_service(&app, send_req).await;
+    assert_eq!(
+        send_resp.status().as_u16(),
+        403,
+        "关闭态登录验证码请求 MUST 403"
+    );
+    let send_body: serde_json::Value = test::read_body_json(send_resp).await;
+    assert_eq!(send_body["error"], "EMAIL_CODE_LOGIN_DISABLED");
+
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM isahl_auth.auth_email_verifications \
+         WHERE email = $1 AND purpose = 'login'",
+    )
+    .bind(test_email)
+    .fetch_one(&pool)
+    .await
+    .expect("Count login codes");
+    assert_eq!(stored, 0, "关闭态 MUST NOT 落库登录验证码");
+
+    // 2. 签发端：手工植入有效验证码，登录端点仍 MUST 403 且 MUST NOT 签发会话
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_email_verifications (email, code, purpose, expires_at) \
+         VALUES ($1, '123456', 'login', NOW() + INTERVAL '15 minutes')",
+    )
+    .bind(test_email)
+    .execute(&pool)
+    .await
+    .expect("Seed valid login code");
+
+    let login_req = test::TestRequest::post()
+        .uri("/auth/login/email-code")
+        .set_json(json!({"email": test_email, "code": "123456"}))
+        .to_request();
+    let login_resp = test::call_service(&app, login_req).await;
+    assert_eq!(
+        login_resp.status().as_u16(),
+        403,
+        "关闭态邮箱验证码登录 MUST 403"
+    );
+    let login_body: serde_json::Value = test::read_body_json(login_resp).await;
+    assert_eq!(login_body["error"], "EMAIL_CODE_LOGIN_DISABLED");
+    assert!(
+        login_body.get("access_token").is_none(),
+        "关闭态 MUST NOT 签发令牌"
+    );
+
+    // 3. 用途隔离：同一关闭态下 purpose=register 仍按既有语义成功
+    let register_req = test::TestRequest::post()
+        .uri("/auth/email/send-code")
+        .set_json(json!({"email": test_email, "purpose": "register"}))
+        .to_request();
+    let register_resp = test::call_service(&app, register_req).await;
+    assert_eq!(
+        register_resp.status().as_u16(),
+        200,
+        "register 用途 MUST NOT 受开关影响"
     );
 
     cleanup_email_code_users(&pool, test_email).await;

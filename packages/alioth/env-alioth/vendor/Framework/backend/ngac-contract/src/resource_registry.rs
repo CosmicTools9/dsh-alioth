@@ -69,6 +69,31 @@ pub struct ResolvedResource {
     pub table_name: String,
 }
 
+/// 路径前缀规则（**PEP 映射单源**）：命中即映射到固定资源，不解析实体/id。
+///
+/// 用途：`/api/admin/*` → `sso_admin:0`、`/api/audit/*` → `sso_audit:0`、
+/// OpenAPI 管理面四族 → `openapi_admin:0` 等「整段路径共享一个恒定资源」的映射。
+/// 前缀更长者优先（如 `/api/admin/api-clients` 先于 `/api/admin/`）。
+#[derive(Debug, Clone)]
+pub struct PrefixRule {
+    pub prefix: String,
+    pub type_name: String,
+    pub resource_id: i64,
+}
+
+/// 方法 → NGAC action（**唯一实现**：SSO 中间件与 Gateway PEP 共用）。
+///
+/// 未知方法 ⇒ `access`（不映射为 `read`：避免把「未识别的写方法」当成读权限放行）。
+pub fn action_for_method(method: &str) -> &'static str {
+    match method.to_uppercase().as_str() {
+        "GET" => "read",
+        "POST" => "create",
+        "PUT" | "PATCH" => "update",
+        "DELETE" => "delete",
+        _ => "access",
+    }
+}
+
 /// Static resource registry that maps URL path prefixes to isahl table mappings.
 ///
 /// Built once at startup and shared across the Gateway.
@@ -79,6 +104,9 @@ pub struct ResourceRegistry {
     /// Map from URL path segment (the entity name in `/api/{prefix}/{entity}`)
     /// to its isahl resource type.
     entities: HashMap<String, ResourceTypeDef>,
+
+    /// 路径前缀规则（最长前缀优先）；解析顺序 = 前缀规则 → 实体解析。
+    prefix_rules: Vec<PrefixRule>,
 
     /// Path prefix for Gateway internal routes that bypass NGAC.
     /// These are still authenticated (JWT required).
@@ -96,12 +124,59 @@ impl ResourceRegistry {
     pub fn new() -> Self {
         Self {
             entities: HashMap::new(),
+            prefix_rules: Vec::new(),
             internal_prefixes: vec![
                 "/api/auth/".to_string(),
                 "/api/ngac/".to_string(),
                 "/health".to_string(),
             ],
         }
+    }
+
+    /// 注册路径前缀规则（**PEP 映射单源**入口；长前缀优先由 `resolve_path` 保证）。
+    pub fn with_prefix_rule(mut self, prefix: &str, type_name: &str, resource_id: i64) -> Self {
+        self.prefix_rules.push(PrefixRule {
+            prefix: prefix.to_string(),
+            type_name: type_name.to_string(),
+            resource_id,
+        });
+        self
+    }
+
+    /// SSO 管理/审计面声明（`/api/admin/*` → `sso_admin:0`、`/api/audit/*` → `sso_audit:0`；
+    /// OpenAPI 四族为其更长的前缀 → `openapi_admin:0`）。SSO 中间件消费本构造，不再手写映射。
+    pub fn with_sso_face_defaults(mut self) -> Self {
+        self = self.with_prefix_rule("/api/admin/api-clients", "openapi_admin", 0);
+        self = self.with_prefix_rule("/api/admin/api-plans", "openapi_admin", 0);
+        self = self.with_prefix_rule("/api/admin/api-subscriptions", "openapi_admin", 0);
+        self = self.with_prefix_rule("/api/admin/ngac/org-policy", "org_policy_admin", 0);
+        self = self.with_prefix_rule("/api/admin/", "sso_admin", 0);
+        self.with_prefix_rule("/api/audit/", "sso_audit", 0)
+    }
+
+    /// 解析 `(type_name, resource_id)`：先按**最长前缀规则**，未命中再落实体内核解析。
+    ///
+    /// 与 [`Self::resolve`] 的差别：后者只做实体段解析（Gateway 面），本函数是 PEP 映射单源入口。
+    pub fn resolve_path(&self, path: &str) -> Option<ResolvedResource> {
+        let mut best: Option<&PrefixRule> = None;
+        for rule in &self.prefix_rules {
+            if path.starts_with(rule.prefix.as_str())
+                && best
+                    .map(|b| rule.prefix.len() > b.prefix.len())
+                    .unwrap_or(true)
+            {
+                best = Some(rule);
+            }
+        }
+        if let Some(rule) = best {
+            return Some(ResolvedResource {
+                resource: format!("{}:{}", rule.type_name, rule.resource_id),
+                type_name: rule.type_name.clone(),
+                resource_id: rule.resource_id,
+                table_name: String::new(),
+            });
+        }
+        self.resolve(path)
     }
 
     /// Register a resource type mapping.
@@ -114,6 +189,17 @@ impl ResourceRegistry {
         for def in defs {
             self.register(def);
         }
+    }
+
+    /// 已注册 resource_type 有序清单（cover-org-resources-ngac / B-2）。
+    ///
+    /// 集合 OA 覆盖 ensure 的输入面：平台默认集（`with_alioth_defaults`）与调用方
+    /// （ns 组合根 `ns_wiring::resource_registry`）扩展的并集——注册面是唯一真相源，
+    /// 新增注册实体自动进入覆盖面（design D1）。
+    pub fn registered_resource_types(&self) -> Vec<&str> {
+        let mut types: Vec<&str> = self.entities.keys().map(String::as_str).collect();
+        types.sort_unstable();
+        types
     }
 
     /// Resolve an API path to an NGAC resource string.
@@ -170,7 +256,8 @@ impl ResourceRegistry {
             Some(s) if !s.is_empty() => {
                 if def.string_id {
                     // String IDs aren't directly usable as bigint — mark as 0
-                    // and rely on ngac_resource_identifier mapping
+                    // (collection-level decision; the string→bigint mapping table was
+                    // retired 2026-10-06, drop-ngac-dead-schema)
                     0i64
                 } else {
                     s.parse::<i64>().unwrap_or(0i64)
@@ -234,7 +321,7 @@ impl ResourceRegistry {
             ResourceTypeDef::new("system_config", "system_configs").with_string_id(),
             // OpenAPI 管理/统计面恒定资源（refactor-openapi-admin-ngac-pdp）：
             // string_id 使 PEP 决策统一为 openapi_admin:0 / openapi_analytics:0，
-            // 与迁移 029 seed 的 OA 对应；table 仅为名义归属（string_id 不查表）。
+            // 与 seed-ngac-07-openapi-admin-analytics-oas.sql 的 OA 对应；table 仅为名义归属（string_id 不查表）。
             ResourceTypeDef::new("openapi_admin", "api_clients").with_string_id(),
             ResourceTypeDef::new("openapi_analytics", "api_usage").with_string_id(),
             ResourceTypeDef::new("engineers", "zc_id_subj-employee"),
@@ -326,6 +413,42 @@ impl ResourceRegistry {
             // 为 files:{id}；注册别名表永不可达。表名仅为名义归属（列级授权/审计用），
             // 行级授权自包含（不注入 X-Authorized-Columns）。
             ResourceTypeDef::new("files", "zc_id_file-document"),
+            // ── 存量未注册实体补注册（2026-10-08，NGAC_SPEC §2.1 注册义务收口）──
+            // 来源 = resource-registry-coverage 门禁死分支修复后暴露的存量缺口（72 处）；
+            // 本组 = 平台基线集（Alioth / AVIC-CAASEC 两 ns 共用 `with_alioth_defaults`）。
+            // 表名取证 = 各 service.json ontology.entities + 后端 models.rs/repositories。
+            // (Alioth) environment 服务：/environments CRUD
+            ResourceTypeDef::new("environments", "zc_id_prot-env_config"),
+            // (Alioth) inventory 服务：盘点/储元/凭证台账 + 物化库存统计
+            ResourceTypeDef::new("countings", "zc_id_even-counting"),
+            ResourceTypeDef::new("counting_details", "zc_id_deta-counting"),
+            ResourceTypeDef::new("storage_nests", "zc_id_storage_rr_stock-in"),
+            ResourceTypeDef::new("vouchers", "zc_id_stat-sto-voucher"),
+            // /service/inventory/statistics（含 {id} 级）——StockStat 读物化储量
+            // （stock_stat_repository.rs FROM zc_id_production_rr_storage）
+            ResourceTypeDef::new("inventory", "zc_id_production_rr_storage"),
+            // (Alioth) license 服务：/licenses CRUD（zc_id_prod-license-purchase）
+            ResourceTypeDef::new("licenses", "zc_id_prod-license-purchase"),
+            // (Alioth) todo 服务：/service/todos CRUD（todo-service/models.rs: table_name）
+            ResourceTypeDef::new("todos", "zc_id_stus-task"),
+            // (Alioth) todo-min 服务：/service/todo-mins CRUD（lib.rs:13 SQL 表）
+            ResourceTypeDef::new("todo_mins", "zc_id_leve-task"),
+            // (AVIC-CAASEC) airworthiness 服务：台账 CRUD（models.rs 各 impl table_name）
+            ResourceTypeDef::new("airworthiness_limits", "zc_id_stan-air"),
+            ResourceTypeDef::new(
+                "certification_maintenance_requirements",
+                "zc_id_stan-operation",
+            ),
+            ResourceTypeDef::new("master_minimum_equipment_items", "zc_id_bom-equipment"),
+            ResourceTypeDef::new("structural_repair_manuals", "zc_id_file-srm"),
+            ResourceTypeDef::new("weight_balance_manuals", "zc_id_file-wbm"),
+            ResourceTypeDef::new("production_inspections", "zc_id_stat-inspection"),
+            ResourceTypeDef::new("external_access_rules", "zc_id_form-access"),
+            // (AVIC-CAASEC) interfaces 服务：/version-contexts CRUD
+            ResourceTypeDef::new("version_contexts", "zc_id_vers-context"),
+            // (AVIC-CAASEC) metrology 服务：/prod-files CRUD + 实例发布/内容读取子端点
+            // （repositories/mod.rs INSERT/UPDATE isahl."zc_id_file-document"）
+            ResourceTypeDef::new("prod_files", "zc_id_file-document"),
         ];
         self.register_all(defaults);
         self
@@ -391,6 +514,23 @@ impl ResourceRegistry {
             ResourceTypeDef::new("measurement_units", "zc_id_unit"),
             ResourceTypeDef::new("exchange_rates", "zc_id_rate-exchange"),
             ResourceTypeDef::new("scalar_prices", "zc_id_scal-price"),
+            // ── 存量未注册实体补注册（2026-10-08，NGAC_SPEC §2.1 收口）──
+            // 来源 = resource-registry-coverage 死分支修复暴露的存量缺口（WZ 12 处）；
+            // 表名取证 = 各 service.json ontology.entities。
+            // wz-yy-wms-service（WMS 台账；URL 2 段风格 /batch-tags 等）
+            ResourceTypeDef::new("batch_tags", "zc_id_tags-batch"),
+            ResourceTypeDef::new("bin_titles", "zc_id_stor-plc-bin"),
+            ResourceTypeDef::new("trustee_accounts", "zc_id_stor-acc-stock"),
+            ResourceTypeDef::new("trustee_account_futures", "zc_id_stor-acc-futures"),
+            ResourceTypeDef::new("deliveries", "zc_id_oper-delivery"),
+            ResourceTypeDef::new("trade_orders", "zc_id_orde-consult"),
+            // zc-id-stus-inventory-service（库存单据台账）
+            ResourceTypeDef::new("inbound_orders", "zc_id_oper-put_in_stock"),
+            ResourceTypeDef::new("outbound_orders", "zc_id_even-issue"),
+            ResourceTypeDef::new("ownership_records", "zc_id_even-log"),
+            ResourceTypeDef::new("stock_ledgers", "zc_id_docu-accounting"),
+            ResourceTypeDef::new("stock_movements", "zc_id_oper-move"),
+            ResourceTypeDef::new("stocktake_orders", "zc_id_even-counting"),
         ];
         self.register_all(wz);
         // 服务实体直接挂 service 根（2 段风格 /api/service/{service}/list，如 invoice-sync/
@@ -404,6 +544,32 @@ impl ResourceRegistry {
         self.entities.insert(
             "receipt_sync".to_string(),
             ResourceTypeDef::new("receipt_collections", "zc_id_bill-check"),
+        );
+        // WZ 服务根别名补注册（2026-10-10，`check-resource-registry-coverage` 报出 5 处
+        // `resolve()=None`）：上述 2 段风格规则下，实体名取 `parts[1]`（服务名），而这 5 个
+        // 服务名此前只注册了其**子实体**（见 ns 组合根 `Pre-Proc/WZ/gateway-host/src/lib.rs`
+        // 的 `register_all`，对判据面不可见）⇒ PEP resolve 仍返回 None、回退 map_resource
+        // 派生出 DB 中不存在的伪资源类型（阻断性缺陷）。
+        // 表名取证 = 各 service.json `ontology.entities` 的首个实体（行内注释给出原始表名）。
+        self.entities.insert(
+            "accounts_payable".to_string(),
+            ResourceTypeDef::new("outgo_payable_items", "zc_id_deta-bill-check"),
+        );
+        self.entities.insert(
+            "accounts_receivable".to_string(),
+            ResourceTypeDef::new("receivable_items", "zc_id_bill-check"),
+        );
+        self.entities.insert(
+            "isahl_db".to_string(),
+            ResourceTypeDef::new("identities", "zc_id_lifecycle"),
+        );
+        self.entities.insert(
+            "transport_dispatch".to_string(),
+            ResourceTypeDef::new("consignments", "zc_id_orde-traffic"),
+        );
+        self.entities.insert(
+            "transport_operations".to_string(),
+            ResourceTypeDef::new("kanban_cards", "zc_id_orde-land"),
         );
         // fix-gw-pep-handler-resource-drift：URL 实体段 → **handler 实际校验的资源名**别名。
         // 这些 URL 实体此前未注册（resolve 回退 map_resource 派生出 DB 中不存在的伪资源 →
@@ -493,6 +659,81 @@ impl ResourceRegistry {
             ResourceTypeDef::new("issues", "zc_id_even-issue").with_string_id(),
             ResourceTypeDef::new("tasks", "zc_id_task-fix").with_string_id(),
             ResourceTypeDef::new("git", "zc_id_stor-plc-repository").with_string_id(),
+            // system-settings（平台级配置六面，service.json = Services/system-settings）：
+            // 单位制 / 汇率 / 运行环境 / 主题与语言 / 许可证。均 string_id 恒定资源
+            // （集合级 OA 由 ngac_seed 幂等预置，行级属主由 handler 内门禁承载，
+            // 对齐 verctrl/issues 模式）。表归属见 service.json#ontology.entities。
+            ResourceTypeDef::new("units", "zc_id_unit").with_string_id(),
+            ResourceTypeDef::new("rates", "zc_id_rate").with_string_id(),
+            ResourceTypeDef::new("environments", "zc_id_prot-env_config").with_string_id(),
+            ResourceTypeDef::new("profiles", "zc_id_prot-profile_config").with_string_id(),
+            ResourceTypeDef::new("licenses", "zc_id_prod-license-sales").with_string_id(),
+            // ── 存量未注册实体补注册（2026-10-08，NGAC_SPEC §2.1 收口）──
+            // 来源 = resource-registry-coverage 死分支修复暴露的存量缺口（Cosmic-Tools 42 处）；
+            // 表名取证 = 各 service.json ontology.entities（后端 models/repositories 交叉复核）。
+            // bv-local-*（本地服务门店线）
+            ResourceTypeDef::new("appointments", "zc_id_stat-task"),
+            ResourceTypeDef::new("service_categories", "zc_id_category"),
+            ResourceTypeDef::new("service_items", "zc_id_prod-consulting"),
+            ResourceTypeDef::new("service_orders", "zc_id_stat-trade_order"),
+            ResourceTypeDef::new("service_order_items", "zc_id_deta-trade_order"),
+            ResourceTypeDef::new("payment_transactions", "zc_id_stat-smt-channel"),
+            ResourceTypeDef::new("settlement_vouchers", "zc_id_stat-smt-voucher"),
+            // 微信支付集成回调（无行级身份 ⇒ 恒定资源；名义表 = 支付流水）
+            ResourceTypeDef::new("wechat_pay", "zc_id_stat-smt-channel").with_string_id(),
+            ResourceTypeDef::new("technicians", "zc_id_subj-employee"),
+            ResourceTypeDef::new("technician_skills", "zc_id_tags-skill"),
+            // 库存/仓储线
+            ResourceTypeDef::new("bin_locations", "zc_id_stor-plc-bin"),
+            ResourceTypeDef::new("storage_warehouses", "zc_id_stor-plc-warehouse"),
+            ResourceTypeDef::new("inventory_records", "zc_id_stat-whs-voucher"),
+            // 物化库存余额（mv_inventory 物化视图无行级身份 ⇒ 恒定资源）
+            ResourceTypeDef::new("inventory_balance", "mv_inventory").with_string_id(),
+            // 订单/履约/结算线
+            ResourceTypeDef::new("trade_order_items", "zc_id_deta-trade_order"),
+            ResourceTypeDef::new("fulfillment_tasks", "zc_id_plan-perform"),
+            ResourceTypeDef::new("logistics_orders", "zc_id_orde-traffic"),
+            ResourceTypeDef::new("logistics_traces", "zc_id_even-tracking"),
+            ResourceTypeDef::new("regions", "zc_id_geog-area"),
+            ResourceTypeDef::new("contractors", "zc_id_subj-org"),
+            ResourceTypeDef::new("settlement_bills", "zc_id_bill-check"),
+            // 订单计划聚合面（只读派生，集合级）
+            ResourceTypeDef::new("order_plan", "zc_id_plan"),
+            ResourceTypeDef::new("plan_change_sync", "zc_id_even-modify"),
+            // 采购/拣货
+            ResourceTypeDef::new("pick_requests", "zc_id_prod-stor_sorting-request"),
+            ResourceTypeDef::new("pick_request_items", "zc_id_bom-output_rr_item"),
+            // 生产/领退料线（production-order + zc-id-plan-material-service）
+            ResourceTypeDef::new("production_orders", "zc_id_stat-task"),
+            ResourceTypeDef::new("production_order_items", "zc_id_deta-tsk"),
+            ResourceTypeDef::new("make_orders", "zc_id_stat-tsk-make"),
+            ResourceTypeDef::new("material_plans", "zc_id_plan-material"),
+            ResourceTypeDef::new("material_consumptions", "zc_id_bom-outbound"),
+            ResourceTypeDef::new("material_consumption_items", "zc_id_bom-output_rr_item"),
+            ResourceTypeDef::new("material_productions", "zc_id_bom-inbound"),
+            ResourceTypeDef::new("material_production_items", "zc_id_bom-input_rr_item"),
+            ResourceTypeDef::new("material_requisitions", "zc_id_bom-pickup"),
+            ResourceTypeDef::new("material_requisition_items", "zc_id_bom-output_rr_item"),
+            ResourceTypeDef::new("material_scraps", "zc_id_bom-outbound"),
+            ResourceTypeDef::new("material_scrap_items", "zc_id_bom-output_rr_item"),
+            // git-repo 分支/标签
+            ResourceTypeDef::new("git_branches", "zc_id_cate-ver_branch"),
+            ResourceTypeDef::new("git_tags", "zc_id_cons-date-tags"),
+            // ct-git 托管面叶实体（issues/tasks/git/verctrl 已在既有注册面）：
+            // 表名取证 = ct-git backend repositories/*.rs
+            ResourceTypeDef::new("repositories", "zc_id_stor-plc-repository"),
+            ResourceTypeDef::new("pipelines", "zc_id_proc-cicd"),
+            ResourceTypeDef::new("pipeline_runs", "zc_id_even-log"),
+            ResourceTypeDef::new("reviews", "zc_id_appr-code-review"),
+            ResourceTypeDef::new("assist_logs", "zc_id_msgs-chat_ai"),
+            ResourceTypeDef::new("milestones", "zc_id_tags-milestone"),
+            // AI 助手端点（POST /assistant/*，无行级身份 ⇒ 恒定资源）
+            ResourceTypeDef::new("assistant", "zc_id_msgs-chat_ai").with_string_id(),
+            // approval 服务聚合面（approval-cc/analytics；流程/实例 CRUD 已在基线注册）
+            ResourceTypeDef::new("approval", "zc_id_oper-approve").with_string_id(),
+            // authority 服务选择器（positions 已在基线集）
+            ResourceTypeDef::new("employees", "zc_id_subj-employee"),
+            ResourceTypeDef::new("approvers", "zc_id_subj-position"),
         ];
         self.register_all(cosmic);
         self
@@ -522,6 +763,17 @@ impl ResourceRegistry {
             // rd-milestone（节点目录/桥行）
             ResourceTypeDef::new("node_templates", "zc_id_tags-milestone"),
             ResourceTypeDef::new("milestones", "zc_id_project_r_milestone-tags"),
+            // rd-project 契约切片补齐（close-se-functional-gaps；此前未注册 ⇒ resolve None ⇒ PDP 拒绝）
+            ResourceTypeDef::new("categories", "zc_id_tags-project"),
+            ResourceTypeDef::new("document_types", "zc_id_cate-file"),
+            ResourceTypeDef::new("documents", "zc_id_document"),
+            ResourceTypeDef::new("project_codes", "zc_id_project"),
+            ResourceTypeDef::new("power_stations", "zc_id_project"),
+            ResourceTypeDef::new("project_relations", "zc_id_project_rr_dependency"),
+            // 主数据选项（组织/人员/维度标签）
+            ResourceTypeDef::new("departments", "zc_id_subj-org"),
+            ResourceTypeDef::new("employees", "zc_id_subj-employee"),
+            ResourceTypeDef::new("dimension_tags", "zc_id_tags-project"),
         ];
         self.register_all(se);
         self
@@ -536,6 +788,36 @@ mod tests {
     fn test_resolve_empty_path() {
         let reg = ResourceRegistry::new().with_alioth_defaults();
         assert!(reg.resolve("/api").is_none());
+    }
+
+    #[test]
+    fn test_registered_resource_types_sorted_and_inclusive() {
+        // cover-org-resources-ngac（B-2）：覆盖 ensure 的输入面——平台默认集 + 调用方扩展
+        // 的并集、有序去重（HashMap 键 = type_name，天然去重）。
+        let reg = ResourceRegistry::new().with_alioth_defaults();
+        let types = reg.registered_resource_types();
+        assert!(!types.is_empty(), "平台默认集非空");
+        assert!(
+            types.windows(2).all(|w| w[0] < w[1]),
+            "返回有序清单（调用方可稳定 diff/日志）"
+        );
+        assert!(types.contains(&"approvals"), "含审批恒定资源");
+
+        let mut extended = ResourceRegistry::new().with_alioth_defaults();
+        extended.register(ResourceTypeDef::new(
+            "z-test-cov-extra",
+            "isahl.z_test_cov_extra",
+        ));
+        let extended_types = extended.registered_resource_types();
+        assert!(
+            extended_types.contains(&"z-test-cov-extra"),
+            "调用方扩展进入覆盖面"
+        );
+        assert_eq!(
+            extended_types.len(),
+            types.len() + 1,
+            "新增注册实体自动覆盖（design D1）"
+        );
     }
 
     #[test]
@@ -571,6 +853,48 @@ mod tests {
             assert_eq!(r.type_name, "ccb_votes");
         }
     }
+    #[test]
+    fn test_resolve_se_new_entities() {
+        // close-se-functional-gaps：rd-project 契约切片新增端点 MUST 可解析（未注册 = PDP 拒绝）
+        let reg = ResourceRegistry::new()
+            .with_alioth_defaults()
+            .with_se_defaults();
+        for (path, want_type) in [
+            ("/api/service/se-rd-project/categories", "categories"),
+            ("/api/service/se-rd-project/categories/123", "categories"),
+            (
+                "/api/service/se-rd-project/document-types",
+                "document_types",
+            ),
+            (
+                "/api/service/se-rd-project/project-codes/import",
+                "project_codes",
+            ),
+            (
+                "/api/service/se-rd-project/power-stations",
+                "power_stations",
+            ),
+            (
+                "/api/service/se-rd-project/project-relations/9",
+                "project_relations",
+            ),
+            ("/api/service/se-rd-project/departments", "departments"),
+            ("/api/service/se-rd-project/employees", "employees"),
+            (
+                "/api/service/se-rd-project/dimension-tags",
+                "dimension_tags",
+            ),
+            ("/api/service/se-rd-project/documents/7", "documents"),
+            // 既有实体仍解析（3 段风格不受新增影响）
+            ("/api/service/se-rd-project/projects/42", "projects"),
+        ] {
+            let r = reg
+                .resolve(path)
+                .unwrap_or_else(|| panic!("resolve failed: {path}"));
+            assert_eq!(r.type_name, want_type, "path={path}");
+        }
+    }
+
     #[test]
     fn test_resolve_flat_list() {
         let reg = ResourceRegistry::new().with_alioth_defaults();

@@ -23,7 +23,8 @@
 //!   故自定义包装而非直接 schema_routes（设计决策，见 change design §3.2）。
 
 use actix_web::{web, HttpRequest, HttpResponse};
-use common::context::require_auth;
+use common::audit::{record_audit_event_with_metadata, Decision};
+use common::context::{extract_user_email, extract_username, require_auth};
 use common::data::ApiResponse;
 use common::permissions::require_resource_access;
 use common::AliothError as ApiError;
@@ -97,11 +98,31 @@ struct DictTableRow {
     group: String,
     /// 是否只读基表（zc_id_category/zc_id_tags，非 leaf）
     read_only: bool,
-    /// 表用户列（前端动态列渲染依据；取 DICT_WRITABLE_COLUMNS ∩ 表实际列）
-    columns: Vec<String>,
+    /// 表列元数据（列级 schema 单源 `crate::schema`；前端动态列渲染依据）
+    columns: Vec<DictColumnOut>,
+    /// **模型级种子权威面**：本表 ∈ 库内 `isahl.gf_seed_tables()`（模型声明集）。
+    /// true ⇒ 前端 MUST 提示「改动须纳入模型版本」：`namespace-db.sh seed`（默认 align）对该表
+    /// `TRUNCATE TABLE ONLY` 后重放基线，未纳入基线的运行期行会被覆盖
+    /// （用户裁决 2026-09-30：权威档 = 模型种子单一权威 + 机制化并入）。
+    /// 判定函数缺席（部分 ns 壳库）/返回空集 ⇒ 回退 true——白名单表构造上即模型级 `isahl` 字典表。
+    model_seeded: bool,
 }
 
-/// GET /dict/tables — 字典表清单（cate/tags + 基表，附 meta_collections 中文名 + 可写列）
+/// 列元数据（/dict/tables payload；列级 schema 产物逐列投影）。
+/// `type` / `title` 一律来自产物——前后端 MUST NOT 各自硬编码列名或列中文名。
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DictColumnOut {
+    name: String,
+    /// 模型元数据 data_type（`isahl_meta.meta_fields.data_type`）
+    #[serde(rename = "type")]
+    data_type: String,
+    /// 列中文名（`meta_fields.title`；模型未填标题 ⇒ 空串）
+    title: String,
+    editable: bool,
+}
+
+/// GET /dict/tables — 字典表清单（cate/tags + 基表，附 meta_collections 中文名 + 列 schema）
 pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, ApiError> {
     let rows: Vec<String> = sqlx::query_scalar(
         r#"
@@ -118,6 +139,28 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
     .fetch_all(pool.get_ref())
     .await
     .map_err(|e| ApiError::Database(e.to_string()))?;
+
+    // 模型级种子声明集（权威档判定面）：探针 + 集合查询；缺席/空集 ⇒ 回退 true（见字段注释）。
+    let (declared_available, declared_tables): (bool, std::collections::HashSet<String>) =
+        if sqlx::query_scalar::<_, bool>(
+            "SELECT to_regprocedure('isahl.gf_seed_tables()') IS NOT NULL",
+        )
+        .fetch_one(pool.get_ref())
+        .await
+        .map_err(|e| ApiError::Database(e.to_string()))?
+        {
+            let set: std::collections::HashSet<String> =
+                sqlx::query_scalar::<_, String>("SELECT table_name FROM isahl.gf_seed_tables()")
+                    .fetch_all(pool.get_ref())
+                    .await
+                    .map_err(|e| ApiError::Database(e.to_string()))?
+                    .into_iter()
+                    .collect();
+            let available = !set.is_empty();
+            (available, set)
+        } else {
+            (false, std::collections::HashSet::new())
+        };
 
     // 中文名权威 = 模型中心 `isahl_meta.meta_collections`（本端点自述契约，见文件头）。
     // 该表仅存在于 Meta 侧库（aliothstudio_dev / _test）；ns 壳库（wz/avic/se/cosmic）
@@ -296,7 +339,8 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
         } else {
             "tags"
         };
-        let columns = dict_columns_for(pool.get_ref(), &table).await?;
+        // 列元数据 = 列级 schema 单源（静态产物，无 DB 往返）
+        let columns = schema_columns_of(&table);
         out.push(DictTableRow {
             table: table.clone(),
             name: meta_names
@@ -306,10 +350,22 @@ pub async fn list_dict_tables(pool: web::Data<PgPool>) -> Result<HttpResponse, A
             group: group.to_string(),
             read_only: is_base_dict_table(&table),
             columns,
+            model_seeded: if declared_available {
+                declared_tables.contains(&table)
+            } else {
+                true
+            },
         });
     }
 
-    Ok(HttpResponse::Ok().json(ApiResponse::success(out)))
+    // 顶层 schemaVersion（= 产物 model_version）：前端据此检测「产物 vs 服务端」失配
+    // （值域办公室 e1；data 形态 = { schemaVersion, tables }，见 change design §接口契约）。
+    Ok(
+        HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
+            "schemaVersion": crate::schema::model_version(),
+            "tables": out,
+        }))),
+    )
 }
 
 /// GET /dict/leaf/{table} — 字典条目列表
@@ -415,7 +471,22 @@ const DICT_WRITABLE_COLUMNS: &[&str] = &[
     "t_sort_", "v_filter",
 ];
 
-/// 查询表实际存在的列（白名单 ∩ 表列）
+/// 表列元数据（**唯一来源** = 列级 schema 产物 `crate::schema`；表不在产物内 ⇒ 空列集）。
+fn schema_columns_of(table: &str) -> Vec<DictColumnOut> {
+    crate::schema::table_columns(table)
+        .unwrap_or(&[])
+        .iter()
+        .map(|c| DictColumnOut {
+            name: c.name.to_string(),
+            data_type: c.data_type.to_string(),
+            title: c.title.to_string(),
+            editable: c.editable,
+        })
+        .collect()
+}
+
+/// 写径可写列 = 列级 schema 的 editable 列 ∩ 既有白名单 ∩ 实表列（**不放宽**：
+/// schema 未标 editable 的列——含值域家族外表——一律不可写；`cols.is_empty()` 即 400 fail-loud）。
 async fn dict_columns_for(pool: &PgPool, table: &str) -> Result<Vec<String>, ApiError> {
     let rows = sqlx::query(
         r#"SELECT column_name FROM information_schema.columns
@@ -427,10 +498,12 @@ async fn dict_columns_for(pool: &PgPool, table: &str) -> Result<Vec<String>, Api
     .map_err(|e| ApiError::Database(e.to_string()))?;
     let present: std::collections::HashSet<String> =
         rows.iter().map(|r| r.get::<String, _>(0)).collect();
-    Ok(DICT_WRITABLE_COLUMNS
+    Ok(crate::schema::editable_columns(table)
+        .unwrap_or(&[])
         .iter()
+        .filter(|c| DICT_WRITABLE_COLUMNS.iter().any(|w| *w == **c))
         .filter(|c| present.contains(**c))
-        .map(|s| s.to_string())
+        .map(|c| (**c).to_string())
         .collect())
 }
 
@@ -512,6 +585,23 @@ pub async fn create_dict_entry(
     // NGAC_SPEC §7.3：CRUD 创建行必须注册 object_attribute + 创建者 association，
     // 否则新行对创建者 RLS 不可见/不可编辑。schema_routes 不触发，此处手动注册。
     register_dict_resource_ngac(pool.get_ref(), new_id, user_id).await;
+    // 留痕（office-audit-trace）：create 记新值摘要（仅实际写入的列）。
+    let new_values = serde_json::Value::Object(
+        cols.iter()
+            .filter_map(|c| data.get(*c).map(|v| ((*c).to_string(), v.clone())))
+            .collect(),
+    );
+    audit_value_domain_write(
+        pool.get_ref(),
+        user_id,
+        &req,
+        &table,
+        new_id,
+        "dict.create",
+        None,
+        Some(&new_values),
+    )
+    .await;
     Ok(
         HttpResponse::Created().json(ApiResponse::success(serde_json::json!({
             "id": new_id.to_string(),
@@ -564,6 +654,9 @@ pub async fn update_dict_entry(
         uid = n + 1,
         id = n + 2,
     );
+    // 前值摘要（留痕用）：行不存在时 UPDATE 无命中 ⇒ 404，审计不落（不产生成功事件）。
+    let repo = SchemaRepository::new(pool.get_ref().clone());
+    let before = repo.get(&table, id).await?;
     let mut q = sqlx::query_as::<_, (i64,)>(AssertSqlSafe(sql.as_str()));
     let col_types = crud::column_types::resolve(pool.get_ref(), &table).await;
     for c in &cols {
@@ -582,13 +675,24 @@ pub async fn update_dict_entry(
         .await
         .map_err(|e| ApiError::Database(e.to_string()))?;
     match row {
-        Some(_) => {
-            let repo = SchemaRepository::new(pool.get_ref().clone());
-            match repo.get(&table, id).await? {
-                Some(v) => Ok(HttpResponse::Ok().json(ApiResponse::success(v))),
-                None => Err(ApiError::NotFound("not_found".into())),
+        Some(_) => match repo.get(&table, id).await? {
+            Some(v) => {
+                // 留痕：update 记前后值摘要（before = 更新前镜像；after = 更新后镜像）
+                audit_value_domain_write(
+                    pool.get_ref(),
+                    user_id,
+                    &req,
+                    &table,
+                    id,
+                    "dict.update",
+                    before.as_ref(),
+                    Some(&v),
+                )
+                .await;
+                Ok(HttpResponse::Ok().json(ApiResponse::success(v)))
             }
-        }
+            None => Err(ApiError::NotFound("not_found".into())),
+        },
         None => Err(ApiError::NotFound("not_found".into())),
     }
 }
@@ -612,7 +716,20 @@ pub async fn delete_dict_entry(
     let user_id = require_auth(&req)?;
     require_resource_access(pool.get_ref(), user_id, NGAC_RESOURCE, id, "delete").await?;
     let repo = SchemaRepository::new(pool.get_ref().clone());
+    // 被删行摘要（留痕用）：行不存在时 delete 亦 404，审计不落。
+    let before = repo.get(&table, id).await?;
     repo.delete(&table, id, user_id).await?;
+    audit_value_domain_write(
+        pool.get_ref(),
+        user_id,
+        &req,
+        &table,
+        id,
+        "dict.delete",
+        before.as_ref(),
+        None,
+    )
+    .await;
     Ok(
         HttpResponse::Ok().json(ApiResponse::success(serde_json::json!({
             "id": id.to_string(),
@@ -622,44 +739,85 @@ pub async fn delete_dict_entry(
     )
 }
 
-/// NGAC 注册：为新建字典条目创建 object_attribute + 创建者 full-CRUD association。
-/// 对齐 `crud::handler::register_created_resource_ngac` 语义（泛型版本要求
-/// `E: AliothDbEntity`，字典表为动态表名，此处按 resource_type='dict' 手动等价实现）。
+/// 值域写入留痕（`value-domain-office :: office-audit-trace`）：
+/// 经 `common::audit::record_audit_event_with_metadata` 落 `isahl_audit.audit_events`，
+/// 事件含 actor（user_id/username/email）、表名、行 id、前后值摘要。
+///
+/// 仅在写入**成功后**调用（被拒路径在调用点之前 return ⇒ MUST NOT 落成功事件）；
+/// 非阻断语义（与 record_audit_event_* 一致）：留痕失败仅 warn，不回滚业务写入。
+// 审计事件字段即参数面（actor/定位/操作/前后值），与 llm::service 同判据豁免打包
+#[allow(clippy::too_many_arguments)]
+async fn audit_value_domain_write(
+    pool: &PgPool,
+    user_id: i64,
+    req: &HttpRequest,
+    table: &str,
+    row_id: i64,
+    operation: &str,
+    before: Option<&Value>,
+    after: Option<&Value>,
+) {
+    let username = extract_username(req).unwrap_or_default();
+    let subject = common::audit::resolve_subject(&username, user_id);
+    let mut metadata = serde_json::Map::new();
+    metadata.insert(
+        "actor".to_string(),
+        serde_json::json!({
+            "user_id": user_id.to_string(),
+            "username": username,
+            "email": extract_user_email(req),
+        }),
+    );
+    metadata.insert("table".to_string(), serde_json::json!(table));
+    // zuid（> 2^53）以字符串入 metadata，避免 JSON number 精度丢失（与列表出口同口径）
+    metadata.insert("id".to_string(), serde_json::json!(row_id.to_string()));
+    if let Some(b) = before {
+        metadata.insert("before".to_string(), b.clone());
+    }
+    if let Some(a) = after {
+        metadata.insert("after".to_string(), a.clone());
+    }
+    if let Err(e) = record_audit_event_with_metadata(
+        pool,
+        user_id,
+        &subject,
+        &format!("dict:{}:{}", table, row_id),
+        operation,
+        &Decision::Permit,
+        Value::Object(metadata),
+    )
+    .await
+    {
+        common::telemetry::warn!(
+            "dict 写入留痕失败（{} {} {}）：{}",
+            operation,
+            table,
+            row_id,
+            e
+        );
+    }
+}
+
+/// 行级 NGAC 注册（**授权写入单源** = `common::ngac_grants`；best-effort）。
+///
+/// 对齐 `crud::handler::register_created_resource_ngac` 语义（**锚点单行**；创建者授权由派生层
+/// 判定，derive-creator-grants-from-lifecycle）。失败有日志不阻断。
 async fn register_dict_resource_ngac(pool: &PgPool, item_id: i64, user_id: i64) {
-    let _ = sqlx::query(
-        "INSERT INTO isahl_auth.ngac_object_attribute \
-         (o_name, fk_policy_class, resource_type, fk_resource, created_by_id) \
-         VALUES ($1, (SELECT id FROM isahl_auth.ngac_policy_class LIMIT 1), $2, $3, $4) \
-         ON CONFLICT(resource_type, fk_resource) DO NOTHING",
+    if let Err(e) = common::ngac_grants::ensure_resource_oa(
+        pool,
+        &common::ngac_grants::ResourceOaSpec {
+            o_name: format!("{NGAC_RESOURCE}-{item_id}"),
+            resource_type: NGAC_RESOURCE,
+            resource_id: item_id,
+            resource_identifier: None,
+            created_by: Some(user_id),
+            policy_class_name: None,
+        },
     )
-    .bind(format!("{}-{}", NGAC_RESOURCE, item_id))
-    .bind(NGAC_RESOURCE)
-    .bind(item_id)
-    .bind(user_id)
-    .execute(pool)
-    .await;
-    let _ = sqlx::query(
-        "INSERT INTO isahl_auth.ngac_association \
-         (fk_user_attribute, fk_object_attribute, ak_access_rights, fk_policy_class, created_at) \
-         SELECT rr.fk_user_attribute, oa.id, \
-                ARRAY(SELECT id FROM isahl_auth.ngac_access_right \
-                      WHERE o_name IN ('read','write','delete','update','create')), \
-                oa.fk_policy_class, NOW() \
-         FROM isahl_auth.ngac_user_rr_attribute rr \
-         JOIN isahl_auth.ngac_object_attribute oa \
-           ON oa.resource_type = $2 AND oa.fk_resource = $3 AND oa.deleted_at IS NULL \
-         WHERE rr.fk_user = $1 AND rr.deleted_at IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM isahl_auth.ngac_association a2 \
-               WHERE a2.fk_user_attribute = rr.fk_user_attribute AND a2.fk_object_attribute = oa.id \
-                 AND a2.deleted_at IS NULL) \
-         ON CONFLICT DO NOTHING",
-    )
-    .bind(user_id)
-    .bind(NGAC_RESOURCE)
-    .bind(item_id)
-    .execute(pool)
-    .await;
+    .await
+    {
+        common::telemetry::warn!("dict NGAC 锚点写入失败（{NGAC_RESOURCE} {item_id}）: {e}");
+    }
 }
 
 /// 注册 dict 路由到 /service/isahl-db scope。

@@ -1,0 +1,6 @@
+# resource-registry-coverage 存量登记（ratchet 基线）——NGAC_SPEC §2.1 注册义务的既有缺口
+# 键 = <service.json 相对路径>::<已声明但未注册的实体>（每行首段为键，gate-kit ratchet 口径）。
+# 收敛路径 = 平台仓 Framework/backend/ngac-contract/src/resource_registry.rs 对应 ns 的 `with_*_defaults` 补注册
+#   （type_name = URL entity 段 `-`→`_`、不加复数；见 NGAC_SPEC §2.1）。ns 仓不得改共享面。
+# 重新生成: bun scripts/check/check-resource-registry-coverage.ts --write-baseline
+

@@ -1,5 +1,5 @@
 # alioth-fk-index	format=1
-# model_version: v10.0.34
+# model_version: v10.0.40
 # generated_from: isahl_meta.meta_fields (+ scripts/db/fk-rr-entries.json 的 rr 语义条目)
 # 列序 F: table<TAB>field<TAB>target_table<TAB>local_key
 # 列序 R: target_table<TAB>source_table<TAB>field<TAB>local_key
@@ -1136,6 +1136,10 @@ F	zc_id_orde-lbl	category	zc_id_cate-ope-title	ck_category
 F	zc_id_orde-lbl	health	zc_id_leve-health	lk_health
 F	zc_id_orde-lbl	progress	zc_id_rati-progress	qk_progress
 F	zc_id_orde-lbl	risk	zc_id_leve-risk	lk_risk
+F	zc_id_orde-manual	category	zc_id_cate-ope-title	ck_category
+F	zc_id_orde-manual	health	zc_id_leve-health	lk_health
+F	zc_id_orde-manual	progress	zc_id_rati-progress	qk_progress
+F	zc_id_orde-manual	risk	zc_id_leve-risk	lk_risk
 F	zc_id_orde-multimodal	category	zc_id_cate-ope-title	ck_category
 F	zc_id_orde-multimodal	health	zc_id_leve-health	lk_health
 F	zc_id_orde-multimodal	progress	zc_id_rati-progress	qk_progress
@@ -2936,6 +2940,7 @@ F	zc_id_project_r_milestone-tags	arrived_at	zc_id_scal-date	qk_arrived
 F	zc_id_project_r_milestone-tags	period	zc_id_segm-date	qk_period
 F	zc_id_project_r_milestone-tags	plan-segm	zc_id_segm-date	qk_plan-segm
 F	zc_id_project_r_milestone-tags	review-segm	zc_id_segm-date	qk_review-segm
+F	zc_id_project_rr_dependency	budget-segm	zc_id_segm-amount	qk_budget-segm
 F	zc_id_project_rr_dependency	period	zc_id_segm-date	qk_period
 F	zc_id_project_rr_other	period	zc_id_segm-date	qk_period
 F	zc_id_project_rr_process	period	zc_id_segm-date	qk_period
@@ -3046,6 +3051,10 @@ F	zc_id_stat-inspection	standard	zc_id_standard	fk_standard
 F	zc_id_stat-inspection	subject	zc_id_subjects	fk_subject
 F	zc_id_stat-maintenance	category	zc_id_cate-maintain	ck_category
 F	zc_id_stat-maintenance	effort	zc_id_scal-duration	qk_effort
+F	zc_id_stat-mal-voucher	object	zc_id_subjects	fk_object
+F	zc_id_stat-mal-voucher	payload	zc_id_prod-sales	fk_payload
+F	zc_id_stat-mal-voucher	subject	zc_id_subjects	fk_subject
+F	zc_id_stat-mal-voucher	write-off	zc_id_scale	qk_write-off
 F	zc_id_stat-slf-voucher	object	zc_id_subjects	fk_object
 F	zc_id_stat-slf-voucher	payload	zc_id_prod-sales	fk_payload
 F	zc_id_stat-slf-voucher	subject	zc_id_subjects	fk_subject
@@ -3522,6 +3531,8 @@ F	zc_id_tick-pickup	batch_no	zc_id_tags-batch	tk_batch_no
 F	zc_id_tick-pickup	branch	zc_id_cate-ver_branch	ck_branch
 F	zc_id_tick-pickup	previous	zc_id_version	fk_previous
 F	zc_id_tick-pickup	version	zc_id_tags-version	tk_version
+F	zc_id_unit-price	currency	zc_id_unit-currency	fk_prefix
+F	zc_id_unit-price	price-unit	zc_id_unit	fk_suffix
 F	zc_id_vers-context	batch_no	zc_id_tags-batch	tk_batch_no
 F	zc_id_vers-context	branch	zc_id_cate-ver_branch	ck_branch
 F	zc_id_vers-context	previous	zc_id_version	fk_previous
@@ -3599,6 +3610,7 @@ R	zc_id_cate-ope-title	zc_id_orde-consult	category	ck_category
 R	zc_id_cate-ope-title	zc_id_orde-hbl	category	ck_category
 R	zc_id_cate-ope-title	zc_id_orde-land	category	ck_category
 R	zc_id_cate-ope-title	zc_id_orde-lbl	category	ck_category
+R	zc_id_cate-ope-title	zc_id_orde-manual	category	ck_category
 R	zc_id_cate-ope-title	zc_id_orde-multimodal	category	ck_category
 R	zc_id_cate-ope-title	zc_id_orde-payment	category	ck_category
 R	zc_id_cate-ope-title	zc_id_orde-railway	category	ck_category
@@ -4224,6 +4236,7 @@ R	zc_id_leve-health	zc_id_orde-consult	health	lk_health
 R	zc_id_leve-health	zc_id_orde-hbl	health	lk_health
 R	zc_id_leve-health	zc_id_orde-land	health	lk_health
 R	zc_id_leve-health	zc_id_orde-lbl	health	lk_health
+R	zc_id_leve-health	zc_id_orde-manual	health	lk_health
 R	zc_id_leve-health	zc_id_orde-multimodal	health	lk_health
 R	zc_id_leve-health	zc_id_orde-payment	health	lk_health
 R	zc_id_leve-health	zc_id_orde-railway	health	lk_health
@@ -4281,6 +4294,7 @@ R	zc_id_leve-risk	zc_id_orde-consult	risk	lk_risk
 R	zc_id_leve-risk	zc_id_orde-hbl	risk	lk_risk
 R	zc_id_leve-risk	zc_id_orde-land	risk	lk_risk
 R	zc_id_leve-risk	zc_id_orde-lbl	risk	lk_risk
+R	zc_id_leve-risk	zc_id_orde-manual	risk	lk_risk
 R	zc_id_leve-risk	zc_id_orde-multimodal	risk	lk_risk
 R	zc_id_leve-risk	zc_id_orde-payment	risk	lk_risk
 R	zc_id_leve-risk	zc_id_orde-railway	risk	lk_risk
@@ -4468,6 +4482,7 @@ R	zc_id_prod-sales	zc_id_deta-trade_order	deal	fk_deal
 R	zc_id_prod-sales	zc_id_deta-trade_order	goods	fk_goods
 R	zc_id_prod-sales	zc_id_stat-bok-voucher	payload	fk_payload
 R	zc_id_prod-sales	zc_id_stat-com-voucher	payload	fk_payload
+R	zc_id_prod-sales	zc_id_stat-mal-voucher	payload	fk_payload
 R	zc_id_prod-sales	zc_id_stat-slf-voucher	payload	fk_payload
 R	zc_id_prod-sales	zc_id_stat-smt-bank	payload	fk_payload
 R	zc_id_prod-sales	zc_id_stat-smt-cash	payload	fk_payload
@@ -4499,6 +4514,7 @@ R	zc_id_rati-progress	zc_id_orde-consult	progress	qk_progress
 R	zc_id_rati-progress	zc_id_orde-hbl	progress	qk_progress
 R	zc_id_rati-progress	zc_id_orde-land	progress	qk_progress
 R	zc_id_rati-progress	zc_id_orde-lbl	progress	qk_progress
+R	zc_id_rati-progress	zc_id_orde-manual	progress	qk_progress
 R	zc_id_rati-progress	zc_id_orde-multimodal	progress	qk_progress
 R	zc_id_rati-progress	zc_id_orde-payment	progress	qk_progress
 R	zc_id_rati-progress	zc_id_orde-railway	progress	qk_progress
@@ -5220,6 +5236,7 @@ R	zc_id_scale	zc_id_production_rr_storage	quantity	qk_qty
 R	zc_id_scale	zc_id_production_rr_storage	s_capacity	qk_s_capacity
 R	zc_id_scale	zc_id_stat-com-voucher	write-off	qk_write-off
 R	zc_id_scale	zc_id_stat-inspection	sample	qk_sample
+R	zc_id_scale	zc_id_stat-mal-voucher	write-off	qk_write-off
 R	zc_id_scale	zc_id_stat-slf-voucher	write-off	qk_write-off
 R	zc_id_scale	zc_id_stat-sto-voucher	write-off	qk_write-off
 R	zc_id_scale	zc_id_stat-task	write-off	qk_write-off
@@ -5273,6 +5290,7 @@ R	zc_id_scale	zc_id_stor-traffic_line	capacity	qk_capacity
 R	zc_id_scale	zc_id_storage	capacity	qk_capacity
 R	zc_id_segm-amount	zc_id_deta-plan	budget-segm	qk_budget-segm
 R	zc_id_segm-amount	zc_id_plan-project	budget-segm	qk_budget-segm
+R	zc_id_segm-amount	zc_id_project_rr_dependency	budget-segm	qk_budget-segm
 R	zc_id_segm-date	zc_id_agreement_r_calc	period	qk_period
 R	zc_id_segm-date	zc_id_agreement_r_term	period	qk_period
 R	zc_id_segm-date	zc_id_appr-payment_rr_invoice	period	qk_period
@@ -6033,6 +6051,8 @@ R	zc_id_subjects	zc_id_stat-bok-voucher	subject	fk_subject
 R	zc_id_subjects	zc_id_stat-com-voucher	object	fk_object
 R	zc_id_subjects	zc_id_stat-com-voucher	subject	fk_subject
 R	zc_id_subjects	zc_id_stat-inspection	subject	fk_subject
+R	zc_id_subjects	zc_id_stat-mal-voucher	object	fk_object
+R	zc_id_subjects	zc_id_stat-mal-voucher	subject	fk_subject
 R	zc_id_subjects	zc_id_stat-slf-voucher	object	fk_object
 R	zc_id_subjects	zc_id_stat-slf-voucher	subject	fk_subject
 R	zc_id_subjects	zc_id_stat-smt-bank	object	fk_object
@@ -6712,6 +6732,7 @@ R	zc_id_unit	zc_id_prod-transform	unit	sk_unit
 R	zc_id_unit	zc_id_prod-tsp_land-license-sales	unit	sk_unit
 R	zc_id_unit	zc_id_prod-type_cert-sales	unit	sk_unit
 R	zc_id_unit	zc_id_production_rr_storage	unit	sk_unit
+R	zc_id_unit	zc_id_unit-price	price-unit	fk_suffix
 R	zc_id_unit-currency	zc_id_deta-bill-check	currency	sk_currency
 R	zc_id_unit-currency	zc_id_deta-bill-pricing	currency	sk_currency
 R	zc_id_unit-currency	zc_id_file-avatar	currency	sk_currency
@@ -6891,6 +6912,7 @@ R	zc_id_unit-currency	zc_id_stor-plc-yard	currency	sk_currency
 R	zc_id_unit-currency	zc_id_stor-traffic_line	currency	sk_currency
 R	zc_id_unit-currency	zc_id_storage	currency	sk_currency
 R	zc_id_unit-currency	zc_id_subj-country	currency	ck_currency
+R	zc_id_unit-currency	zc_id_unit-price	currency	fk_prefix
 R	zc_id_unit-geo	zc_id_geog-area	unit	sk_unit
 R	zc_id_unit-geo	zc_id_geog-circle	unit	sk_unit
 R	zc_id_unit-geo	zc_id_geog-path	unit	sk_unit

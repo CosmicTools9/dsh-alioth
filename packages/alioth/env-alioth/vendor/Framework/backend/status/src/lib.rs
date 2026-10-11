@@ -3,15 +3,18 @@
 //! `isahl.zc_id_stus-project`（id 默认 gen_next_uid(12)）的唯一实现来源：
 //! - Status 字段并集（WZ notice/code/flag/enable + Alioth name 别名/comments）
 //! - StatusRepository：完整 CRUD（create 列默认 gen_next_uid(12)）+ RLS 读覆盖
+//! - handlers::status：typed 维护面（CRUD + NGAC 鉴权 + 审计留痕），crate 级 `register`
 //! - DamageReport / EventTracking / EventAccident（isahl 全局表）只读仓库
 //! - status_mapper：统一状态映射（zc_id_stus-trade.code → 前端状态键）
 //!
 //! ns 壳仅注册路由前缀；全部实现本 crate 单一持有。
 
+pub mod handlers;
 pub mod models;
 pub mod repository;
 pub mod status_mapper;
 
+pub use handlers::status::register;
 pub use models::{CreateStatusRequest, Status, UpdateStatusRequest};
 pub use repository::StatusRepository;
 

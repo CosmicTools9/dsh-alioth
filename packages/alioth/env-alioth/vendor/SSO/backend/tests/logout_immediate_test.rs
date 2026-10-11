@@ -46,10 +46,13 @@ async fn refresh_rejected_after_session_revoked() {
         resp.status()
     );
     // 注册自动审批流：用户落 pending_approval——激活后登录（tdd_reg_009 同款）
-    let _ = sqlx::query("UPDATE isahl_auth.auth_users SET status = 'active' WHERE email = $1")
-        .bind(&email)
-        .execute(&pool)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE isahl_auth.auth_users SET status = 'active' \
+         WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
+    )
+    .bind(&email)
+    .execute(&pool)
+    .await;
     let login_req = test::TestRequest::post()
         .uri("/auth/login")
         .set_json(json!({ "identifier": email, "password": "TestPass123!" }))
@@ -107,13 +110,24 @@ async fn refresh_rejected_after_session_revoked() {
         "refresh must be rejected after session revoked"
     );
 
-    // 清理
-    sqlx::query("DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)")
+    // 清理（邮箱唯一存储 = auth_user_emails；邮箱行先行满足 FK）
+    sqlx::query("DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)")
         .bind(&email).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)")
+    sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)")
         .bind(&email).execute(&pool).await.ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = $1")
-        .bind(&email)
+    let user_ids: Vec<i64> =
+        sqlx::query_scalar("SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1")
+            .bind(&email)
+            .fetch_all(&pool)
+            .await
+            .unwrap_or_default();
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(&user_ids)
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
+        .bind(&user_ids)
         .execute(&pool)
         .await
         .ok();
@@ -148,10 +162,13 @@ async fn logout_with_bearer_revokes_session_only() {
         resp.status()
     );
     // 注册自动审批流：用户落 pending_approval——激活后登录（tdd_reg_009 同款）
-    let _ = sqlx::query("UPDATE isahl_auth.auth_users SET status = 'active' WHERE email = $1")
-        .bind(&email)
-        .execute(&pool)
-        .await;
+    let _ = sqlx::query(
+        "UPDATE isahl_auth.auth_users SET status = 'active' \
+         WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
+    )
+    .bind(&email)
+    .execute(&pool)
+    .await;
     let login_req = test::TestRequest::post()
         .uri("/auth/login")
         .set_json(json!({ "identifier": email, "password": "TestPass123!" }))
@@ -224,6 +241,12 @@ async fn logout_with_bearer_revokes_session_only() {
         .await
         .ok();
     sqlx::query("DELETE FROM isahl_auth.refresh_tokens WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
+    // auth_user_emails 入边 FK 无 ON DELETE CASCADE：先删邮箱行再删账号
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
         .bind(user_id)
         .execute(&pool)
         .await

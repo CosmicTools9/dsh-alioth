@@ -126,9 +126,9 @@ async fn insert_employee(pool: &PgPool, name: &str) -> i64 {
     // （fix-approver-incumbent-source：任职账号集合 = 标量 ∪ 桥派生，仅计 is_active 账号）
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, $2, $2, $2 || '@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, $2, 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT (id) DO NOTHING"#,
     )
     .bind(person)
@@ -229,6 +229,14 @@ async fn insert_action(pool: &PgPool, notice: &str, fk_event: i64) -> i64 {
     .unwrap()
 }
 
+/// 授予 actor admin UA（`scope=all` 管理视角门禁需要）：复用测试 common 的
+/// `ensure_role_member`（幂等建 auth_users 行 + admin UA 绑定）。
+async fn grant_admin(pool: &PgPool, user_id: i64) {
+    common::ensure_role_member(pool, "admin", user_id)
+        .await
+        .expect("grant admin UA");
+}
+
 #[tokio::test]
 async fn test_enriched_handler_default_list() {
     let pool = connect_test_db().await;
@@ -237,7 +245,8 @@ async fn test_enriched_handler_default_list() {
 
     let flow = insert_flow(&pool, &format!("flow-{code}")).await;
     let emp = insert_employee(&pool, "测试用户").await;
-    // 创建紧急级别并获取 ID
+    grant_admin(&pool, emp).await; // scope=all = 管理视角（admin UA 门禁）
+                                   // 创建紧急级别并获取 ID
     let urg_id = insert_urgency(&pool, "high").await;
     // 创建审批事件，引用紧急级别 → priority=high
     let event = insert_event(&pool, &format!("ev-{code}"), flow, Some(urg_id)).await;
@@ -262,7 +271,11 @@ async fn test_enriched_handler_default_list() {
     .await;
 
     let req = test::TestRequest::get()
-        .uri("/test/approval-instances/enriched?scope=all")
+        // `q=<唯一 code>`：断言面限定到本测试自己的行——共享测试库会积累历次运行/并行用例的行，
+        // 否则本行可能落到第 1 页之外（历史 flake）。
+        .uri(&format!(
+            "/test/approval-instances/enriched?scope=all&q={code}"
+        ))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(
@@ -331,6 +344,7 @@ async fn test_enriched_handler_status_filter() {
     let event_p = insert_event(&pool, &format!("ev-p-{code}"), flow_p, None).await;
     insert_instance(&pool, &format!("inst-pending-{code}"), Some(event_p), None).await;
     let emp = insert_employee(&pool, "测试用户2").await;
+    grant_admin(&pool, emp).await; // scope=all = 管理视角（admin UA 门禁）
 
     let ctx = ::common::context::RequestContext::with_username(emp, "actor@test", "actor");
     let app = test::init_service(
@@ -346,7 +360,9 @@ async fn test_enriched_handler_status_filter() {
     .await;
 
     let req = test::TestRequest::get()
-        .uri("/test/approval-instances/enriched?scope=all&status=approved")
+        .uri(&format!(
+            "/test/approval-instances/enriched?scope=all&status=approved&q={code}"
+        ))
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
@@ -380,6 +396,7 @@ async fn test_enriched_handler_pending_status() {
     let event = insert_event(&pool, &format!("ev-{code}"), flow, None).await;
     insert_instance(&pool, &format!("inst-{code}"), Some(event), None).await;
     let emp = insert_employee(&pool, "测试用户3").await;
+    grant_admin(&pool, emp).await; // scope=all = 管理视角（admin UA 门禁）
 
     let ctx = ::common::context::RequestContext::with_username(emp, "actor@test", "actor");
     let app = test::init_service(
@@ -395,7 +412,9 @@ async fn test_enriched_handler_pending_status() {
     .await;
 
     let req = test::TestRequest::get()
-        .uri("/test/approval-instances/enriched?scope=all")
+        .uri(&format!(
+            "/test/approval-instances/enriched?scope=all&q={code}"
+        ))
         .to_request();
     let resp = test::call_service(&app, req).await;
     let body: Value = test::read_body_json(resp).await;
@@ -414,7 +433,7 @@ async fn test_enriched_handler_pending_status() {
              (SELECT ee.notice FROM isahl."zc_id_subj-employee" ee
               WHERE ee.deleted_at IS NULL AND (ee.fk_user = 1 OR ee.id = 1)
               ORDER BY (ee.fk_user = 1) DESC LIMIT 1),
-             (SELECT COALESCE(u.display_name, u.name, u.username) FROM isahl_auth.auth_users u WHERE u.id = 1)
+             (SELECT COALESCE(u.display_name, u.username) FROM isahl_auth.auth_users u WHERE u.id = 1)
            )"#,
     )
     .fetch_one(&pool)
@@ -562,6 +581,7 @@ async fn test_enriched_q_search_filters() {
 
     let flow = insert_flow(&pool, &format!("flow-{code}")).await;
     let emp = insert_employee(&pool, "张全有").await;
+    grant_admin(&pool, emp).await; // scope=all = 管理视角（admin UA 门禁）
     let ev = insert_event(&pool, &format!("ev-{code}"), flow, None).await;
     let _hit = insert_instance(&pool, "付款申请-华东", Some(ev), Some(emp)).await;
     let _miss = insert_instance(&pool, "请假申请", Some(ev), Some(emp)).await;
@@ -680,4 +700,370 @@ async fn test_enriched_todo_scope_admin_sees_all() {
         ids.contains(&inst),
         "admin UA 用户应可见他人实例（管理视角）: {ids:?}"
     );
+}
+
+/// 置顶契约（用户裁决 2026-09-27）：注册 / 认证 / 授权的相关审批在「我的审批」恒定居首，
+/// 优先于**更晚创建**的普通实例 —— 即排序不是单纯的 `created_at DESC`。
+#[tokio::test]
+async fn test_enriched_list_pins_certification_flow_instances_first() {
+    let pool = connect_test_db().await;
+    setup_test_schema(&pool).await.unwrap();
+    let code = test_code("hdlr-pin");
+
+    // 置顶流程 = 认证域三流程之一（先建 ⇒ 时间上更早；仅靠 created_at DESC 不会居首）
+    let pinned_flow = insert_flow(&pool, &format!("flow-pin-{code}")).await;
+    sqlx::query(
+        r#"UPDATE isahl."zc_id_proc-approve" SET code = 'FLOW-AUTHORIZATION' WHERE id = $1"#,
+    )
+    .bind(pinned_flow)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let pinned_event = insert_event(&pool, &format!("ev-pin-{code}"), pinned_flow, None).await;
+    let pinned =
+        insert_instance(&pool, &format!("inst-pin-{code}"), Some(pinned_event), None).await;
+
+    // 普通流程（后建 ⇒ 按 created_at DESC 本应居首）
+    let plain_flow = insert_flow(&pool, &format!("flow-plain-{code}")).await;
+    let plain_event = insert_event(&pool, &format!("ev-plain-{code}"), plain_flow, None).await;
+    let plain = insert_instance(
+        &pool,
+        &format!("inst-plain-{code}"),
+        Some(plain_event),
+        None,
+    )
+    .await;
+
+    grant_admin(&pool, plain).await; // scope=all = 管理视角（admin UA 门禁）
+    let ctx = ::common::context::RequestContext::with_username(plain, "actor@test", "actor");
+    let app = test::init_service(
+        App::new().app_data(web::Data::new(pool.clone())).service(
+            web::scope("/test")
+                .wrap_fn(move |req, srv| {
+                    req.extensions_mut().insert(ctx.clone());
+                    srv.call(req)
+                })
+                .configure(handlers::enriched_instance::register),
+        ),
+    )
+    .await;
+
+    // `q=<本测试唯一 code>`：把断言面限定到本测试自己创建的两行——
+    // 否则 `scope=all` 会读到**同库并行用例**的其它置顶行（认证域注册审批），
+    // 那条更新的行会把 pinned 挤到第 2 位 ⇒ 断言语义正确但结果依赖调度（历史 flake）。
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!(
+                "/test/approval-instances/enriched?scope=all&pageSize=500&q={code}"
+            ))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200, "enriched 应 200");
+    let body: Value = test::read_body_json(resp).await;
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .expect("items array")
+        .iter()
+        .filter_map(|i| {
+            i["id"]
+                .as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| i["id"].as_i64())
+        })
+        .collect();
+    let pinned_pos = ids
+        .iter()
+        .position(|id| *id == pinned)
+        .unwrap_or_else(|| panic!("pinned instance {pinned} in list: {}", ids.len()));
+    let plain_pos = ids
+        .iter()
+        .position(|id| *id == plain)
+        .unwrap_or_else(|| panic!("plain instance {plain} in list: {}", ids.len()));
+    assert_eq!(pinned_pos, 0, "认证域流程实例必须居首");
+    assert!(pinned_pos < plain_pos, "置顶优先于时间序");
+}
+
+/// `codes` 白名单过滤（管理端注册审批队列范围限定）：
+/// 仅返回 code 命中白名单的实例，其它 code（如实名 `user-verify`）不得出现。
+#[tokio::test]
+async fn test_enriched_codes_filter_restricts_instances() {
+    let pool = connect_test_db().await;
+    setup_test_schema(&pool).await.unwrap();
+    let code = test_code("hdlr-codes");
+
+    let flow = insert_flow(&pool, &format!("flow-{code}")).await;
+    let ev = insert_event(&pool, &format!("ev-{code}"), flow, None).await;
+    let hit = insert_instance(&pool, &format!("inst-hit-{code}"), Some(ev), None).await;
+    let miss = insert_instance(&pool, &format!("inst-miss-{code}"), Some(ev), None).await;
+    sqlx::query(
+        r#"UPDATE isahl."zc_id_oper-approve" SET code = 'user-register-approval' WHERE id = $1"#,
+    )
+    .bind(hit)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(r#"UPDATE isahl."zc_id_oper-approve" SET code = 'user-verify' WHERE id = $1"#)
+        .bind(miss)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let actor = insert_employee(&pool, "codes 管理员").await;
+    grant_admin(&pool, actor).await;
+    let ctx = ::common::context::RequestContext::with_username(actor, "actor@test", "actor");
+    let app = test::init_service(
+        App::new().app_data(web::Data::new(pool.clone())).service(
+            web::scope("/test")
+                .wrap_fn(move |req, srv| {
+                    req.extensions_mut().insert(ctx.clone());
+                    srv.call(req)
+                })
+                .configure(handlers::enriched_instance::register),
+        ),
+    )
+    .await;
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/test/approval-instances/enriched?scope=all&codes=user-register-approval")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200, "codes 过滤应 200");
+    let body: Value = test::read_body_json(resp).await;
+    let ids: Vec<i64> = body["items"]
+        .as_array()
+        .expect("items array")
+        .iter()
+        .filter_map(|i| {
+            i["id"]
+                .as_str()
+                .and_then(|s| s.parse::<i64>().ok())
+                .or_else(|| i["id"].as_i64())
+        })
+        .collect();
+    assert!(ids.contains(&hit), "白名单 code 实例应在结果中: {ids:?}");
+    assert!(
+        !ids.contains(&miss),
+        "非白名单 code（user-verify）不得出现: {ids:?}"
+    );
+}
+
+/// `codes` 超过上限 → 400（MUST NOT 静默截断——否则调用方以为过滤生效）
+#[tokio::test]
+async fn test_enriched_codes_too_many_rejected() {
+    let pool = connect_test_db().await;
+    setup_test_schema(&pool).await.unwrap();
+
+    let actor = insert_employee(&pool, "codes 超限").await;
+    grant_admin(&pool, actor).await;
+    let ctx = ::common::context::RequestContext::with_username(actor, "actor@test", "actor");
+    let app = test::init_service(
+        App::new().app_data(web::Data::new(pool.clone())).service(
+            web::scope("/test")
+                .wrap_fn(move |req, srv| {
+                    req.extensions_mut().insert(ctx.clone());
+                    srv.call(req)
+                })
+                .configure(handlers::enriched_instance::register),
+        ),
+    )
+    .await;
+
+    let codes = (0..21)
+        .map(|i| format!("c{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri(&format!(
+                "/test/approval-instances/enriched?scope=all&codes={codes}"
+            ))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 400, "codes 超上限应 400");
+}
+
+/// `scope=all`（管理视角全量）MUST 持 admin UA：非 admin 403，授予后 200。
+#[tokio::test]
+async fn test_enriched_scope_all_requires_admin() {
+    let pool = connect_test_db().await;
+    setup_test_schema(&pool).await.unwrap();
+    let code = test_code("hdlr-gate");
+
+    let flow = insert_flow(&pool, &format!("flow-{code}")).await;
+    let ev = insert_event(&pool, &format!("ev-{code}"), flow, None).await;
+    insert_instance(&pool, &format!("inst-{code}"), Some(ev), None).await;
+
+    let actor = insert_employee(&pool, "非管理员").await;
+    let ctx = ::common::context::RequestContext::with_username(actor, "actor@test", "actor");
+    let app = test::init_service(
+        App::new().app_data(web::Data::new(pool.clone())).service(
+            web::scope("/test")
+                .wrap_fn(move |req, srv| {
+                    req.extensions_mut().insert(ctx.clone());
+                    srv.call(req)
+                })
+                .configure(handlers::enriched_instance::register),
+        ),
+    )
+    .await;
+
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/test/approval-instances/enriched?scope=all")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 403, "非 admin 不得读取管理视角全量");
+
+    // 授予 admin UA 后同一 actor 应放行
+    grant_admin(&pool, actor).await;
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/test/approval-instances/enriched?scope=all")
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200, "admin UA 持有者应放行");
+}
+
+/// 重提链（`original_id`）：创建入参双形态兼容 → 落 `meta.original_id` → enriched 回带字符串；
+/// 无链实例 `meta` 保持 NULL 且回带 null。
+#[tokio::test]
+async fn test_reappeal_original_link_roundtrip() {
+    use approval::models::{ApprovalInstance, CreateApprovalInstanceRequest};
+    use approval::repositories::ApprovalInstanceRepository;
+    use approval::services::ApprovalInstanceService;
+
+    let pool = connect_test_db().await;
+    setup_test_schema(&pool).await.unwrap();
+    let code = test_code("hdlr-link");
+
+    let flow = insert_flow(&pool, &format!("flow-{code}")).await;
+    let emp = insert_employee(&pool, "链接用户").await;
+    grant_admin(&pool, emp).await;
+    let event = insert_event(&pool, &format!("ev-{code}"), flow, None).await;
+    // 来源实例（被驳回后「再申请」指向它）
+    let source = insert_instance(&pool, &format!("src-{code}"), Some(event), Some(emp)).await;
+
+    // 双形态反序列化：字符串 / 数字都必须接受（common::serde_zuid::opt）
+    let by_number: CreateApprovalInstanceRequest = serde_json::from_value(serde_json::json!({
+        "node_name": format!("再申请: src-{code}"),
+        "original_id": source,
+    }))
+    .expect("数字形态 original_id 应被接受");
+    assert_eq!(by_number.original_id, Some(source), "数字形态解析为同一 id");
+    let by_text: CreateApprovalInstanceRequest = serde_json::from_value(serde_json::json!({
+        "node_name": format!("再申请: src-{code}"),
+        "original_id": source.to_string(),
+    }))
+    .expect("字符串形态 original_id 应被接受");
+    assert_eq!(by_text.original_id, Some(source), "字符串形态解析为同一 id");
+
+    let svc = ApprovalInstanceService::new(ApprovalInstanceRepository::new(pool.clone()));
+    let reappeal: ApprovalInstance = svc.create(by_number, emp).await.expect("带链创建");
+    let stored: Option<String> = sqlx::query_scalar(
+        r#"SELECT meta->>'original_id' FROM isahl."zc_id_oper-approve" WHERE id = $1"#,
+    )
+    .bind(reappeal.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, Some(source.to_string()), "meta.original_id 落值");
+
+    let plain: ApprovalInstance = svc
+        .create(
+            CreateApprovalInstanceRequest {
+                node_name: format!("plain-{code}"),
+                code: None,
+                fk_approve: None,
+                original_id: None,
+                comments: None,
+            },
+            emp,
+        )
+        .await
+        .expect("无链创建");
+    let plain_meta: Option<serde_json::Value> =
+        sqlx::query_scalar(r#"SELECT meta FROM isahl."zc_id_oper-approve" WHERE id = $1"#)
+            .bind(plain.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(plain_meta.is_none(), "无链实例 meta 保持 NULL");
+
+    // update 路径（同样含 raw 字符串 SQL）：改标题后仍能读写（回归：行尾反斜杠字面量曾致语法错误）
+    let updated = svc
+        .update(
+            reappeal.id,
+            approval::models::UpdateApprovalInstanceRequest {
+                node_name: Some(format!("再申请(改): src-{code}")),
+                code: None,
+                comments: None,
+            },
+            emp,
+        )
+        .await
+        .expect("更新实例")
+        .expect("实例存在");
+    assert_eq!(updated.id, reappeal.id, "update 返回同一实例");
+
+    // enriched 回带：带链 = 来源 id 字符串；无链 = null
+    let ctx = ::common::context::RequestContext::with_username(emp, "actor@test", "actor");
+    let app = test::init_service(
+        App::new().app_data(web::Data::new(pool.clone())).service(
+            web::scope("/test")
+                .wrap_fn(move |req, srv| {
+                    req.extensions_mut().insert(ctx.clone());
+                    srv.call(req)
+                })
+                .configure(handlers::enriched_instance::register),
+        ),
+    )
+    .await;
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            // `q=<唯一 code>`：只看本测试自己创建的行（共享库含历次运行/并行用例数据）
+            .uri(&format!(
+                "/test/approval-instances/enriched?scope=all&q={code}"
+            ))
+            .to_request(),
+    )
+    .await;
+    assert!(
+        resp.status().is_success(),
+        "enriched handler should return 200"
+    );
+    let body: Value = test::read_body_json(resp).await;
+    let items = body["items"].as_array().expect("items array");
+    let pick = |id: i64| {
+        items
+            .iter()
+            .find(|i| {
+                i["id"]
+                    .as_str()
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .or_else(|| i["id"].as_i64())
+                    == Some(id)
+            })
+            .unwrap_or_else(|| panic!("instance {id} in response"))
+    };
+    assert_eq!(
+        pick(reappeal.id)["original_id"],
+        Value::String(source.to_string()),
+        "带链实例回带字符串形态的来源 id"
+    );
+    assert!(pick(plain.id)["original_id"].is_null(), "无链实例回带 null");
+    // 计数/页码为数字（本 change 去掉误加的 serde_zuid）
+    assert!(body["total"].as_i64().is_some(), "total 为 JSON 数字");
+    assert!(body["page"].as_i64().is_some(), "page 为 JSON 数字");
 }

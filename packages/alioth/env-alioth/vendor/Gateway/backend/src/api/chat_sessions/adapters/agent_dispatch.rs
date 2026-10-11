@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use serde_json::Value;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,20 +8,26 @@ use ai_agent::agents::AgentConfig;
 use ai_agent::registry::AgentRegistry;
 use ai_agent::router::{AgentRouter, RoutingContext};
 
-use crate::api::chat_sessions::ports::AgentDispatchPort;
+use crate::api::chat_sessions::context_envelope::ChatContextEnvelope;
+use crate::api::chat_sessions::memory_scope;
+use crate::api::chat_sessions::ports::{AgentDispatchPort, RoutingHistoryPort};
 
 /// Agent Registry 缓存 TTL：60 秒
 const REGISTRY_TTL: Duration = Duration::from_secs(60);
 
 pub struct AgentRouterAdapter {
     pool: PgPool,
+    routing_history: Arc<dyn RoutingHistoryPort>,
     registry: Arc<RwLock<(AgentRegistry, Instant)>>,
 }
 
 impl AgentRouterAdapter {
-    pub fn new(pool: PgPool) -> Self {
+    /// `routing_history` = 路由决策历史写径（D11）：adapter 不 import 具体 adapter，
+    /// 只依赖 `ports::RoutingHistoryPort`（生产实现 `DbRoutingHistory`）。
+    pub fn new(pool: PgPool, routing_history: Arc<dyn RoutingHistoryPort>) -> Self {
         Self {
             pool: pool.clone(),
+            routing_history,
             registry: Arc::new(RwLock::new((
                 AgentRegistry::new(),
                 Instant::now() - REGISTRY_TTL,
@@ -65,7 +70,7 @@ impl AgentDispatchPort for AgentRouterAdapter {
         &self,
         session_id: i64,
         user_message: &str,
-        page_context: Option<Value>,
+        envelope: &ChatContextEnvelope,
         history: &[(String, String)],
         locale: &str,
         llm: &llm::LlmService,
@@ -73,16 +78,10 @@ impl AgentDispatchPort for AgentRouterAdapter {
         // D2.7 pinned_agent：会话 pin 命中且 registry 存在 → 直接返回，跳过
         // router.route 与 routing state 写入（pin 由 switch-agent 设置/清除）。
         // SQL NULL 与缺失等价（无 pin）；实例租用保持 memory 连续性。
-        let pinned: Option<String> = sqlx::query_scalar::<_, String>(
-            r#"SELECT agent_state->>'pinned_agent'
-               FROM isahl."zc_id_thre-ai_session" WHERE id = $1"#,
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten()
-        .filter(|s| !s.is_empty());
+        // D10：pinned 读取单实现（memory_scope::read_pinned_agent），不再本层复写 SQL。
+        let pinned = memory_scope::read_pinned_agent(&self.pool, session_id)
+            .await
+            .unwrap_or(None);
         if let Some(code) = pinned {
             self.refresh_registry_if_needed().await;
             let exists = self.with_registry(|r| r.get(&code).is_some()).await;
@@ -95,43 +94,31 @@ impl AgentDispatchPort for AgentRouterAdapter {
         let registry = self.with_registry(|r| r.clone()).await;
         let router = AgentRouter::new(registry);
 
-        let suggested_agent = page_context.as_ref().and_then(|v| {
-            // 前端 AIChatContext 传输形态为嵌套 {pageContext:{suggestedAgent}}，
-            // 兼容顶层直传与嵌套两种形态（实测嵌套形态下顶层读取永 None →
-            // 页面建议加成失效，填单场景被路由到 general）。
-            v.get("suggestedAgent")
-                .or_else(|| v.get("pageContext").and_then(|pc| pc.get("suggestedAgent")))
-                .and_then(|s| s.as_str())
-                .map(String::from)
-        });
-
         let routing_ctx = RoutingContext {
             user_message: user_message.to_string(),
-            page_context,
+            page_context: envelope.page_context.clone(),
             conversation_history: history.to_vec(),
-            suggested_agent,
+            suggested_agent: envelope.suggested_agent.clone(),
             locale: locale.to_string(),
         };
 
         let decision = router.route(&routing_ctx, Some(llm)).await;
 
-        // R3（D2.6）：routing 决策环形保留最近 10 条（append_bounded_state 读改写
-        // 截断；条目=单次决策）。无界 append 路径已消除；写失败上抛（既有语义）。
-        let _ = super::db_session::append_bounded_state(
-            &self.pool,
-            session_id,
-            "routing",
-            serde_json::json!({
-                "agent": decision.agent_code.clone(),
-                "confidence": decision.confidence,
-                "reason": decision.reason.clone(),
-                "level": format!("{:?}", decision.level),
-                "at": chrono::Utc::now().timestamp(),
-            }),
-            super::db_session::ROUTING_STATE_CAP,
-        )
-        .await
-        .map_err(|e| format!("Failed to save routing state: {}", e))?;
+        // R3（D2.6）：routing 决策环形保留最近 10 条（写径经 ports::RoutingHistoryPort
+        // ——D11 单向依赖；条目=单次决策）。写失败上抛（既有语义）。
+        self.routing_history
+            .append_routing_decision(
+                session_id,
+                serde_json::json!({
+                    "agent": decision.agent_code.clone(),
+                    "confidence": decision.confidence,
+                    "reason": decision.reason.clone(),
+                    "level": format!("{:?}", decision.level),
+                    "at": chrono::Utc::now().timestamp(),
+                }),
+            )
+            .await
+            .map_err(|e| format!("Failed to save routing state: {}", e))?;
 
         Ok(decision.agent_code)
     }

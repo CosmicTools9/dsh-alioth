@@ -39,6 +39,7 @@ async fn unit_dimension_is_bare_key_under_public_search_path() {
             filter_value: None,
             sort_field: None,
             sort_order: None,
+            search: None,
         })
         .await
         .expect("list units");

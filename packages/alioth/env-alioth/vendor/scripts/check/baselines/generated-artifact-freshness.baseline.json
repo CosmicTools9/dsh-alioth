@@ -1,0 +1,49 @@
+{
+  "version": "1.0.0",
+  "rule_reference": "openspec/changes/add-generated-artifact-freshness-gate（生成产物陈旧检测；Pre-Proc/{ns}/Apps 三件产物 MUST 与现行 app.json#config 一致 / prototype 相对且最新）",
+  "note": "存量归线（ratchet，只减不增）：键=rule|file|subject。生成产物 MUST NOT 手改 —— 出口逐条见 reason（flow-plan：PRD 批准 → 重规划；manifest：`refresh_manifest{confirmed:true}`；eval-report：重跑 verify_artifacts）；条目清零后收缩本文件。",
+  "violations": [
+    {
+      "rule": "eval-report-prototype",
+      "file": "Pre-Proc/Alioth/Apps/alioth-envcfg/eval-report.json",
+      "subject": "",
+      "reason": "verify_artifacts 产物：prototype 曾写废弃工作区绝对路径且版本落后。平台已修（AliothMeta 20aa694a44 改 rel_to_root）⇒ 重跑 verify_artifacts 即清（2026-10-08 已清 6 条）"
+    },
+    {
+      "rule": "flow-plan-module-overset",
+      "file": "Pre-Proc/SE/Apps/se-budget/flow-plan.json",
+      "subject": "project_budget",
+      "reason": "AppAgent 流水线产物：模块退役后 flow-plan 未重规划，残留退役模块 id。出口 = 先在实例「需求」页签提交并批准需求（approved）→ analyze_ontology{force:true} 重规划（PRD 门禁 fail-closed：无 approved 需求即拒；2026-10-08 实测四 App 全拒）→ 随后复验 app.json/extensions 级联"
+    },
+    {
+      "rule": "flow-plan-module-overset",
+      "file": "Pre-Proc/SE/Apps/se-budget/flow-plan.json",
+      "subject": "budget_item",
+      "reason": "AppAgent 流水线产物：模块退役后 flow-plan 未重规划，残留退役模块 id。出口 = 先在实例「需求」页签提交并批准需求（approved）→ analyze_ontology{force:true} 重规划（PRD 门禁 fail-closed：无 approved 需求即拒；2026-10-08 实测四 App 全拒）→ 随后复验 app.json/extensions 级联"
+    },
+    {
+      "rule": "flow-plan-module-overset",
+      "file": "Pre-Proc/SE/Apps/se-budget/flow-plan.json",
+      "subject": "budget_record",
+      "reason": "AppAgent 流水线产物：模块退役后 flow-plan 未重规划，残留退役模块 id。出口 = 先在实例「需求」页签提交并批准需求（approved）→ analyze_ontology{force:true} 重规划（PRD 门禁 fail-closed：无 approved 需求即拒；2026-10-08 实测四 App 全拒）→ 随后复验 app.json/extensions 级联"
+    },
+    {
+      "rule": "flow-plan-module-overset",
+      "file": "Pre-Proc/SE/Apps/se-budget/flow-plan.json",
+      "subject": "budget_indicator",
+      "reason": "AppAgent 流水线产物：模块退役后 flow-plan 未重规划，残留退役模块 id。出口 = 先在实例「需求」页签提交并批准需求（approved）→ analyze_ontology{force:true} 重规划（PRD 门禁 fail-closed：无 approved 需求即拒；2026-10-08 实测四 App 全拒）→ 随后复验 app.json/extensions 级联"
+    },
+    {
+      "rule": "eval-report-prototype",
+      "file": "Pre-Proc/WZ/Apps/wz-transit-ops/eval-report.json",
+      "subject": "",
+      "reason": "WZ 原型重建链（D-3/D-4 迁移 + D-8 清理重建；wz-transit-ops a-v235→a-v237）后 eval-report 的 /prototype 指针陈旧；生成产物 MUST NOT 手改 ⇒ 出口 = 重跑 AppAgent verify_artifacts / alioth-compose（独立工作面）；由 WZ ns 归属方登记，重跑后即收缩。"
+    },
+    {
+      "rule": "eval-report-prototype",
+      "file": "Pre-Proc/Cosmic-Tools/Apps/ct-wms/eval-report.json",
+      "subject": "",
+      "reason": "Cosmic-Tools 原型推进（a-v277→a-v278）后 eval-report 的 /prototype 指针陈旧（MUST NOT 手改生成产物）；出口 = 重跑 AppAgent verify_artifacts / alioth-compose（独立工作面）；由 Cosmic-Tools ns 归属方登记，重跑后即收缩（2026-10-11 /pj 入册，push 档 generated-artifact-freshness 归零）。"
+    }
+  ]
+}

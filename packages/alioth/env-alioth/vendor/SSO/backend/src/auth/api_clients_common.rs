@@ -132,6 +132,8 @@ pub struct CreatedApiClient {
 pub enum CreateClientError {
     /// client_id 已被占用（未软删）
     ClientIdTaken,
+    /// scopes 含文法外值（common::openapi_scope 单源文法）
+    InvalidScope(Vec<String>),
     /// argon2id hash 失败
     Hash(ClientSecretError),
     /// 开启事务失败
@@ -159,6 +161,17 @@ pub async fn create_api_client(
     scopes: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<CreatedApiClient, CreateClientError> {
+    // scope 文法校验（签发面单源门：文法外值零写入；空 scope=待授权是合法态，
+    // 由门户呈现 authorization_status；通配是否放行由调用面决定，见 portal/admin）
+    let invalid: Vec<String> = scopes
+        .iter()
+        .filter(|s| !common::openapi_scope::is_valid_scope(s))
+        .cloned()
+        .collect();
+    if !invalid.is_empty() {
+        return Err(CreateClientError::InvalidScope(invalid));
+    }
+
     // 唯一性预检（INSERT 前先给友好 409；并发冲突由 Insert 分支兜底）
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM isahl_auth.api_clients \

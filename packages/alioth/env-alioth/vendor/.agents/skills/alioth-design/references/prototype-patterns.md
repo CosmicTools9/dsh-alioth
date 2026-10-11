@@ -206,11 +206,11 @@ bun .agents/skills/alioth-module/scripts/bump-module-version.ts structure
 当新原型出现可被规约化的缺陷时，必须同时做两件事：
 
 1. 将决策写入 `references/prototype-patterns.md`（本文档）或 `docs/specs/HTML_DESIGN_SPEC.md`。
-2. 在 `audit-html-spec.ts` 中增加对应自动检测，使未来同类问题在审计阶段即可被发现。
+2. 在 `skill://alioth-app/scripts/audit-html-spec.ts`（审计工具归属 alioth-app）中增加对应自动检测，使未来同类问题在审计阶段即可被发现。
 
 ### 背景
 
-structure-v14 迭代中暴露的“空图标”、“徽章偏下”问题，已通过新增审计规则固化（见 `audit-html-spec.py` 对应检查）。
+structure-v14 迭代中暴露的“空图标”、“徽章偏下”问题，已通过新增审计规则固化（见 `.agents/skills/alioth-app/scripts/audit-html-spec.ts` 对应检查）。
 
 ---
 

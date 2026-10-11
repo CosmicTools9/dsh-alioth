@@ -18,6 +18,6 @@ pub mod knowledge;
 pub mod knowledge_expand;
 pub mod legal_search;
 pub mod standard_search;
-pub mod system_config_llm_test;
+pub mod system_config_probes;
 pub mod system_push;
 pub mod version;

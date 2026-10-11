@@ -26,7 +26,7 @@ async fn system_user_is_created_idempotently() {
     // 1. auth_users 记录：id=1，user_type='system'，无密码，不可登录
     let (user_type, password_hash, is_active, status): (String, Option<String>, bool, String) =
         sqlx::query_as(
-            "SELECT user_type, password_hash, is_active, status FROM isahl_auth.auth_users WHERE id = 1",
+            "SELECT user_type::text, password_hash, is_active, status::text FROM isahl_auth.auth_users WHERE id = 1",
         )
         .fetch_one(&pool)
         .await

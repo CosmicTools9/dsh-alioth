@@ -16,12 +16,14 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true }
-aes-gcm = { workspace = true }
+master-key = { path = "../master-key" }
 rand = { workspace = true }
 base64 = { workspace = true }
 log = { workspace = true }
 async-trait = { workspace = true }
 common = { path = "../common" }
 crud = { path = "../crud" }
-typenum = "1"
+
+[dev-dependencies]
+tokio = { workspace = true }
+base64 = { workspace = true }

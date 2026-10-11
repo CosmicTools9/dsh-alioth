@@ -7,6 +7,12 @@
 //! 4. Recording audit events for compliance
 //! 5. Inserting RequestContext into request extensions for downstream handlers
 //!
+//! # 内部 seam（评审候选 5，2026-10-10）
+//!
+//! 内部关注点各成模块（外 interface `NgacEnforcer` 与组合根装配不变）：
+//! `pep::jwt`（JWT 解码/验签）· `pep::session`（会话态校验）· `pep::pdp_client`（PDP 远调）
+//! · `pep::audit`（审计投递）· `pep::obligations`（义务执行）· `pep::resource_map`（资源映射）。
+//!
 //! # Architecture
 //!
 //! ```text
@@ -31,9 +37,14 @@
 //! }
 //! ```
 
+use super::audit::{resolve_audit_subject, spawn_audit_event, AuditSpawn};
 use super::cache::{ProbeOutcome, VersionProbe};
-use crate::epp::{record_audit_event_with_metadata, Decision as AuditDecision};
-use crate::pep::jwks::{JwksError, SsoJwksClient};
+use super::jwt::{decode_jwt_token, TEST_SSO_JWT_PUBLIC_KEY};
+use super::pdp_client::call_pdp_remote;
+use super::resource_map::{map_resource, method_to_action, platform_resource_registry};
+use super::session::is_session_active;
+use crate::epp::Decision as AuditDecision;
+use crate::pep::jwks::SsoJwksClient;
 use actix_web::{
     body::EitherBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
@@ -43,128 +54,12 @@ use common::context::RequestContext;
 use common::telemetry::{debug, error, warn};
 use crud::audit_outbox::AuditScope;
 use futures::future::{ok, LocalBoxFuture, Ready};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-use ngac_contract::{HttpNgacClient, ResourceRegistry};
+use ngac_contract::HttpNgacClient;
 
-/// 按 namespace 构建资源注册表（与 main.rs 受保护路由一致）：WZ 的 service 路由为
-/// 2 段风格（/service/invoice-sync/list）且实体直接挂 service 根，必须加载
-/// with_wz_defaults（含 invoice-sync/receipt-sync 服务根别名键），否则 resolve
-/// 返回 None → map_resource 回退把 /service/invoice-sync/list 解析成 list:0 → 403。
-fn ngac_resource_registry() -> ResourceRegistry {
-    let reg = ResourceRegistry::new().with_alioth_defaults();
-    if std::env::var("NAMESPACE")
-        .unwrap_or_default()
-        .eq_ignore_ascii_case("WZ")
-    {
-        reg.with_wz_defaults()
-    } else {
-        reg
-    }
-}
-use serde::Deserialize;
 use sqlx::PgPool;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
-
-/// 测试用 EC P-256 公钥（PKCS#8 PEM），供 `new_without_pool()` 与集成测试使用。
-const TEST_SSO_JWT_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
-\
-MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAExHBYWD4VZBXSBjQIgcMUKbtHGEV3
-\
-NK6CQd0RxdS3yLGgsXJ1XqdLJwuPvErVIsSI3ywGfDHPPrqmuN53XjRBZg==
-\
------END PUBLIC KEY-----";
-
-/// PDP (Policy Decision Point) error types.
-///
-/// Errors that can occur during PDP communication, including token validation,
-/// network failures, and invalid responses.
-#[derive(Debug)]
-pub enum PdpError {
-    /// JWT token decoding or validation failed
-    TokenDecodeError(String),
-    /// Network error during PDP communication
-    NetworkError(String),
-    /// Invalid response format from PDP
-    InvalidResponse(String),
-    /// PDP service unavailable
-    PdpUnavailable(String),
-}
-
-impl std::fmt::Display for PdpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PdpError::TokenDecodeError(reason) => write!(f, "Token decode failed: {}", reason),
-            PdpError::NetworkError(reason) => write!(f, "Network error: {}", reason),
-            PdpError::InvalidResponse(reason) => write!(f, "Invalid PDP response: {}", reason),
-            PdpError::PdpUnavailable(reason) => write!(f, "PDP unavailable: {}", reason),
-        }
-    }
-}
-
-impl std::error::Error for PdpError {}
-
-/// JWT Claims structure for authentication.
-///
-/// Extracted from the Authorization header's Bearer token.
-/// Contains user identity and token metadata.
-///
-/// # Fields
-///
-/// * `sub` - Subject (user ID) from JWT
-/// * `exp` - Expiration timestamp (Unix seconds)
-/// * `iat` - Issued-at timestamp (Unix seconds)
-/// * `email` - User email address (optional, for audit logging)
-///
-/// # Example
-///
-/// ```json
-/// {
-///   "sub": "550e8400-e29b-41d4-a716-446655440000",
-///   "exp": 1234567890,
-///   "iat": 1234567800,
-///   "email": "user@example.com"
-/// }
-/// ```
-#[derive(Debug, Deserialize, Clone)]
-pub struct Claims {
-    /// Subject (user ID) from JWT
-    pub sub: String,
-    /// Expiration time (Unix timestamp in seconds)
-    pub exp: usize,
-    /// Issued at (Unix timestamp in seconds)
-    pub iat: usize,
-    /// User email address for audit logging (defaults to empty string)
-    #[serde(default)]
-    pub email: String,
-    /// Username for display
-    #[serde(default)]
-    pub username: String,
-    /// Session token linking this token to an SSO session.
-    /// When present, the PEP validates session revocation status.
-    #[serde(default)]
-    pub sid: String,
-    /// Issuer（必须与 SSO `oidc_issuer` 一致），用于防令牌错投。
-    #[serde(default)]
-    pub iss: String,
-    /// Audience（第一方场景 == issuer），验证方必须校验命中自身预期值。
-    #[serde(default)]
-    pub aud: String,
-    /// OAuth scope（空格分隔）；client_credentials 服务令牌携带其子集。
-    #[serde(default)]
-    pub scope: String,
-    /// 服务令牌主体：api_clients.fk_service_user（auth_users 服务用户 id）。
-    /// 自然人令牌为 0。服务令牌以此作为 NGAC PDP 决策主体（openapi-external-access）。
-    #[serde(default)]
-    #[serde(with = "common::serde_zuid")]
-    pub svc_user_id: i64,
-    /// standalone token_version（fix-sso-noauth-removal）：standalone 登录 token
-    /// 携带（Some）；SSO/服务令牌无此声明（None）。PEP 对 Some 值比对
-    /// `standalone_users.token_version`——logout bump 后旧 token 即时失效。
-    #[serde(default)]
-    pub tv: Option<i64>,
-}
 
 /// NGAC (Next Generation Access Control) Policy Enforcer.
 ///
@@ -268,7 +163,7 @@ impl NgacEnforcer {
             issuer: "http://localhost:9002".to_string(),
             audience: "http://localhost:9002".to_string(),
             public_noauth_paths: HashSet::new(),
-            resource_registry: Some(Arc::new(ngac_resource_registry())),
+            resource_registry: Some(Arc::new(platform_resource_registry())),
         }
     }
 
@@ -287,7 +182,7 @@ impl NgacEnforcer {
             issuer: "http://localhost:9002".to_string(),
             audience: "http://localhost:9002".to_string(),
             public_noauth_paths: HashSet::new(),
-            resource_registry: Some(Arc::new(ngac_resource_registry())),
+            resource_registry: Some(Arc::new(platform_resource_registry())),
         }
     }
 
@@ -306,7 +201,7 @@ impl NgacEnforcer {
             issuer: "http://localhost:9002".to_string(),
             audience: "http://localhost:9002".to_string(),
             public_noauth_paths: HashSet::new(),
-            resource_registry: Some(Arc::new(ngac_resource_registry())),
+            resource_registry: Some(Arc::new(platform_resource_registry())),
         }
     }
 
@@ -335,10 +230,10 @@ impl NgacEnforcer {
     }
 }
 
-/// PDP 检查请求 / 响应类型已从 ngac-contract crate 导入。
-/// 本地保留类型别名以便测试代码兼容。
-pub type PdpCheckRequest = ngac_contract::PdpCheckRequest;
-pub type PdpCheckResponse = ngac_contract::PdpCheckResponse;
+/// PDP 检查请求/响应与 `Claims`/`PdpError` 经 re-export 保持原公开路径
+/// （实现已迁 `pep::pdp_client` / `pep::jwt`；评审候选 5 内部 seam 分缝，2026-10-10）。
+pub use super::jwt::Claims;
+pub use super::pdp_client::{PdpCheckRequest, PdpCheckResponse, PdpError};
 
 impl<S, B> Transform<S, ServiceRequest> for NgacEnforcer
 where
@@ -370,282 +265,6 @@ where
     }
 }
 
-/// Decode JWT token and extract claims.
-///
-/// 优先通过 SSO JWKS（按 token header `kid` 选密钥）验证；JWKS 不可用或缺失对应
-/// 密钥时，回退到静态配置的公钥（若存在）。`jwks_client` 为 None 时直接使用静态公钥。
-/// 除 `exp` 外，强制校验 `iss` 与 `aud`：jsonwebtoken 10 的 `set_issuer`/`set_audience`
-/// 为条件校验（claim 缺失即跳过），故 decode 成功后显式比对——`iss`/`aud` 必须存在
-/// 且等于预期绑定值，缺失或不匹配 → 401（防令牌跨部署/服务错投被接受）。
-async fn decode_jwt_token(
-    jwks_client: Option<&SsoJwksClient>,
-    fallback_keys: &[&[u8]],
-    token: &str,
-    issuer: &str,
-    audience: &str,
-) -> Result<Claims, PdpError> {
-    let mut validation = Validation::new(Algorithm::ES256);
-    validation.validate_exp = true;
-    validation.set_issuer(&[issuer]);
-    validation.set_audience(&[audience]);
-
-    let decoding_key = match jwks_client {
-        Some(client) => {
-            let kid = SsoJwksClient::token_kid(token);
-            match client.decoding_key(&kid).await {
-                Ok(key) => Some(key),
-                // 仅 SSO 不可用（网络/HTTP/解析失败）回退静态公钥（可用性）；
-                // kid 未命中 / 密钥不支持是吊销或配置信号，fail-closed 拒绝
-                // （M69 审计 P3：回退会掩盖已吊销 key 的令牌）。
-                Err(JwksError::FetchFailed(e)) => {
-                    log::debug!("JWKS 不可用，回退静态公钥: {e}");
-                    None
-                }
-                Err(e) => {
-                    return Err(PdpError::TokenDecodeError(format!(
-                        "JWKS 验证失败（fail-closed）: {e}"
-                    )))
-                }
-            }
-        }
-        None => None,
-    };
-
-    let claims = match decoding_key {
-        // JWKS 命中 → 单钥验证（kid 已选钥）
-        Some(key) => {
-            decode::<Claims>(token, &key, &validation)
-                .map_err(|e| PdpError::TokenDecodeError(e.to_string()))?
-                .claims
-        }
-        // 无 JWKS / JWKS 不可用 → 静态回退（active + prev 依次尝试，轮换窗口旧钥可验）
-        None => verify_token_with_keys(fallback_keys, token, &validation)?,
-    };
-
-    // 显式强制 iss/aud（jsonwebtoken 10 的 set_* 仅条件校验）：声明缺失或不匹配
-    // → 视为无效令牌（401），杜绝「缺 aud/iss 声明跳过绑定校验」的错投路径。
-    if claims.iss.is_empty() || claims.iss != issuer {
-        return Err(PdpError::TokenDecodeError(format!(
-            "iss claim missing or mismatch: expected '{}'",
-            issuer
-        )));
-    }
-    if claims.aud.is_empty() || claims.aud != audience {
-        return Err(PdpError::TokenDecodeError(format!(
-            "aud claim missing or mismatch: expected '{}'",
-            audience
-        )));
-    }
-
-    Ok(claims)
-}
-
-/// 静态回退多 key 验签：active + prev 依次尝试，任一把成功即接受；
-/// 全部失败返回第一个错误（保持单钥错误语义），空列表返回明确错误。
-fn verify_token_with_keys(
-    keys: &[&[u8]],
-    token: &str,
-    validation: &Validation,
-) -> Result<Claims, PdpError> {
-    let mut first_err: Option<PdpError> = None;
-    for key in keys {
-        let decoding_key = match DecodingKey::from_ec_pem(key) {
-            Ok(dk) => dk,
-            Err(e) => {
-                if first_err.is_none() {
-                    first_err = Some(PdpError::TokenDecodeError(e.to_string()));
-                }
-                continue;
-            }
-        };
-        match decode::<Claims>(token, &decoding_key, validation) {
-            Ok(td) => return Ok(td.claims),
-            Err(e) => {
-                if first_err.is_none() {
-                    first_err = Some(PdpError::TokenDecodeError(e.to_string()));
-                }
-            }
-        }
-    }
-    Err(first_err.unwrap_or_else(|| {
-        PdpError::TokenDecodeError("no static fallback public key configured".to_string())
-    }))
-}
-
-/// 校验 SSO 会话是否仍处于活跃状态。
-///
-/// 仅当 JWT 携带 `sid`（SSO 会话令牌）时执行；旧版未绑定会话的 token
-/// 跳过检查（向后兼容）。会话状态从 `isahl_auth.sso_sessions` 读取，
-/// 已吊销/过期/不存在的会话视为失效，返回 false。
-/// `expires_at` 为 not null 列：本地直接校验过期，不依赖 SSO 定时任务
-/// 翻转 status（M69 审计 P3：过期窗口内旧 token 仍被接受）。
-async fn is_session_active(pool: &PgPool, sid: &str) -> bool {
-    let result = sqlx::query_as::<_, (String,)>(
-        "SELECT status FROM isahl_auth.sso_sessions \
-         WHERE session_token = $1 AND expires_at > NOW() LIMIT 1",
-    )
-    .bind(sid)
-    .fetch_optional(pool)
-    .await;
-
-    match result {
-        Ok(Some((status,))) => status == "active",
-        // 会话不存在或查询失败：保守地视为失效，拒绝请求。
-        Ok(None) | Err(_) => false,
-    }
-}
-
-/// 远程调用 SSO NGAC PDP 决策端点
-/// 通过 HTTP 调用 SSO 的 /api/ngac/decide 接口，消除编译时耦合
-async fn call_pdp_remote(
-    ngac_client: &HttpNgacClient,
-    auth_token: &str,
-    user_id: i64,
-    resource: &str,
-    action: &str,
-) -> Result<bool, PdpError> {
-    let request = ngac_contract::PdpCheckRequest {
-        user_id,
-        resource: resource.to_string(),
-        action: action.to_string(),
-    };
-
-    let response = ngac_client
-        .decide(&request, auth_token)
-        .await
-        .map_err(|e| {
-            common::telemetry::error!("NGAC remote decision failed: {}", e);
-            PdpError::NetworkError(e.to_string())
-        })?;
-
-    Ok(response.permitted)
-}
-
-/// NGAC 审计主体标识（fix-ngac-audit-subject-identity）：**username 优先**；
-/// 缺失/空 → `user:{user_id}`（保留唯一性，禁止跨主体共享常量占位）。
-/// 服务令牌（`sub=client:*`）以 client 标识为主体。
-fn resolve_audit_subject(
-    username: &str,
-    user_id: i64,
-    is_service_token: bool,
-    service_id: &str,
-) -> String {
-    // 服务令牌主体 = client 标识（区别于自然人 username 空间）；
-    // 自然人主体走跨审计面唯一实现（common::audit::resolve_subject）。
-    if is_service_token && !service_id.is_empty() {
-        return service_id.to_string();
-    }
-    common::audit::resolve_subject(username, user_id)
-}
-
-/// 授权审计 fire-and-forget（NGAC_SPEC §8「每个决策产生审计（fire-and-forget，
-/// 量级 = 请求率）」+ SECURITY_SPEC §11.2）：写库不阻塞请求响应，写入失败仅 telemetry
-/// 记录、不改变响应结果。「已决策未落库」丢失窗口见 SECURITY_SPEC §11.2。
-///
-/// 主体标识 = `subject`（username 优先，回落 `user:{id}`，规则见 `resolve_audit_subject`）；
-/// email 属联系方式，存在时随 `metadata.email` 保留（不作为标识）。
-fn spawn_audit_event(
-    pool: PgPool,
-    user_id: i64,
-    subject: &str,
-    email: &str,
-    resource: &str,
-    action: &str,
-    decision: AuditDecision,
-) {
-    let subject = subject.to_string();
-    let resource = resource.to_string();
-    let action = action.to_string();
-    let metadata = if email.is_empty() {
-        serde_json::json!({})
-    } else {
-        serde_json::json!({ "email": email })
-    };
-    tokio::spawn(async move {
-        if let Err(e) = record_audit_event_with_metadata(
-            &pool, user_id, &subject, &resource, &action, &decision, metadata,
-        )
-        .await
-        {
-            warn!("NGAC audit event write failed: {}", e);
-        }
-    });
-}
-
-/// Map HTTP method to action string
-fn method_to_action(method: &str) -> &'static str {
-    match method {
-        "GET" => "read",
-        "POST" => "create",
-        "PUT" | "PATCH" => "update",
-        "DELETE" => "delete",
-        _ => "read",
-    }
-}
-
-/// Map HTTP request path to NGAC resource string in `type:id` format.
-///
-/// All resources are normalized to two segments: `{type}:{id}`.
-/// Collection-level operations (list/create) use `id = 0`.
-///
-/// Examples:
-/// - /api/schemas -> schema:0
-/// - /api/schemas/123 -> schema:123
-/// - /api/schemas/123/export -> schema:123
-/// - /api/collections -> collection:0
-/// - /api/collections/abc -> collection:abc
-/// - /api/product -> product:0
-/// - /api/product/42 -> product:42
-fn map_resource(path: &str) -> String {
-    let stripped = path.trim_start_matches("/api/").trim_start_matches('/');
-    let parts: Vec<&str> = stripped.split('/').collect();
-    if parts.is_empty() || parts[0].is_empty() {
-        return "api:0".to_string();
-    }
-
-    // /api/service/{svc}/{entity}[/{id}]：entity 段为资源类型（registry 未注册的
-    // service 实体也按实体名推导，而非整路径 fallback 出 service_xxx 伪类型）。
-    // 与 scope 推导（PEP scope 校验）一致，保证 PDP 决策与 scope 校验同实体。
-    if parts.len() >= 3 && parts[0] == "service" {
-        let entity = parts[2].replace('-', "_");
-        let id = parts
-            .get(3)
-            .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(0);
-        return format!("{}:{}", entity, id);
-    }
-
-    // OpenAPI 管理/统计面恒定资源（refactor-openapi-admin-ngac-pdp，迁移 029）：
-    // - usage 系列（统计聚合，全 GET）→ openapi_analytics:0
-    // - scope-catalog / outbound（出向管理 CRUD）→ openapi_admin:0
-    // 文档路径（openapi.json/openapi/openapi/）在 is_openapi_doc_path 提前豁免，
-    // 不到这里。
-    if parts[0] == "openapi" {
-        match parts.get(1).copied() {
-            Some("usage") => return "openapi_analytics:0".to_string(),
-            Some("scope-catalog") | Some("outbound") => {
-                return "openapi_admin:0".to_string();
-            }
-            _ => {}
-        }
-    }
-
-    let resource_type = parts[0].replace("-", "_");
-    if parts.len() == 1 || parts[1].is_empty() {
-        return format!("{}:0", resource_type);
-    }
-
-    // SSO PDP requires the resource ID to be an integer. If the second path
-    // segment is numeric, use it as the resource ID (sub-paths like /export
-    // are ignored because NGAC policies are object-centric). If it is not
-    // numeric, treat it as a sub-resource qualifier so that
-    // /api/schedule/overview becomes schedule_overview:0 instead of the
-    // invalid schedule:overview.
-    match parts[1].parse::<i64>() {
-        Ok(id) => format!("{}:{}", resource_type, id),
-        Err(_) => format!("{}_{}:0", resource_type, parts[1].replace("-", "_")),
-    }
-}
 pub struct NgacEnforcerService<S> {
     service: Rc<S>,
     pool: Option<PgPool>,
@@ -732,6 +351,9 @@ where
             // 用于 auth/login、auth/register 等需要在登录前访问的端点
             // 段边界匹配（SECURITY_SPEC §3.4 豁免最小化）：`/api/auth` 只豁免
             // 自身与 `/api/auth/...`，不得匹配 `/api/authx` 等非豁免前缀。
+            //
+            // 集合 = **静态**（组合根一次求值）平台自有面 ∪ 各 ns 自持声明
+            // （`Gateway/host/src/main.rs :: platform_public_noauth_paths()`）；无运行期可变面。
             let is_noauth_path = public_noauth_paths.iter().any(|p| {
                 let path = req.path();
                 path == p || path.starts_with(&format!("{}/", p))
@@ -772,60 +394,29 @@ where
                 // 服务令牌命中 noauth 路径 → 继续下方 JWT 校验 + PDP 流程
             }
 
-            // 从 Authorization header 或 httpOnly Cookie 获取 token
-            // SSO 登录通过 Cookie 下发 access_token，前端跨域/跨端口请求时
-            // 也依赖 Cookie 自动携带，因此 PEP 需要同时支持两种来源。
-            let token = match req.headers().get("Authorization") {
-                Some(value) => {
-                    if let Ok(value_str) = value.to_str() {
-                        if let Some(token) = value_str.strip_prefix("Bearer ") {
-                            token.to_string()
-                        } else {
-                            warn!("Invalid authorization header format");
-                            return Ok(req.into_response(
-                                HttpResponse::Unauthorized()
-                                    .json(serde_json::json!({
-                                        "error": "Invalid authorization header format"
-                                    }))
-                                    .map_into_right_body(),
-                            ));
-                        }
-                    } else {
-                        return Ok(req.into_response(
-                            HttpResponse::Unauthorized()
-                                .json(serde_json::json!({
-                                    "error": "Invalid authorization header"
-                                }))
-                                .map_into_right_body(),
-                        ));
-                    }
-                }
+            // 令牌提取 + 来源判定：**委托 `common::csrf::resolve_credential`（唯一实现）**。
+            // change implement-csrf-protection design §3：优先级 = scoped cookie（`x-auth-cookie-scope`
+            // 前缀 cookie）→ Bearer → 环境 cookie（`access_token`）；本处曾内联 Bearer→cookie
+            // 两分支，与 `common::middleware` / SSO `jwt::extract_token` 构成三份互相冲突的
+            // 实现（spec-audit F1），已删除。来源必须与令牌一同取出——它是下方 CSRF 豁免的
+            // 唯一判据（Bearer ⇒ 豁免；cookie ⇒ 校验），MUST NOT 另立「存在某头即豁免」启发式。
+            let (token, credential_source) = match common::csrf::resolve_credential(req.request()) {
+                Some(resolved) => resolved,
                 None => {
-                    // 没有 Authorization header，尝试从 Cookie 获取
-                    match req.cookie("access_token") {
-                        Some(cookie) => {
-                            let value = cookie.value().trim();
-                            if value.is_empty() {
-                                return Ok(req.into_response(
-                                    HttpResponse::Unauthorized()
-                                        .json(serde_json::json!({
-                                            "error": "Missing authorization header"
-                                        }))
-                                        .map_into_right_body(),
-                                ));
-                            }
-                            value.to_string()
-                        }
-                        None => {
-                            return Ok(req.into_response(
-                                HttpResponse::Unauthorized()
-                                    .json(serde_json::json!({
-                                        "error": "Missing authorization header"
-                                    }))
-                                    .map_into_right_body(),
-                            ));
-                        }
-                    }
+                    // 错误响应语义与旧内联分支逐字保持一致（401 + 三分类 message）：
+                    // 无 Authorization 头 → 缺凭证；头存在但非 UTF-8 → 头非法；
+                    // 头存在但非 `Bearer ` 形态 → 格式非法。
+                    let message = match req.headers().get("Authorization") {
+                        None => "Missing authorization header",
+                        Some(h) if h.to_str().is_err() => "Invalid authorization header",
+                        Some(_) => "Invalid authorization header format",
+                    };
+                    warn!("{}", message);
+                    return Ok(req.into_response(
+                        HttpResponse::Unauthorized()
+                            .json(serde_json::json!({ "error": message }))
+                            .map_into_right_body(),
+                    ));
                 }
             };
 
@@ -951,6 +542,26 @@ where
             } else {
                 user_id_str.parse::<i64>().unwrap_or(0)
             };
+
+            // ── CSRF 门（change implement-csrf-protection design §4；Gateway PEP 插入点）──
+            // 次序铁律：校验 MUST 在**鉴权成功之后**求值——至此令牌提取/解码、
+            // token_version、会话吊销、服务客户端有效性四类 401 判定已全部通过
+            // ⇒ 失效会话的写请求仍为 401，MUST NOT 上移（上移会把 401 变成 403，
+            // 破坏前端 `api-auth-401` 的刷新/登出语义）。
+            // 守卫（开关 ∧ 非安全方法 ∧ 非豁免路径）与判据（Bearer 豁免 / cookie
+            // 常量时间 double-submit 比较）都在单源实现内部；失败体 = 平铺
+            // `{code,message}`（`ErrorResponse`，MUST NOT 用旧式嵌套体）。
+            if let Some(csrf_response) = common::csrf::csrf_gate(req.request(), credential_source) {
+                warn!(
+                    "CSRF rejected: user={} method={} path={} source={:?}",
+                    user_id_str,
+                    req.method(),
+                    req.path(),
+                    credential_source
+                );
+                return Ok(req.into_response(csrf_response.map_into_right_body()));
+            }
+
             // 审计主体标识（fix-ngac-audit-subject-identity）：username 优先，
             // 回落 user:{id}；服务令牌以 client 标识为主体。
             let audit_subject = resolve_audit_subject(
@@ -1027,23 +638,20 @@ where
                         // registry 未注册的 service 实体路径（如 /api/service/measurement/unit）：
                         // 从 entity 段（/service/{svc}/{entity}[/{id}]）推导 scope 实体名，
                         // 而非整路径 fallback（避免 service_measurement 伪类型）。
-                        let stripped = req.path().trim_start_matches("/api/");
-                        let parts: Vec<&str> = stripped.split('/').collect();
-                        if parts.len() >= 3 && parts[0] == "service" {
-                            Some(parts[2].replace('-', "_"))
-                        } else {
+                        // 派生单源 = common::openapi_scope::service_entity_from_path（文档
+                        // 对账测试同源消费）；其余路径回退 map_resource 首段。
+                        common::openapi_scope::service_entity_from_path(req.path()).or_else(|| {
                             map_resource(req.path())
                                 .split(':')
                                 .next()
                                 .map(|s| s.to_string())
-                        }
+                        })
                     });
                 if let Some(rt) = resolved_for_scope {
-                    let required = format!("{}:{}", action, rt);
-                    let has_scope = claims
-                        .scope
-                        .split_whitespace()
-                        .any(|s| s == required || s == format!("*:{}", rt) || s == "*");
+                    // scope 文法/覆盖判定单源：common::openapi_scope（签发面校验、
+                    // 文档 conformance 测试同源；等价旧内联 s==required||*:{rt}||*）。
+                    let required = common::openapi_scope::required_scope(action, &rt);
+                    let has_scope = common::openapi_scope::covers_any(&claims.scope, &required);
                     if !has_scope {
                         warn!(
                             "Scope insufficient: user={} required={} has={}",
@@ -1056,6 +664,34 @@ where
                                     "reason": format!(
                                         "Required scope '{}' not granted (has: '{}')",
                                         required, claims.scope
+                                    )
+                                }))
+                                .map_into_right_body(),
+                        ));
+                    }
+                }
+
+                // 产品投影判定（change `wire-openapi-product-projection`）：**scope 之后**追加，
+                // 收窄方向单调——投影集非空时投影外业务端点 403 NOT_IN_PRODUCT_SET；
+                // 投影集为空/含 `*` ⇒ 跳过（无产品数据的 ns 行为不变）。
+                // 判定单源 = `openapi::projection`（文档面同源消费）；DB 缺失/查询失败 ⇒ 全量（不阻断）。
+                if let Some(db) = pool.as_ref() {
+                    let projection = crate::openapi::projection::global_cache().get(db).await;
+                    if !projection.allows(req.path()) {
+                        // `req` 在 `into_response` 中被移动 ⇒ 先取出展示用值
+                        let rejected_path = req.path().to_string();
+                        let status_line = projection.status_line();
+                        warn!(
+                            "Product projection: path not exposed by any product: user={} path={} ({})",
+                            user_id_str, rejected_path, status_line
+                        );
+                        return Ok(req.into_response(
+                            HttpResponse::Forbidden()
+                                .json(serde_json::json!({
+                                    "error": "NOT_IN_PRODUCT_SET",
+                                    "reason": format!(
+                                        "Path '{}' is not exposed by any OpenAPI product ({})",
+                                        rejected_path, status_line
                                     )
                                 }))
                                 .map_into_right_body(),
@@ -1170,8 +806,11 @@ where
                 }
             };
 
+            // 义务随判决下发（wire-obligations-into-pep-audit）：审计行落
+            // obligations_triggered——与 SSO 决策审计同源对称（§2.6）。
+            let decide_outcome = decide_outcome.map(|resp| (resp.permitted, resp.obligations));
             match decide_outcome {
-                Ok(true) => {
+                Ok((true, obligations)) => {
                     if let (Some(visible), Some(resolved)) = (visible_ids, resolved.as_ref()) {
                         request_context
                             .set_visible_resource_ids(resolved.type_name.clone(), visible.clone());
@@ -1202,11 +841,14 @@ where
                         spawn_audit_event(
                             db_pool.clone(),
                             user_id_i64,
-                            &audit_subject,
-                            &user_email,
-                            &resource,
-                            action,
-                            AuditDecision::Permit,
+                            AuditSpawn {
+                                subject: &audit_subject,
+                                email: &user_email,
+                                resource: &resource,
+                                action,
+                                decision: AuditDecision::Permit,
+                                obligations,
+                            },
                         );
                     }
                     // 列级授权注入（所有 read 动作：列表 resource_id==0 与详情
@@ -1233,17 +875,20 @@ where
                         AuditScope::actor_scope(audit_subject.clone(), svc.call(req)).await?;
                     Ok(response.map_into_left_body())
                 }
-                Ok(false) => {
+                Ok((false, obligations)) => {
                     warn!("Access denied for user={}", user_id_str);
                     if let Some(db_pool) = &pool {
                         spawn_audit_event(
                             db_pool.clone(),
                             user_id_i64,
-                            &audit_subject,
-                            &user_email,
-                            &resource,
-                            action,
-                            AuditDecision::Deny,
+                            AuditSpawn {
+                                subject: &audit_subject,
+                                email: &user_email,
+                                resource: &resource,
+                                action,
+                                decision: AuditDecision::Deny,
+                                obligations,
+                            },
                         );
                     }
                     Ok(req.into_response(
@@ -1367,209 +1012,5 @@ mod tests {
     fn test_ngac_enforcer_new() {
         let enforcer = NgacEnforcer::new_without_pool();
         assert!(enforcer.pool.is_none());
-    }
-
-    #[test]
-    fn test_pdp_check_request_serialize() {
-        let request = PdpCheckRequest {
-            user_id: 42,
-            resource: "document:123".to_string(),
-            action: "read".to_string(),
-        };
-
-        let json = serde_json::to_string(&request).unwrap();
-        // serde_zuid 迁移：user_id 序列化为字符串（双向兼容，SSO 端同构 deserialize）
-        assert!(json.contains("\"user_id\":\"42\""));
-        assert!(json.contains("\"resource\":\"document:123\""));
-        assert!(json.contains("\"action\":\"read\""));
-    }
-
-    #[test]
-    fn test_pdp_check_response_deserialize() {
-        let json = r#"{
-            "permitted": true,
-            "reason": "Access granted"
-        }"#;
-
-        let response: PdpCheckResponse = serde_json::from_str(json).unwrap();
-        assert!(response.permitted);
-        assert_eq!(response.reason, "Access granted");
-    }
-
-    #[test]
-    fn test_pdp_check_response_deserialize_deny() {
-        let json = r#"{
-            "permitted": false,
-            "reason": "Access denied by policy"
-        }"#;
-
-        let response: PdpCheckResponse = serde_json::from_str(json).unwrap();
-        assert!(!response.permitted);
-        assert_eq!(response.reason, "Access denied by policy");
-    }
-
-    #[test]
-    fn test_pdp_check_request_missing_fields() {
-        let json = r#"{
-            "user_id": 42
-        }"#;
-
-        let result: Result<PdpCheckRequest, _> = serde_json::from_str(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_method_to_action_mapping() {
-        assert_eq!(method_to_action("GET"), "read");
-        assert_eq!(method_to_action("POST"), "create");
-        assert_eq!(method_to_action("PUT"), "update");
-        assert_eq!(method_to_action("PATCH"), "update");
-        assert_eq!(method_to_action("DELETE"), "delete");
-        assert_eq!(method_to_action("OPTIONS"), "read"); // Default
-    }
-
-    #[test]
-    fn test_claims_deserialize() {
-        let json = r#"{
-            "sub": "550e8400-e29b-41d4-a716-446655440000",
-            "exp": 1234567890,
-            "iat": 1234567800
-        }"#;
-
-        let claims: Claims = serde_json::from_str(json).unwrap();
-        assert_eq!(claims.sub, "550e8400-e29b-41d4-a716-446655440000");
-        assert_eq!(claims.exp, 1234567890);
-        assert_eq!(claims.iat, 1234567800);
-    }
-
-    #[test]
-    fn test_pdp_error_display() {
-        let err = PdpError::TokenDecodeError("Invalid token".to_string());
-        assert!(err.to_string().contains("Token decode failed"));
-
-        let err = PdpError::NetworkError("Connection refused".to_string());
-        assert!(err.to_string().contains("Network error"));
-
-        let err = PdpError::InvalidResponse("JSON parse error".to_string());
-        assert!(err.to_string().contains("Invalid PDP response"));
-
-        let err = PdpError::PdpUnavailable("Service down".to_string());
-        assert!(err.to_string().contains("PDP unavailable"));
-    }
-
-    #[test]
-    fn test_map_resource_schemas_list() {
-        let resource = map_resource("/api/schemas");
-        assert_eq!(resource, "schemas:0");
-    }
-
-    #[test]
-    fn test_map_resource_schema_get() {
-        let resource = map_resource("/api/schemas/123e4567-e89b-12d3-a456-426614174000");
-        assert_eq!(resource, "schemas_123e4567_e89b_12d3_a456_426614174000:0");
-    }
-
-    #[test]
-    fn test_map_resource_schema_export() {
-        let resource = map_resource("/api/schemas/123e4567-e89b-12d3-a456-426614174000/export");
-        assert_eq!(resource, "schemas_123e4567_e89b_12d3_a456_426614174000:0");
-    }
-
-    #[test]
-    fn test_map_resource_collections() {
-        let resource = map_resource("/api/collections");
-        assert_eq!(resource, "collections:0");
-    }
-
-    #[test]
-    fn test_map_resource_collection_item() {
-        let resource = map_resource("/api/collections/abc-123");
-        assert_eq!(resource, "collections_abc_123:0");
-    }
-
-    #[test]
-    fn test_map_resource_product() {
-        let resource = map_resource("/api/product");
-        assert_eq!(resource, "product:0");
-    }
-
-    #[test]
-    fn test_map_resource_product_item() {
-        let resource = map_resource("/api/product/42");
-        assert_eq!(resource, "product:42");
-    }
-
-    #[test]
-    fn test_map_resource_datasource() {
-        let resource = map_resource("/api/data-sources");
-        assert_eq!(resource, "data_sources:0");
-    }
-
-    #[test]
-    fn test_map_resource_non_schema() {
-        let resource = map_resource("/api/other/path");
-        assert_eq!(resource, "other_path:0");
-    }
-
-    #[test]
-    fn test_map_resource_workspace_overview() {
-        let resource = map_resource("/api/schedule/overview");
-        assert_eq!(resource, "schedule_overview:0");
-
-        let resource = map_resource("/api/global/overview");
-        assert_eq!(resource, "global_overview:0");
-    }
-
-    #[test]
-    fn test_verify_token_with_keys_no_keys() {
-        let validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
-        let err = verify_token_with_keys(&[], "not-a-token", &validation);
-        assert!(matches!(err, Err(PdpError::TokenDecodeError(_))));
-    }
-
-    #[test]
-    fn test_verify_token_with_keys_bad_pem() {
-        let validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
-        let bad = b"-----BEGIN PUBLIC KEY-----\nnot-a-key\n-----END PUBLIC KEY-----";
-        let err = verify_token_with_keys(&[bad], "not-a-token", &validation);
-        assert!(matches!(err, Err(PdpError::TokenDecodeError(_))));
-    }
-
-    #[test]
-    fn test_verify_token_with_keys_second_key_used() {
-        // 第一把钥解析失败但第二把是合法公钥：验证不因第一把坏钥短路（走第二把）
-        let validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::ES256);
-        let bad = b"-----BEGIN PUBLIC KEY-----\nnot-a-key\n-----END PUBLIC KEY-----";
-        let err =
-            verify_token_with_keys(&[bad, TEST_SSO_JWT_PUBLIC_KEY], "not-a-token", &validation);
-        // token 无效（非坏钥导致），错误应为 decode 类而非坏钥短路
-        assert!(matches!(err, Err(PdpError::TokenDecodeError(_))));
-    }
-
-    #[test]
-    fn audit_subject_prefers_username_over_email() {
-        // 唯一性标识 = username；即使 email 可用也不作为主体（fix-ngac-audit-subject-identity）
-        assert_eq!(resolve_audit_subject("alice", 42, false, "42"), "alice");
-    }
-
-    #[test]
-    fn audit_subject_falls_back_to_unique_user_id() {
-        // username 缺失/空 → user:{id}（保唯一，不同用户不折叠）
-        assert_eq!(resolve_audit_subject("", 42, false, "42"), "user:42");
-        assert_eq!(resolve_audit_subject("   ", 42, false, "42"), "user:42");
-        assert_ne!(
-            resolve_audit_subject("", 42, false, "42"),
-            resolve_audit_subject("", 43, false, "43"),
-            "回落值必须对每个主体唯一"
-        );
-    }
-
-    #[test]
-    fn audit_subject_service_token_uses_client_identity() {
-        // 服务令牌主体为 client 标识（区别于自然人 username 空间）
-        assert_eq!(
-            resolve_audit_subject("", 7, true, "client:demo"),
-            "client:demo"
-        );
     }
 }

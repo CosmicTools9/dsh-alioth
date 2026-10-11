@@ -40,5 +40,7 @@ tracks:
             args: ["scripts/check/check-prototype-render.ts", "--changed", "--fail"]
             timeout_sec: 300
 source:
-  content_sha256: 6b93afa102dc851715133de58c2e18812921150640d76e5ce88b07a76260e2cb
+  content_sha256: 4cd351522b6129a6dd8f7fc9fdc9036d5fb20c9f39f3777ef495fa5aa2ee1667
+  # 2026-10-08 重记：SKILL.md 增「App 壳 Tab 表单源（MUST）」——import 派生件
+  # llm-tsx/generated/app-tabs（禁手写三表）——derive-app-shell-tabs-from-declaration
   # 2026-09-24 重记：SKILL.md 经 ee2bf5b72a 禁令文本指针化，typed Track/Step/gate 内容未变（join-loop 收尾核验）

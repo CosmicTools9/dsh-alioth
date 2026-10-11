@@ -48,10 +48,9 @@ macro_rules! put_update {
 async fn seed_flow(pool: &sqlx::PgPool, code: &str) -> (i64, String) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'optlock-test', 'optlock-test', 'optlock@test.local',
-                   'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'optlock-test', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)

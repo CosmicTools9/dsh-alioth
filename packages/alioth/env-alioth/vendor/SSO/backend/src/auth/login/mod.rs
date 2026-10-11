@@ -145,11 +145,10 @@ mod tests {
         );
 
         let user_id: i64 = sqlx::query_scalar(
-            "INSERT INTO isahl_auth.auth_users (name, email, password_hash, status) \
-             VALUES ($1, $2, 'argon2-placeholder', 'active') RETURNING id",
+            "INSERT INTO isahl_auth.auth_users (username, password_hash, status) \
+             VALUES ($1, 'argon2-placeholder', 'active') RETURNING id",
         )
         .bind(format!("lf_test_{}", suffix))
-        .bind(format!("lf_test_{}@example.com", suffix))
         .fetch_one(&pool)
         .await
         .expect("插入测试用户失败");

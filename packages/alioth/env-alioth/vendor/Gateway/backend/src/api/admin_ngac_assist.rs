@@ -5,10 +5,10 @@
 //! LLM 输出仅生成结构化提案；执行由前端确认后经既有 `/api/admin/ngac/*`
 //! CRUD 端点完成（服务端校验 + 策略审计照常）。
 //!
-//! 快照获取 = 进程内函数复用（design D2）：`gateway_sso::ngac::graph::graph_snapshot`
+//! 快照获取 = 进程内函数复用（design D2）：`gateway_sso::facade::ngac::graph::graph_snapshot`
 //! 与 `GET /api/admin/ngac/graph` 同一实现，零 Gateway→SSO 出站调用。
 //!
-//! 安全：admin 门控复用 `gateway_sso::admin::handlers::require_admin`（同语义唯一实现）；
+//! 安全：admin 门控复用 `gateway_sso::facade::admin::require_admin`（同语义唯一实现）；
 //! 提案校验 fail-closed——操作白名单 + 全部引用命中快照，非法项标 `invalid`
 //! 由前端禁用执行；LLM 不可用/输出不可解析 → 4xx 拒绝（不降级为自由文本建议）。
 #![cfg(feature = "sso")]
@@ -17,22 +17,13 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
-use gateway_sso::ngac::graph::{self, GraphSnapshot};
+use gateway_sso::facade::ngac::graph::{self, GraphSnapshot};
 
-use crate::api::chat_sessions::adapters::db_llm_config::DbLlmConfigAdapter;
-use crate::api::chat_sessions::ports::LlmConfigPort;
+use crate::api::chat_sessions::turn::{self, OutputContract, PromptSection, TurnSpec};
 
-/// NL 操作白名单（design D5）：边级 + 指派级；不含 UA/OA 节点结构与层级编辑。
-const OP_WHITELIST: &[&str] = &[
-    "create_association",
-    "update_association",
-    "delete_association",
-    "create_prohibition",
-    "update_prohibition",
-    "delete_prohibition",
-    "assign_ua",
-    "remove_ua_assignment",
-];
+// NL 操作白名单已收敛：**单一真相源** = `ai_agent::tools::ngac_ops::POLICY_OPS`
+//（本文件原为第三份独立声明，8 项，与工具层 6 项已分叉——change
+// `consolidate-ngac-write-path` 收敛为一处）。
 
 /// 多轮历史截断（最近 N 轮进 prompt）。
 const HISTORY_CAP: usize = 6;
@@ -58,15 +49,15 @@ pub struct NlAssistRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NlOperation {
     pub op: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub ua_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub oa_id: Option<i64>,
     /// update/delete 目标规则 id（association/prohibition）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub rule_id: Option<i64>,
     /// assign_ua / remove_ua_assignment 目标用户。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub user_id: Option<i64>,
     /// access_rights（名称数组）/ conditions / expires_at。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,9 +73,17 @@ pub struct NlOperation {
 /// 不经操作白名单执行链；id/resource_type 命中快照才透传（fail-closed）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NlFocus {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        with = "common::serde_zuid::seq",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub ua_ids: Vec<i64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        with = "common::serde_zuid::seq",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub oa_ids: Vec<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_type: Option<String>,
@@ -143,23 +142,6 @@ const SYSTEM_PROMPT: &str = r#"你是 NGAC 权限策略助手。管理员会用�
 7. conditions 仅允许 not_before/not_after（ISO8601 时间窗）；不确定就不填。
 8. 歧义（同名、不存在的实体、意图不清）→ operations 与 focus 均置空，reply 中列出澄清问题。"#;
 
-/// 从 LLM 输出提取 JSON 文本（容忍围栏/前后噪声；失败返回 None → fail-closed）。
-fn extract_json(text: &str) -> Option<&str> {
-    let trimmed = text.trim();
-    let trimmed = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed)
-        .trim();
-    let start = trimmed.find('{')?;
-    let end = trimmed.rfind('}')?;
-    if end > start {
-        Some(&trimmed[start..=end])
-    } else {
-        None
-    }
-}
-
 /// 构建注入 LLM 的紧凑快照上下文（集合级 OA 全量、实例级每类型抽样）。
 fn build_snapshot_context(snap: &GraphSnapshot, users: &[(i64, Option<String>)]) -> String {
     use std::fmt::Write;
@@ -192,7 +174,7 @@ fn build_snapshot_context(snap: &GraphSnapshot, users: &[(i64, Option<String>)])
     types.sort_unstable();
     types.dedup();
     for rt in types {
-        let oas: Vec<&gateway_sso::ngac::graph::GraphObjectAttribute> = snap
+        let oas: Vec<&gateway_sso::facade::ngac::graph::GraphObjectAttribute> = snap
             .object_attributes
             .iter()
             .filter(|o| o.resource_type.as_deref() == Some(rt))
@@ -300,7 +282,7 @@ pub fn validate_operations(
 
     for op in ops.iter_mut() {
         let mut reason: Option<String> = None;
-        if !OP_WHITELIST.contains(&op.op.as_str()) {
+        if !ai_agent::tools::ngac_ops::POLICY_OPS.contains(&op.op.as_str()) {
             reason = Some(format!("操作 {} 不在白名单内", op.op));
         }
         let need_ua = op.op.starts_with("create_")
@@ -441,43 +423,87 @@ pub fn validate_focus(
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/admin/ngac-assist")
-            .wrap(gateway_sso::auth::middleware::NgacPep::new())
+            .wrap(gateway_sso::facade::auth::NgacPep::new())
             .route("/nl-assist", web::post().to(nl_assist)),
     );
 }
 
-/// POST /api/admin/ngac-assist/nl-assist
-async fn nl_assist(
-    req: HttpRequest,
-    pool: web::Data<PgPool>,
-    state: web::Data<gateway_sso::AuthState>,
-    body: web::Json<NlAssistRequest>,
-) -> HttpResponse {
-    // admin 门控：与既有 /api/admin/* 同语义（require_admin 唯一实现）
-    let _admin_id =
-        match gateway_sso::admin::handlers::require_admin(&req, pool.get_ref(), state.get_ref())
-            .await
-        {
-            Ok(id) => id,
-            Err(resp) => return resp,
-        };
+/// 提案生成失败（wire-ngac-proposal-into-assistant D2）：HTTP 语义由调用方映射，
+/// 文本与 refactor-ngac-admin-nl-graph 的原响应逐字一致。
+#[derive(Debug)]
+pub(crate) enum ProposeError {
+    /// message 问题（400）
+    BadRequest(String),
+    /// 快照/目录查询失败（500）
+    Internal(String),
+    /// LLM 装配不可用（503）
+    LlmUnavailable,
+    /// LLM 调用/输出非法（502）
+    BadGateway(String),
+}
 
-    let message = body.message.trim().to_string();
+impl ProposeError {
+    /// → (HTTP status, error 文本)
+    fn http(&self) -> (u16, String) {
+        match self {
+            ProposeError::BadRequest(m) => (400, m.clone()),
+            ProposeError::Internal(m) => (500, m.clone()),
+            ProposeError::LlmUnavailable => (
+                503,
+                "LLM 服务不可用，提案生成失败（fail-closed）".to_string(),
+            ),
+            ProposeError::BadGateway(m) => (502, m.clone()),
+        }
+    }
+
+    /// chat 侧用户可见文案（同 `http` 文本）。
+    pub(crate) fn user_message(&self) -> String {
+        self.http().1
+    }
+
+    /// `common::authoring::AuthoringVerdict::into_http_error()` 的 `(status, body)`
+    /// → 等价变体（保判定单源；HTTP 码由 [`ProposeError::http`] 回放）。
+    ///
+    /// 逐项不阻断 ⇒ 常态不可达；保留以维持「判定构造点唯一」（change
+    /// `consolidate-authoring-channel` 的接入意图）。
+    fn from_http_error(status: u16, body: &serde_json::Value) -> Self {
+        let msg = body
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| body.to_string());
+        match status {
+            400 => ProposeError::BadRequest(msg),
+            502 => ProposeError::BadGateway(msg),
+            503 => ProposeError::LlmUnavailable,
+            _ => ProposeError::Internal(msg),
+        }
+    }
+}
+
+/// 提案生成核心（wire-ngac-proposal-into-assistant D2 抽分）：
+/// HTTP handler 与 chat 专属生成器共用同一管线（prompt/白名单/快照校验单源）。
+pub(crate) async fn propose(
+    pool: &PgPool,
+    raw_message: &str,
+    req_history: &[NlHistoryTurn],
+) -> Result<NlAssistResponse, ProposeError> {
+    let message = raw_message.trim().to_string();
     if message.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({"error": "message 不能为空"}));
+        return Err(ProposeError::BadRequest("message 不能为空".to_string()));
     }
     if message.chars().count() > 2000 {
-        return HttpResponse::BadRequest()
-            .json(serde_json::json!({"error": "message 过长（上限 2000 字符）"}));
+        return Err(ProposeError::BadRequest(
+            "message 过长（上限 2000 字符）".to_string(),
+        ));
     }
 
     // 快照（进程内唯一实现；失败 fail-closed，不返回部分上下文）
-    let snap = match graph::graph_snapshot(pool.get_ref()).await {
+    let snap = match graph::graph_snapshot(pool).await {
         Ok(s) => s,
         Err(e) => {
             log::error!("nl_assist: graph snapshot failed: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "策略图快照构建失败"}));
+            return Err(ProposeError::Internal("策略图快照构建失败".to_string()));
         }
     };
 
@@ -486,102 +512,241 @@ async fn nl_assist(
         "SELECT id, username FROM isahl_auth.auth_users WHERE is_active = true ORDER BY id LIMIT $1",
     )
     .bind(USERS_CAP)
-    .fetch_all(pool.get_ref())
+    .fetch_all(pool)
     .await
     {
         Ok(rows) => rows,
         Err(e) => {
             log::error!("nl_assist: user directory failed: {}", e);
-            return HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "用户目录查询失败"}));
+            return Err(ProposeError::Internal("用户目录查询失败".to_string()));
         }
     };
 
-    // LLM 装配（复用 chat 基础设施；不可用 fail-closed）
-    let llm = match DbLlmConfigAdapter::new(pool.get_ref().clone())
-        .load_service()
-        .await
-    {
+    // LLM 装配（turn seam 单入口：approval::llm_assist 单实现；不可用 fail-closed）
+    let llm = match turn::load_llm(pool).await {
         Ok(s) => s,
         Err(e) => {
             log::error!("nl_assist: LLM unavailable: {}", e);
-            return HttpResponse::ServiceUnavailable()
-                .json(serde_json::json!({"error": "LLM 服务不可用，提案生成失败（fail-closed）"}));
+            return Err(ProposeError::LlmUnavailable);
         }
     };
 
-    // prompt：快照 + 多轮历史（截断）+ 当前诉求
-    let mut prompt = String::with_capacity(16 * 1024);
-    prompt.push_str("== 策略图快照 ==\n");
-    prompt.push_str(&build_snapshot_context(&snap, &users));
-    let start = body.history.len().saturating_sub(HISTORY_CAP);
-    let history = &body.history[start..];
+    // prompt 分段（快照 + 多轮历史（截断）+ 当前诉求 + 收尾指令）。
+    // 逐字性：`assemble_prompt` 段间单换行分隔、标题成行——与原手工拼接逐字一致。
+    let mut sections = vec![PromptSection {
+        heading: "== 策略图快照 ==",
+        body: build_snapshot_context(&snap, &users),
+    }];
+    let start = req_history.len().saturating_sub(HISTORY_CAP);
+    let history = &req_history[start..];
     if !history.is_empty() {
-        prompt.push_str("\n== 对话历史（由旧到新）==\n");
+        // 历史段正文：每行 "<角色>: <内容>"（行尾换行，与原 `writeln_fn` 拼接一致）
+        let mut lines = String::new();
         for turn in history {
             let role = if turn.role == "user" {
                 "管理员"
             } else {
                 "助手"
             };
-            let _ = writeln_fn(&mut prompt, format_args!("{}: {}", role, turn.content));
+            let _ = writeln_fn(&mut lines, format_args!("{}: {}", role, turn.content));
         }
+        sections.push(PromptSection {
+            heading: "== 对话历史（由旧到新）==",
+            body: lines,
+        });
     }
-    let _ = writeln_fn(&mut prompt, format_args!("\n== 管理员诉求 ==\n{}", message));
-    let _ = writeln_fn(&mut prompt, format_args!("\n请输出 JSON 提案。"));
+    sections.push(PromptSection {
+        heading: "== 管理员诉求 ==",
+        body: format!("{message}\n"),
+    });
+    sections.push(PromptSection {
+        heading: "",
+        body: "请输出 JSON 提案。\n".to_string(),
+    });
 
-    let raw = match llm
-        .generate_with_system_preamble(
-            SYSTEM_PROMPT,
-            &prompt,
-            Some(0.2),
-            Some(4096),
-            None,
-            None,
-            None,
-        )
-        .await
+    let raw = match turn::run_turn(
+        &llm,
+        TurnSpec {
+            system_preamble: SYSTEM_PROMPT,
+            sections,
+            output: OutputContract::Text,
+            temperature: Some(0.2),
+            max_tokens: Some(4096),
+        },
+    )
+    .await
     {
-        Ok(text) => text,
+        Ok(outcome) => outcome.text,
         Err(e) => {
+            // `load_llm` 已拦截装配失败；此处防御性保持同一 fail-closed 语义
+            if matches!(e, turn::TurnError::Config(_)) {
+                log::error!("nl_assist: LLM unavailable: {}", e);
+                return Err(ProposeError::LlmUnavailable);
+            }
             log::error!("nl_assist: LLM call failed: {}", e);
-            return HttpResponse::BadGateway()
-                .json(serde_json::json!({"error": "LLM 调用失败（fail-closed）"}));
+            return Err(ProposeError::BadGateway(
+                "LLM 调用失败（fail-closed）".to_string(),
+            ));
         }
     };
 
     // 解析 + 校验（fail-closed：不可解析 → 拒绝，不降级为自由文本）
-    let json_text = match extract_json(&raw) {
+    let json_text = match turn::extract_json(&raw) {
         Some(t) => t,
         None => {
             log::warn!("nl_assist: LLM output not JSON (len={})", raw.len());
-            return HttpResponse::BadGateway().json(serde_json::json!({
-                "error": "LLM 输出不可解析为 JSON（fail-closed），请重述诉求"
-            }));
+            return Err(ProposeError::BadGateway(
+                "LLM 输出不可解析为 JSON（fail-closed），请重述诉求".to_string(),
+            ));
         }
     };
     let envelope: LlmEnvelope = match serde_json::from_str(json_text) {
         Ok(e) => e,
         Err(e) => {
             log::warn!("nl_assist: LLM JSON invalid: {}", e);
-            return HttpResponse::BadGateway().json(serde_json::json!({
-                "error": "LLM 输出 JSON 结构非法（fail-closed），请重述诉求"
-            }));
+            return Err(ProposeError::BadGateway(
+                "LLM 输出 JSON 结构非法（fail-closed），请重述诉求".to_string(),
+            ));
         }
     };
 
     let (operations, mut warnings) = validate_operations(envelope.operations, &snap, &users);
+    // 逐项标注结论（change consolidate-authoring-channel）：无效项**仍保留在提案里展示**
+    // ⇒ 逐项问题 MUST NOT 整体阻断（通道类型保证该语义；此处阻断判定单源，恒不触发）。
+    let authoring = operations.iter().enumerate().fold(
+        common::authoring::AuthoringVerdict::ok(),
+        |v, (i, op)| match &op.invalid_reason {
+            Some(reason) => v.with_item(i, format!("operations[{i}]"), reason.clone()),
+            None => v,
+        },
+    );
+    if let Some((status, body)) = authoring.into_http_error() {
+        // 不可达路径（逐项不阻断）——保留判定单源，防未来误把逐项当整体。
+        // 本函数返回 `ProposeError`（HTTP 映射由 `ProposeError::http` 承担）⇒ 在此把
+        // authoring 的 (status, body) 折回等价变体，MUST NOT 静默丢弃该判定。
+        return Err(ProposeError::from_http_error(status, &body));
+    }
     let (focus, focus_warnings) = validate_focus(envelope.focus, &snap);
     warnings.extend(focus_warnings);
     warnings.extend(envelope.warnings);
 
-    HttpResponse::Ok().json(NlAssistResponse {
+    Ok(NlAssistResponse {
         reply: envelope.reply.unwrap_or_default(),
         operations,
         focus,
         snapshot_version: snap.version,
         warnings,
     })
+}
+
+/// chat 内 NGAC 提案 turn 专属生成器（wire-ngac-proposal-into-assistant D2/D3）：
+/// `Ok(None)` = 不适用（非 admin/判据失败，静默回落通用生成）；`Ok(Some)` = assistant
+/// content（回复文本 + ```json 结构化块，经既有 validate_structured/确认链）；`Err` =
+/// 适用但失败（fail-closed，MUST NOT 降级为自由文本建议）。
+pub(crate) async fn try_ngac_proposal_content(
+    pool: &PgPool,
+    user_id: i64,
+    message: &str,
+    history: &[NlHistoryTurn],
+    locale: &str,
+) -> Result<Option<String>, String> {
+    // admin 判据（与 require_admin 同一实现）；非 admin/判据失败 ⇒ 不适用
+    // （fail-safe：不因门控故障中断通用对话，也 MUST NOT 生成可写提案）
+    match common::permissions::is_admin_user(pool, user_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            log::warn!("chat-ai: ngac_proposal 请求者非 admin（user {user_id}），回落通用生成");
+            return Ok(None);
+        }
+        Err(e) => {
+            log::warn!("chat-ai: admin 判据查询失败（{e}），回落通用生成");
+            return Ok(None);
+        }
+    }
+    let resp = propose(pool, message, history)
+        .await
+        .map_err(|e| e.user_message())?;
+    Ok(Some(build_chat_content(&resp, locale)))
+}
+
+/// assistant content 构造（D3；纯函数便于单测）：`reply` + ```json 块
+/// `{actions, operations, warnings}`——actions 仅当存在合法 operations 时携带
+/// （执行参数 = 仅合法项 + snapshot_version；invalid 项保留在 operations 展示）。
+pub(crate) fn build_chat_content(resp: &NlAssistResponse, locale: &str) -> String {
+    let valid: Vec<&NlOperation> = resp
+        .operations
+        .iter()
+        .filter(|o| o.invalid_reason.is_none())
+        .collect();
+    let actions = if valid.is_empty() {
+        serde_json::json!([])
+    } else {
+        let label = if locale.starts_with("en") {
+            format!("Apply {} policy change(s)", valid.len())
+        } else {
+            format!("应用 {} 项策略变更", valid.len())
+        };
+        serde_json::json!([{
+            "id": "ngac:apply-proposal",
+            "label": label,
+            "kind": "execute",
+            // 动作名是**活规约指定值**（`ngac-admin` :: `ngac-proposal-via-assistant` 明写
+            // `action_type=ngac_apply_proposal`，执行经既有 `/api/admin/ngac/*` 端点）——
+            // 属「客户端执行命名空间」：执行体是前端 `actionHandlers['ngac:apply-proposal']` 覆写，
+            // 不在后端动作目录内。目录门禁对它的判定 = 登记在 CLIENT_EXECUTED（含前端处理键与
+            // 规约出处）+ 校验该键真实存在于覆写面（MUST NOT 为迁就门禁改名）。
+            "action_type": "ngac_apply_proposal",
+            "params": {
+                "operations": valid,
+                "snapshot_version": resp.snapshot_version,
+            },
+        }])
+    };
+    let payload = serde_json::json!({
+        "actions": actions,
+        "operations": resp.operations,
+        "warnings": resp.warnings,
+    });
+    let mut content = resp.reply.trim().to_string();
+    content.push_str("\n\n```json\n");
+    content.push_str(&payload.to_string());
+    content.push_str("\n```");
+    content
+}
+
+/// POST /api/admin/ngac-assist/nl-assist（HTTP 外壳：admin 门控 + `propose` + 映射）
+async fn nl_assist(
+    req: HttpRequest,
+    pool: web::Data<PgPool>,
+    state: web::Data<gateway_sso::facade::auth::AuthState>,
+    body: web::Json<NlAssistRequest>,
+) -> HttpResponse {
+    // admin 门控：与既有 /api/admin/* 同语义（require_admin 唯一实现）
+    let _admin_id = match gateway_sso::facade::admin::require_admin(
+        &req,
+        pool.get_ref(),
+        state.get_ref(),
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    match propose(pool.get_ref(), &body.message, &body.history).await {
+        Ok(resp) => HttpResponse::Ok().json(resp),
+        Err(e) => {
+            let (status, message) = e.http();
+            let body = serde_json::json!({"error": message});
+            match status {
+                400 => HttpResponse::BadRequest().json(body),
+                500 => HttpResponse::InternalServerError().json(body),
+                502 => HttpResponse::BadGateway().json(body),
+                503 => HttpResponse::ServiceUnavailable().json(body),
+                _ => HttpResponse::InternalServerError().json(body),
+            }
+        }
+    }
 }
 
 /// `std::fmt::Write::writeln` 的薄封装（避免函数内 use 冲突）。
@@ -595,9 +760,9 @@ fn writeln_fn(buf: &mut String, args: std::fmt::Arguments<'_>) -> std::fmt::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gateway_sso::ngac::graph::{
+    use gateway_sso::facade::ngac::graph::{
         GraphAccessRight, GraphAssociation, GraphObjectAttribute, GraphPolicyClass,
-        GraphProhibition, GraphUserAttribute,
+        GraphProhibition, GraphUserAttribute, ProjectionHealth,
     };
 
     fn snap_fixture() -> GraphSnapshot {
@@ -640,6 +805,14 @@ mod tests {
         };
         GraphSnapshot {
             version: 7,
+            // 投影健康面（AGE 未部署形态：就绪但零漂移）——夹具只驱动提案校验，
+            // 不消费该字段。
+            projection: ProjectionHealth {
+                graph_ready: true,
+                drifted_entities: 0,
+                projection_drift: 0,
+                stale: false,
+            },
             policy_classes: vec![GraphPolicyClass {
                 id: 1,
                 o_name: "default".to_string(),
@@ -800,17 +973,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_json_strips_fences_and_noise() {
-        assert_eq!(extract_json("```json\n{\"a\":1}\n```"), Some("{\"a\":1}"));
-        assert_eq!(
-            extract_json("前置噪声 {\"a\":1} 尾部噪声"),
-            Some("{\"a\":1}")
-        );
-        assert_eq!(extract_json("完全没有大括号"), None);
-        assert_eq!(extract_json(""), None);
-    }
-
-    #[test]
     fn focus_valid_passthrough() {
         let snap = snap_fixture();
         let f = NlFocus {
@@ -875,5 +1037,87 @@ mod tests {
         let (out, warns) = validate_focus(Some(f), &snap);
         assert!(out.is_none());
         assert!(!warns.is_empty());
+    }
+
+    // ── wire-ngac-proposal-into-assistant：chat content 构造（D3）──
+
+    fn resp_with(ops: Vec<NlOperation>, version: i64) -> NlAssistResponse {
+        NlAssistResponse {
+            reply: "已生成提案".to_string(),
+            operations: ops,
+            focus: None,
+            snapshot_version: version,
+            warnings: vec!["注意并发变更".to_string()],
+        }
+    }
+
+    fn extract_payload(content: &str) -> serde_json::Value {
+        // orchestrator 结构化管线的同源提取器（extract_json_block）必须能消费本 content
+        ai_agent::agents::extract_json_block(content).expect("结构化块可被提取器解析")
+    }
+
+    #[test]
+    fn build_chat_content_actions_only_valid_ops() {
+        let mut invalid = op("assign_ua", None, None, None);
+        invalid.invalid_reason = Some("缺少 ua_id".to_string());
+        let resp = resp_with(
+            vec![
+                op(
+                    "create_association",
+                    Some(1),
+                    Some(10),
+                    Some(serde_json::json!({"access_rights": ["read"]})),
+                ),
+                invalid,
+            ],
+            7,
+        );
+        let content = build_chat_content(&resp, "zh-CN");
+        assert!(content.starts_with("已生成提案"));
+
+        let v = extract_payload(&content);
+        let actions = v["actions"].as_array().expect("actions 数组");
+        assert_eq!(actions.len(), 1, "仅存在合法项时携带 apply action");
+        assert_eq!(actions[0]["id"], "ngac:apply-proposal");
+        assert_eq!(actions[0]["kind"], "execute");
+        assert_eq!(actions[0]["action_type"], "ngac_apply_proposal");
+        assert_eq!(actions[0]["label"], "应用 1 项策略变更");
+        assert_eq!(actions[0]["params"]["snapshot_version"], 7);
+        assert_eq!(
+            actions[0]["params"]["operations"].as_array().unwrap().len(),
+            1,
+            "执行参数仅含合法项"
+        );
+        // operations 全量（含 invalid_reason 展示项）+ warnings 透传
+        assert_eq!(v["operations"].as_array().unwrap().len(), 2);
+        assert_eq!(v["warnings"][0], "注意并发变更");
+    }
+
+    #[test]
+    fn build_chat_content_no_actions_when_all_invalid() {
+        let mut invalid = op("assign_ua", None, None, None);
+        invalid.invalid_reason = Some("缺少 ua_id".to_string());
+        let content = build_chat_content(&resp_with(vec![invalid], 3), "en");
+        let v = extract_payload(&content);
+        assert!(v["actions"].as_array().unwrap().is_empty());
+        assert_eq!(v["operations"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn build_chat_content_en_label() {
+        let content = build_chat_content(
+            &resp_with(
+                vec![op(
+                    "create_association",
+                    Some(1),
+                    Some(10),
+                    Some(serde_json::json!({"access_rights": ["read"]})),
+                )],
+                5,
+            ),
+            "en",
+        );
+        let v = extract_payload(&content);
+        assert_eq!(v["actions"][0]["label"], "Apply 1 policy change(s)");
     }
 }

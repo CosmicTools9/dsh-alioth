@@ -3,7 +3,9 @@
 //! 使用 aliothstudio_test 数据库，自建自清 fixture（负 ID）。
 //! 覆盖：
 //! - 全链路：上传（HTTP multipart）→ 列表/下载/删除（handler 直调）
-//! - 行级鉴权矩阵：创建者可读写删 / ak_access_user 命中可读 / 无关用户 404
+//! - 行级鉴权矩阵：创建者可读写删 / `ak_access_user` 命中可读 /
+//!   **未声明 `ak_*` 限制的行**同 ns 可读（用户裁决 2026-10-08「平台要看到全部的」）/
+//!   写面（删改）仍限创建者或显式授权者 ⇒「B 删 A 的无授权文件 → 404」
 //! - namespace 隔离：跨 namespace 下载 404 / 列表过滤 / 非法 header 400
 //! - 上传约束：10MB 上限、扩展名白名单、文件名净化（400）
 
@@ -229,20 +231,20 @@ async fn row_auth_matrix() {
         json_body(http_upload(&state, USER_A, "Alioth", "private.txt", b"secret", &[]).await).await;
     let file_id: i64 = up["id"].as_str().unwrap().parse().unwrap();
 
-    // B 下载 → 404（行级授权拒绝）
+    // B 下载 A 的**无授权列**文件 → 200（用户裁决 2026-10-08「平台要看到全部的」：
+    // 未声明 ak_* 限制的行——门户/司机等外部身份上传即此形——对本 ns 调用方开放读）
     let resp = download_file(
         req_with_user(USER_B, "Alioth"),
         web::Data::new(state.clone()),
         web::Path::from(file_id),
     )
-    .await;
-    if let Ok(r) = resp {
-        assert_eq!(
-            r.status(),
-            actix_web::http::StatusCode::NOT_FOUND,
-            "未授权用户应 404"
-        );
-    } // Err：404/NotFound 语义
+    .await
+    .expect("download unrestricted");
+    assert_eq!(
+        resp.status(),
+        actix_web::http::StatusCode::OK,
+        "未声明 ak_* 限制的行：同 ns 调用方可读（平台看到全部）"
+    );
 
     // A 上传声明 akAccessUsers=[B]
     let up2 = json_body(
@@ -1125,4 +1127,55 @@ async fn presigned_local_falls_back_to_proxy() {
     assert_eq!(body["url"], format!("/api/files/{file_id}"));
 
     cleanup(&pool, &[file_id]).await;
+}
+
+/// `?inline=1` 内容处置开关（用户裁决 2026-10-08「随车单据点击后不应该是预览吗」）：
+/// 缺省 MUST 仍 `attachment`（既有调用方下载语义不变）；`inline=1` MUST 改 `inline`
+/// ⇒ 前端「点击预览」直接新页签导航该 URL 由浏览器内联渲染（Cookie 鉴权）。
+#[tokio::test]
+async fn download_disposition_inline_opt_in() {
+    let pool = connect_test_db().await;
+    let state = setup_state(pool.clone()).await;
+    let up =
+        json_body(http_upload(&state, USER_A, "Alioth", "doc.pdf", b"%PDF-1.4 x", &[]).await).await;
+    let file_id: i64 = up["id"].as_str().unwrap().parse().unwrap();
+
+    let resp = download_file(
+        req_with_user(USER_A, "Alioth"),
+        web::Data::new(state.clone()),
+        web::Path::from(file_id),
+    )
+    .await
+    .expect("download");
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(cd.starts_with("attachment"), "缺省 MUST 仍为下载语义: {cd}");
+
+    let req = test::TestRequest::default()
+        .uri("/api/files/x?inline=1")
+        .insert_header(("X-Namespace", "Alioth"))
+        .to_http_request();
+    req.extensions_mut()
+        .insert(RequestContext::new(USER_A, "user@test.local".to_string()));
+    let resp = download_file(req, web::Data::new(state), web::Path::from(file_id))
+        .await
+        .expect("download inline");
+    let cd = resp
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(cd.starts_with("inline"), "inline=1 MUST 内联: {cd}");
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/pdf"),
+        "内容类型取自扩展名"
+    );
 }

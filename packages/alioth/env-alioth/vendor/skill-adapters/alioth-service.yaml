@@ -58,4 +58,5 @@ tracks:
             args: ["tsc", "--noEmit"]
             timeout_sec: 180
 source:
-  content_sha256: a49a9e79414ff5ce47ef03e917426aa2aa823ad34aaa3f789cd858970653782e
+  content_sha256: b9f52ab69fd8ca400a632ff35b178f77de2c67ee37558fb7e0d0037ac516be96
+  # 2026-10-08 重记：SKILL.md 注记修正（check-shared-kernel 阶段：pre-commit→push 聚合）——fix-service-dag-stage-notes

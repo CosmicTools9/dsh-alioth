@@ -1,5 +1,66 @@
 {
-  "generated_at": "2026-09-22T06:22:37.617Z",
+  "generated_at": "2026-09-30T13:03:26.036Z",
   "note": "存量漂移棘轮基线（只减不增）；--init 重冻结",
-  "findings": []
+  "findings": [
+    {
+      "ns": "prod",
+      "table": "zc_id_even-accident_rr_reason",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=468）"
+    },
+    {
+      "ns": "prod",
+      "table": "zc_id_project_rr_group",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=502）"
+    },
+    {
+      "ns": "prod",
+      "table": "zc_id_project_rr_parent",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=296）"
+    },
+    {
+      "ns": "prod",
+      "table": "zc_id_relation-inventory_r_status",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=182）"
+    },
+    {
+      "ns": "prod",
+      "table": "zc_id_trade_order_rr_contract",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=454）"
+    },
+    {
+      "ns": "prod",
+      "table": "zc_id_tsp-voucher_rr_devi-seal",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=476）"
+    },
+    {
+      "ns": "prod",
+      "table": "zc_id_unit-magnetic_field_stress",
+      "kind": "layer-only",
+      "detail": "本层独有（登记中无此表；字面量 code=150）"
+    },
+    {
+      "ns": "test",
+      "table": "zc_id_orga-department_rr_project",
+      "kind": "mismatch",
+      "detail": "字面量 code=511 ≠ 登记 code=520"
+    },
+    {
+      "ns": "test",
+      "table": "zc_id_plan-perform_rr_tsk-make",
+      "kind": "mismatch",
+      "detail": "字面量 code=513 ≠ 登记 code=516"
+    },
+    {
+      "ns": "test",
+      "table": "zc_id_project_r_review-status",
+      "kind": "mismatch",
+      "detail": "字面量 code=512 ≠ 登记 code=523"
+    }
+  ]
 }

@@ -57,28 +57,46 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
         (&admin_email, format!("graph_admin_{}", suffix)),
     ] {
         sqlx::query(
-            "INSERT INTO isahl_auth.auth_users (id, username, name, email, status, is_active, created_at, updated_at)
-             VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-             ON CONFLICT (name) DO UPDATE SET username = EXCLUDED.username",
+            "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+             VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+             ON CONFLICT (username) DO NOTHING",
         )
-        .bind(mail)
         .bind(&name)
         .execute(pool)
         .await
         .expect("insert user");
+        let uid: i64 =
+            sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+                .bind(&name)
+                .fetch_one(pool)
+                .await
+                .expect("resolve user");
+        sqlx::query(
+            "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+             VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+        )
+        .bind(uid)
+        .bind(mail)
+        .execute(pool)
+        .await
+        .ok();
     }
-    let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email)
-            .fetch_one(pool)
-            .await
-            .expect("fetch user");
-    let admin_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&admin_email)
-            .fetch_one(pool)
-            .await
-            .expect("fetch admin");
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users WHERE id IN \
+         (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1) LIMIT 1",
+    )
+    .bind(&email)
+    .fetch_one(pool)
+    .await
+    .expect("fetch user");
+    let admin_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users WHERE id IN \
+         (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1) LIMIT 1",
+    )
+    .bind(&admin_email)
+    .fetch_one(pool)
+    .await
+    .expect("fetch admin");
 
     sqlx::query("INSERT INTO isahl_auth.ngac_policy_class (o_name) VALUES ('default') ON CONFLICT DO NOTHING")
         .execute(pool)
@@ -104,8 +122,12 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
         .await;
     }
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        // 必须按策略类过滤：`o_name='admin'` 在每个策略类下各有一行；无过滤器时 LIMIT 1 可能取到
+        // 他测试残留的、他类 admin UA ⇒ 绑定到错类 UA 使 require_admin 的 NGAC 判定 Deny（非确定性 403）。
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");
@@ -204,6 +226,10 @@ async fn cleanup(pool: &PgPool, f: &Fixture, suffix: &str) {
     .execute(pool)
     .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = ANY($1)")
+        .bind(vec![f.user_id, f.admin_id])
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
         .bind(vec![f.user_id, f.admin_id])
         .execute(pool)
         .await;

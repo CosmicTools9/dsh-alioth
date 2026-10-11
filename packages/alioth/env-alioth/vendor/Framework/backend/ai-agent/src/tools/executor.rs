@@ -16,222 +16,68 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlx::{AssertSqlSafe, Column, Row};
 
-/// 把 JSON 值归类为 Schema type 名词（用于报错信息）。
-fn value_type_name(value: &serde_json::Value) -> &'static str {
-    if value.is_null() {
-        "null"
-    } else if value.is_boolean() {
-        "boolean"
-    } else if value.is_number() {
-        "number"
-    } else if value.is_string() {
-        "string"
-    } else if value.is_array() {
-        "array"
-    } else {
-        "object"
-    }
-}
-
-/// 值是否满足声明的 Schema type。
-/// 仅校验工具支持的标量类型（string/number/integer/boolean）；
-/// object/array/null 等其他声明不在表单字段校验范围，放行（不误报）。
-fn value_matches_type(value: &serde_json::Value, declared: &str) -> bool {
-    match declared {
-        "string" => value.is_string(),
-        "number" => value.is_number(),
-        // JSON 数字经 f64 往返的 1.0 非整数——按整型声明即类型不符
-        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
-        "boolean" => value.is_boolean(),
-        _ => true,
-    }
-}
-
-fn push_field_error(errors: &mut Vec<serde_json::Value>, field: &str, code: &str, message: String) {
-    errors.push(json!({
-        "field": field,
-        "error": code,
-        "message": message
-    }));
-}
-
-/// 纯函数表单校验引擎：`form_schema`（JSON Schema 子集）逐字段校验
-/// `field_values`。支持规则：required / type / enum / minimum / maximum /
-/// minLength / maxLength / pattern。返回错误条目列表
-/// （`{field, error, message}`）；空列表 = 校验通过。
+/// 表单校验工具（change `add-form-contract-seam`，ADR D-053）
 ///
-/// 规则说明：
-/// - required 按「值是否存在」判定（保留既有行为，null 视为已提供，交由 type 规则拦截）；
-/// - type 不符时该字段跳过其余规则（避免级联噪音）；
-/// - 数值规则（minimum/maximum）仅作用于数值；长度/pattern 仅作用于字符串；
-/// - pattern 非法正则视为 schema 作者错误——跳过该规则，不阻断其余校验。
-fn validate_form_schema(
-    form_schema: &serde_json::Value,
-    field_values: &serde_json::Value,
-) -> Vec<serde_json::Value> {
-    let mut errors: Vec<serde_json::Value> = Vec::new();
-    let Some(props) = form_schema.get("properties").and_then(|p| p.as_object()) else {
-        return errors;
-    };
-
-    // required：声明的必填字段缺值即报错（与 Schema 无关字段不在 properties 内）
-    if let Some(required) = form_schema.get("required").and_then(|r| r.as_array()) {
-        for name in required {
-            let Some(name) = name.as_str() else { continue };
-            if !props.contains_key(name) {
-                continue;
-            }
-            if field_values.get(name).is_none() {
-                push_field_error(
-                    &mut errors,
-                    name,
-                    "required",
-                    format!("字段 '{}' 为必填项", name),
-                );
-            }
-        }
-    }
-
-    for (field_name, field_schema) in props {
-        if !field_schema.is_object() {
-            continue;
-        }
-        let Some(value) = field_values.get(field_name) else {
-            continue;
-        };
-
-        // type
-        if let Some(declared) = field_schema.get("type").and_then(|t| t.as_str()) {
-            if !value_matches_type(value, declared) {
-                push_field_error(
-                    &mut errors,
-                    field_name,
-                    "type",
-                    format!(
-                        "字段 '{}' 类型应为 {}, 实际为 {}",
-                        field_name,
-                        declared,
-                        value_type_name(value)
-                    ),
-                );
-                continue;
-            }
-        }
-
-        // enum
-        if let Some(allowed) = field_schema.get("enum").and_then(|e| e.as_array()) {
-            if !allowed.iter().any(|v| v == value) {
-                push_field_error(
-                    &mut errors,
-                    field_name,
-                    "enum",
-                    format!("字段 '{}' 的值不在允许范围内", field_name),
-                );
-            }
-        }
-
-        // minimum / maximum（数值字段）
-        if value.is_number() {
-            if let Some(min) = field_schema.get("minimum").and_then(|m| m.as_f64()) {
-                if let Some(actual) = value.as_f64() {
-                    if actual < min {
-                        push_field_error(
-                            &mut errors,
-                            field_name,
-                            "minimum",
-                            format!("字段 '{}' 不能小于 {}", field_name, min),
-                        );
-                    }
-                }
-            }
-            if let Some(max) = field_schema.get("maximum").and_then(|m| m.as_f64()) {
-                if let Some(actual) = value.as_f64() {
-                    if actual > max {
-                        push_field_error(
-                            &mut errors,
-                            field_name,
-                            "maximum",
-                            format!("字段 '{}' 不能大于 {}", field_name, max),
-                        );
-                    }
-                }
-            }
-        }
-
-        // minLength / maxLength / pattern（字符串字段，按 Unicode 标量计长）
-        if let Some(s) = value.as_str() {
-            let len = s.chars().count() as u64;
-            if let Some(min) = field_schema.get("minLength").and_then(|m| m.as_u64()) {
-                if len < min {
-                    push_field_error(
-                        &mut errors,
-                        field_name,
-                        "min_length",
-                        format!("字段 '{}' 长度不能小于 {}", field_name, min),
-                    );
-                }
-            }
-            if let Some(max) = field_schema.get("maxLength").and_then(|m| m.as_u64()) {
-                if len > max {
-                    push_field_error(
-                        &mut errors,
-                        field_name,
-                        "max_length",
-                        format!("字段 '{}' 长度不能大于 {}", field_name, max),
-                    );
-                }
-            }
-            if let Some(pattern) = field_schema.get("pattern").and_then(|p| p.as_str()) {
-                if let Ok(re) = regex::Regex::new(pattern) {
-                    if !re.is_match(s) {
-                        push_field_error(
-                            &mut errors,
-                            field_name,
-                            "pattern",
-                            format!("字段 '{}' 不符合格式要求", field_name),
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    errors
-}
-
-/// 表单校验工具
+/// 校验口径 = **当前页面登记的表单契约**（`ToolContext.form_contract`），MUST NOT 接受
+/// 模型自备 schema——后者是「可校验任意 schema 的第二实现」，已随本 change 退役。
 pub struct ValidateFormTool;
 
 impl ValidateFormTool {
     pub fn definition() -> ToolDefinition {
         ToolDefinition {
             name: "validate_form".to_string(),
-            description: "校验表单字段值是否符合 Schema 定义的规则（类型、必填、范围、格式等）"
+            description: "按**当前页面登记的表单契约**校验字段值（类型/必填/枚举/范围/格式）。\
+                契约由页面提供（无需也不接受入参 schema）；契约不可用时返回 CONTRACT_UNAVAILABLE。"
                 .to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "form_schema": { "type": "object", "description": "表单 Schema 定义" },
                     "field_values": { "type": "object", "description": "待校验的字段值映射" }
                 },
-                "required": ["form_schema", "field_values"]
+                "required": ["field_values"]
             }),
             execution_target: crate::agents::ExecutionTarget::Backend,
         }
     }
 
-    pub async fn execute(call: &ToolCall, _ctx: &ToolContext) -> Result<ToolResult, String> {
+    pub async fn execute(call: &ToolCall, ctx: &ToolContext) -> Result<ToolResult, String> {
         let args = call.arguments.clone();
-        let form_schema = args.get("form_schema").cloned().unwrap_or(json!({}));
         let field_values = args.get("field_values").cloned().unwrap_or(json!({}));
 
-        let errors = validate_form_schema(&form_schema, &field_values);
-        let valid = errors.is_empty();
+        // fail-closed（design D7）：未登记 / 不可解析 / 超限截断的契约一律「不可用」，
+        // MUST NOT 放行、MUST NOT 回落模型自备 schema。
+        let Some(contract) = ctx.form_contract.as_ref() else {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!({
+                    "valid": false,
+                    "error": "CONTRACT_UNAVAILABLE",
+                    "errors": [],
+                    "uncovered": [],
+                    "appliable": false,
+                }),
+                error: Some(
+                    "CONTRACT_UNAVAILABLE: 当前页面未登记表单契约，无法校验\
+                     （MUST NOT 以模型自备 schema 兜底）"
+                        .to_string(),
+                ),
+            });
+        };
+
+        let outcome = super::form_contract::validate_against_contract(contract, &field_values);
+        let valid = outcome.errors.is_empty();
         Ok(ToolResult {
             tool_call_id: call.id.clone(),
             name: call.name.clone(),
             success: valid,
-            output: json!({ "valid": valid, "errors": errors }),
+            output: json!({
+                "valid": valid,
+                "errors": outcome.errors,
+                "uncovered": outcome.uncovered,
+                "appliable": outcome.appliable,
+            }),
             error: if valid {
                 None
             } else {
@@ -482,7 +328,10 @@ impl ExecuteActionTool {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "action_type": { "type": "string", "enum": ["status_transition", "batch_approve", "generate_document", "send_notification"], "description": "动作类型" },
+                    // 枚举由动作目录生成（单一真相源，change add-action-catalogue）：
+                    // MUST NOT 手写字面量清单。仅 `expose_to_llm` 项可见（NGAC /
+                    // 系统设置动作只经提案 actions[] 可达，行为不变）。
+                    "action_type": { "type": "string", "enum": crate::tools::action_catalogue::ActionCatalogue::llm_exposed_ids(), "description": "动作类型" },
                     "target_ids": { "type": "array", "items": { "type": "integer" }, "description": "目标实体 ID 列表" },
                     "params": { "type": "object", "description": "动作参数" },
                     "confirmed": { "type": "boolean", "description": "已废弃——Explicit/High/Critical 级动作一律需走用户确认通道（HTTP execute-action），本工具恒返回 needs_confirmation 提案，confirmed 值不再影响执行" }
@@ -569,6 +418,484 @@ impl ExecuteActionTool {
                 error: Some(e),
             }),
         }
+    }
+}
+
+/// 权限规范（org-policy）提案工具
+/// （route-ngac-policy-authoring-through-ai-assist 2.1）。
+///
+/// 只把 LLM 整理的规范操作打包为 `needs_confirmation` 提案——工具路径
+/// MUST NOT 落库、MUST NOT 自证确认（ADR D-051）；真实写入仅经 HTTP
+/// `execute-action`（确认来自用户点击）→ Gateway 动作 `ngac_org_policy_apply`
+/// → SSO org-policy 服务层（Rhai 强校验 + 状态机 + 审计等价保留）。
+///
+/// 表达式字段（condition/obligation/prohibition_template）值 MUST 为 Rhai
+/// 源码字符串（结构化占位在工具层即拒）；标识符级强校验在服务端写径完成
+/// （唯一引擎）。
+pub struct NgacPolicyDraftTool;
+
+/// org-policy 提案操作白名单（与 SSO 服务层内容写面一一对应；状态机迁移不在列）。
+const NGAC_POLICY_OPS: &[&str] = &[
+    "upsert_class",
+    "patch_class",
+    "create_rule",
+    "patch_rule",
+    "delete_rule",
+    "create_label",
+    "patch_label",
+    "delete_label",
+];
+
+/// 表达式类字段（值 MUST 为 Rhai 源码字符串；空串 = 未设置）。
+const NGAC_EXPR_FIELDS: &[&str] = &["condition", "obligation", "prohibition_template"];
+
+/// 单操作形状校验（工具层 fail-closed；错误文本可行动，供 LLM 修正重试）。
+fn validate_policy_operation(op: &serde_json::Value) -> Result<(), String> {
+    let o = op
+        .as_object()
+        .ok_or_else(|| "operation 必须为 JSON 对象".to_string())?;
+    let name = o
+        .get("op")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operation 缺少 op 字段".to_string())?;
+    if !NGAC_POLICY_OPS.contains(&name) {
+        return Err(format!(
+            "未知 op '{name}'（白名单：{}）",
+            NGAC_POLICY_OPS.join("/")
+        ));
+    }
+    let need_str = |f: &str| -> Result<(), String> {
+        if o.get(f)
+            .and_then(|v| v.as_str())
+            .map(|s| !s.trim().is_empty())
+            == Some(true)
+        {
+            Ok(())
+        } else {
+            Err(format!("{name}: 缺少必填字符串字段 {f}"))
+        }
+    };
+    let need_id = |f: &str| -> Result<(), String> {
+        if o.get(f).and_then(|v| v.as_i64()).is_some() {
+            Ok(())
+        } else {
+            Err(format!("{name}: 缺少必填整数 id 字段 {f}"))
+        }
+    };
+    match name {
+        "upsert_class" => {
+            need_str("code")?;
+            need_str("notice")?;
+        }
+        "patch_class" => {
+            need_id("class_id")?;
+        }
+        "create_rule" => {
+            need_id("policy_class_id")?;
+            need_str("subject_code")?;
+            need_str("resource_type")?;
+            if o.get("actions").and_then(|v| v.as_array()).is_none() {
+                return Err(format!("{name}: 缺少必填数组字段 actions"));
+            }
+        }
+        "patch_rule" | "delete_rule" => {
+            need_id("rule_id")?;
+        }
+        "create_label" => {
+            need_str("code")?;
+            need_id("rank")?;
+            need_str("notice")?;
+        }
+        "patch_label" | "delete_label" => {
+            need_str("code")?;
+        }
+        _ => unreachable!("op 已在白名单内"),
+    }
+    // 表达式字段：存在则为非空白字符串（Rhai 源码；结构化占位拒绝）
+    for f in NGAC_EXPR_FIELDS {
+        match o.get(*f) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(s)) if !s.trim().is_empty() => {}
+            Some(_) => {
+                return Err(format!(
+                    "{name}: {f} MUST 为 Rhai 源码字符串（结构化占位不受支持）"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+impl NgacPolicyDraftTool {
+    pub fn definition() -> ToolDefinition {
+        ToolDefinition {
+            name: "ngac_policy_draft".to_string(),
+            description: "将权限规范（org_policy）新建/修改意图整理为待用户确认的提案（不落库）。\
+经用户确认后经确认通道执行（服务端 admin 门控 + Rhai 强校验 + 状态机 + 审计）。\
+表达式字段（condition/obligation/prohibition_template）值 MUST 为 Rhai 源码字符串。\
+可用键按字段区分：condition / prohibition_template = user_id、resource、action、\
+subject_attributes、object_attributes（**不含** decision、permitted——条件在判决终态前求值，\
+引用即被写径拒绝）；obligation（事件模式 / 义务算子）= 上述五键 + decision、permitted。\
+状态机迁移（提交评审/激活/退役）不在本工具范围。"
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": "按序执行的规范内容操作",
+                        "items": {
+                            "type": "object",
+                            "required": ["op"],
+                            "properties": {
+                                "op": {
+                                    "type": "string",
+                                    "enum": ["upsert_class", "patch_class", "create_rule",
+                                             "patch_rule", "delete_rule", "create_label",
+                                             "patch_label", "delete_label"],
+                                    "description": "upsert_class=新建类（code 未被未退休行占用）；patch_class=更新类内容（仅 draft/in_review）；create_rule=挂接规则行（仅所属类 draft/in_review）；delete_rule=软删规则行"
+                                },
+                                "code": { "type": "string", "description": "upsert_class：规范码；create/patch/delete_label：分级码" },
+                                "class_id": { "type": "integer", "description": "patch_class：目标类 id" },
+                                "policy_class_id": { "type": "integer", "description": "create_rule：所属类 id" },
+                                "rule_id": { "type": "integer", "description": "patch_rule / delete_rule：目标规则 id" },
+                                "notice": { "type": "string", "description": "名称/说明（upsert_class、create_label 必填）" },
+                                "scope": { "type": "object", "description": "{\"resource_types\": [\"...\"], \"actions\": [\"...\"]} 白名单域" },
+                                "ua_template": { "type": "object", "description": "{\"name_rule\": \"...\"} 主体 UA 模板" },
+                                "label_code": { "type": "string" },
+                                "audit_required": { "type": "boolean" },
+                                "comments": { "type": "string" },
+                                "subject_code": { "type": "string", "description": "create_rule 必填：主体代码（UA 名或模板）" },
+                                "resource_type": { "type": "string", "description": "create_rule 必填" },
+                                "actions": { "type": "array", "items": { "type": "string" }, "description": "create_rule 必填：动作清单" },
+                                "condition": { "type": "string", "description": "Rhai 条件源码（空串 = 未设置）" },
+                                "obligation": { "type": "string", "description": "Rhai 义务源码" },
+                                "prohibition_template": { "type": "string", "description": "Rhai 禁止模板源码" },
+                                "rank": { "type": "integer", "description": "create_label 必填：分级序（越大越敏感）" },
+                                "domain": { "type": "string", "description": "create/patch_label：分级域（缺省 security）" },
+                                "summary": { "type": "string", "description": "一句话中文摘要（确认弹窗展示用）" }
+                            }
+                        }
+                    }
+                },
+                "required": ["operations"]
+            }),
+            execution_target: crate::agents::ExecutionTarget::Backend,
+        }
+    }
+
+    pub async fn execute(call: &ToolCall, ctx: &ToolContext) -> Result<ToolResult, String> {
+        let ops = call
+            .arguments
+            .get("operations")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if ops.is_empty() {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some("operations 不能为空（至少一项规范操作）".to_string()),
+            });
+        }
+        let mut cleaned: Vec<serde_json::Value> = Vec::with_capacity(ops.len());
+        for (i, op) in ops.iter().enumerate() {
+            if let Err(e) = validate_policy_operation(op) {
+                return Ok(ToolResult {
+                    tool_call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    success: false,
+                    output: json!(null),
+                    error: Some(format!("operations[{i}] 形状不合法：{e}")),
+                });
+            }
+            cleaned.push(op.clone());
+        }
+        // 提案（id 非 `agent_action:` 前缀：确认经 structured.actions 记录解析，
+        // params 承载 operations；工具路径零写入）
+        Ok(ToolResult {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+            success: true,
+            output: json!({
+                "id": "ngac:org-policy-apply",
+                "label": format!("应用 {} 项权限规范变更", cleaned.len()),
+                "kind": "execute",
+                "action_type": "ngac_org_policy_apply",
+                "target_ids": [],
+                "params": { "operations": cleaned },
+                "status": "needs_confirmation",
+                "confirm_url_hint": format!("/api/chat-sessions/{}/execute-action", ctx.session_id),
+                "message": "提案已生成：请用户确认后经 HTTP execute-action 执行（工具路径不落库）"
+            }),
+            error: None,
+        })
+    }
+}
+
+/// NGAC 策略操作提案工具（wire-nl-assist-into-assistant）。
+///
+/// 只把 LLM 整理的策略操作（关联/禁止/UA 指派）打包为 `needs_confirmation` 提案——
+/// 工具路径 MUST NOT 落库、MUST NOT 自证确认（提案-确认纪律，ADR D-051）；
+/// 真实写入仅经 HTTP `execute-action`（确认来自用户点击）→ Gateway 动作
+/// `ngac_strategy_apply` → 单事务「业务写 + 行镜像 + 策略变更审计」（admin 门控）。
+///
+/// 操作白名单单一真相源 = [`crate::tools::ngac_ops::POLICY_OPS`]（nl-assist 校验 /
+/// 本工具层提案校验 / 执行体分支集合三处同源；change `consolidate-ngac-write-path`）。
+pub struct NgacStrategyDraftTool;
+
+impl NgacStrategyDraftTool {
+    pub fn definition() -> ToolDefinition {
+        ToolDefinition {
+            name: "ngac_strategy_draft".to_string(),
+            description:
+                "将 NGAC 策略操作意图（关联/禁止/UA 指派）整理为待用户确认的提案（不落库）。\
+经用户确认后经确认通道执行（服务端 admin 门控 + 审计）。\
+操作类型：create/update/delete association、create/update/delete prohibition、assign/remove_ua_assignment。\
+UA/OA/用户 id MUST 先用 query_sql 查实，MUST NOT 编造。"
+                    .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": "按序执行的策略操作",
+                        "items": {
+                            "type": "object",
+                            "required": ["op"],
+                            "properties": {
+                                "op": {
+                                    "type": "string",
+                                    "enum": crate::tools::ngac_ops::POLICY_OPS,
+                                    "description": "操作类型"
+                                },
+                                "ua_id": { "type": "integer", "description": "create/update/delete association、create/update/delete prohibition、assign/remove_ua_assignment：目标 UA id" },
+                                "oa_id": { "type": "integer", "description": "create association、create prohibition：目标 OA id" },
+                                "association_id": { "type": "integer", "description": "update/delete_association：目标关联 id" },
+                                "prohibition_id": { "type": "integer", "description": "update/delete_prohibition：目标禁止 id" },
+                                "user_id": { "type": "integer", "description": "assign_ua / remove_ua_assignment：目标用户 id" },
+                                "actions": { "type": "array", "items": { "type": "string" }, "description": "授权动作白名单（如 [\"read\",\"write\"]）" },
+                                "o_name": { "type": "string", "description": "update_association：新的关联名" },
+                                "conditions": { "type": "object", "description": "update_*：新的条件对象" },
+                                "is_active": { "type": "boolean", "description": "update_prohibition：是否生效" }
+                            }
+                        }
+                    }
+                },
+                "required": ["operations"]
+            }),
+            execution_target: crate::agents::ExecutionTarget::Backend,
+        }
+    }
+
+    pub async fn execute(call: &ToolCall, _ctx: &ToolContext) -> Result<ToolResult, String> {
+        let args = &call.arguments;
+        let ops = args
+            .get("operations")
+            .and_then(|v| v.as_array())
+            .ok_or("Missing 'operations' parameter")?;
+        if ops.is_empty() {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: serde_json::Value::Null,
+                error: Some("EMPTY_OPERATIONS: operations 不能为空".to_string()),
+            });
+        }
+        for (i, op) in ops.iter().enumerate() {
+            let op_type = op.get("op").and_then(|v| v.as_str()).unwrap_or("");
+            if !crate::tools::ngac_ops::POLICY_OPS.contains(&op_type) {
+                return Ok(ToolResult {
+                    tool_call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    success: false,
+                    output: serde_json::Value::Null,
+                    error: Some(format!(
+                        "INVALID_OP[{}]: '{}' 不在白名单 {:?}",
+                        i,
+                        op_type,
+                        crate::tools::ngac_ops::POLICY_OPS
+                    )),
+                });
+            }
+        }
+        // 提案-确认纪律：恒返回 needs_confirmation，零写入
+        Ok(ToolResult {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+            success: true,
+            output: json!({
+                "status": "needs_confirmation",
+                "action_type": "ngac_strategy_apply",
+                "confirm_url_hint": format!("/api/chat-sessions/{}/execute-action", _ctx.session_id),
+                "message": "该策略操作需用户确认后经 HTTP execute-action 执行（LLM 工具路径不可自证确认）",
+                "operations": ops,
+            }),
+            error: None,
+        })
+    }
+}
+
+/// 系统设置提案工具（add-system-config-ai-action 2.2）。
+///
+/// 只把 LLM 整理的系统设置变更打包为 `needs_confirmation` 提案——工具路径
+/// MUST NOT 落库、MUST NOT 自证确认（提案-确认纪律）；真实写入仅经 HTTP
+/// `execute-action`（确认来自用户点击）→ Gateway 动作 `system_config_apply`
+/// → `system-config` 服务层（凭证加密 + change D 审计口径等价）。
+///
+/// 凭证：`credentials` 仅**专属键**承载（MUST NOT 混入 `settings`；非对象拒绝）；
+/// 动作回执/审计 metadata/日志 MUST NOT 回显凭证值。
+pub struct SystemConfigDraftTool;
+
+/// 系统设置提案操作白名单（与服务层 CRUD 一一对应）。
+const SYSTEM_CONFIG_OPS: &[&str] = &["create_config", "update_config", "delete_config"];
+
+/// 单操作形状校验（工具层 fail-closed；错误文本可行动，供 LLM 修正重试）。
+fn validate_system_config_operation(op: &serde_json::Value) -> Result<(), String> {
+    let o = op
+        .as_object()
+        .ok_or_else(|| "operation 必须为 JSON 对象".to_string())?;
+    let name = o
+        .get("op")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "operation 缺少 op 字段".to_string())?;
+    if !SYSTEM_CONFIG_OPS.contains(&name) {
+        return Err(format!(
+            "未知 op '{name}'（白名单：{}）",
+            SYSTEM_CONFIG_OPS.join("/")
+        ));
+    }
+    let need_str = |f: &str| -> Result<(), String> {
+        if o.get(f)
+            .and_then(|v| v.as_str())
+            .map(|s| !s.trim().is_empty())
+            == Some(true)
+        {
+            Ok(())
+        } else {
+            Err(format!("{name}: 缺少必填字符串字段 {f}"))
+        }
+    };
+    let need_id = |f: &str| -> Result<(), String> {
+        if o.get(f).and_then(|v| v.as_i64()).is_some() {
+            Ok(())
+        } else {
+            Err(format!("{name}: 缺少必填整数 id 字段 {f}"))
+        }
+    };
+    // 对象型可选字段（凭证专属键约束：非对象拒绝）
+    for f in ["settings", "credentials"] {
+        match o.get(f) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::Object(_)) => {}
+            Some(_) => return Err(format!("{name}: {f} MUST 为 JSON 对象")),
+        }
+    }
+    match name {
+        "create_config" => {
+            need_str("category")?;
+            need_str("provider")?;
+        }
+        "update_config" | "delete_config" => {
+            need_id("id")?;
+        }
+        _ => unreachable!("op 已在白名单内"),
+    }
+    Ok(())
+}
+
+impl SystemConfigDraftTool {
+    pub fn definition() -> ToolDefinition {
+        ToolDefinition {
+            name: "system_config_draft".to_string(),
+            description: "将系统设置（system-config：LLM/email/sms/storage 等 provider 行）变更意图整理为待用户确认的提案（不落库）。经用户确认后经确认通道执行（admin 门控 + 凭证加密 + system_config.* 审计）。凭证（api_key/password 等）MUST 放 credentials 对象（禁止混入 settings），且 MUST NOT 在你的回复正文中重复凭证值；不确定 category/provider 取值时先读列表/分类。"
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operations": {
+                        "type": "array",
+                        "minItems": 1,
+                        "description": "按序执行的系统设置操作",
+                        "items": {
+                            "type": "object",
+                            "required": ["op"],
+                            "properties": {
+                                "op": { "type": "string", "enum": ["create_config", "update_config", "delete_config"], "description": "create_config=新建 provider 行；update_config=更新（id 必填）；delete_config=软删（id 必填）" },
+                                "id": { "type": "integer", "description": "update_config / delete_config：目标行 id" },
+                                "category": { "type": "string", "description": "create_config 必填：分类码（如 llm/email/sms/storage）" },
+                                "provider": { "type": "string", "description": "create_config 必填：provider 码（如 deepseek/smtp）" },
+                                "code": { "type": "string", "description": "行编码（可选）" },
+                                "notice": { "type": "string" },
+                                "settings": { "type": "object", "description": "非敏感设置（MUST NOT 混入凭证键）" },
+                                "credentials": { "type": "object", "description": "敏感凭证专属键（服务端按 schema 加密；MUST NOT 出现在 settings / 回复正文）" },
+                                "enabled": { "type": "boolean" },
+                                "is_default": { "type": "boolean" },
+                                "domain_": { "type": "string" },
+                                "comments": { "type": "string" },
+                                "summary": { "type": "string", "description": "一句话中文摘要（确认弹窗展示用）" }
+                            }
+                        }
+                    }
+                },
+                "required": ["operations"]
+            }),
+            execution_target: crate::agents::ExecutionTarget::Backend,
+        }
+    }
+
+    pub async fn execute(call: &ToolCall, ctx: &ToolContext) -> Result<ToolResult, String> {
+        let ops = call
+            .arguments
+            .get("operations")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        if ops.is_empty() {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some("operations 不能为空（至少一项系统设置操作）".to_string()),
+            });
+        }
+        let mut cleaned: Vec<serde_json::Value> = Vec::with_capacity(ops.len());
+        for (i, op) in ops.iter().enumerate() {
+            if let Err(e) = validate_system_config_operation(op) {
+                return Ok(ToolResult {
+                    tool_call_id: call.id.clone(),
+                    name: call.name.clone(),
+                    success: false,
+                    output: json!(null),
+                    error: Some(format!("operations[{i}] 形状不合法：{e}")),
+                });
+            }
+            cleaned.push(op.clone());
+        }
+        // 提案（id 非 `agent_action:` 前缀：确认经 structured 记录解析，params 承载 operations）
+        Ok(ToolResult {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+            success: true,
+            output: json!({
+                "id": "syscfg:apply",
+                "label": format!("应用 {} 项系统设置变更", cleaned.len()),
+                "kind": "execute",
+                "action_type": "system_config_apply",
+                "target_ids": [],
+                "params": { "operations": cleaned },
+                "status": "needs_confirmation",
+                "confirm_url_hint": format!("/api/chat-sessions/{}/execute-action", ctx.session_id),
+                "message": "提案已生成：请用户确认后经 HTTP execute-action 执行（工具路径不落库）"
+            }),
+            error: None,
+        })
     }
 }
 
@@ -1413,31 +1740,215 @@ impl QuerySchemaTool {
     }
 }
 
+/// NGAC 候选补丁影响预演工具（change `wire-org-policy-declaration-fields` tasks 3.3）。
+///
+/// 承载 `POST /api/admin/ngac/analysis/dry-run` 的产品入口：**只读**（克隆图求值，
+/// 关系表零写入）⇒ 不产生提案、不落库。执行经宿主 `ActionHandler`（地址 = 动作目录
+/// 的 `ngac_dry_run`；该条目 `expose_to_llm: false` ⇒ **能力不外溢**到其它可执行动作，
+/// 模型只能经本工具触达该分析）。
+pub struct NgacDryRunTool;
+
+impl NgacDryRunTool {
+    pub fn definition() -> ToolDefinition {
+        ToolDefinition {
+            name: "ngac_dry_run".to_string(),
+            description: "预演 NGAC 候选策略补丁的判决影响（只读、零写库）。\
+输入 patches（association/prohibition 增删）与 checks（user_id/resource_type/fk_resource/action），\
+逐点返回 before/after/flipped（Permit/Deny/NotApplicable）。提案前用它给出影响清单；\
+结果只作参考，真实生效仍经用户确认后的策略写入通道。"
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "patches": { "type": "array", "description": "候选补丁：{kind: association|prohibition, remove, id, fk_user_attribute, fk_object_attribute, rights[], is_active}" },
+                    "checks": { "type": "array", "description": "判决点：{user_id, resource_type, fk_resource, action}" }
+                },
+                "required": ["patches", "checks"]
+            }),
+            execution_target: crate::agents::ExecutionTarget::Backend,
+        }
+    }
+
+    pub async fn execute(call: &ToolCall, ctx: &ToolContext) -> Result<ToolResult, String> {
+        let params = call.arguments.clone();
+        let Some(handler) = ctx.action_handler.as_deref() else {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some("NGAC_ANALYSIS_UNAVAILABLE: 未注入动作执行器".to_string()),
+            });
+        };
+        match handler.analyze("ngac_dry_run", &params, ctx).await {
+            Ok(output) => Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: true,
+                output,
+                error: None,
+            }),
+            Err(e) => Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some(e),
+            }),
+        }
+    }
+}
+
+/// NGAC 图路径证据工具（tasks 3.3；只读）。
+///
+/// 承载 `POST /api/admin/ngac/analysis/explain-paths` 的产品入口：给定资源标识
+/// （`{resource_type}:{id}`）返回 UA→OA 的 ASSOCIATION/PROHIBITION 边证据——
+/// 回答「这个资源为什么这样授权」。同 [`NgacDryRunTool`] 经宿主 `ActionHandler`
+/// 收窄可达（目录条目 `expose_to_llm: false`）。
+pub struct NgacExplainPathsTool;
+
+impl NgacExplainPathsTool {
+    pub fn definition() -> ToolDefinition {
+        ToolDefinition {
+            name: "ngac_explain_paths".to_string(),
+            description: "查询 NGAC 图路径证据（只读）：给定资源标识 `{resource_type}:{id}`，\
+返回该资源 OA 闭包内全部 UA→OA 边（边类 ASSOCIATION/PROHIBITION + 权利 + 两端名）。\
+用于解释存量授权的来源；不改变任何状态。"
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "resource": { "type": "string", "description": "资源标识 `{resource_type}:{id}`（与 PEP 同构）" },
+                    "action": { "type": "string", "description": "动作名（契约字段；路径按 OA 闭包枚举，不按动作过滤）" }
+                },
+                "required": ["resource", "action"]
+            }),
+            execution_target: crate::agents::ExecutionTarget::Backend,
+        }
+    }
+
+    pub async fn execute(call: &ToolCall, ctx: &ToolContext) -> Result<ToolResult, String> {
+        let params = call.arguments.clone();
+        let Some(handler) = ctx.action_handler.as_deref() else {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some("NGAC_ANALYSIS_UNAVAILABLE: 未注入动作执行器".to_string()),
+            });
+        };
+        match handler.analyze("ngac_explain_paths", &params, ctx).await {
+            Ok(output) => Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: true,
+                output,
+                error: None,
+            }),
+            Err(e) => Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some(e),
+            }),
+        }
+    }
+}
+
+/// NGAC 访问检查工具（`wire-ngac-zero-consumer-faces`；只读，批量）。
+///
+/// 承载 `/api/ngac/pdp/check{,/batch}` 的**能力面**产品入口：逐点返回 `permitted` / `reason`。
+/// 执行经宿主 `ActionHandler::analyze`（**不入动作目录** ⇒ 与 `execute_action` 的枚举/确认级面解耦，
+/// 能力不外溢），宿主侧实现 = `common::permissions::require_resource_access`（**决策唯一实现**）。
+pub struct NgacCheckAccessTool;
+
+impl NgacCheckAccessTool {
+    pub fn definition() -> ToolDefinition {
+        ToolDefinition {
+            name: "ngac_check_access".to_string(),
+            description: "批量检查 NGAC 访问判定（只读）：输入 checks（user_id / resource_type / \
+fk_resource / action），逐点返回 permitted 与原因。用于回答「某用户能否对某资源做某动作」；\
+不改变任何状态，判定与 PEP/内层门同源。"
+                .to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "checks": {
+                        "type": "array",
+                        "description": "判定点：{user_id, resource_type, fk_resource, action}",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "user_id": { "type": "integer" },
+                                "resource_type": { "type": "string" },
+                                "fk_resource": { "type": "integer" },
+                                "action": { "type": "string" }
+                            },
+                            "required": ["user_id", "resource_type", "action"]
+                        }
+                    }
+                },
+                "required": ["checks"]
+            }),
+            execution_target: crate::agents::ExecutionTarget::Backend,
+        }
+    }
+
+    pub async fn execute(call: &ToolCall, ctx: &ToolContext) -> Result<ToolResult, String> {
+        let params = call.arguments.clone();
+        let Some(handler) = ctx.action_handler.as_deref() else {
+            return Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some("NGAC_ANALYSIS_UNAVAILABLE: 未注入动作执行器".to_string()),
+            });
+        };
+        match handler.analyze("ngac_check_access", &params, ctx).await {
+            Ok(output) => Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: true,
+                output,
+                error: None,
+            }),
+            Err(e) => Ok(ToolResult {
+                tool_call_id: call.id.clone(),
+                name: call.name.clone(),
+                success: false,
+                output: json!(null),
+                error: Some(e),
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agents::tool_orchestrator::ActionHandler;
     use crate::agents::ConfirmationLevel;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
-    /// 测试用 ActionHandler：固定确认级别 + 共享调用日志
-    /// （锁约定与 crate 内既有 fake adapter 一致：std Mutex 直锁）
+    /// 测试用 ActionHandler：固定确认级别 + 调用日志（mpsc 通道，无 Mutex——
+    /// 满足 `rs-parking-lot` 规则：新代码 MUST NOT 出现 `std::sync::Mutex` + `.lock().unwrap()`；
+    /// 调用方按需 `try_recv`/`try_iter` 读取，语义与旧共享 Vec 一致）。
     /// FakeActionHandler 调用日志型（工具名 + 参数 id 集）
-    type CallLog = Arc<Mutex<Vec<(String, Vec<i64>)>>>;
+    type CallLog = std::sync::mpsc::Receiver<(String, Vec<i64>)>;
 
     struct FakeActionHandler {
         level: ConfirmationLevel,
-        calls: CallLog,
+        tx: std::sync::mpsc::Sender<(String, Vec<i64>)>,
     }
 
     impl FakeActionHandler {
         fn boxed(level: ConfirmationLevel) -> (Arc<dyn ActionHandler>, CallLog) {
-            let calls: CallLog = Arc::new(Mutex::new(vec![]));
-            let handler: Arc<dyn ActionHandler> = Arc::new(FakeActionHandler {
-                level,
-                calls: calls.clone(),
-            });
-            (handler, calls)
+            let (tx, rx) = std::sync::mpsc::channel::<(String, Vec<i64>)>();
+            let handler: Arc<dyn ActionHandler> = Arc::new(FakeActionHandler { level, tx });
+            (handler, rx)
         }
     }
 
@@ -1450,10 +1961,7 @@ mod tests {
             params: &serde_json::Value,
             _ctx: &ToolContext,
         ) -> Result<serde_json::Value, String> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push((action_type.to_string(), target_ids.to_vec()));
+            let _ = self.tx.send((action_type.to_string(), target_ids.to_vec()));
             Ok(json!({
                 "executed": action_type,
                 "count": target_ids.len(),
@@ -1473,7 +1981,113 @@ mod tests {
             db_pool: sqlx::PgPool::connect_lazy("postgres://u:p@localhost:5432/nodb").unwrap(),
             allowed_schemas: vec![],
             action_handler: handler,
+            form_contract: None,
         }
+    }
+
+    // ── 只读分析工具（ngac_dry_run / ngac_explain_paths，tasks 3.3）────────────
+
+    /// 记录调用而不引入 `std::sync::Mutex`（`rs-parking-lot`：新代码不得
+    /// `.lock().unwrap()`）——用 mpsc 通道回传 (tool, target_ids)。
+    struct ChannelledHandler {
+        tx: std::sync::mpsc::Sender<(String, Vec<i64>)>,
+    }
+
+    #[async_trait::async_trait]
+    impl ActionHandler for ChannelledHandler {
+        async fn execute(
+            &self,
+            action_type: &str,
+            target_ids: &[i64],
+            _params: &serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<serde_json::Value, String> {
+            let _ = self.tx.send((action_type.to_string(), target_ids.to_vec()));
+            Ok(json!({ "executed": action_type }))
+        }
+
+        async fn analyze(
+            &self,
+            tool: &str,
+            params: &serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> Result<serde_json::Value, String> {
+            let _ = self.tx.send((tool.to_string(), vec![]));
+            Ok(json!({
+                "executed": tool,
+                "note": params.get("resource").cloned().unwrap_or(serde_json::Value::Null)
+            }))
+        }
+
+        fn confirmation_level(&self, _action_type: &str) -> ConfirmationLevel {
+            ConfirmationLevel::None
+        }
+    }
+
+    /// 分析工具经 `ToolContext.action_handler` 收窄执行：动作地址 = 工具名、
+    /// target_ids 空、params 原样透传；**不产生提案**（只读）；无 handler ⇒ 失败（不静默）。
+    #[tokio::test]
+    async fn ngac_analysis_tools_dispatch_to_handler_without_proposal() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handler: Arc<dyn ActionHandler> = Arc::new(ChannelledHandler { tx });
+        let ctx = action_ctx(Some(handler));
+        let registry = crate::tools::registry::ToolRegistry::new();
+
+        let call = ToolCall {
+            id: "t-dry".to_string(),
+            name: "ngac_dry_run".to_string(),
+            arguments: json!({
+                "patches": [ { "kind": "association", "remove": true, "id": 5 } ],
+                "checks": [ { "user_id": 9, "resource_type": "invoices", "action": "read" } ]
+            }),
+        };
+        let r = registry.execute(&call, &ctx).await.expect("dry-run tool");
+        assert!(r.success, "dry-run 工具应成功：{r:?}");
+        assert_eq!(r.output["executed"], "ngac_dry_run");
+        assert!(
+            r.output.get("status").is_none() || r.output["status"] != "needs_confirmation",
+            "只读分析 MUST NOT 产生确认提案：{r:?}"
+        );
+
+        let call2 = ToolCall {
+            id: "t-paths".to_string(),
+            name: "ngac_explain_paths".to_string(),
+            arguments: json!({ "resource": "invoices:7", "action": "read" }),
+        };
+        let r2 = registry.execute(&call2, &ctx).await.expect("explain tool");
+        assert!(r2.success, "explain-paths 工具应成功：{r2:?}");
+        assert_eq!(r2.output["executed"], "ngac_explain_paths");
+
+        let call3 = ToolCall {
+            id: "t-check".to_string(),
+            name: "ngac_check_access".to_string(),
+            arguments: json!({ "checks": [ { "user_id": 7, "resource_type": "invoices", "fk_resource": 0, "action": "read" } ] }),
+        };
+        let r3 = registry.execute(&call3, &ctx).await.expect("check tool");
+        assert!(r3.success, "check_access 工具应成功：{r3:?}");
+        assert_eq!(r3.output["executed"], "ngac_check_access");
+
+        let first = rx.recv().expect("第一次调用记录");
+        let second = rx.recv().expect("第二次调用记录");
+        let third = rx.recv().expect("第三次调用记录");
+        assert_eq!(first.0, "ngac_dry_run");
+        assert_eq!(second.0, "ngac_explain_paths");
+        assert_eq!(third.0, "ngac_check_access");
+        assert!(
+            first.1.is_empty() && second.1.is_empty() && third.1.is_empty(),
+            "分析工具 MUST NOT 传 target_ids"
+        );
+
+        // 无 handler（测试/未注入场景）⇒ 显式失败（MUST NOT 静默返回空结果）
+        let bare = action_ctx(None);
+        let r3 = registry.execute(&call, &bare).await.expect("tool result");
+        assert!(!r3.success);
+        assert!(
+            r3.error
+                .unwrap_or_default()
+                .contains("NGAC_ANALYSIS_UNAVAILABLE"),
+            "未注入执行器 MUST 显式失败"
+        );
     }
 
     fn action_call(action_type: &str, confirmed: bool) -> ToolCall {
@@ -1522,7 +2136,7 @@ mod tests {
         assert_eq!(result.output["params"], json!({ "note": "x" }));
         assert!(result.output["confirm_url_hint"].is_string());
         assert!(
-            calls.lock().unwrap().is_empty(),
+            calls.try_recv().is_err(),
             "LLM 自称确认不得触达 handler（数据零变更）"
         );
     }
@@ -1542,7 +2156,7 @@ mod tests {
         assert_eq!(result.output["target_ids"], json!([11, 22]));
         assert_eq!(result.output["params"], json!({ "note": "x" }));
         assert!(result.output["confirm_url_hint"].is_string());
-        assert!(calls.lock().unwrap().is_empty(), "未确认不得触达 handler");
+        assert!(calls.try_recv().is_err(), "未确认不得触达 handler");
     }
 
     #[tokio::test]
@@ -1556,7 +2170,7 @@ mod tests {
             .unwrap();
         assert!(result.success);
         assert_eq!(result.output["executed"], "generate_document");
-        assert_eq!(calls.lock().unwrap().len(), 1);
+        assert_eq!(calls.try_iter().count(), 1);
     }
 
     #[tokio::test]
@@ -1586,165 +2200,94 @@ mod tests {
         assert_eq!(result.error.as_deref(), Some("backend rejected"));
     }
 
-    /// 返回所有错误条目的 error code 列表（断言辅助）
-    fn codes(errors: &[serde_json::Value]) -> Vec<&str> {
-        errors
-            .iter()
-            .map(|e| e["error"].as_str().unwrap_or(""))
-            .collect()
-    }
-
-    #[test]
-    fn type_rule_string_number_integer_boolean() {
-        let schema = json!({
-            "properties": {
-                "title": { "type": "string" },
-                "price": { "type": "number" },
-                "count": { "type": "integer" },
-                "enabled": { "type": "boolean" }
-            }
-        });
-        // 正例：各类型匹配
-        assert!(validate_form_schema(
-            &schema,
-            &json!({ "title": "x", "price": 1.5, "count": 3, "enabled": true })
-        )
-        .is_empty());
-        // 反例：类型不符（错误按字段名排序，与 Map 迭代序一致）
-        let errors = validate_form_schema(
-            &schema,
-            &json!({ "title": 42, "price": "贵", "count": 3.5, "enabled": "yes" }),
-        );
-        assert_eq!(codes(&errors), vec!["type", "type", "type", "type"]);
-        let title_err = errors.iter().find(|e| e["field"] == "title").unwrap();
-        assert_eq!(
-            title_err["message"],
-            "字段 'title' 类型应为 string, 实际为 number"
-        );
-        let count_err = errors.iter().find(|e| e["field"] == "count").unwrap();
-        assert_eq!(
-            count_err["message"],
-            "字段 'count' 类型应为 integer, 实际为 number"
-        );
-        // 浮点数字面量 1.0 不算 integer
-        let errors = validate_form_schema(&schema, &json!({ "count": 1.0 }));
-        assert_eq!(codes(&errors), vec!["type"]);
-    }
-
-    #[test]
-    fn required_rule_keeps_presence_semantics() {
-        let schema = json!({
-            "properties": { "name": { "type": "string" }, "age": { "type": "integer" } },
-            "required": ["name"]
-        });
-        assert!(validate_form_schema(&schema, &json!({ "name": "张三" })).is_empty());
-        let errors = validate_form_schema(&schema, &json!({ "age": 30 }));
-        assert_eq!(codes(&errors), vec!["required"]);
-        assert_eq!(errors[0]["message"], "字段 'name' 为必填项");
-        // 显式 null 视为已提供 → 不报 required；是否合法交由 type 规则
-        let errors = validate_form_schema(&schema, &json!({ "name": serde_json::Value::Null }));
-        assert!(!codes(&errors).contains(&"required"));
-        assert_eq!(codes(&errors), vec!["type"]);
-    }
-
-    #[test]
-    fn enum_rule_accepts_declared_values_only() {
-        let schema = json!({
-            "properties": { "status": { "type": "string", "enum": ["draft", "submitted"] } }
-        });
-        assert!(validate_form_schema(&schema, &json!({ "status": "draft" })).is_empty());
-        let errors = validate_form_schema(&schema, &json!({ "status": "approved" }));
-        assert_eq!(codes(&errors), vec!["enum"]);
-    }
-
-    #[test]
-    fn minimum_maximum_rules_bound_numbers() {
-        let schema = json!({
-            "properties": { "age": { "type": "integer", "minimum": 0, "maximum": 150 } }
-        });
-        assert!(validate_form_schema(&schema, &json!({ "age": 0 })).is_empty());
-        assert!(validate_form_schema(&schema, &json!({ "age": 150 })).is_empty());
-        let errors = validate_form_schema(&schema, &json!({ "age": -1 }));
-        assert_eq!(codes(&errors), vec!["minimum"]);
-        let errors = validate_form_schema(&schema, &json!({ "age": 151 }));
-        assert_eq!(codes(&errors), vec!["maximum"]);
-        // 字符串值不触发数值边界规则（无 type 声明时无任何规则命中）
-        let untyped = json!({
-            "properties": { "age": { "minimum": 0, "maximum": 150 } }
-        });
-        assert!(validate_form_schema(&untyped, &json!({ "age": "老" })).is_empty());
-    }
-
-    #[test]
-    fn min_length_max_length_rules_measure_scalars() {
-        let schema = json!({
-            "properties": { "code": { "type": "string", "minLength": 2, "maxLength": 5 } }
-        });
-        assert!(validate_form_schema(&schema, &json!({ "code": "AB12" })).is_empty());
-        let errors = validate_form_schema(&schema, &json!({ "code": "A" }));
-        assert_eq!(codes(&errors), vec!["min_length"]);
-        let errors = validate_form_schema(&schema, &json!({ "code": "ABCDEF" }));
-        assert_eq!(codes(&errors), vec!["max_length"]);
-        // 多字节字符按 Unicode 标量计数（"张"=1）
-        let errors = validate_form_schema(&schema, &json!({ "code": "张" }));
-        assert_eq!(codes(&errors), vec!["min_length"]);
-    }
-
-    #[test]
-    fn pattern_rule_validates_regex() {
-        let schema = json!({
-            "properties": { "email": { "type": "string", "pattern": r"^[^@]+@[^@]+$" } }
-        });
-        assert!(validate_form_schema(&schema, &json!({ "email": "a@b.com" })).is_empty());
-        let errors = validate_form_schema(&schema, &json!({ "email": "not-an-email" }));
-        assert_eq!(codes(&errors), vec!["pattern"]);
-        // 非法正则跳过该规则（不 panic、不误报）
-        let bad_schema = json!({
-            "properties": { "x": { "type": "string", "pattern": "([" } }
-        });
-        assert!(validate_form_schema(&bad_schema, &json!({ "x": "anything" })).is_empty());
-    }
-
-    #[test]
-    fn multiple_fields_report_isolated_errors() {
-        let schema = json!({
-            "properties": {
-                "title": { "type": "string", "minLength": 3 },
-                "qty": { "type": "integer", "minimum": 1 },
-                "status": { "enum": ["on"] }
-            },
-            "required": ["title", "qty"]
-        });
-        let errors = validate_form_schema(&schema, &json!({ "qty": 0, "status": "off" }));
-        // required(title) 缺 + qty minimum 越界 + status enum 不匹配
-        assert_eq!(codes(&errors), vec!["required", "minimum", "enum"]);
-    }
-
-    #[tokio::test]
-    async fn execute_contract_reports_valid_flag_and_errors() {
-        // 通过 ToolResult 契约层（execute 不需 DB；connect_lazy 不发起连接）
-        let ctx = ToolContext {
+    /// 构造带契约的 ctx（change `add-form-contract-seam`：`validate_form` 的校验口径 =
+    /// 当前页面登记的契约，MUST NOT 用入参 schema）
+    fn contract_ctx(contract: Option<crate::tools::form_contract::FormContract>) -> ToolContext {
+        ToolContext {
             session_id: 1,
             user_id: None,
             db_pool: sqlx::PgPool::connect_lazy("postgres://u:p@localhost:5432/nodb").unwrap(),
             allowed_schemas: vec![],
             action_handler: None,
-        };
+            form_contract: contract,
+        }
+    }
+
+    fn simple_contract() -> crate::tools::form_contract::FormContract {
+        serde_json::from_value(json!({
+            "fields": [
+                { "name": "age", "type": "integer", "required": true, "minimum": 0, "maximum": 150 }
+            ]
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn validate_form_uses_page_contract_and_reports_errors() {
+        let ctx = contract_ctx(Some(simple_contract()));
         let call = ToolCall {
             id: "c1".to_string(),
             name: "validate_form".to_string(),
-            arguments: json!({
-                "form_schema": {
-                    "properties": { "age": { "type": "integer", "minimum": 0 } }
-                },
-                "field_values": { "age": -5 }
-            }),
+            arguments: json!({ "field_values": { "age": -5 } }),
         };
         let result = ValidateFormTool::execute(&call, &ctx).await.unwrap();
         assert!(!result.success);
         assert_eq!(result.output["valid"], false);
         assert_eq!(result.output["errors"][0]["error"], "minimum");
+        assert_eq!(result.output["appliable"], false);
         assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn validate_form_passes_when_values_match_contract() {
+        let ctx = contract_ctx(Some(simple_contract()));
+        let call = ToolCall {
+            id: "c2".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({ "field_values": { "age": 30 } }),
+        };
+        let result = ValidateFormTool::execute(&call, &ctx).await.unwrap();
+        assert!(result.success);
+        assert_eq!(result.output["valid"], true);
+        assert_eq!(result.output["appliable"], true);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_form_without_contract_fails_closed() {
+        // 未登记契约 ⇒ CONTRACT_UNAVAILABLE，MUST NOT 放行（design D7 fail-closed）
+        let ctx = contract_ctx(None);
+        let call = ToolCall {
+            id: "c3".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({ "field_values": { "age": 30 } }),
+        };
+        let result = ValidateFormTool::execute(&call, &ctx).await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.output["error"], "CONTRACT_UNAVAILABLE");
+        assert_eq!(result.output["appliable"], false);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("CONTRACT_UNAVAILABLE"));
+    }
+
+    #[tokio::test]
+    async fn validate_form_ignores_model_supplied_schema() {
+        // 模型自备 schema 不再被消费（「可校验任意 schema」的第二实现已退役）：
+        // 入参声明 age 为 string，而契约是 integer ⇒ 按契约判，30 合法。
+        let ctx = contract_ctx(Some(simple_contract()));
+        let call = ToolCall {
+            id: "c4".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({
+                "form_schema": { "properties": { "age": { "type": "string" } } },
+                "field_values": { "age": 30 }
+            }),
+        };
+        let result = ValidateFormTool::execute(&call, &ctx).await.unwrap();
+        assert!(result.success, "MUST 按契约判定，MUST NOT 按入参 schema");
     }
 
     // ============ S3/S4：query_sql AST 级校验（design D2.2/D2.3） ============
@@ -1799,6 +2342,7 @@ mod tests {
             db_pool: sqlx::PgPool::connect_lazy("postgres://u:p@localhost:5432/nodb").unwrap(),
             allowed_schemas: vec!["isahl".to_string()],
             action_handler: None,
+            form_contract: None,
         };
         let call = ToolCall {
             id: "c1".to_string(),
@@ -1825,6 +2369,7 @@ mod tests {
             db_pool: sqlx::PgPool::connect_lazy("postgres://u:p@localhost:5432/nodb").unwrap(),
             allowed_schemas: vec![],
             action_handler: None,
+            form_contract: None,
         };
         let call = ToolCall {
             id: "c1".to_string(),
@@ -1933,5 +2478,187 @@ mod tests {
         // 派生表内纯聚合 → 放行
         let q = parse_select("SELECT * FROM (SELECT count(*) c FROM isahl.a) t");
         assert!(function_blacklist_violation(&q).is_none());
+    }
+
+    // ── ngac_policy_draft（route-ngac-policy-authoring-through-ai-assist 2.1）──
+
+    fn ngac_call(operations: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "n1".to_string(),
+            name: "ngac_policy_draft".to_string(),
+            arguments: json!({ "operations": operations }),
+        }
+    }
+
+    #[tokio::test]
+    async fn ngac_policy_draft_returns_confirmation_proposal_without_writes() {
+        let (handler, calls) = FakeActionHandler::boxed(ConfirmationLevel::Explicit);
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(Some(handler));
+        let call = ngac_call(json!([
+            {
+                "op": "upsert_class", "code": "finance-approval", "notice": "财务审批规范",
+                "scope": { "resource_types": ["invoice"], "actions": ["approve"] },
+                "prohibition_template": "action == \"export\" && !permitted",
+                "summary": "新建财务审批规范"
+            },
+            {
+                "op": "create_rule", "policy_class_id": 7, "subject_code": "position:cfo",
+                "resource_type": "invoice", "actions": ["approve"],
+                "condition": "action == \"approve\" && permitted"
+            }
+        ]));
+        let result = registry.execute(&call, &ctx).await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["id"], "ngac:org-policy-apply");
+        assert_eq!(result.output["kind"], "execute");
+        assert_eq!(result.output["action_type"], "ngac_org_policy_apply");
+        assert_eq!(result.output["status"], "needs_confirmation");
+        assert!(result.output["label"].as_str().unwrap().contains('2'));
+        assert_eq!(
+            result.output["params"]["operations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        // 工具路径零动作调用（MUST NOT 落库/自证确认）
+        assert!(calls.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn ngac_policy_draft_rejects_unknown_op() {
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(None);
+        let result = registry
+            .execute(&ngac_call(json!([{ "op": "drop_table" }])), &ctx)
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("白名单"));
+    }
+
+    #[tokio::test]
+    async fn ngac_policy_draft_rejects_structured_expression_placeholder() {
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(None);
+        let result = registry
+            .execute(
+                &ngac_call(json!([{
+                    "op": "create_rule", "policy_class_id": 7, "subject_code": "s",
+                    "resource_type": "r", "actions": ["read"],
+                    "condition": { "and": [] }
+                }])),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("Rhai 源码字符串"));
+    }
+
+    #[tokio::test]
+    async fn ngac_policy_draft_rejects_empty_operations() {
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(None);
+        let result = registry.execute(&ngac_call(json!([])), &ctx).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("不能为空"));
+    }
+
+    // ── system_config_draft（add-system-config-ai-action 2.2）──
+
+    fn syscfg_call(operations: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "s1".to_string(),
+            name: "system_config_draft".to_string(),
+            arguments: json!({ "operations": operations }),
+        }
+    }
+
+    #[tokio::test]
+    async fn system_config_draft_returns_confirmation_proposal_without_writes() {
+        let (handler, calls) = FakeActionHandler::boxed(ConfirmationLevel::Explicit);
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(Some(handler));
+        let call = syscfg_call(json!([
+            {
+                "op": "create_config", "category": "llm", "provider": "deepseek",
+                "code": "llm-primary", "notice": "主模型",
+                "settings": { "model": "deepseek-v4", "base_url": "https://api.example" },
+                "credentials": { "api_key": "sk-***" },
+                "enabled": true, "is_default": true, "summary": "新建主 LLM 行"
+            },
+            { "op": "update_config", "id": 7, "enabled": false, "summary": "停用旧行" }
+        ]));
+        let result = registry.execute(&call, &ctx).await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["id"], "syscfg:apply");
+        assert_eq!(result.output["kind"], "execute");
+        assert_eq!(result.output["action_type"], "system_config_apply");
+        assert_eq!(result.output["status"], "needs_confirmation");
+        assert!(result.output["label"].as_str().unwrap().contains('2'));
+        assert_eq!(
+            result.output["params"]["operations"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        // 工具路径零动作调用（MUST NOT 落库/自证确认）
+        assert!(calls.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn system_config_draft_requires_category_and_provider_on_create() {
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(None);
+        let result = registry
+            .execute(
+                &syscfg_call(json!([{ "op": "create_config", "category": "llm" }])),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("provider"));
+    }
+
+    #[tokio::test]
+    async fn system_config_draft_rejects_non_object_credentials() {
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(None);
+        let result = registry
+            .execute(
+                &syscfg_call(json!([{
+                    "op": "update_config", "id": 3, "credentials": "sk-plain-text"
+                }])),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result
+            .error
+            .unwrap()
+            .contains("credentials MUST 为 JSON 对象"));
+    }
+
+    #[tokio::test]
+    async fn system_config_draft_rejects_unknown_op_and_empty() {
+        let registry = crate::tools::registry::ToolRegistry::new();
+        let ctx = action_ctx(None);
+        let unknown = registry
+            .execute(&syscfg_call(json!([{ "op": "drop_config" }])), &ctx)
+            .await
+            .unwrap();
+        assert!(!unknown.success);
+        assert!(unknown.error.unwrap().contains("白名单"));
+        let empty = registry
+            .execute(&syscfg_call(json!([])), &ctx)
+            .await
+            .unwrap();
+        assert!(!empty.success);
+        assert!(empty.error.unwrap().contains("不能为空"));
     }
 }

@@ -1,6 +1,6 @@
 // AUTO-GENERATED from DB (pg_inherits + isahl_meta.meta_collections, 生成期) — DO NOT EDIT
-// 生成: bun scripts/generate-context-fields.ts（模型升级后重跑；pre-commit
-// check-context-fields.ts 漂移时自动重建并阻断提交）
+// 生成: bun scripts/generate-context-fields.ts（模型升级后重跑；push 阶段门禁
+// check-context-fields.ts 漂移时自动重建并阻断推送）
 //
 //! 模型设计规则（operation 节点，2026-09-01 裁决）：
 //! - 可入选上下文条件判断/数值计算参数的字段：物理类型族 MUST ∈
@@ -84,6 +84,10 @@ pub static STATEMENT_LEAVES: &[ScopeItemMeta] = &[
         concept: Some("事实-贸易凭证"),
     },
     ScopeItemMeta {
+        table: "zc_id_stat-mal-voucher",
+        concept: Some("事实-人工凭证"),
+    },
+    ScopeItemMeta {
         table: "zc_id_stat-slf-voucher",
         concept: Some("事实-上架凭证"),
     },
@@ -118,6 +122,10 @@ pub static STATEMENT_LEAVES: &[ScopeItemMeta] = &[
     ScopeItemMeta {
         table: "zc_id_orde-consult",
         concept: Some("订单-咨询委托"),
+    },
+    ScopeItemMeta {
+        table: "zc_id_orde-manual",
+        concept: Some("订单-人工服务"),
     },
     ScopeItemMeta {
         table: "zc_id_orde-payment",
@@ -386,6 +394,9 @@ pub fn statement_leaf_insert_sql(leaf: &str) -> Option<&'static str> {
         "zc_id_stat-com-voucher" => Some(
             r#"INSERT INTO isahl."zc_id_stat-com-voucher" (notice, code, tpl_id, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
         ),
+        "zc_id_stat-mal-voucher" => Some(
+            r#"INSERT INTO isahl."zc_id_stat-mal-voucher" (notice, code, tpl_id, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
+        ),
         "zc_id_stat-slf-voucher" => Some(
             r#"INSERT INTO isahl."zc_id_stat-slf-voucher" (notice, code, tpl_id, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
         ),
@@ -412,6 +423,9 @@ pub fn statement_leaf_insert_sql(leaf: &str) -> Option<&'static str> {
         ),
         "zc_id_orde-consult" => Some(
             r#"INSERT INTO isahl."zc_id_orde-consult" (notice, code, tpl_id, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
+        ),
+        "zc_id_orde-manual" => Some(
+            r#"INSERT INTO isahl."zc_id_orde-manual" (notice, code, tpl_id, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
         ),
         "zc_id_orde-payment" => Some(
             r#"INSERT INTO isahl."zc_id_orde-payment" (notice, code, tpl_id, created_by_id, _f_, _t_, dk_scene, dk_factor, dk_function) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id"#,
@@ -805,6 +819,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -1043,6 +1092,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -1298,6 +1382,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -1541,6 +1660,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -1779,6 +1933,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -2062,6 +2251,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -2340,6 +2564,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -2585,6 +2844,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -2840,6 +3134,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -3085,6 +3414,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -3340,6 +3704,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -3585,6 +3984,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -3840,6 +4274,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -4078,6 +4547,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -4333,6 +4837,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -4578,6 +5117,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -4833,6 +5407,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -5083,6 +5692,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -5321,6 +5965,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -5592,6 +6271,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -5875,6 +6589,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "盘点物项·code",
                 category: "reference",
@@ -6125,6 +6874,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -6363,6 +7147,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -6611,6 +7430,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -6849,6 +7703,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.container.t_color_",
                 label: "容器·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -7097,6 +7986,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.matter.code",
                 label: "物项·code",
                 category: "reference",
@@ -7340,6 +8264,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.statement.code",
                 label: "缘由·code",
                 category: "reference",
@@ -7515,6 +8474,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.dependency.t_color_",
                 label: "前序依赖·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -7700,6 +8694,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.statement.code",
                 label: "缘由·code",
                 category: "reference",
@@ -7875,6 +8904,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.dependency.t_color_",
                 label: "前序依赖·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -8060,6 +9124,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.statement.code",
                 label: "任务事实·code",
                 category: "reference",
@@ -8240,6 +9339,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
                 domain: "color",
             },
             ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
                 name: "_refs.statement.code",
                 label: "缘由·code",
                 category: "reference",
@@ -8415,6 +9549,41 @@ pub static CONTEXT_FIELDS: &[(&str, &[ContextFieldMeta])] = &[
             ContextFieldMeta {
                 name: "_refs.dependency.t_color_",
                 label: "前序依赖·t_color_",
+                category: "reference",
+                data_type: "text",
+                domain: "color",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.code",
+                label: "锁定状态·code",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.comments",
+                label: "锁定状态·comments",
+                category: "reference",
+                data_type: "text",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.enable",
+                label: "锁定状态·enable",
+                category: "reference",
+                data_type: "boolean",
+                domain: "",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.label",
+                label: "锁定状态·notice",
+                category: "reference",
+                data_type: "text",
+                domain: "lookup",
+            },
+            ContextFieldMeta {
+                name: "_refs.lock-status.t_color_",
+                label: "锁定状态·t_color_",
                 category: "reference",
                 data_type: "text",
                 domain: "color",
@@ -8676,6 +9845,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-authorization",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-authorization",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -8716,7 +9893,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-authorization",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -8760,6 +9937,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-bid-evaluation",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-bid-evaluation",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -8800,7 +9985,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-bid-evaluation",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -8844,6 +10029,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-code-review",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-code-review",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -8884,7 +10077,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-code-review",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -8928,6 +10121,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-damage",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-damage",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -8968,7 +10169,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-damage",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9012,6 +10213,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-org-structure",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-org-structure",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9052,7 +10261,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-org-structure",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9100,6 +10309,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_invoice" e
 JOIN isahl."zc_id_appr-payment_rr_invoice" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-payment",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -9152,7 +10369,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-payment",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9196,6 +10413,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-pricing",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-pricing",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9236,7 +10461,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-pricing",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9280,6 +10505,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-prj-initiation",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-prj-initiation",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9320,7 +10553,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-prj-initiation",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9364,6 +10597,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-prj_doc-push",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-prj_doc-push",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9404,7 +10645,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-prj_doc-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9448,6 +10689,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-prj_made-push",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-prj_made-push",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9488,7 +10737,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-prj_made-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9532,6 +10781,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-prj_request-push",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-prj_request-push",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9572,7 +10829,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-prj_request-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9616,6 +10873,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-prj_sales-push",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-prj_sales-push",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9656,7 +10921,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-prj_sales-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9700,6 +10965,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-process",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-process",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9740,7 +11013,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-process",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9784,6 +11057,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-project-push",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-project-push",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9824,7 +11105,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-project-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9868,6 +11149,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-purchase",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-purchase",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9908,7 +11197,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-purchase",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -9952,6 +11241,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-recruitment",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-recruitment",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -9992,7 +11289,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-recruitment",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10036,6 +11333,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-req-time_off",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-req-time_off",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -10076,7 +11381,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-req-time_off",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10120,6 +11425,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_appr-user_verify",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_appr-user_verify",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -10160,7 +11473,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_appr-user_verify",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10200,6 +11513,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_stor-container" e
 JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-accident",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -10252,7 +11573,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-accident",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10310,6 +11631,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_even-alert",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-alert",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -10357,7 +11686,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-alert",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10416,6 +11745,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_even-counting",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-counting",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -10463,7 +11800,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-counting",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10503,6 +11840,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_stor-container" e
 JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-issue",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -10547,7 +11892,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-issue",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10587,6 +11932,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_stor-container" e
 JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-log",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -10638,7 +11991,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-log",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10678,6 +12031,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_stor-container" e
 JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-modify",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -10729,7 +12090,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-modify",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10780,6 +12141,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_even-report",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-report",
         "_refs.matter.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_production" e
@@ -10820,7 +12189,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-report",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10860,6 +12229,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_stor-container" e
 JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_even-tracking",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -10911,7 +12288,7 @@ WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
     (
         "zc_id_even-tracking",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.deleted_at IS NULL ORDER BY 2 LIMIT 200"#,
@@ -10955,6 +12332,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_task-commission",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-commission",
         "_refs.statement.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_statement" e
@@ -11022,6 +12407,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
         "zc_id_task-design",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-design",
         "_refs.statement.label",
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_statement" e
@@ -11085,6 +12478,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_task" e
 JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-develop",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -11152,6 +12553,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_task" e
 JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-fix",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -11219,6 +12628,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_task" e
 JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-pay",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -11286,6 +12703,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_task" e
 JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-storage",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -11353,6 +12778,14 @@ WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
         r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
 FROM isahl."zc_id_task" e
 JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
+    ),
+    (
+        "zc_id_task-testing",
+        "_refs.lock-status.label",
+        r#"SELECT DISTINCT e.notice AS label, e.t_color_ AS color
+FROM isahl."zc_id_stus-lock" e
+JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
 WHERE j.deleted_at IS NULL AND e.deleted_at IS NULL ORDER BY 1 LIMIT 200"#,
     ),
     (
@@ -11429,7 +12862,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-authorization",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11465,7 +12898,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-bid-evaluation",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11501,7 +12934,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-code-review",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11537,7 +12970,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-damage",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11573,7 +13006,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-org-structure",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11609,7 +13042,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-payment",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11645,7 +13078,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-pricing",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11681,7 +13114,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-prj-initiation",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11717,7 +13150,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-prj_doc-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11753,7 +13186,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-prj_made-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11789,7 +13222,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-prj_request-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11825,7 +13258,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-prj_sales-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11861,7 +13294,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-process",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11897,7 +13330,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-project-push",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11933,7 +13366,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-purchase",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -11969,7 +13402,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-recruitment",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12005,7 +13438,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-req-time_off",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12041,7 +13474,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_appr-user_verify",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12077,7 +13510,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-accident",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12134,7 +13567,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-alert",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12184,7 +13617,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-counting",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12220,7 +13653,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-issue",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12263,7 +13696,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-log",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12306,7 +13739,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-modify",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12349,7 +13782,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-report",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12392,7 +13825,7 @@ WHERE e.id = $1"#,
     (
         "zc_id_even-tracking",
         "fk_subject",
-        r#"SELECT e.id, COALESCE(u.name, e.notice) AS label, e.t_color_ AS color
+        r#"SELECT e.id, COALESCE(u.display_name, u.username, e.notice) AS label, e.t_color_ AS color
 FROM isahl."zc_id_subjects" e
                LEFT JOIN isahl_auth.auth_users u ON u.id = e.fk_user
 WHERE e.id = $1"#,
@@ -12709,6 +14142,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_appr-authorization",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-authorization",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -12793,6 +14240,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_appr-bid-evaluation",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-bid-evaluation",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -12872,6 +14333,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-code-review",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -12956,6 +14431,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-damage",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13040,6 +14529,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-org-structure",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13143,6 +14646,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_appr-payment",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-payment",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -13241,6 +14758,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_appr-pricing",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-pricing",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -13325,6 +14856,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_appr-prj-initiation",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-prj-initiation",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -13404,6 +14949,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-prj_doc-push",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13488,6 +15047,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-prj_made-push",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13572,6 +15145,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-prj_request-push",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13656,6 +15243,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-prj_sales-push",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13740,6 +15341,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-process",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13824,6 +15439,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-project-push",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13908,6 +15537,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-purchase",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -13992,6 +15635,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-recruitment",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -14076,6 +15733,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-req-time_off",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -14160,6 +15831,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_appr-user_verify",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -14244,6 +15929,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-accident",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -14347,6 +16046,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_even-alert",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-alert",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -14445,6 +16158,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_even-counting",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-counting",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -14529,6 +16256,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_even-issue",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-issue",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -14613,6 +16354,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_even-log",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-log",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -14697,6 +16452,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_even-modify",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-modify",
         "matter",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -14776,6 +16545,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-report",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -14860,6 +16643,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_stor-container" e
         JOIN isahl."zc_id_event_rr_container" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_even-tracking",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -14944,6 +16741,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_task" e
         JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-commission",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -15005,6 +16816,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
     ),
     (
         "zc_id_task-design",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-design",
         "statement",
         r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
                (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
@@ -15056,6 +16881,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_task" e
         JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-develop",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -15112,6 +16951,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_task" e
         JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-fix",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -15168,6 +17021,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_task" e
         JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-pay",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -15224,6 +17091,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_task" e
         JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-storage",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),
@@ -15280,6 +17161,20 @@ pub static CONTEXT_BRIDGE_REFS: &[(&str, &str, &str)] = &[
                   ORDER BY e2.id) y) AS labels
         FROM isahl."zc_id_task" e
         JOIN isahl."zc_id_task_rr_dependency" j ON j.ref_right = e.id
+        WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
+        ORDER BY e.id LIMIT 1) x"#,
+    ),
+    (
+        "zc_id_task-testing",
+        "lock-status",
+        r#"SELECT to_jsonb(x) FROM (SELECT e.id, e.notice AS label, e.t_color_ AS color,
+               (SELECT jsonb_agg(y.lbl) FROM (SELECT e2.notice AS lbl
+                  FROM isahl."zc_id_stus-lock" e2
+                  JOIN isahl."zc_id_lifecycle_r_lock-status" j2 ON j2.ref_right = e2.id
+                  WHERE j2.ref_left = $1 AND j2.deleted_at IS NULL AND e2.deleted_at IS NULL
+                  ORDER BY e2.id) y) AS labels
+        FROM isahl."zc_id_stus-lock" e
+        JOIN isahl."zc_id_lifecycle_r_lock-status" j ON j.ref_right = e.id
         WHERE j.ref_left = $1 AND j.deleted_at IS NULL AND e.deleted_at IS NULL
         ORDER BY e.id LIMIT 1) x"#,
     ),

@@ -185,6 +185,21 @@ const STOP_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_prod-transport_rr_stop"
           $5
    ON CONFLICT DO NOTHING"#;
 
+/// 本产品既有起讫停靠活行现状（`ck_category` 短码 + 地点 id）——判「是否需要重写」用。
+const STOP_CURRENT: &str = r#"SELECT ct.code, s.ref_right
+   FROM "isahl"."zc_id_prod-transport_rr_stop" s
+   JOIN "isahl"."zc_id_cate-traffic" ct ON ct.id = s.ck_category
+  WHERE s.ref_left = $1 AND s.deleted_at IS NULL
+    AND ct.code IN ('ST-DEPART', 'ST-ARRIVE')"#;
+
+/// 软删本产品**目标类别**的既有起讫停靠活行（重写前置；部分唯一索引 `WHERE deleted_at IS NULL`
+/// ⇒ 软删后重插不撞键）。**只限目标类别**：调用方只给起点时 MUST NOT 顺带删掉既有讫点行。
+/// 未出现在目标类别集合的历史行（异常数据）一律不动。
+const STOP_RETIRE: &str = r#"UPDATE "isahl"."zc_id_prod-transport_rr_stop"
+   SET deleted_at = NOW(), deleted_by_id = $2
+   WHERE ref_left = $1 AND deleted_at IS NULL
+     AND ck_category IN (SELECT id FROM "isahl"."zc_id_cate-traffic" WHERE code = ANY($3))"#;
+
 /// 为运输产品写起讫停靠桥 ×2（起 = `ST-DEPART` / 讫 = `ST-ARRIVE`）。
 ///
 /// 产品写件单源——合同驱动（`create_contract_transport_product_tx`）、委托富链
@@ -192,10 +207,15 @@ const STOP_INSERT: &str = r#"INSERT INTO "isahl"."zc_id_prod-transport_rr_stop"
 /// 桥 `code` 由产品 code 派生（`STOP-{product_code}-D/-A`，与既有 `STOP-PRD-*` 约定同构），
 /// 各 ns MUST NOT 保留同语义的第二份 SQL（`REUSE_FIRST_SPEC`）。
 /// 地点缺失（`None` / 非正）即跳过、不报错（对齐既有「无站点则跳过」风格）。
-/// 幂等：唯一键 `uq_zc_id_prod-transport_rr_stop_ref_left_ref_right_qk_period`
-/// = (ref_left, ref_right, COALESCE(qk_period,-1)) **不含 ck_category** —— 起讫同址
-/// （origin == dest，直发/委托链从 `over-seq` 全 NULL 的产品停靠桥解析起讫时实测同址）
-/// 或重放同 (ref_left, ref_right) 时，`ON CONFLICT DO NOTHING` 吞并第二行而非撞键中断写链。
+///
+/// **幂等 = 按类别 upsert**（2026-09-27，fix-inquiry-reentry-upsert）：目标集与现状不一致时，
+/// 先软删本产品既有起讫活行再按目标集重写 —— 同 `(ref_left, ck_category)` 恒至多一行**活行**
+/// 且指向新地点（改起讫即生效，条数不变）；目标集与现状一致时不写（零 churn）。
+/// 旧实现只有 `ON CONFLICT DO NOTHING`（唯一键
+/// `uq_zc_id_prod-transport_rr_stop_ref_left_ref_right_qk_period` = (ref_left, ref_right,
+/// COALESCE(qk_period,-1))，**不含 ck_category**）⇒ 重放/改地点时**静默保留旧值**，调用方误以为已改。
+/// 同址（origin == dest）仍只留 1 行：第二条 INSERT 撞唯一键由 `ON CONFLICT DO NOTHING` 吞并
+/// （直发/委托链从 `over-seq` 全 NULL 的产品停靠桥解析起讫时实测同址）。
 pub async fn insert_product_stops_tx(
     conn: &mut PgConnection,
     product_id: i64,
@@ -204,13 +224,41 @@ pub async fn insert_product_stops_tx(
     dest_place_id: Option<i64>,
     user_id: i64,
 ) -> Result<(), AliothError> {
-    for (suffix, place_id, cate_code) in [
-        ("D", origin_place_id, "ST-DEPART"),
-        ("A", dest_place_id, "ST-ARRIVE"),
-    ] {
-        let Some(place_id) = place_id.filter(|pid| *pid > 0) else {
-            continue;
-        };
+    let targets: Vec<(&str, &str, i64)> = [
+        ("D", "ST-DEPART", origin_place_id),
+        ("A", "ST-ARRIVE", dest_place_id),
+    ]
+    .into_iter()
+    .filter_map(|(suffix, cate, place)| place.filter(|pid| *pid > 0).map(|pid| (suffix, cate, pid)))
+    .collect();
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let current: Vec<(String, Option<i64>)> = sqlx::query_as(STOP_CURRENT)
+        .bind(product_id)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(AliothError::from_sqlx)?;
+    // 变更判据 = **目标类别**的值变了或缺行；非目标类别的既有行既不参与判定也不被删
+    // （「只给起点」的调用 MUST NOT 动既有讫点行——见 `wz-transport-stop-bridge::stop-bridge-writer-upsert` 场景）。
+    let changed = targets.iter().any(|(_, cate, place)| {
+        match current.iter().find(|(code, _)| code == cate) {
+            Some((_, cur)) => *cur != Some(*place),
+            None => true,
+        }
+    });
+    if !changed {
+        return Ok(());
+    }
+    let retire_cates: Vec<String> = targets.iter().map(|(_, c, _)| (*c).to_string()).collect();
+    sqlx::query(STOP_RETIRE)
+        .bind(product_id)
+        .bind(user_id)
+        .bind(&retire_cates)
+        .execute(&mut *conn)
+        .await
+        .map_err(AliothError::from_sqlx)?;
+    for (suffix, cate_code, place_id) in targets {
         sqlx::query(STOP_INSERT)
             .bind(format!("STOP-{product_code}-{suffix}"))
             .bind(product_id)

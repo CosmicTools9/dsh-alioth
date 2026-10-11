@@ -13,6 +13,7 @@ fn make_page(page: i64, page_size: i64) -> ListQuery {
         filter_value: None,
         sort_field: None,
         sort_order: None,
+        search: None,
     }
 }
 
@@ -26,6 +27,7 @@ fn test_to_filter_all_fields_present() {
         filter_value: Some("active".into()),
         sort_field: Some("name".into()),
         sort_order: Some("asc".into()),
+        search: None,
     };
     let f = q.to_filter();
     assert!(f.is_some());
@@ -52,6 +54,7 @@ fn test_to_filter_none_when_partial_fields() {
         filter_value: Some("test".into()),
         sort_field: None,
         sort_order: None,
+        search: None,
     };
     assert!(q.to_filter().is_none());
 }
@@ -66,6 +69,7 @@ fn test_to_sort_present() {
         filter_value: None,
         sort_field: Some("created_at".into()),
         sort_order: Some("desc".into()),
+        search: None,
     };
     let s = q.to_sort();
     assert!(s.is_some());
@@ -84,6 +88,7 @@ fn test_to_sort_default_order() {
         filter_value: None,
         sort_field: Some("name".into()),
         sort_order: None,
+        search: None,
     };
     let s = q.to_sort();
     assert!(s.is_some());
@@ -102,6 +107,7 @@ fn test_to_sort_none_when_no_sort_field() {
         filter_value: None,
         sort_field: None,
         sort_order: Some("asc".into()),
+        search: None,
     };
     assert!(q.to_sort().is_none());
 }

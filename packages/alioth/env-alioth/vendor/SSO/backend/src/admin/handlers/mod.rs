@@ -89,26 +89,17 @@ pub(crate) async fn require_admin_claims(
             .json(serde_json::json!({"error": "Invalid user ID in token claims"}))
     })?;
 
-    let is_admin: bool = sqlx::query_scalar(
-        r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM isahl_auth.ngac_user_rr_attribute ur
-            JOIN isahl_auth.ngac_user_attribute ua ON ua.id = ur.fk_user_attribute
-            WHERE ur.fk_user = $1
-              AND ua.o_name = 'admin'
-              AND ur.deleted_at IS NULL
-        )
-        "#,
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-        log::error!("Admin auth: DB query failed: {}", e);
-        HttpResponse::InternalServerError()
-            .json(serde_json::json!({"error": "Database query failed"}))
-    })?;
+    // admin 判据唯一实现 = `common::permissions::is_admin_user`（NGAC 有效 UA 集：直派 ∪
+    // 认知派生 ∪ 委托派生 ∪ 祖先闭包，含 `deleted_at`/`expires_at` 过滤——NGAC_SPEC
+    // §2.2.3/§2.2.4 消费同源义务）。此前本处自写 SQL 只查 `ur.deleted_at`，漏 `expires_at`
+    // 与派生 UA，与 PDP 决策面不一致（consolidate-ngac-admin-predicate）。
+    let is_admin = common::permissions::is_admin_user(pool, user_id)
+        .await
+        .map_err(|e| {
+            log::error!("Admin auth: DB query failed: {}", e);
+            HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "Database query failed"}))
+        })?;
 
     if !is_admin {
         return Err(

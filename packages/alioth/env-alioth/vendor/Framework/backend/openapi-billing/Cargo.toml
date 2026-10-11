@@ -1,0 +1,19 @@
+# openapi-billing — OpenAPI 计费聚合内核（框架面，跨面共享单源）
+#
+# 存在理由：计费聚合 SQL（产品行 × 价标量 × 用量窗口）必须**单一实现**——
+# 消费方有二：SSO admin 面 `GET /api/admin/api-billing`（聚合报表）与
+# Gateway 支付面 `POST /api/openapi/billing/pay`（发起收款的权威金额）。
+# 两份 SQL 即两份计价文法 ⇒ 报表金额与收款金额可静默分歧（见 change
+# `add-openapi-payment-channel` design §D）。
+#
+# 规约：`openspec/specs/openapi-external-access :: openapi-billing-payment`
+#      （活规约 `usage-billing-aggregation` 的金额/单价承载与未定价语义由本 crate 原样保持）。
+[package]
+name = "openapi-billing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlx = { workspace = true }
+chrono = { workspace = true }

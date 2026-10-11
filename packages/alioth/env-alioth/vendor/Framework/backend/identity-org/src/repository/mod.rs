@@ -7,9 +7,6 @@
 //! 仅自定义 create/update 的 INSERT/UPDATE SQL。
 
 pub mod bill_check;
-pub mod consignment;
-pub mod consignment_structures;
-pub mod contract;
 pub mod deta_bill_check;
 mod drift_guard;
 pub mod environment;
@@ -37,8 +34,6 @@ pub mod transport_tracking;
 pub mod vehicle;
 
 pub use bill_check::*;
-pub use consignment::*;
-pub use contract::*;
 pub use deta_bill_check::*;
 pub use environment::*;
 pub use fence::*;

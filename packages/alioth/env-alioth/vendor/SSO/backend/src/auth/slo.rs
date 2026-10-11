@@ -363,19 +363,16 @@ pub async fn initiate_slo_handler(
     {
         Some(token) => token.to_string(),
         None => {
-            // Fallback: extract sid claim from access_token cookie
-            match req.cookie("access_token") {
-                Some(cookie) => {
-                    let token = cookie.value().to_string();
-                    match decode_token_any(&token, &state.verification_keys()) {
-                        Ok(claims) if !claims.sid.is_empty() => claims.sid,
-                        _ => {
-                            return HttpResponse::BadRequest().json(serde_json::json!({
-                                "error": "Missing session token"
-                            }))
-                        }
+            // Fallback: extract sid claim from access token（单一实现 = `common::csrf`）
+            match common::csrf::extract_token(&req) {
+                Some(token) => match decode_token_any(&token, &state.verification_keys()) {
+                    Ok(claims) if !claims.sid.is_empty() => claims.sid,
+                    _ => {
+                        return HttpResponse::BadRequest().json(serde_json::json!({
+                            "error": "Missing session token"
+                        }))
                     }
-                }
+                },
                 None => {
                     return HttpResponse::BadRequest().json(serde_json::json!({
                         "error": "Missing session token"
@@ -384,6 +381,12 @@ pub async fn initiate_slo_handler(
             }
         }
     };
+
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点（SLO 发起 = 会话态变），
+    // 会话解析成功之后校验（无凭据 ⇒ 由上方 400 短路，不进本门）
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
 
     let slo_handler = SloHandler::new(pool.get_ref().clone(), state.get_ref().clone());
 

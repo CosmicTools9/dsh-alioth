@@ -202,7 +202,7 @@ pub struct AgentConfig {
     /// 智能体主体 id（`isahl.zc_id_empl-agent.id`）——记忆 L1 主体层键与消息主体标识。
     /// 无主体行（未 materialize）时为 None：orchestration MUST 显式失败，
     /// MUST NOT 回落为按人类账号（user_id）写记忆。
-    #[serde(default)]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub subject_id: Option<i64>,
 }
 
@@ -372,7 +372,10 @@ pub mod document_automation;
 pub mod flow_design;
 pub mod form_filling;
 pub mod general;
+pub mod ngac_strategy_author;
+pub mod org_policy_author;
 pub mod simulation;
+pub mod system_config_admin;
 pub mod tool_orchestrator;
 
 use data_analysis::DataAnalysisAgent;
@@ -380,7 +383,10 @@ use document_automation::DocumentAutomationAgent;
 use flow_design::FlowDesignAgent;
 use form_filling::FormFillingAgent;
 use general::GeneralAssistantAgent;
+use ngac_strategy_author::NgacStrategyAuthorAgent;
+use org_policy_author::OrgPolicyAuthorAgent;
 use simulation::SimulationAgent;
+use system_config_admin::SystemConfigAdminAgent;
 
 /// 构建默认 Agent Registry 并注册所有内置 Agent
 pub fn build_default_registry() -> HashMap<String, Box<dyn Agent>> {
@@ -397,12 +403,24 @@ pub fn build_default_registry() -> HashMap<String, Box<dyn Agent>> {
     registry.insert("flow_design".to_string(), Box::new(FlowDesignAgent::new()));
     registry.insert("simulation".to_string(), Box::new(SimulationAgent::new()));
     registry.insert(
+        "org_policy_author".to_string(),
+        Box::new(OrgPolicyAuthorAgent::new()),
+    );
+    registry.insert(
+        "system_config_admin".to_string(),
+        Box::new(SystemConfigAdminAgent::new()),
+    );
+    registry.insert(
         "document_automation".to_string(),
         Box::new(DocumentAutomationAgent::new()),
     );
     registry.insert(
         "general".to_string(),
         Box::new(GeneralAssistantAgent::new()),
+    );
+    registry.insert(
+        "ngac_strategy_author".to_string(),
+        Box::new(NgacStrategyAuthorAgent::new()),
     );
 
     registry

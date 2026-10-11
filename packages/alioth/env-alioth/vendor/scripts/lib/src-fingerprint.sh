@@ -30,19 +30,24 @@ src_fingerprint() {
     if [ "$#" -gt 0 ]; then
         dirs=("$@")
     else
-        dirs=(
-            "${root}/Framework/backend"
-            "${root}/Gateway/backend/src"
-            "${root}/SSO/backend/src"
-            "${root}/Meta/backend/src"
-            "${root}/OpenActivity/backend/src"
-        )
+        # 逐根做**存在性过滤**：find 对不存在路径返回 1（不是「忽略」——旧注释与 find 行为不符），
+        # 在调用方的 `set -e` + `pipefail` 下会让整个入口**静默退出**（2026-09-25 实证：ns 仓
+        # 无 Gateway/SSO/OpenActivity 三个根 ⇒ `scripts/cargo-check.sh`/`cargo-test.sh` 只打印 sccache 行、
+        # rc=1，cargo 从未被调用）。过滤后域随仓形态自然收敛（平台仓 = 全量面；ns 仓 = Framework/Meta/Pre-Proc）。
         local d
+        for d in \
+            "${root}/Framework/backend" \
+            "${root}/Gateway/backend/src" \
+            "${root}/SSO/backend/src" \
+            "${root}/Meta/backend/src" \
+            "${root}/OpenActivity/backend/src"; do
+            [ -d "${d}" ] && dirs+=("${d}")
+        done
         for d in "${root}"/Pre-Proc/*/Sources/Apps/Services; do
             [ -d "${d}" ] && dirs+=("${d}")
         done
     fi
-    # 不存在的根会被 find 忽略（stderr 丢弃）；数组为空（bash 3.2 下 @ 展开不安全）时退回仓库根
+    # 数组为空（bash 3.2 下 @ 展开不安全）时退回仓库根
     [ "${#dirs[@]}" -gt 0 ] || dirs=("${root}")
     find "${dirs[@]}" -type f \
         \( -name '*.rs' -o -name '*.toml' -o -name '*.lock' -o -name '*.sql' \

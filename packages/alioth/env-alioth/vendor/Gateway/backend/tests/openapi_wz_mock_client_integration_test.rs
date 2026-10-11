@@ -5,7 +5,9 @@
 //!   2. 有效 scope → 调 WZ 仓储端点（/api/service/zc-id-stus-inventory-service/inbound-orders）→ 非 401/403
 //!   3. scope 不足 → 403 SCOPE_INSUFFICIENT（fail-closed）
 //!   4. 无令牌 → 401
-//!   5. per-client 限流超限 → 429 + Retry-After/X-RateLimit-*（Free 套餐 1rps 语义）
+//!
+//! （限流用例已迁 METERING-010/011——唯一实现 = metering per-plan 桶；
+//! 见 change fix-openapi-review-findings §2）
 //!
 //! 模拟方式：测试 JWT（sub=client:* + svc_user_id）——与 SSO client_credentials
 //! 签发的服务令牌同构（PEP 按 sub 前缀 + svc_user_id 解析）。端点用真实 WZ
@@ -13,7 +15,6 @@
 
 use actix_web::{test, web, App, HttpResponse};
 use alioth_gateway::pep::NgacEnforcer;
-use common::RateLimitMiddleware;
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::json;
 
@@ -198,45 +199,4 @@ async fn wz_openapi_004_no_token_unauthorized() {
         .to_request();
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status().as_u16(), 401, "无令牌应 401");
-}
-
-/// WZ-OPENAPI-005: per-client 限流（Free 套餐 1rps 语义）→ 第 2 个请求 429
-#[actix_web::test]
-async fn wz_openapi_005_per_client_rate_limit_429() {
-    let app = test::init_service(
-        App::new()
-            .wrap(RateLimitMiddleware::per_client(&["/api/service"], 1.0, 1.0))
-            .route(
-                "/api/service/wz-yy-wms-service/bin-titles",
-                web::get().to(|| async { HttpResponse::Ok().json(json!({"ok": true})) }),
-            ),
-    )
-    .await;
-    let token = issue_token("client:mock-xingtai", 42, "read:bin_titles");
-    for i in 0..2 {
-        let req = test::TestRequest::get()
-            .uri("/api/service/wz-yy-wms-service/bin-titles")
-            .insert_header(("Authorization", format!("Bearer {}", token)))
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        if i == 0 {
-            assert_eq!(resp.status().as_u16(), 200, "第 1 个请求应放行");
-        } else {
-            assert_eq!(resp.status().as_u16(), 429, "第 2 个请求应 429");
-            let headers = resp.headers();
-            assert!(headers.contains_key("Retry-After"), "缺少 Retry-After");
-            assert!(
-                headers.contains_key("X-RateLimit-Limit"),
-                "缺少 X-RateLimit-Limit"
-            );
-            assert!(
-                headers.contains_key("X-RateLimit-Remaining"),
-                "缺少 X-RateLimit-Remaining"
-            );
-            assert!(
-                headers.contains_key("X-RateLimit-Reset"),
-                "缺少 X-RateLimit-Reset"
-            );
-        }
-    }
 }

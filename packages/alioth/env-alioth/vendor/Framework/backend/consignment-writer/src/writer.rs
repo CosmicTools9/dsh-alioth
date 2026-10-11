@@ -1519,7 +1519,7 @@ async fn apply_carrier_tx(
     Ok(())
 }
 
-/// **委托编辑的结构写路单一实现**（`PUT /service/isahl-db/consignments/{id}`）：
+/// **委托编辑的结构写路单一实现**（`PUT /service/transport-dispatch/consignments/{id}`）：
 /// 把编辑表单的业务字段落到结构载体（明细 / 停靠桥 / 时段 / 标量），`comments` 仅存展示摘要。
 ///
 /// 事务由调用方管理（同 `create_full` 约定）；`input.is_empty()` 由调用方短路。

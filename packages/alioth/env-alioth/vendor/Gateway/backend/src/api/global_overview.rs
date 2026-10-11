@@ -169,12 +169,7 @@ async fn fetch_pending_approvals(
             LEFT JOIN isahl."zc_id_subj-employee" e ON e.id = i.fk_subject
             WHERE i.deleted_at IS NULL
               AND (i.fk_operator = $1 OR i.created_by_id = $1
-                   OR EXISTS (
-                       SELECT 1 FROM isahl_auth.ngac_user_rr_attribute ur
-                       JOIN isahl_auth.ngac_user_attribute ua ON ua.id = ur.fk_user_attribute
-                       WHERE ur.fk_user = $1 AND ua.o_name = 'admin'
-                         AND ur.deleted_at IS NULL AND ua.deleted_at IS NULL
-                   ))
+                   OR isahl_auth.is_admin($1))
               {rls_clause}
         )
         SELECT id, title, applicant, dept, code, status, time,
@@ -212,12 +207,7 @@ async fn fetch_counts(pool: &sqlx::PgPool, user_id: Option<i64>) -> Counts {
         FROM isahl."zc_id_oper-approve" i
         WHERE i.deleted_at IS NULL
           AND (i.fk_operator = $1 OR i.created_by_id = $1
-               OR EXISTS (
-                   SELECT 1 FROM isahl_auth.ngac_user_rr_attribute ur
-                   JOIN isahl_auth.ngac_user_attribute ua ON ua.id = ur.fk_user_attribute
-                   WHERE ur.fk_user = $1 AND ua.o_name = 'admin'
-                     AND ur.deleted_at IS NULL AND ua.deleted_at IS NULL
-               ))
+               OR isahl_auth.is_admin($1))
           AND NOT EXISTS (
               SELECT 1 FROM isahl."zc_id_deta-opinion" o
               WHERE o.fk_list = i.id AND o.deleted_at IS NULL

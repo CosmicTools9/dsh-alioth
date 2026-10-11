@@ -6,6 +6,7 @@
 
 use super::orchestrator::{SessionOrchestrator, TurnInput};
 use super::{build_orchestrator, extract_user_id};
+use crate::api::chat_sessions::context_envelope::ChatContextEnvelope;
 use crate::i18n::I18nManagerRef;
 use actix::{Actor, ActorContext, AsyncContext, Handler, Message as ActixMessage, StreamHandler};
 use actix_web::{web, HttpMessage, HttpRequest, HttpResponse};
@@ -25,6 +26,10 @@ struct WsIncoming {
     attachments: Option<serde_json::Value>,
     /// 命中的知识引用 [{key,title}]（D2.15）
     knowledge_refs: Option<serde_json::Value>,
+    /// 知识注入结果（顶层兄弟字段，wire 规范，D5；与 context 内旧键兼容）
+    knowledge_context: Option<String>,
+    /// Agent 路由提示（顶层兄弟字段，wire 规范，D5；与 context 内旧键兼容）
+    suggested_agent: Option<String>,
     /// 模型档位（chat 模型切换）："deep" | "flash"；缺省 = deep（主模型）
     model: Option<String>,
 }
@@ -158,11 +163,24 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                     return;
                 };
 
+                // D5 写侧：顶层兄弟字段 `knowledge_context` / `suggested_agent` 与
+                // `context` 折为规范单深度形态后再写入会话快照（storage 稳态即规范形；
+                // `from_raw` 仍兼容读旧嵌套行）。三者皆空 → None（不覆盖既有快照）。
+                let context = ChatContextEnvelope::from_parts(
+                    body.context,
+                    body.knowledge_context,
+                    body.suggested_agent,
+                )
+                .to_session_context();
+
                 // 本轮取消通道：actor 持 sender（cancel 帧置位），turn 持 receiver
                 let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
                 self.cancel_tx = Some(cancel_tx);
 
                 tokio::spawn(async move {
+                    // 每帧调 build_orchestrator：内部 `SHARED_ORCHESTRATOR` OnceLock 使
+                    // 首轮后仅为 Arc 克隆（≈免费），故保留每帧调用；组装逻辑收在
+                    // `build_orchestrator_with`（D3）供测试注入假实现。
                     let orchestrator = build_orchestrator(&pool, i18n);
                     // 流式回调专用 addr（主 addr 后续被 add_message 错误路径 move）
                     let addr_for_chunks = addr.clone();
@@ -171,7 +189,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ChatWsSession {
                         .add_message(
                             session_id,
                             &message,
-                            body.context,
+                            context,
                             body.attachments,
                             body.knowledge_refs,
                             user_id,
@@ -266,6 +284,113 @@ pub async fn ws_connect(
 
 #[cfg(test)]
 mod tests {
-    // 真流式（LLM SSE）取代了伪流式切块——无纯函数单测。
-    // 流式行为经 orchestrator 集成验证。
+    //! WS 出/入向帧契约（无 LLM、无 DB）：出向 chunk / tool(start|end) / final / error，
+    //! 入向消息帧与 cancel 帧解析（真流式 LLM 行为由 orchestrator 轮次测试覆盖）。
+    use super::*;
+
+    fn sample_response() -> super::super::ChatMessageResponse {
+        super::super::ChatMessageResponse {
+            id: 7,
+            role: "assistant".to_string(),
+            content: "你好".to_string(),
+            created_at: chrono::Utc::now(),
+            agent_code: "general".to_string(),
+            structured: None,
+            requires_input: false,
+            suggested_actions: vec![],
+            usage: None,
+            knowledge_refs: None,
+        }
+    }
+
+    /// 出向终止帧：`{"type":"final", ...ChatMessageResponse}`（前端据此 resolve）。
+    #[test]
+    fn final_frame_carries_response_with_final_type() {
+        let frame = final_frame(&sample_response());
+        let v: serde_json::Value = serde_json::from_str(&frame).unwrap();
+        assert_eq!(v["type"], "final");
+        assert_eq!(v["content"], "你好");
+        assert_eq!(v["agent_code"], "general");
+    }
+
+    /// 出向错误帧：`{"type":"error","error":...}`。
+    #[test]
+    fn error_frame_shape() {
+        let v: serde_json::Value = serde_json::from_str(&error_frame("invalid_json")).unwrap();
+        assert_eq!(v["type"], "error");
+        assert_eq!(v["error"], "invalid_json");
+    }
+
+    /// 出向流式帧契约：chunk / tool(start) / tool(end)。
+    #[test]
+    fn stream_frame_chunk_and_tool_events() {
+        use super::super::orchestrator::TurnStreamEvent;
+
+        let chunk: serde_json::Value =
+            serde_json::from_str(&stream_frame(TurnStreamEvent::Chunk("片段".to_string())))
+                .unwrap();
+        assert_eq!(chunk["type"], "chunk");
+        assert_eq!(chunk["content"], "片段");
+
+        let start: serde_json::Value =
+            serde_json::from_str(&stream_frame(TurnStreamEvent::ToolStart {
+                name: "query".to_string(),
+                arguments: serde_json::json!({"q": 1}),
+            }))
+            .unwrap();
+        assert_eq!(start["type"], "tool");
+        assert_eq!(start["event"], "start");
+        assert_eq!(start["name"], "query");
+        assert_eq!(start["arguments"]["q"], 1);
+
+        let end: serde_json::Value =
+            serde_json::from_str(&stream_frame(TurnStreamEvent::ToolEnd {
+                name: "query".to_string(),
+                success: true,
+                output: "ok".to_string(),
+            }))
+            .unwrap();
+        assert_eq!(end["type"], "tool");
+        assert_eq!(end["event"], "end");
+        assert!(end["success"].as_bool().unwrap());
+        assert_eq!(end["output"], "ok");
+    }
+
+    /// 入向消息帧解析（消息 + context + model）。
+    #[test]
+    fn incoming_message_frame_parses() {
+        let body: WsIncoming = serde_json::from_str(
+            r#"{"message":"你好","context":{"pageContext":{}},"model":"flash"}"#,
+        )
+        .unwrap();
+        assert_eq!(body.frame_type, None);
+        assert_eq!(body.message.as_deref(), Some("你好"));
+        assert_eq!(body.model.as_deref(), Some("flash"));
+        assert!(body.context.is_some());
+    }
+
+    /// 顶层兄弟字段（wire 规范）解析：knowledge_context / suggested_agent。
+    #[test]
+    fn incoming_top_level_siblings_parse() {
+        let body: WsIncoming = serde_json::from_str(
+            r#"{"message":"x","knowledge_context":"K","suggested_agent":"fa"}"#,
+        )
+        .unwrap();
+        assert_eq!(body.knowledge_context.as_deref(), Some("K"));
+        assert_eq!(body.suggested_agent.as_deref(), Some("fa"));
+    }
+
+    /// 入向 cancel 帧：无 message 亦可解析（D2.9 取消语义）。
+    #[test]
+    fn incoming_cancel_frame_parses_without_message() {
+        let body: WsIncoming = serde_json::from_str(r#"{"type":"cancel"}"#).unwrap();
+        assert_eq!(body.frame_type.as_deref(), Some("cancel"));
+        assert!(body.message.is_none());
+    }
+
+    /// 非法 JSON → 上层发 error 帧（此处断言解析失败）。
+    #[test]
+    fn incoming_invalid_json_is_rejected() {
+        assert!(serde_json::from_str::<WsIncoming>("not json").is_err());
+    }
 }

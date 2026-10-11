@@ -5,6 +5,8 @@
 //!   2. 配额超限 → 429 QUOTA_EXCEEDED（quota_daily 窗口计数）
 //!   3. 自然人令牌不计量（api_usage 无记录）
 //!   4. SLA 报告端点聚合正确（total/errors/p95）
+//!   5. per-plan 限流超限 → 429 RATE_LIMITED + 标准头（唯一实现；迁自 PEP-OPENAPI-006）
+//!   6. 不同 client 限流桶隔离（迁自 PEP-OPENAPI-007）
 //!
 //! 依赖真实测试库（aliothstudio_test）。测试数据自建自清。
 
@@ -53,15 +55,16 @@ fn issue_token(sub: &str, svc_user_id: i64, scope: &str) -> String {
 /// 创建测试 client + 服务用户 + 订阅（指定 plan code），返回 (client_id, subscription_id, svc_user_id)。
 async fn create_test_client(pool: &PgPool, suffix: &str, plan_code: &str) -> (String, i64, i64) {
     let client_id = format!("metering_test_{}", suffix);
-    // 服务用户
+    // 服务用户（自愈：失败/并发残留同 username 时复用该行——测试套件共享测试库，
+    // 前次失败未清理不应连带后续运行）
     let svc_user = sqlx::query_scalar::<_, i64>(
         "INSERT INTO isahl_auth.auth_users \
-         (name, username, email, password_hash, user_type, is_active, status, \
+         (username, password_hash, user_type, is_active, status, \
           created_at, updated_at, failed_login_attempts, notification_preferences) \
-         VALUES ($1, $2, NULL, NULL, 'service', TRUE, 'active', NOW(), NOW(), 0, '{}'::jsonb) \
+         VALUES ($1, NULL, 'service', TRUE, 'active', NOW(), NOW(), 0, '{}'::jsonb) \
+         ON CONFLICT (username) DO UPDATE SET updated_at = NOW() \
          RETURNING id",
     )
-    .bind(format!("svc-{}", client_id))
     .bind(format!("svc:{}", client_id))
     .fetch_one(pool)
     .await
@@ -540,7 +543,7 @@ async fn metering_006_scope_catalog_counts() {
     cleanup_test_client(&pool, &client_id).await;
 }
 
-/// METERING-007: 迁移 029（openapi_admin/openapi_analytics OA 种子）
+/// METERING-007: OA 种子 seed-ngac-07-openapi-admin-analytics-oas（openapi_admin/openapi_analytics）
 /// 幂等重放 + 结构断言（refactor-openapi-admin-ngac-pdp tasks 4.1/4.2）
 #[tokio::test]
 async fn metering_007_openapi_oa_seed_idempotent() {
@@ -615,7 +618,7 @@ async fn metering_007_openapi_oa_seed_idempotent() {
     assert!(versions >= 1, "ngac_policy_version 应有版本行");
 }
 
-/// METERING-008: 迁移 031（openapi 产品 CRUD 4 实体 OA 种子）
+/// METERING-008: OA 种子 seed-ngac-08-openapi-product-oas（openapi 产品 CRUD 4 实体）
 /// 幂等重放 + 结构断言（seed-openapi-product-oa tasks 2.x）
 #[tokio::test]
 async fn metering_008_openapi_product_oa_seed_idempotent() {
@@ -733,4 +736,426 @@ async fn metering_009_scope_catalog_includes_product_scopes() {
         entities.len() * actions.len(),
         "4 实体 × 4 action 共 16 个产品 scope 应全在目录中"
     );
+}
+
+// ============================================================================
+// 测试组 5: per-plan 限流（生产唯一实现）
+// 迁自 PEP-OPENAPI-006/007（随 `common::RateLimitMiddleware::per_client` 退役——
+// change fix-openapi-review-findings §2：限流实现单源 = 本套件所测 metering per-plan 桶；
+// 测试 MUST 钉生产实现）。
+// ============================================================================
+
+/// 429 响应头断言（Retry-After / X-RateLimit-*；仅析 headers ⇒ 对 body 泛型）。
+fn assert_rate_limit_headers<B>(resp: &actix_web::dev::ServiceResponse<B>) {
+    let headers = resp.headers();
+    assert!(headers.contains_key("Retry-After"), "缺少 Retry-After");
+    assert!(
+        headers.contains_key("X-RateLimit-Limit"),
+        "缺少 X-RateLimit-Limit"
+    );
+    assert!(
+        headers.contains_key("X-RateLimit-Remaining"),
+        "缺少 X-RateLimit-Remaining"
+    );
+    assert!(
+        headers.contains_key("X-RateLimit-Reset"),
+        "缺少 X-RateLimit-Reset"
+    );
+}
+
+/// 建一条专用 plan 并把订阅改指它（返回 plan id；调用方负责清理）。
+async fn attach_plan(pool: &PgPool, sub_id: i64, code: &str, rps: f64, burst: i32) -> i64 {
+    let plan: (i64,) = sqlx::query_as(
+        r#"INSERT INTO isahl_auth.api_plans
+           (code, tier, rate_limit_rps, burst, quota_daily, quota_monthly,
+            sla_availability, sla_p95_ms, support_level)
+           VALUES ($1, 0, $2, $3, 0, 0, 0.99, 0, 'community')
+           ON CONFLICT (code) DO UPDATE SET rate_limit_rps = $2, burst = $3
+           RETURNING id"#,
+    )
+    .bind(code)
+    .bind(rps)
+    .bind(burst)
+    .fetch_one(pool)
+    .await
+    .expect("create dedicated plan");
+    let _ = sqlx::query("UPDATE isahl_auth.api_subscriptions SET fk_plan = $1 WHERE id = $2")
+        .bind(plan.0)
+        .bind(sub_id)
+        .execute(pool)
+        .await;
+    plan.0
+}
+
+/// METERING-010: per-plan 限流超限 → 429 RATE_LIMITED + 标准头
+///
+/// Given: 专用 plan（rps=0.01 / burst=1）订阅
+/// When:  同一 client 连续 2 个请求（无等待）
+/// Then:  第 2 个返回 429，含 Retry-After / X-RateLimit-*（迁自 PEP-OPENAPI-006）
+#[tokio::test]
+async fn metering_010_per_plan_rate_limit_429() {
+    let pool = connect_test_db().await;
+    let suffix = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let (client_id, sub_id, svc_user) = create_test_client(&pool, &suffix, "free").await;
+    let plan_id = attach_plan(&pool, sub_id, &format!("ratelimit_{}", suffix), 0.01, 1).await;
+
+    let app = test::init_service(
+        App::new()
+            .wrap(alioth_gateway::openapi::metering::ApiUsageMiddleware::new(
+                pool.clone(),
+            ))
+            .route(
+                "/api/service/measurement/units",
+                web::get().to(|| async { HttpResponse::Ok().json(json!({"data": []})) }),
+            ),
+    )
+    .await;
+
+    let token = issue_token(&format!("client:{}", client_id), svc_user, "read:units");
+
+    // 第 1 个：放行（burst=1）
+    let req1 = test::TestRequest::get()
+        .uri("/api/service/measurement/units")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp1 = test::call_service(&app, req1).await;
+    assert_eq!(resp1.status().as_u16(), 200, "第 1 个请求应放行（burst=1）");
+
+    // 第 2 个：桶耗尽 → 429 + 标准头
+    let req2 = test::TestRequest::get()
+        .uri("/api/service/measurement/units")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp2 = test::call_service(&app, req2).await;
+    assert_eq!(resp2.status().as_u16(), 429, "桶耗尽应 429");
+    assert_rate_limit_headers(&resp2);
+    let body: serde_json::Value = test::read_body_json(resp2).await;
+    assert_eq!(body["error"], "RATE_LIMITED");
+
+    let _ = sqlx::query("DELETE FROM isahl_auth.api_plans WHERE id = $1")
+        .bind(plan_id)
+        .execute(&pool)
+        .await;
+    cleanup_test_client(&pool, &client_id).await;
+}
+
+/// METERING-011: 不同 client 限流桶隔离
+///
+/// Given: 两个 client（各自 burst=1 订阅）
+/// When:  A 打满桶后 B 发起请求
+/// Then:  B 仍放行（桶按 client 键独立；迁自 PEP-OPENAPI-007）
+#[tokio::test]
+async fn metering_011_buckets_isolated_between_clients() {
+    let pool = connect_test_db().await;
+    let suffix = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let (client_a, sub_a, svc_a) =
+        create_test_client(&pool, &format!("{}-a", suffix), "free").await;
+    let plan_a = attach_plan(&pool, sub_a, &format!("ratelimit_{}_a", suffix), 0.01, 1).await;
+    let (client_b, sub_b, svc_b) =
+        create_test_client(&pool, &format!("{}-b", suffix), "free").await;
+    let plan_b = attach_plan(&pool, sub_b, &format!("ratelimit_{}_b", suffix), 0.01, 1).await;
+
+    let app = test::init_service(
+        App::new()
+            .wrap(alioth_gateway::openapi::metering::ApiUsageMiddleware::new(
+                pool.clone(),
+            ))
+            .route(
+                "/api/service/measurement/units",
+                web::get().to(|| async { HttpResponse::Ok().json(json!({"data": []})) }),
+            ),
+    )
+    .await;
+
+    let token_a = issue_token(&format!("client:{}", client_a), svc_a, "read:units");
+    let token_b = issue_token(&format!("client:{}", client_b), svc_b, "read:units");
+
+    // A 打满桶（burst=1）→ 再请求 429
+    let resp_a1 = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token_a)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp_a1.status().as_u16(), 200);
+    let resp_a2 = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token_a)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp_a2.status().as_u16(), 429, "A 桶应已耗尽");
+
+    // B 独立桶 → 放行
+    let resp_b = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token_b)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(
+        resp_b.status().as_u16(),
+        200,
+        "client B 不应受 client A 限流影响"
+    );
+
+    for pid in [plan_a, plan_b] {
+        let _ = sqlx::query("DELETE FROM isahl_auth.api_plans WHERE id = $1")
+            .bind(pid)
+            .execute(&pool)
+            .await;
+    }
+    cleanup_test_client(&pool, &client_a).await;
+    cleanup_test_client(&pool, &client_b).await;
+}
+
+// ============================================================================
+// 测试组 4: 限流头 / 配额窗口 / 来源 IP（change fix-openapi-metering-gaps）
+// ============================================================================
+
+/// METERING-012: 放行响应携带 `X-RateLimit-*`（Remaining 随消费递减，与 429 同源口径）
+#[tokio::test]
+async fn metering_012_rate_limit_headers_on_success() {
+    let pool = connect_test_db().await;
+    let suffix = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let (client_id, sub_id, svc_user) = create_test_client(&pool, &suffix, "free").await;
+    let plan_id = attach_plan(&pool, sub_id, &format!("headers_{}", suffix), 0.001, 3).await;
+
+    let app = test::init_service(
+        App::new()
+            .wrap(alioth_gateway::openapi::metering::ApiUsageMiddleware::new(
+                pool.clone(),
+            ))
+            .route(
+                "/api/service/measurement/units",
+                web::get().to(|| async { HttpResponse::Ok().json(json!({"data": []})) }),
+            ),
+    )
+    .await;
+    let token = issue_token(&format!("client:{}", client_id), svc_user, "read:units");
+
+    let header = |resp: &actix_web::dev::ServiceResponse<_>, name: &str| -> String {
+        resp.headers()
+            .get(name)
+            .unwrap_or_else(|| panic!("放行响应缺少 {}", name))
+            .to_str()
+            .unwrap()
+            .to_string()
+    };
+
+    let resp1 = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp1.status().as_u16(), 200, "burst=3 首次请求应放行");
+    assert_eq!(header(&resp1, "X-RateLimit-Limit"), "3");
+    assert_eq!(
+        header(&resp1, "X-RateLimit-Remaining"),
+        "2",
+        "放行响应 MUST 带剩余令牌数（供第三方自适应）"
+    );
+    assert!(!header(&resp1, "X-RateLimit-Reset").is_empty());
+
+    let resp2 = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp2.status().as_u16(), 200);
+    assert_eq!(header(&resp2, "X-RateLimit-Remaining"), "1", "剩余应递减");
+
+    let _ = sqlx::query("DELETE FROM isahl_auth.api_plans WHERE id = $1")
+        .bind(plan_id)
+        .execute(&pool)
+        .await;
+    cleanup_test_client(&pool, &client_id).await;
+}
+
+/// METERING-014: 月度配额超限 ⇒ `Retry-After` = 距次月 1 日 0 点（MUST NOT 固定 3600）
+#[tokio::test]
+async fn metering_014_monthly_quota_retry_after_window() {
+    use chrono::Datelike;
+    let pool = connect_test_db().await;
+    let suffix = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let (client_id, sub_id, svc_user) = create_test_client(&pool, &suffix, "free").await;
+    let plan: (i64,) = sqlx::query_as(
+        r#"INSERT INTO isahl_auth.api_plans
+           (code, tier, rate_limit_rps, burst, quota_daily, quota_monthly,
+            sla_availability, sla_p95_ms, support_level)
+           VALUES ($1, 0, 10.0, 20, 0, 1, 0.99, 0, 'community')
+           ON CONFLICT (code) DO UPDATE SET quota_monthly = 1, quota_daily = 0
+           RETURNING id"#,
+    )
+    .bind(format!("monthly_{}", suffix))
+    .fetch_one(&pool)
+    .await
+    .expect("create monthly-quota plan");
+    let _ = sqlx::query("UPDATE isahl_auth.api_subscriptions SET fk_plan = $1 WHERE id = $2")
+        .bind(plan.0)
+        .bind(sub_id)
+        .execute(&pool)
+        .await;
+
+    let app = test::init_service(
+        App::new()
+            .wrap(alioth_gateway::openapi::metering::ApiUsageMiddleware::new(
+                pool.clone(),
+            ))
+            .route(
+                "/api/service/measurement/units",
+                web::get().to(|| async { HttpResponse::Ok().json(json!({"data": []})) }),
+            ),
+    )
+    .await;
+    let token = issue_token(&format!("client:{}", client_id), svc_user, "read:units");
+
+    let resp1 = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp1.status().as_u16(), 200, "月配额 1、窗口计数 0 → 放行");
+
+    // 等计量落库使月窗口计数达 1
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let resp2 = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp2.status().as_u16(), 429, "月配额耗尽应 429");
+    let retry_after: i64 = resp2
+        .headers()
+        .get("Retry-After")
+        .expect("配额 429 MUST 带 Retry-After")
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    let (year, month) = if now.month() == 12 {
+        (now.year() + 1, 1)
+    } else {
+        (now.year(), now.month() + 1)
+    };
+    let first = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap();
+    let expected = (chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(first, chrono::Utc)
+        - now)
+        .num_seconds()
+        .max(1);
+    assert!(
+        (retry_after - expected).abs() <= 5,
+        "月度配额 Retry-After 应等于距次月秒数（expected {expected}, got {retry_after}）"
+    );
+
+    let _ = sqlx::query("DELETE FROM isahl_auth.api_plans WHERE id = $1")
+        .bind(plan.0)
+        .execute(&pool)
+        .await;
+    cleanup_test_client(&pool, &client_id).await;
+}
+
+/// METERING-015: `api_usage.client_ip` 落库为请求对端地址（审计列；缺失 ⇒ NULL）
+#[tokio::test]
+async fn metering_015_client_ip_recorded() {
+    let pool = connect_test_db().await;
+    let suffix = format!(
+        "{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let (client_id, sub_id, svc_user) = create_test_client(&pool, &suffix, "free").await;
+
+    let app = test::init_service(
+        App::new()
+            .wrap(alioth_gateway::openapi::metering::ApiUsageMiddleware::new(
+                pool.clone(),
+            ))
+            .route(
+                "/api/service/measurement/units",
+                web::get().to(|| async { HttpResponse::Ok().json(json!({"data": []})) }),
+            ),
+    )
+    .await;
+    let token = issue_token(&format!("client:{}", client_id), svc_user, "read:units");
+
+    let peer: std::net::SocketAddr = "203.0.113.7:54321".parse().unwrap();
+    let resp = test::call_service(
+        &app,
+        test::TestRequest::get()
+            .uri("/api/service/measurement/units")
+            .insert_header(("Authorization", format!("Bearer {}", token)))
+            .peer_addr(peer)
+            .to_request(),
+    )
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    let ip: Option<String> = sqlx::query_scalar(
+        "SELECT host(client_ip) FROM isahl_auth.api_usage \
+         WHERE fk_subscription = $1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(sub_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap_or(None);
+    assert_eq!(
+        ip.as_deref(),
+        Some("203.0.113.7"),
+        "api_usage.client_ip 应记录请求对端地址（审计列）"
+    );
+
+    cleanup_test_client(&pool, &client_id).await;
 }

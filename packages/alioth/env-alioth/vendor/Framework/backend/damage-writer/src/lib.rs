@@ -137,7 +137,7 @@ pub async fn link_event_container_tx(
     }
     // 车牌 → 车辆：**唯一口径** = 实体↔身份桥（`zc_id_identity.identity` 命中且分类为 `plate`）。
     // 车辆 `notice`/`code` MAY NOT 承载号牌（change align-vehicle-plate-identity，2026-09-23 模型裁定；
-    // 车辆 ⊂ `zc_id_carrier` ⊂ `zc_id_entity` ⇒ 桥为模型声明正用，见 model-center-requests.md §R12）。
+    // 车辆 ⊂ `zc_id_carrier` ⊂ `zc_id_entity` ⇒ 桥为模型声明正用，见 .planning/model-center-requests.md §R12）。
     let vehicle_id: Option<i64> = sqlx::query_scalar(
         r#"SELECT v.id FROM "isahl"."zc_id_stor-ctn-vehicle" v
            JOIN "isahl"."zc_id_entity_rr_identity" er

@@ -1,5 +1,7 @@
 /**
- * parsers.ts — 集中导出项目已有 parser，供审计脚本引用。
+ * parsers.ts — 集中导出项目已有 parser，供审计脚本引用（**import 面单一实现**；
+ * CLI 面 = scripts/parser-utils.mjs——两面同源经本文件取解析入口，2026-10-11 前
+ * 两处各自直引 cheerio/css-tree/meriyah 且互称「唯一入口」）。
  *
  * 用法（Bun）:
  *   import { html, css, js, cssSelector, markdown, toml } from '../lib/parsers.ts';

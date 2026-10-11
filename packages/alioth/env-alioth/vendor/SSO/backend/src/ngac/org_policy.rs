@@ -1,4 +1,4 @@
-//! 组织规范资产线（Phase D-1 org-policy-assets；规格：`.planning/ngac-org-phase-d1-spec.md`）。
+//! 权限规范线（Phase D-1 org-policy-assets；规格：`.planning/ngac-org-phase-d1-spec.md`）。
 //!
 //! 语义：
 //! - 资产：`org_policy_class`（权责规范/权限类别声明）→ `org_policy_rule`（职责规则行）+
@@ -18,8 +18,92 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use chrono::{DateTime, Utc};
 use common::audit::{record_audit_event, Decision};
 use common::AliothError;
+use runtime_engine::RhaiExpressionEngine;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+
+/// 权限规范表达式字段的已知键集（Rhai 强校验作用域）
+/// （route-ngac-policy-authoring-through-ai-assist 2.3）。
+///
+/// 与 `ngac::obligation::ctx_variables` 的 D2 键契约一致（决策上下文：主体/资源/
+/// 动作/判决 + 属性集合）；`ctx` 映射由引擎校验入口（`validate`/`validate_all`）
+/// 自注入，不入本表。扩键 MUST 同批改 obligation 求值上下文（单一契约），
+/// MUST NOT 双写两处键集。
+pub const ORG_POLICY_EXPR_KEYS: &[&str] = &[
+    "user_id",
+    "resource",
+    "action",
+    "decision",
+    "permitted",
+    "subject_attributes",
+    "object_attributes",
+];
+
+/// `condition` / `prohibition_template` 的**求值键集**（= `ngac_host::rhai_condition_evaluator` 的变量集）。
+///
+/// 这两列派生进 association / prohibition 的 `conditions.rhai`，由**决策期**求值器求值——该求值器
+/// **不含** `decision` / `permitted`（条件在判决终态前求值）⇒ 写径 MUST 收窄到本键集，否则产生
+/// 「写入成功但永不满足」的静默面（与 §2.4 未知键 fail-closed 同类；2026-10-10 收口）。
+/// `obligation` 列（事件模式 / 义务算子）由义务求值上下文（含 `decision` / `permitted`）求值
+/// ⇒ 仍用 [`ORG_POLICY_EXPR_KEYS`]。
+pub const ORG_POLICY_CONDITION_EXPR_KEYS: &[&str] = &[
+    "user_id",
+    "resource",
+    "action",
+    "subject_attributes",
+    "object_attributes",
+];
+
+/// 表达式列写前强校验（fail-closed；route-ngac-policy-authoring-through-ai-assist 2.3）。
+///
+/// 语义（冻结）：
+/// - `null` / 缺省：未设置 ⇒ 放行（与 obligation `response_ops` 空语义对齐）；
+/// - JSON 字符串：Rhai 源码；trim 后非空 ⇒ MUST 过 `validate_all`
+///   （语法 + 标识符 ⊆ [`ORG_POLICY_EXPR_KEYS`] + 受控函数白名单，唯一引擎）；
+/// - 其他类型（object/array/…）：拒绝——MUST NOT 以未校验的结构化占位承载表达式
+///   （expression-engine 唯一性；校验失败 MUST 阻断写入，禁止先落库后求值期报错）。
+pub fn validate_org_policy_expression(
+    field: &str,
+    value: &serde_json::Value,
+) -> Result<(), AliothError> {
+    validate_org_policy_expression_with_keys(field, value, ORG_POLICY_EXPR_KEYS)
+}
+
+/// [`validate_org_policy_expression`] 的键集参数化版本（条件列见
+/// [`ORG_POLICY_CONDITION_EXPR_KEYS`]；`obligation` 列用全键集）。
+pub fn validate_org_policy_expression_with_keys(
+    field: &str,
+    value: &serde_json::Value,
+    keys: &[&str],
+) -> Result<(), AliothError> {
+    match value {
+        serde_json::Value::Null => Ok(()),
+        serde_json::Value::String(script) => {
+            let script = script.trim();
+            if script.is_empty() {
+                return Ok(());
+            }
+            let known: Vec<String> = keys.iter().map(|s| s.to_string()).collect();
+            RhaiExpressionEngine::new()
+                .validate_all(script, &known)
+                .map_err(|e| {
+                    AliothError::BadRequest(format!(
+                        "{field} 表达式不合法（fail-closed，未落库）：{e}"
+                    ))
+                })
+        }
+        other => Err(AliothError::BadRequest(format!(
+            "{field} MUST 为 Rhai 源码字符串（或 null），实际为 {}",
+            match other {
+                serde_json::Value::Object(_) => "object",
+                serde_json::Value::Array(_) => "array",
+                serde_json::Value::Bool(_) => "bool",
+                serde_json::Value::Number(_) => "number",
+                serde_json::Value::String(_) | serde_json::Value::Null => unreachable!(),
+            }
+        ))),
+    }
+}
 
 /// org_policy_class 行（投影/管理面通用载体）。
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -208,6 +292,13 @@ pub async fn create_org_policy_class(
     if input.code.trim().is_empty() || input.notice.trim().is_empty() {
         return Err(AliothError::BadRequest("code/notice 必填".to_string()));
     }
+    if let Some(v) = &input.prohibition_template {
+        validate_org_policy_expression_with_keys(
+            "prohibition_template",
+            v,
+            ORG_POLICY_CONDITION_EXPR_KEYS,
+        )?;
+    }
     let existing: Option<String> = sqlx::query_scalar(
         "SELECT state FROM isahl_auth.org_policy_class \
          WHERE code = $1 AND deleted_at IS NULL AND state <> 'retired' LIMIT 1",
@@ -395,6 +486,14 @@ pub async fn update_org_policy_class(
             class_id, base.state
         )));
     }
+    // 表达式列写前强校验（fail-closed；2.3）——先于合并/UPDATE
+    if let Some(v) = &input.prohibition_template {
+        validate_org_policy_expression_with_keys(
+            "prohibition_template",
+            v,
+            ORG_POLICY_CONDITION_EXPR_KEYS,
+        )?;
+    }
     let merged = apply_update(&base, &input);
     sqlx::query(
         "UPDATE isahl_auth.org_policy_class SET notice=$2, scope=$3, ua_template=$4, \
@@ -551,6 +650,13 @@ pub async fn create_org_policy_rule(
             )))
         }
     }
+    // 表达式列写前强校验（fail-closed；2.3）
+    if let Some(v) = &input.condition {
+        validate_org_policy_expression_with_keys("condition", v, ORG_POLICY_CONDITION_EXPR_KEYS)?;
+    }
+    if let Some(v) = &input.obligation {
+        validate_org_policy_expression("obligation", v)?;
+    }
     let row = sqlx::query_as::<_, OrgPolicyRule>(concat!(
         "INSERT INTO isahl_auth.org_policy_rule \
          (policy_class_id, subject_code, resource_type, actions, condition, obligation, \
@@ -656,6 +762,13 @@ pub async fn update_org_policy_rule(
     .await?
     .ok_or_else(|| AliothError::NotFound(format!("org_policy_rule {rule_id} 不存在")))?;
     ensure_rule_class_editable(&mut tx, base.policy_class_id).await?;
+    // 表达式列写前强校验（fail-closed；2.3）——先于合并/UPDATE
+    if let Some(v) = &input.condition {
+        validate_org_policy_expression_with_keys("condition", v, ORG_POLICY_CONDITION_EXPR_KEYS)?;
+    }
+    if let Some(v) = &input.obligation {
+        validate_org_policy_expression("obligation", v)?;
+    }
     let merged = apply_rule_update(&base, &input);
     sqlx::query(
         "UPDATE isahl_auth.org_policy_rule SET subject_code=$2, resource_type=$3, actions=$4, \
@@ -1285,4 +1398,112 @@ pub fn configure_admin_routes(cfg: &mut web::ServiceConfig) {
             "/ngac/org-policy/labels/{code}",
             web::delete().to(delete_label),
         );
+}
+
+#[cfg(test)]
+mod expr_validation_tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn null_and_empty_pass() {
+        assert!(validate_org_policy_expression("condition", &Value::Null).is_ok());
+        assert!(validate_org_policy_expression("condition", &json!("")).is_ok());
+        assert!(validate_org_policy_expression("condition", &json!("   ")).is_ok());
+    }
+
+    #[test]
+    fn valid_rhai_with_known_keys_passes() {
+        assert!(validate_org_policy_expression(
+            "condition",
+            &json!("action == \"read\" && permitted")
+        )
+        .is_ok());
+        // ctx 映射（引擎自注入）可用
+        assert!(
+            validate_org_policy_expression("condition", &json!("ctx[\"resource\"] == \"x\""))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn unknown_identifier_fail_closed() {
+        let err = validate_org_policy_expression("condition", &json!("amount > 100")).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("amount"),
+            "错误须可行动（含未知标识符）：{msg}"
+        );
+        assert!(msg.contains("fail-closed"));
+    }
+
+    #[test]
+    fn syntax_error_fail_closed() {
+        assert!(validate_org_policy_expression("obligation", &json!("amount > ((")).is_err());
+    }
+
+    #[test]
+    fn unregistered_free_function_fail_closed() {
+        // R8：Rhai 编译期不拦未注册函数 ⇒ 白名单层必须拦截
+        assert!(validate_org_policy_expression("obligation", &json!("not_a_builtin(1)")).is_err());
+    }
+
+    #[test]
+    fn structured_placeholder_rejected() {
+        assert!(
+            validate_org_policy_expression("prohibition_template", &json!({"and": []})).is_err()
+        );
+        assert!(validate_org_policy_expression("prohibition_template", &json!(["x"])).is_err());
+        assert!(validate_org_policy_expression("prohibition_template", &json!(42)).is_err());
+    }
+
+    #[test]
+    fn known_keys_cover_decision_context() {
+        // `obligation`（事件模式 / 义务算子）由义务求值上下文求值 ⇒ 全键集（含 decision/permitted）
+        for key in ORG_POLICY_EXPR_KEYS {
+            assert!(
+                validate_org_policy_expression("obligation", &json!(format!("{key} == {key}")))
+                    .is_ok(),
+                "键 {key} 必须在义务作用域内"
+            );
+        }
+    }
+
+    #[test]
+    fn condition_keys_are_narrowed_to_evaluable_vars() {
+        // `condition` / `prohibition_template` 由决策期求值器（`ngac_host::rhai_condition_evaluator`）
+        // 求值 ⇒ 写径键集 MUST 与之逐名一致（MUST NOT 接受 `decision` / `permitted`——
+        // 接受即「写入成功但永不满足」的静默面）。
+        for field in ["condition", "prohibition_template"] {
+            for key in ORG_POLICY_CONDITION_EXPR_KEYS {
+                assert!(
+                    validate_org_policy_expression_with_keys(
+                        field,
+                        &json!(format!("{key} == {key}")),
+                        ORG_POLICY_CONDITION_EXPR_KEYS
+                    )
+                    .is_ok(),
+                    "{field}: 键 {key} 必须在条件作用域内"
+                );
+            }
+            for key in ["decision", "permitted"] {
+                assert!(
+                    validate_org_policy_expression_with_keys(
+                        field,
+                        &json!(format!("{key} == \"x\"")),
+                        ORG_POLICY_CONDITION_EXPR_KEYS
+                    )
+                    .is_err(),
+                    "{field}: 求值上下文不含 {key} ⇒ 写径 MUST 拒绝（否则静默永不满足）"
+                );
+            }
+        }
+        // 键集本身：5 键 = 求值器变量集，且不含 decision/permitted
+        assert_eq!(ORG_POLICY_CONDITION_EXPR_KEYS.len(), 5);
+        assert!(!ORG_POLICY_CONDITION_EXPR_KEYS.contains(&"decision"));
+        assert!(!ORG_POLICY_CONDITION_EXPR_KEYS.contains(&"permitted"));
+        assert!(ORG_POLICY_CONDITION_EXPR_KEYS
+            .iter()
+            .all(|k| ORG_POLICY_EXPR_KEYS.contains(k)));
+    }
 }

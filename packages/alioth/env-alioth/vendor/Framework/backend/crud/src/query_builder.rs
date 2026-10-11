@@ -244,6 +244,14 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         if let Some(s) = query.to_sort() {
             builder.sorts.push(s);
         }
+        // 关键词检索：实体声明 SEARCH_COLUMNS 后自动施加（未声明 ⇒ 无操作，零回归）。
+        // 全读径（list/list_with_rls/list_refs/list_refs_with_rls）都经本构造器，
+        // 故这是检索接缝的唯一施加点。
+        if let Some(q) = query.search_trimmed() {
+            if let Some(predicate) = crate::search::entity_search_predicate::<E>(q) {
+                builder.raw_filters.push(predicate);
+            }
+        }
         builder
     }
 
@@ -285,8 +293,24 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
         page: i64,
         page_size: i64,
     ) -> Result<PaginatedResponse<E>, AliothError> {
-        let items = self.fetch_items(page, page_size).await?;
-        let total = self.fetch_count().await?;
+        // 列表/计数失败 MUST 留痕（此前静默映射 500 ⇒ 页面只显示「加载失败」，服务端零线索；
+        // 实例：WZ「中转运营」多实体列表 500，`isahl_meta` 无痕、网关日志只有 access 行）。
+        // 收口即全实体共用，故此处一处 INFO/ERROR 即可定位到表与底层原因。
+        let table = E::table_name();
+        let items = match self.fetch_items(page, page_size).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::error!("[crud] list 失败 table={table} page={page}: {e}");
+                return Err(e);
+            }
+        };
+        let total = match self.fetch_count().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::error!("[crud] count 失败 table={table}: {e}");
+                return Err(e);
+            }
+        };
         Ok(PaginatedResponse::new(items, total, page, page_size))
     }
 
@@ -570,24 +594,17 @@ impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 关键词搜索——仅当 E: KeywordSearchable 时可用
+// 关键词检索——列声明 = E::SEARCH_COLUMNS；谓词与转义单源 = crate::search
 // ═══════════════════════════════════════════════════════════════════════════════
 
-impl<'a, E: AliothDbEntity + crate::search::KeywordSearchable> QueryBuilder<'a, E> {
-    /// 添加关键词搜索条件（通过 raw ILIKE，列名由 KeywordSearchable 声明）
-    pub fn with_keyword(mut self, keyword: &str) -> Self {
-        let escaped = keyword
-            .replace('\'', "''")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        let pattern = format!("%{}%", escaped);
-        let conditions: Vec<String> = E::SEARCH_COLUMNS
-            .iter()
-            .map(|col| format!("{}::text ILIKE '{}'", col, pattern))
-            .collect();
-        if !conditions.is_empty() {
-            self.raw_filters
-                .push(format!("({})", conditions.join(" OR ")));
+impl<'a, E: AliothDbEntity> QueryBuilder<'a, E> {
+    /// 追加关键词检索条件（列由 `E::SEARCH_COLUMNS` 声明；未声明或空输入 ⇒ 无操作）。
+    ///
+    /// 注意：`from_list_query` 已自动消费 `ListQuery.search`——本方法供自建列表 SQL
+    /// 的服务显式调用（同一谓词，重复调用逻辑等价）。
+    pub fn with_search(mut self, keyword: &str) -> Self {
+        if let Some(predicate) = crate::search::entity_search_predicate::<E>(keyword) {
+            self.raw_filters.push(predicate);
         }
         self
     }
@@ -604,8 +621,23 @@ impl<'a, E: AliothDbEntity + HasReferenceJoins> QueryBuilder<'a, E> {
         page: i64,
         page_size: i64,
     ) -> Result<PaginatedResponse<E>, AliothError> {
-        let items = self.fetch_items_refs(page, page_size).await?;
-        let total = self.fetch_count().await?;
+        // 同 `fetch`：**实体实际走的就是本路径**（服务仓储 `list` ⇒ `list_refs` ⇒ 本函数），
+        // 故 `_refs` 变体的失败必须同样留痕，否则页面「加载失败」而服务端零线索。
+        let table = E::table_name();
+        let items = match self.fetch_items_refs(page, page_size).await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::error!("[crud] list_refs 失败 table={table} page={page}: {e}");
+                return Err(e);
+            }
+        };
+        let total = match self.fetch_count().await {
+            Ok(v) => v,
+            Err(e) => {
+                common::telemetry::error!("[crud] count(refs) 失败 table={table}: {e}");
+                return Err(e);
+            }
+        };
         Ok(PaginatedResponse::new(items, total, page, page_size))
     }
 

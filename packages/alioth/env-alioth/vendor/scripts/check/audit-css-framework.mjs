@@ -2,6 +2,10 @@
 /**
  * audit-css-framework.mjs — CSS 框架合规审计
  *
+ * 规约：`openspec/specs/css-theme-stack`（`theme-stack-single-generation`——本判据的活规约落点：
+ * 共享包 CSS 主题栈单代、已废弃布局层（`gate-layout.css` 的 `gl-*` / `meta-layout.css` 的 `al-*`）
+ * MUST NOT 回潮；本判据是其机械执行面）。
+ *
  * 检查原型 HTML 是否符合 CSS 新架构：
  * - 必须引用 prototype-base.css（兼容 legacy tailwind-utilities.css）
  * - 禁止引用 gate-layout.css / meta-layout.css / design-tokens.css

@@ -84,10 +84,20 @@ async fn ensure_system_user(pool: &PgPool) -> Result<bool, sqlx::Error> {
 
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, password_hash, status, user_type, is_active)
-           VALUES (1, 'system', 'system', 'system@aliothstudio.local',
-                   NULL, 'active', 'system', true)
+           (id, username, display_name, password_hash, status, user_type, is_active)
+           VALUES (1, 'system', '系统', NULL, 'active', 'system', true)
            ON CONFLICT (id) DO NOTHING"#,
+    )
+    .execute(pool)
+    .await?;
+
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails（auth_users 无 email 列；账号内幂等）
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+           SELECT 1, 'system@aliothstudio.local', TRUE
+           WHERE NOT EXISTS (
+               SELECT 1 FROM isahl_auth.auth_user_emails
+               WHERE fk_user = 1 AND email = 'system@aliothstudio.local' AND deleted_at IS NULL)"#,
     )
     .execute(pool)
     .await?;

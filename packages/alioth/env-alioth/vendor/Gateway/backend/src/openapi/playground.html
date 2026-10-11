@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AliothStudio OpenAPI Playground</title>
+    <style>
+      :root {
+        --bg: #0f1117;
+        --panel: #171a23;
+        --line: #2a2f3a;
+        --fg: #e6e8ee;
+        --dim: #98a0b3;
+        --get: #2f81f7;
+        --post: #2ea043;
+        --put: #d29922;
+        --delete: #da3633;
+        --accent: #7c8cff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.5 -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Helvetica Neue",
+          sans-serif;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        padding: 10px 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+      header h1 {
+        font-size: 15px;
+        margin: 0;
+        flex: 0 0 auto;
+      }
+      header input {
+        flex: 1 1 260px;
+        min-width: 200px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #0c0e14;
+        color: var(--fg);
+      }
+      header button {
+        padding: 6px 14px;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+        background: var(--accent);
+        color: #0c0e14;
+        font-weight: 600;
+      }
+      header button.ghost {
+        background: transparent;
+        color: var(--dim);
+        border: 1px solid var(--line);
+      }
+      .banner {
+        padding: 7px 18px;
+        background: #332b12;
+        color: #e5c07b;
+        font-size: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .hint {
+        padding: 8px 18px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+      .hint code {
+        background: #0c0e14;
+        padding: 1px 5px;
+        border-radius: 4px;
+      }
+      main {
+        padding: 14px 18px 60px;
+        max-width: 1080px;
+      }
+      .status {
+        margin: 0 0 12px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        color: var(--dim);
+      }
+      .status.err {
+        border-color: #6b2b28;
+        color: #ff9c96;
+      }
+      .group {
+        margin: 0 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .group > h2 {
+        margin: 0;
+        padding: 9px 14px;
+        font-size: 13px;
+        letter-spacing: 0.02em;
+        background: #1d2230;
+        color: var(--dim);
+        font-weight: 600;
+      }
+      .op {
+        border-top: 1px solid var(--line);
+        padding: 9px 14px;
+      }
+      .op:first-of-type {
+        border-top: 0;
+      }
+      .op .row {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        flex-wrap: wrap;
+        cursor: pointer;
+      }
+      .method {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 4px;
+        color: #0c0e14;
+      }
+      .method.get {
+        background: var(--get);
+        color: #fff;
+      }
+      .method.post {
+        background: var(--post);
+        color: #fff;
+      }
+      .method.put {
+        background: var(--put);
+      }
+      .method.patch {
+        background: var(--put);
+      }
+      .method.delete {
+        background: var(--delete);
+        color: #fff;
+      }
+      .method.other {
+        background: var(--dim);
+      }
+      .path {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+      }
+      .summary {
+        color: var(--dim);
+        font-size: 12px;
+      }
+      .scopes {
+        margin-left: auto;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .scope {
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 11px;
+        color: #b8c0ff;
+        border: 1px solid #39406b;
+        border-radius: 999px;
+        padding: 1px 8px;
+      }
+      .try {
+        display: none;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed var(--line);
+      }
+      .try.open {
+        display: block;
+      }
+      .try label {
+        display: block;
+        font-size: 12px;
+        color: var(--dim);
+        margin: 6px 0 3px;
+      }
+      .try input,
+      .try textarea {
+        width: 100%;
+        background: #0c0e14;
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 6px 9px;
+        font-family: ui-monospace, Menlo, monospace;
+        font-size: 12px;
+      }
+      .try textarea {
+        min-height: 84px;
+      }
+      .try .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 9px;
+        align-items: center;
+      }
+      .try button {
+        padding: 6px 13px;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+        background: var(--accent);
+        color: #0c0e14;
+        font-weight: 600;
+      }
+      .resp {
+        margin-top: 9px;
+        display: none;
+      }
+      .resp.open {
+        display: block;
+      }
+      .resp .meta {
+        font-size: 12px;
+        color: var(--dim);
+        margin-bottom: 5px;
+      }
+      .resp pre {
+        margin: 0;
+        padding: 9px 11px;
+        background: #0c0e14;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        max-height: 340px;
+        overflow: auto;
+        font-size: 12px;
+      }
+      footer {
+        padding: 0 18px 24px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AliothStudio OpenAPI Playground</h1>
+      <input
+        id="token"
+        type="password"
+        autocomplete="off"
+        placeholder="Bearer token（服务令牌 / API Key 兑换）"
+      />
+      <button id="apply">应用 Token</button>
+      <button id="clear" class="ghost">清除</button>
+    </header>
+    <div class="banner" id="product-banner">产品投影口径加载中…</div>
+    <div class="hint">
+      取令牌：<code>POST /api/auth/token</code
+      >（client_credentials：grant_type=client_credentials&amp;client_id=…&amp;client_secret=…）
+      或 <code>POST /api/auth/authenticate</code>（Authorization: Bearer
+      ak_…）。本页零外部资源（无 CDN）， 令牌仅存于本机 localStorage，随请求以
+      <code>Authorization: Bearer</code> 发送。
+    </div>
+    <main>
+      <p id="status" class="status">加载中…</p>
+      <div id="doc"></div>
+    </main>
+    <footer>
+      文档端点：<code>GET /api/openapi.json</code>（须认证）；scope 不足返回 403
+      SCOPE_INSUFFICIENT。
+    </footer>
+
+    <script>
+      (function () {
+        "use strict";
+        var TOKEN_KEY = "openapi_token";
+        var DOC_URL = "/api/openapi.json";
+        var statusEl = document.getElementById("status");
+        var docEl = document.getElementById("doc");
+        var tokenInput = document.getElementById("token");
+        var token = localStorage.getItem(TOKEN_KEY) || "";
+        tokenInput.value = token;
+
+        function setStatus(text, isError) {
+          statusEl.textContent = text;
+          statusEl.className = isError ? "status err" : "status";
+        }
+        function authHeaders(extra) {
+          var h = { Accept: "application/json" };
+          if (token) {
+            h.Authorization = "Bearer " + token;
+          }
+          return Object.assign(h, extra || {});
+        }
+        function el(tag, cls, text) {
+          var n = document.createElement(tag);
+          if (cls) {
+            n.className = cls;
+          }
+          if (text !== undefined) {
+            n.textContent = text;
+          }
+          return n;
+        }
+        /** 分组键 = /api/service/{svc}/… 的服务段（文档 operation 无 tags 字段；服务段即自然分组）。 */
+        function groupOf(path) {
+          var m = /^\/api\/service\/([^/]+)/.exec(path);
+          return m ? m[1] : "(其他)";
+        }
+        function scopesOf(op) {
+          var out = [];
+          (op.security || []).forEach(function (s) {
+            Object.keys(s).forEach(function (name) {
+              (s[name] || []).forEach(function (sc) {
+                out.push(sc);
+              });
+            });
+          });
+          return out;
+        }
+
+        function buildTry(op, method, path, inputFields) {
+          var box = el("div", "try");
+          var inputs = {};
+          inputFields.forEach(function (p) {
+            var label = el(
+              "label",
+              null,
+              p.in === "query" ? "query: " + p.name : p.name,
+            );
+            var field = el("input");
+            field.placeholder = p.name;
+            var schema = p.schema || {};
+            if (schema.type === "integer") {
+              field.value =
+                schema.default !== undefined ? String(schema.default) : "";
+            }
+            inputs[p.in + ":" + p.name] = field;
+            box.appendChild(label);
+            box.appendChild(field);
+          });
+          var bodyField = null;
+          if (op.requestBody) {
+            box.appendChild(el("label", null, "request body（JSON）"));
+            bodyField = el("textarea");
+            bodyField.placeholder = "{}";
+            box.appendChild(bodyField);
+          }
+          var actions = el("div", "actions");
+          var run = el("button", null, "执行");
+          var hint = el("span", "summary", "同源 fetch，带 Bearer 令牌");
+          actions.appendChild(run);
+          actions.appendChild(hint);
+          box.appendChild(actions);
+          var resp = el("div", "resp");
+          var respMeta = el("div", "meta", "");
+          var respBody = el("pre", null, "");
+          resp.appendChild(respMeta);
+          resp.appendChild(respBody);
+          box.appendChild(resp);
+
+          run.addEventListener("click", function () {
+            var url = path.replace(/\{([^}]+)\}/g, function (all, name) {
+              var f = inputs["path:" + name];
+              return f && f.value ? encodeURIComponent(f.value) : all;
+            });
+            var qs = [];
+            Object.keys(inputs).forEach(function (key) {
+              var p = key.split(":");
+              if (p[0] === "query" && inputs[key].value !== "") {
+                qs.push(
+                  encodeURIComponent(p[1]) +
+                    "=" +
+                    encodeURIComponent(inputs[key].value),
+                );
+              }
+            });
+            if (qs.length) {
+              url += (url.indexOf("?") >= 0 ? "&" : "?") + qs.join("&");
+            }
+            var init = { method: method.toUpperCase(), headers: authHeaders() };
+            if (bodyField) {
+              init.headers["Content-Type"] = "application/json";
+              init.body = bodyField.value || "{}";
+            }
+            resp.className = "resp open";
+            respMeta.textContent =
+              method.toUpperCase() + " " + url + " — 请求中…";
+            fetch(url, init)
+              .then(function (r) {
+                respMeta.textContent =
+                  method.toUpperCase() +
+                  " " +
+                  url +
+                  " → " +
+                  r.status +
+                  " " +
+                  r.statusText;
+                return r.text();
+              })
+              .then(function (text) {
+                try {
+                  respBody.textContent = JSON.stringify(
+                    JSON.parse(text),
+                    null,
+                    2,
+                  );
+                } catch (e) {
+                  respBody.textContent = text;
+                }
+              })
+              .catch(function (err) {
+                respMeta.textContent =
+                  method.toUpperCase() + " " + url + " → 请求失败";
+                respBody.textContent = String(err);
+              });
+          });
+          return box;
+        }
+
+        function renderOperation(method, path, op) {
+          var wrap = el("div", "op");
+          var row = el("div", "row");
+          row.appendChild(
+            el(
+              "span",
+              "method " +
+                (/^(get|post|put|patch|delete)$/.test(method)
+                  ? method
+                  : "other"),
+              method.toUpperCase(),
+            ),
+          );
+          row.appendChild(el("span", "path", path));
+          if (op.summary) {
+            row.appendChild(el("span", "summary", op.summary));
+          }
+          var scopes = el("div", "scopes");
+          scopesOf(op).forEach(function (sc) {
+            scopes.appendChild(el("span", "scope", sc));
+          });
+          if (!scopesOf(op).length) {
+            scopes.appendChild(el("span", "scope", "（无 scope 标注）"));
+          }
+          row.appendChild(scopes);
+          wrap.appendChild(row);
+
+          var params = (op.parameters || []).filter(function (p) {
+            return p && (p.in === "path" || p.in === "query");
+          });
+          var tryBox = buildTry(op, method, path, params);
+          row.addEventListener("click", function () {
+            tryBox.classList.toggle("open");
+          });
+          wrap.appendChild(tryBox);
+          return wrap;
+        }
+
+        function render(doc) {
+          docEl.textContent = "";
+          // 产品投影口径：与后端同源（文档 info.description 的生效口径行）——MUST NOT 前端自判
+          var banner = document.getElementById("product-banner");
+          var desc = (doc.info && doc.info.description) || "";
+          var line = desc.split("\n").filter(function (l) {
+            return l.indexOf("产品投影") === 0 || l.indexOf("无产品投影") === 0;
+          })[0];
+          if (banner) {
+            banner.textContent =
+              line || "无产品投影 ⇒ 文档与授权面全量候选（产品数据未生效）";
+          }
+          var paths = doc.paths || {};
+          var groups = {};
+          Object.keys(paths)
+            .sort()
+            .forEach(function (path) {
+              var opsForPath = paths[path] || {};
+              Object.keys(opsForPath).forEach(function (method) {
+                var g = groupOf(path);
+                if (!groups[g]) {
+                  groups[g] = [];
+                }
+                groups[g].push([method, path, opsForPath[method]]);
+              });
+            });
+          var groupNames = Object.keys(groups).sort();
+          var opCount = 0;
+          groupNames.forEach(function (name) {
+            var box = el("section", "group");
+            box.appendChild(el("h2", null, name));
+            groups[name].forEach(function (t) {
+              box.appendChild(renderOperation(t[0], t[1], t[2]));
+              opCount++;
+            });
+            docEl.appendChild(box);
+          });
+          setStatus(
+            "已加载 " +
+              opCount +
+              " 个操作 / " +
+              groupNames.length +
+              " 个分组" +
+              (doc.info && doc.info.title ? "——" + doc.info.title : "") +
+              (token
+                ? ""
+                : "（未设置令牌：文档端点是受保护的，请先获取并填入 Bearer token）"),
+            !token,
+          );
+        }
+
+        function load() {
+          setStatus("加载文档中…");
+          fetch(DOC_URL, { headers: authHeaders() })
+            .then(function (r) {
+              if (!r.ok) {
+                throw new Error("HTTP " + r.status);
+              }
+              return r.json();
+            })
+            .then(render)
+            .catch(function (err) {
+              docEl.textContent = "";
+              setStatus(
+                "无法加载 " +
+                  DOC_URL +
+                  "（" +
+                  String(err) +
+                  "）。该端点须认证：请先取令牌后点「应用 Token」。",
+                true,
+              );
+            });
+        }
+
+        document.getElementById("apply").addEventListener("click", function () {
+          token = tokenInput.value.trim();
+          if (token) {
+            localStorage.setItem(TOKEN_KEY, token);
+          } else {
+            localStorage.removeItem(TOKEN_KEY);
+          }
+          load();
+        });
+        document.getElementById("clear").addEventListener("click", function () {
+          token = "";
+          tokenInput.value = "";
+          localStorage.removeItem(TOKEN_KEY);
+          load();
+        });
+
+        load();
+      })();
+    </script>
+  </body>
+</html>

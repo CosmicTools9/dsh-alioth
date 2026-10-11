@@ -7,7 +7,7 @@
 #   `.env` 自 2026-09 起刻意**不再承载**该键（原 `enc:` 密文注入优先级高于 shell，
 #   导致显式 `DATABASE_URL=…test` 经 `mise run` 仍连 dev；见 Meta/backend/.mise.toml:91-95）。
 #   现行承载面 = **组件级 `.mise.toml [env]`**（`DATABASE_URL = { default = "postgres://…" }`）。
-#   ⇒ 任何「读 `.env` 找 DATABASE_URL」或「只读 shell 的 $DATABASE_URL」的探测都会**假报未配置**
+#   ⇒ 任何「读 `.env` 找 DATABASE_URL」或「只读 shell 的 ${DATABASE_URL}」的探测都会**假报未配置**
 #     （本条即修此漂移：探测口径收敛到本文件的解析通道）。
 #
 # 用法（source 型）:
@@ -21,6 +21,9 @@
 # =============================================================================
 
 DB_URL_LIB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# 仓角色与「本 ns DSN」的唯一实现（同一 lib 目录；见 repo-role.sh 头注）
+# shellcheck source=scripts/lib/repo-role.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/repo-role.sh"
 # 由**直接调用** db_url_resolve 的消费方在 source 后读取；command substitution 中取值时
 # 本变量在子 shell 内被赋值、随子 shell 消亡 ⇒ 需要来源的消费方 MUST 改用 db_url_resolve_report
 # （shellcheck 跨文件不可见）
@@ -47,6 +50,16 @@ db_url_resolve_scan() {
     if [ -n "${DATABASE_URL:-}" ]; then
         printf 'url=%s\nsource=%s\n' "$DATABASE_URL" "环境变量"
         return 0
+    fi
+    # 仓角色分支（2026-09-28）：ns 仓门禁的判定面 MUST 是本 ns 库——解析到即用；解析不到即**失败**，
+    # MUST NOT 继续走平台组件缺省（那会让 ns 面门禁连平台共享库，属错误判定）。
+    local _role_root _role_url
+    if _role_root="$(repo_role_root "$PWD" 2>/dev/null)" && [ "$(repo_role "$_role_root")" = "ns" ]; then
+        if _role_url="$(repo_ns_db_url "$_role_root" 2>/dev/null)"; then
+            printf 'url=%s\nsource=%s\n' "$_role_url" "Deploy/$(repo_ns_name "$_role_root")/.env（本 ns 仓）"
+            return 0
+        fi
+        return 1
     fi
     while IFS= read -r comp; do
         url="$(cd "${DB_URL_LIB_ROOT}/${comp}" && mise env 2>/dev/null \

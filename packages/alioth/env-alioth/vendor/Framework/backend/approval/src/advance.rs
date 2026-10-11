@@ -14,6 +14,28 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
+/// 节点信息解析（flow 边 → 节点类型 + 标签）——**单一实现**（2026-09-29 check-sql-literal-single-source
+/// 检出原为四处逐字重复副本）。四处调用（`advance_flow` / `advance_fan_out` /
+/// `process_node_advancement` / `initiate_flow`）各自绑定 `(flow_id, target_id)`，行型 `(String, String)`。
+const NODE_INFO_SQL: &str = r#"SELECT CASE
+                        WHEN c.code IS NOT NULL
+                          AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
+                          THEN c.code
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
+                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
+                        WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
+                                     WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
+                          THEN 'end'
+                        ELSE 'gate'
+                      END,
+                      COALESCE(rro.comments, o.notice)
+               FROM isahl.zc_id_process_rr_operation rro
+               JOIN isahl.zc_id_operation o ON o.id = rro.ref_right AND o.deleted_at IS NULL
+               LEFT JOIN isahl."zc_id_cate-proc_op" c
+                 ON c.id = o."ck_cate-proc_op" AND c.deleted_at IS NULL
+               WHERE rro.ref_left = $1 AND rro.ref_right = $2 AND rro.deleted_at IS NULL"#;
+
 // ============================================================
 // P1-5 条件选边 + P0-1/P1-4 指派语义辅助
 // ============================================================
@@ -271,6 +293,57 @@ pub(crate) fn eval_flow_condition(
     runtime_engine::RhaiExpressionEngine::new()
         .evaluate_bool(expr, &vars)
         .map_err(|e| format!("eval: {e}"))
+}
+
+/// 错误分支审计（fix-approval-error-branch-integrity）：运行期无法继续推进的
+/// 停滞/降级分支 MUST 留可查询痕迹（此前仅 warn，DB 无标记 → 停滞流程与正常完成
+/// 不可区分）。写入失败仅告警，不阻断推进、不改变停驻/降级语义。
+async fn audit_error_branch(
+    pool: &PgPool,
+    flow_id: i64,
+    node_id: i64,
+    operation: &str,
+    reason: &str,
+    extra: serde_json::Value,
+) {
+    let mut metadata = match extra {
+        serde_json::Value::Object(m) => m,
+        serde_json::Value::Null => serde_json::Map::new(),
+        other => {
+            let mut m = serde_json::Map::new();
+            m.insert("detail".to_string(), other);
+            m
+        }
+    };
+    metadata.insert(
+        "flow_id".to_string(),
+        serde_json::json!(flow_id.to_string()),
+    );
+    metadata.insert(
+        "node_id".to_string(),
+        serde_json::json!(node_id.to_string()),
+    );
+    metadata.insert("reason".to_string(), serde_json::json!(reason));
+    if let Err(e) = common::audit::record_audit_event_with_metadata(
+        pool,
+        common::SYSTEM_USER_ID,
+        "system:approval-engine",
+        &format!("approval-flows:{}", flow_id),
+        operation,
+        &common::audit::Decision::NotApplicable,
+        serde_json::Value::Object(metadata),
+    )
+    .await
+    {
+        common::telemetry::warn!(
+            "error-branch audit failed ({} flow {} node {} — {}): {}",
+            operation,
+            flow_id,
+            node_id,
+            reason,
+            e
+        );
+    }
 }
 
 /// 选边（2026-09-02 routing 模式，fix-flow-gateway-semantics A2）：
@@ -627,7 +700,7 @@ pub async fn advance_flow(
                     );
                     return Ok(());
                 }
-                // 全员已行动未达标：自动 rejected 终局（本实例若已是 rejected 不重复发布）
+                // 全员已行动未达标：自动 rejected 终局（终局 MUST 可从库内复原）
                 common::telemetry::warn!(
                     "vote node {} (flow {}) all voters acted, quorum {}/{} unmet — auto-rejected",
                     current_event_id,
@@ -635,19 +708,50 @@ pub async fn advance_flow(
                     approved,
                     threshold
                 );
-                if let Some(bus) = actx.bus {
-                    let already_rejected: bool = sqlx::query_scalar(
-                        r#"SELECT EXISTS (
-                            SELECT 1 FROM isahl."zc_id_lifecycle_r_primary-status" ls
-                            JOIN isahl."zc_id_stus-approve" s ON s.id = ls.ref_right
-                            WHERE ls.ref_left = $1 AND ls.deleted_at IS NULL AND s.code = 'rejected'
-                        )"#,
+                // 节点级幂等：该节点（载体）已有 rejected 实例 → 不重复物化/发布
+                // （reject 路径的本次实例自身即 rejected，旧行为同判据）
+                let node_rejected: bool = sqlx::query_scalar(
+                    r#"SELECT EXISTS (
+                        SELECT 1 FROM isahl."zc_id_oper-approve" oa
+                        JOIN isahl.zc_id_operation_rr_event oe
+                          ON oe.ref_left = oa.id AND oe.deleted_at IS NULL
+                        JOIN isahl."zc_id_lifecycle_r_primary-status" ls
+                          ON ls.ref_left = oa.id AND ls.deleted_at IS NULL
+                        JOIN isahl."zc_id_stus-approve" s
+                          ON s.id = ls.ref_right AND s.deleted_at IS NULL
+                        WHERE oe.ref_right = $1 AND oa.deleted_at IS NULL AND s.code = 'rejected'
+                    )"#,
+                )
+                .bind(current_event_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
+                if !node_rejected {
+                    // 物化节点级终局记录：系统身份实例 + rejected 主状态桥 + 驳回意见
+                    // （与人工驳回同构 → 时间线/富化/待办读路径免改即可呈现终局）
+                    let verdict_ids = create_approval_instances(
+                        pool,
+                        current_op_id,
+                        "",
+                        &actx,
+                        Some(&[common::SYSTEM_USER_ID]),
                     )
-                    .bind(instance_id)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(|e| ApiError::Database(e.to_string()))?;
-                    if !already_rejected {
+                    .await?;
+                    for verdict_id in &verdict_ids {
+                        crate::handlers::approve_reject::record_system_verdict(
+                            pool,
+                            *verdict_id,
+                            "rejected",
+                            "已拒绝",
+                            "审批驳回",
+                            &format!(
+                                "quorum 未达自动终局（通过 {}/阈值 {}，全员已行动）",
+                                approved, threshold
+                            ),
+                        )
+                        .await?;
+                    }
+                    if let Some(bus) = actx.bus {
                         crate::handlers::approve_reject::publish_approval_completed(
                             bus,
                             pool,
@@ -710,36 +814,26 @@ pub async fn advance_flow(
             current_event_id,
             flow_id
         );
+        audit_error_branch(
+            pool,
+            flow_id,
+            current_op_id,
+            "approval.flow_stall",
+            "no_outgoing_edge_selected",
+            serde_json::json!({ "carrier_id": current_event_id.to_string(), "routing": routing }),
+        )
+        .await;
         return Ok(());
     }
 
     // 3. 为每个目标节点创建 operation
     for target_id in targets {
-        let node_info = sqlx::query_as::<_, (String, String)>(
-            r#"SELECT CASE
-                        WHEN c.code IS NOT NULL
-                          AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
-                          THEN c.code
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
-                        WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
-                                     WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
-                          THEN 'end'
-                        ELSE 'gate'
-                      END,
-                      COALESCE(rro.comments, o.notice)
-               FROM isahl.zc_id_process_rr_operation rro
-               JOIN isahl.zc_id_operation o ON o.id = rro.ref_right AND o.deleted_at IS NULL
-               LEFT JOIN isahl."zc_id_cate-proc_op" c
-                 ON c.id = o."ck_cate-proc_op" AND c.deleted_at IS NULL
-               WHERE rro.ref_left = $1 AND rro.ref_right = $2 AND rro.deleted_at IS NULL"#,
-        )
-        .bind(flow_id)
-        .bind(target_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| ApiError::Database(e.to_string()))?;
+        let node_info = sqlx::query_as::<_, (String, String)>(NODE_INFO_SQL)
+            .bind(flow_id)
+            .bind(target_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
 
         let (node_type, node_label) = match node_info {
             Some(n) => n,
@@ -933,6 +1027,15 @@ pub(crate) async fn route_reject(
             "route_reject: node {} backTo 缺失/非法——按 stop 处理",
             current_op
         );
+        audit_error_branch(
+            pool,
+            flow_id,
+            current_op,
+            "approval.reject_route_degraded",
+            "back_to_missing_or_invalid",
+            serde_json::json!({ "instance_id": instance_id.to_string() }),
+        )
+        .await;
         return Ok(false);
     };
 
@@ -949,6 +1052,15 @@ pub(crate) async fn route_reject(
             "route_reject: backTo index {} 越界/无 id——按 stop 处理",
             back_idx
         );
+        audit_error_branch(
+            pool,
+            flow_id,
+            current_op,
+            "approval.reject_route_degraded",
+            "back_to_index_out_of_range",
+            serde_json::json!({ "back_to": back_idx, "instance_id": instance_id.to_string() }),
+        )
+        .await;
         return Ok(false);
     };
     let target_op: Option<(i64, String)> = sqlx::query_as::<_, (i64, String)>(
@@ -970,6 +1082,15 @@ pub(crate) async fn route_reject(
             "route_reject: 目标 op '{}' 不可解析——按 stop 处理",
             target_id
         );
+        audit_error_branch(
+            pool,
+            flow_id,
+            current_op,
+            "approval.reject_route_degraded",
+            "back_to_target_unresolvable",
+            serde_json::json!({ "target_node_id": target_id.to_string(), "instance_id": instance_id.to_string() }),
+        )
+        .await;
         return Ok(false);
     };
     let pending_ids: Vec<i64> = sqlx::query_scalar(
@@ -1286,31 +1407,12 @@ async fn advance_fan_out(
     for (target_id, _cond) in entries {
         // 扇出抵达时间：每条条件输入抵达目标节点即盖 qk_arrived（见 stamp_arrival）
         stamp_arrival(pool, *target_id).await?;
-        let node_info = sqlx::query_as::<_, (String, String)>(
-            r#"SELECT CASE
-                        WHEN c.code IS NOT NULL
-                          AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
-                          THEN c.code
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
-                        WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
-                                     WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
-                          THEN 'end'
-                        ELSE 'gate'
-                      END,
-                      COALESCE(rro.comments, o.notice)
-                 FROM isahl.zc_id_process_rr_operation rro
-                 JOIN isahl.zc_id_operation o ON o.id = rro.ref_right AND o.deleted_at IS NULL
-                 LEFT JOIN isahl."zc_id_cate-proc_op" c
-                   ON c.id = o."ck_cate-proc_op" AND c.deleted_at IS NULL
-                 WHERE rro.ref_left = $1 AND rro.ref_right = $2 AND rro.deleted_at IS NULL"#,
-        )
-        .bind(flow_id)
-        .bind(*target_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| ApiError::Database(e.to_string()))?;
+        let node_info = sqlx::query_as::<_, (String, String)>(NODE_INFO_SQL)
+            .bind(flow_id)
+            .bind(*target_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
         if let Some((target_type, target_label)) = node_info {
             match target_type.as_str() {
                 // review/action/vote 亦为人工节点（评审/执行/投票岗位），统一建实例
@@ -1452,7 +1554,7 @@ async fn advance_auto_node(
                     let users: Vec<i64> = if kind != "role" {
                         sqlx::query_scalar(
                             r#"SELECT u.id FROM isahl_auth.auth_users u
-                               WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.name = $1)
+                               WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.display_name = $1)
                                LIMIT 50"#,
                         )
                         .bind(id)
@@ -2111,6 +2213,15 @@ async fn advance_auto_node(
                     flow_id,
                     route_values.join(" / ")
                 );
+                audit_error_branch(
+                    pool,
+                    flow_id,
+                    template_node_id,
+                    "approval.decision_stall",
+                    "no_matching_labeled_edge",
+                    serde_json::json!({ "outputs": route_values.clone() }),
+                )
+                .await;
                 return Ok(());
             }
             common::telemetry::info!(
@@ -2367,31 +2478,12 @@ async fn process_node_advancement(
         }
 
         for target_id in targets {
-            let node_info = sqlx::query_as::<_, (String, String)>(
-                r#"SELECT CASE
-                        WHEN c.code IS NOT NULL
-                          AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
-                          THEN c.code
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
-                        WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
-                                     WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
-                          THEN 'end'
-                        ELSE 'gate'
-                      END,
-                      COALESCE(rro.comments, o.notice)
-                   FROM isahl.zc_id_process_rr_operation rro
-                   JOIN isahl.zc_id_operation o ON o.id = rro.ref_right AND o.deleted_at IS NULL
-                   LEFT JOIN isahl."zc_id_cate-proc_op" c
-                     ON c.id = o."ck_cate-proc_op" AND c.deleted_at IS NULL
-                   WHERE rro.ref_left = $1 AND rro.ref_right = $2 AND rro.deleted_at IS NULL"#,
-            )
-            .bind(flow_id)
-            .bind(target_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| ApiError::Database(e.to_string()))?;
+            let node_info = sqlx::query_as::<_, (String, String)>(NODE_INFO_SQL)
+                .bind(flow_id)
+                .bind(target_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(|e| ApiError::Database(e.to_string()))?;
 
             let (node_type, node_label) = match node_info {
                 Some(n) => n,
@@ -2518,31 +2610,12 @@ pub async fn initiate_flow(
 
     let mut created = Vec::new();
     for target_id in targets {
-        let node_info = sqlx::query_as::<_, (String, String)>(
-            r#"SELECT CASE
-                        WHEN c.code IS NOT NULL
-                          AND c.code NOT IN ('and_sign', 'or_sign', 'sequential')
-                          THEN c.code
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-approve' THEN 'approve'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-action' THEN 'action'
-                        WHEN (SELECT relname FROM pg_class WHERE oid = o.tableoid) = 'zc_id_oper-check' THEN 'review'
-                        WHEN EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_statement rs
-                                     WHERE rs.ref_left = o.id AND rs.deleted_at IS NULL)
-                          THEN 'end'
-                        ELSE 'gate'
-                      END,
-                      COALESCE(rro.comments, o.notice)
-               FROM isahl.zc_id_process_rr_operation rro
-               JOIN isahl.zc_id_operation o ON o.id = rro.ref_right AND o.deleted_at IS NULL
-               LEFT JOIN isahl."zc_id_cate-proc_op" c
-                 ON c.id = o."ck_cate-proc_op" AND c.deleted_at IS NULL
-               WHERE rro.ref_left = $1 AND rro.ref_right = $2 AND rro.deleted_at IS NULL"#,
-        )
-        .bind(flow_id)
-        .bind(target_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| ApiError::Database(e.to_string()))?;
+        let node_info = sqlx::query_as::<_, (String, String)>(NODE_INFO_SQL)
+            .bind(flow_id)
+            .bind(target_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| ApiError::Database(e.to_string()))?;
         let Some((node_type, node_label)) = node_info else {
             continue;
         };

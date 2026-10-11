@@ -39,8 +39,6 @@ pub struct SystemConfig {
     pub is_default: Option<bool>,
     /// 作用域
     pub domain_: Option<String>,
-    /// 是否公开
-    pub public: Option<bool>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
@@ -81,8 +79,6 @@ pub struct CreateSystemConfigRequest {
     #[serde(default)]
     pub is_default: bool,
     pub domain_: Option<String>,
-    #[serde(default)]
-    pub public: bool,
 }
 
 /// 更新系统配置请求
@@ -102,7 +98,6 @@ pub struct UpdateSystemConfigRequest {
     pub enabled: Option<bool>,
     pub is_default: Option<bool>,
     pub domain_: Option<String>,
-    pub public: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -120,6 +115,9 @@ pub struct ConfigCategory {
     pub notice: String,
     pub description: Option<String>,
     pub icon: Option<String>,
+    /// 是否具备连通性探测（宿主 `ProviderProbe` 注册；FE 据此显示「测试连接」）
+    #[serde(default)]
+    pub supports_probe: bool,
     pub providers: Vec<ConfigProvider>,
 }
 
@@ -194,7 +192,6 @@ pub struct SystemConfigSafeResponse {
     pub enabled: Option<bool>,
     pub is_default: Option<bool>,
     pub domain_: Option<String>,
-    pub public: Option<bool>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -218,7 +215,6 @@ impl From<SystemConfig> for SystemConfigSafeResponse {
             enabled: config.enabled,
             is_default: config.is_default,
             domain_: config.domain_,
-            public: config.public,
             created_at: config.created_at,
             updated_at: config.updated_at,
         }

@@ -42,22 +42,31 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     let mut users = [0i64; 2];
     for (i, tag) in ["va", "vb"].iter().enumerate() {
         let email = format!("condv2_{}_{}@alioth.test", tag, suffix);
+        let username = format!("condv2_{}_{}", tag, suffix);
         sqlx::query(
-            "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-             VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-             ON CONFLICT (name) DO NOTHING",
+            "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+             VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+             ON CONFLICT (username) DO NOTHING",
         )
-        .bind(&email)
-        .bind(format!("condv2_{}_{}", tag, suffix))
+        .bind(&username)
         .execute(pool)
         .await
         .expect("insert user");
         users[i] =
-            sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-                .bind(&email)
+            sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+                .bind(&username)
                 .fetch_one(pool)
                 .await
                 .expect("fetch user");
+        sqlx::query(
+            "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+             VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+        )
+        .bind(users[i])
+        .bind(&email)
+        .execute(pool)
+        .await
+        .ok();
     }
 
     // UA base + UA cond；user_a 持有 base 与 cond；user_b 仅持有 base

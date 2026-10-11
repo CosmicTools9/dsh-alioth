@@ -20,8 +20,12 @@ pub trait SystemConfigRepository: Clone + Send + Sync + 'static {
 
     // 基础 CRUD（原由 CrudRepository 提供，现显式声明）
 
-    /// 创建配置
-    async fn insert(&self, req: &CreateSystemConfigRequest) -> Result<SystemConfig, Error>;
+    /// 创建配置（`actor_id` = 操作者，写入 `created_by_id`；`None` 仅测试/脚本路径）
+    async fn insert(
+        &self,
+        req: &CreateSystemConfigRequest,
+        actor_id: Option<i64>,
+    ) -> Result<SystemConfig, Error>;
 
     /// 根据 ID 获取配置
     async fn find_by_id(&self, id: i64) -> Result<Option<SystemConfig>, Error>;
@@ -29,11 +33,12 @@ pub trait SystemConfigRepository: Clone + Send + Sync + 'static {
     /// 列出配置（分页）
     async fn list(&self, limit: i64, offset: i64) -> Result<Vec<SystemConfig>, Error>;
 
-    /// 更新配置
+    /// 更新配置（`actor_id` = 操作者，写入 `updated_by_id`）
     async fn update(
         &self,
         id: i64,
         req: &UpdateSystemConfigRequest,
+        actor_id: Option<i64>,
     ) -> Result<Option<SystemConfig>, Error>;
 
     /// 软删除配置

@@ -22,7 +22,7 @@ use sqlx::PgPool;
 use super::jwt::validate_access_token;
 use super::session::is_session_active;
 use super::AuthState;
-use crate::auth::extract_user_id;
+use crate::auth::extract_user_id_with_source;
 use crate::ngac::pdp::{audit_decision, decide_access, Decision};
 use serde_json::json;
 
@@ -36,9 +36,13 @@ use serde_json::json;
 /// 窗口固定对齐 epoch（60s 默认），窗口边界最多放行 ≤2× 上限（固定窗口语义，接受）。
 /// DB 故障 fail-open 放行并记日志（限流为防护面非授权面）；窗口行由 housekeeping 清理。
 ///
-/// 上限与窗口通过环境变量 `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SEC` /
-/// `RATE_LIMIT_REGISTER_MAX` 调整，默认 10 请求 / 60 秒（外部注册 3 请求/窗口）。
-/// 从环境变量读取限流上限（默认 10 请求/窗口）。
+/// 上限与窗口通过环境变量调整（分档语义见 [`throttle_tier`]）：
+/// - `RATE_LIMIT_MAX`：`credential` 档（凭证提交/交换面，防爆破目标），默认 10 请求/窗口；
+/// - `RATE_LIMIT_SESSION_MAX`：`session` 档（会话与权限**只读**面），默认 120 请求/窗口；
+/// - `RATE_LIMIT_REGISTER_MAX`：`register` 档（外部注册通道），默认 3 请求/窗口；
+/// - `RATE_LIMIT_WINDOW_SEC`：三档共用窗口长度，默认 60 秒。
+///
+/// 从环境变量读取 `credential` 档上限（默认 10 请求/窗口）。
 fn rate_limit_max() -> u32 {
     std::env::var("RATE_LIMIT_MAX")
         .ok()
@@ -52,6 +56,23 @@ fn rate_limit_window_secs() -> u64 {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(60)
+}
+
+/// `session` 档上限（默认 120 请求/窗口）。
+///
+/// 口径依据（fix-auth-ratelimit-bucket-split）：会话/权限只读端点（`/api/auth/me`、
+/// `/api/auth/portal-context`、`/api/auth/check-access`、`/api/auth/refresh`、
+/// `/api/auth/mode`、`/api/auth/oauth/providers`、`/api/auth/sessions*`）
+/// 在单文档一次「未登录 → 登录 → 首页 + N 次导航」中天然产生 6–10 次请求；与凭证面
+/// （`credential`，10/60s 防爆破）同桶时**合法用户单独即可打满整桶**——2026-09-22 实测事故：
+/// `silentRefresh` 固定 5s 冷却 ⇒ 12 次/分刷新重试打满配额，连启动探测与人工登录都被 429；
+/// 共享出口 IP（NAT / 首跳未设转发头）时一人触顶即全体 429。故只读面独立成档并给足
+/// 导航语义额度，凭证面口径保持不变。
+fn rate_limit_session_max() -> u32 {
+    std::env::var("RATE_LIMIT_SESSION_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120)
 }
 
 /// 外部注册限流上限（默认 3 请求/窗口；防护分级——公开注册面严于通用认证端点）。
@@ -85,15 +106,26 @@ async fn ensure_rate_limit_table(pool: &PgPool) {
     let _ = ENSURE_TABLE.set(());
 }
 
+/// 限流判定结果：本次请求计入后的窗口内计数 + 是否放行。
+///
+/// 计数随判定一并返回，供 429 响应 `details` 与 warn 日志输出（现场可定位"谁打满的哪个桶"）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RateLimitDecision {
+    /// 窗口内累计计数（含本次请求）
+    count: u32,
+    /// 是否放行（`count <= max`）
+    allowed: bool,
+}
+
 /// DB-backed 限流判定：原子递增当前窗口计数。
-/// `Ok(true)` 放行；`Ok(false)` 超限（调用方 429）；`Err` DB 故障（调用方 fail-open）。
+/// `Ok(decision)`：`decision.allowed == false` 即超限（调用方 429）；`Err` DB 故障（调用方 fail-open）。
 async fn db_rate_limit_check(
     pool: &PgPool,
     scope: &str,
     ip: &str,
     max: u32,
     window_secs: u64,
-) -> Result<bool, sqlx::Error> {
+) -> Result<RateLimitDecision, sqlx::Error> {
     ensure_rate_limit_table(pool).await;
     let now_epoch = Utc::now().timestamp();
     let window_epoch = now_epoch - now_epoch.rem_euclid(window_secs as i64);
@@ -110,7 +142,11 @@ async fn db_rate_limit_check(
     .bind(window_start)
     .fetch_one(pool)
     .await?;
-    Ok((count as u32) <= max)
+    let count = count as u32;
+    Ok(RateLimitDecision {
+        count,
+        allowed: count <= max,
+    })
 }
 
 /// 是否为需要限流的认证端点路径。
@@ -121,6 +157,67 @@ fn is_auth_throttled_path(path: &str) -> bool {
 /// 外部主体注册通道（add-dual-register-channels）：独立更严限流档。
 fn is_external_register_path(path: &str) -> bool {
     path == "/auth/register/external" || path == "/api/auth/register/external"
+}
+
+/// `session` 档（会话与权限**只读**面）白名单——**auth 前缀之后**的子路径。
+///
+/// 两种挂载形态共用同一份判定：SSO 独立部署（`Release/SSO`）挂 `/auth/...`，
+/// Gateway 反代/别名形态挂 `/api/auth/...`（`sso_remote_proxy` 保留原路径转发）。
+/// 故白名单只登记前缀之后的子路径，避免出现"只放宽了反代形态、独立形态仍按 10/60s"的裂口。
+///
+/// 放宽面必须**显式登记**：未列入本表的一切 `/auth/*`、`/api/auth/*`、`/oidc/*` 路径
+/// 一律落 `credential` 默认档（更严）——新增端点漏登记只会更严，不会更松（fail-safe）。
+/// 与 `openspec/specs/sso-auth-rate-limiting` 的分档表逐行对应。
+const SESSION_READ_SUBPATHS: &[&str] = &[
+    "/me",
+    "/portal-context",
+    "/check-access",
+    "/refresh",
+    "/mode",
+    "/oauth/providers",
+    "/sessions",
+];
+
+/// 段边界前缀匹配：`prefix` 命中自身或其子路径，MUST NOT 命中同前缀异段路径
+/// （`/me` 命中 `/me` 与 `/me/profile`，不命中 `/messaging`）。
+///
+/// 不复用 `common::PublicRouteMatcher`：其 `is_public` 为裸 `starts_with`
+/// （`Framework/backend/common/src/middleware.rs`），用作放宽档白名单会把
+/// `/api/auth/messaging` 误判进 `session` 档 ⇒ 违反「默认档最严」。
+fn matches_segment_prefix(path: &str, prefix: &str) -> bool {
+    match path.strip_prefix(prefix) {
+        Some(rest) => rest.is_empty() || rest.starts_with('/'),
+        None => false,
+    }
+}
+
+/// 剥掉认证挂载前缀（`/api/auth` 优先，其次 `/auth`）→ 返回前缀之后的子路径。
+fn auth_subpath(path: &str) -> Option<&str> {
+    path.strip_prefix("/api/auth")
+        .or_else(|| path.strip_prefix("/auth"))
+}
+
+/// `session` 档路径判定（段边界白名单，见 [`SESSION_READ_SUBPATHS`]）。
+fn is_session_read_path(path: &str) -> bool {
+    match auth_subpath(path) {
+        Some(subpath) => SESSION_READ_SUBPATHS
+            .iter()
+            .any(|prefix| matches_segment_prefix(subpath, prefix)),
+        None => false,
+    }
+}
+
+/// 限流档判定 → `(scope, 上限)`。
+///
+/// 顺序固定：`register`（精确匹配）→ `session`（段边界白名单）→ `credential`（默认档）。
+fn throttle_tier(path: &str) -> (&'static str, u32) {
+    if is_external_register_path(path) {
+        ("register", register_rate_limit_max())
+    } else if is_session_read_path(path) {
+        ("session", rate_limit_session_max())
+    } else {
+        ("credential", rate_limit_max())
+    }
 }
 
 /// Require valid JWT for all non-public routes
@@ -209,8 +306,10 @@ where
                     path
                 );
 
-                // 认证端点速率限制（SECURITY_SPEC §4）：DB-backed 固定窗口（G3），
-                // 跨实例一致。防护分级：外部注册通道独立更严档。
+                // 认证端点速率限制（SECURITY_SPEC §4）：DB-backed 固定窗口（G3），跨实例一致。
+                // 分档（fix-auth-ratelimit-bucket-split）：`credential`（凭证提交/交换，防爆破）/
+                // `session`（会话与权限只读）/ `register`（外部注册，更严）三档独立桶，
+                // 档位判定见 `throttle_tier`。
                 if is_auth_throttled_path(&path) {
                     // 分桶键 = 可信跳采信的客户端地址（2026-09-23 fix-auth-ratelimit-client-ip：
                     // 旧实现无条件读转发头 ⇒ 平台链路全部远程用户折进 127.0.0.1 同一桶，
@@ -218,13 +317,11 @@ where
                     let remote_ip =
                         crate::auth::session::client_ip_from_conn_info(&req.connection_info());
                     if let Some(ip) = remote_ip {
-                        let (scope, max) = if is_external_register_path(&path) {
-                            ("register", register_rate_limit_max())
-                        } else {
-                            ("auth", rate_limit_max())
-                        };
+                        // 分档（fix-auth-ratelimit-bucket-split）：凭证面 / 会话只读面 /
+                        // 外部注册面各自独立桶，互不串扰；未登记路径落 credential 默认档。
+                        let (scope, max) = throttle_tier(&path);
                         let window_secs = rate_limit_window_secs();
-                        let allowed = match req.app_data::<web::Data<PgPool>>() {
+                        let decision = match req.app_data::<web::Data<PgPool>>() {
                             Some(pool) => {
                                 db_rate_limit_check(
                                     pool.get_ref(),
@@ -240,28 +337,53 @@ where
                                         "SSO middleware: rate limit DB check failed (fail-open): {}",
                                         e
                                     );
-                                    true
+                                    RateLimitDecision {
+                                        count: 0,
+                                        allowed: true,
+                                    }
                                 })
                             }
                             None => {
                                 log::error!("SSO middleware: PgPool missing for rate limiting");
-                                true
+                                RateLimitDecision {
+                                    count: 0,
+                                    allowed: true,
+                                }
                             }
                         };
-                        if !allowed {
+                        if !decision.allowed {
                             log::warn!(
-                                "SSO middleware: rate limit exceeded for {} on {}",
+                                "SSO middleware: rate limit exceeded ip={} path={} scope={} count={} limit={} window_seconds={}",
                                 ip,
-                                path
+                                path,
+                                scope,
+                                decision.count,
+                                max,
+                                window_secs
                             );
                             return Ok(req
                                 .into_response(
                                     HttpResponse::TooManyRequests()
-                                        .insert_header((header::RETRY_AFTER, "60"))
-                                        .json(ErrorResponse::new(
-                                            "RATE_LIMITED",
-                                            "Too many authentication attempts, please retry after 60 seconds",
-                                        )),
+                                        .insert_header((
+                                            header::RETRY_AFTER,
+                                            window_secs.to_string(),
+                                        ))
+                                        .json(
+                                            ErrorResponse::new(
+                                                "RATE_LIMITED",
+                                                format!(
+                                                    "Too many authentication requests, please retry after {} seconds",
+                                                    window_secs
+                                                ),
+                                            )
+                                            .with_details(json!({
+                                                "scope": scope,
+                                                "count": decision.count,
+                                                "limit": max,
+                                                "window_seconds": window_secs,
+                                                "retry_after_seconds": window_secs,
+                                            })),
+                                        ),
                                 )
                                 .map_into_right_body());
                         }
@@ -325,6 +447,22 @@ where
                         }
                     }
                     log::debug!("SSO middleware: {} {} auth accepted", method, path);
+                    // CSRF 校验（implement-csrf-protection design.md §4）：
+                    // 求值 MUST 在鉴权成功之后（失效会话已在上方短路为 401，不改变
+                    // 401/403 次序语义）；凭据来源 = 实际完成鉴权者（Bearer 豁免；
+                    // cookie 来源须 double-submit 相等）。开关∧非安全方法∧非豁免路径
+                    // 由 `csrf_gate` 内部判定（/auth/refresh、/auth/logout 为显式豁免面）。
+                    if let Some((_, source)) = common::csrf::resolve_credential(req.request()) {
+                        if let Some(resp) = common::csrf::csrf_gate(req.request(), source) {
+                            log::warn!(
+                                "SSO middleware: CSRF rejected {} {} (source {:?})",
+                                method,
+                                path,
+                                source
+                            );
+                            return Ok(req.into_response(resp).map_into_right_body());
+                        }
+                    }
                     // fix（tighten-pdp-decision-surface A）：claims 注入 extensions，
                     // 服务决策 handler 做主体一致性校验免二次验签
                     req.extensions_mut().insert(claims.clone());
@@ -456,12 +594,34 @@ where
             let (object_type, resource_id, action) = match map_pep_resource(&path, &method) {
                 Some(v) => v,
                 None => {
+                    // 透传分支同样 gate（否则 `/api/admin/*` 未映射路径漏检）：
+                    // 仅在 CSRF 面确实需要校验时解析来源；无凭据/验签失败不在此下结论
+                    // （透传与 401 语义交由下游，MUST NOT 变 403）。
+                    if common::csrf::csrf_requires_check(req.request()) {
+                        if let Some(state) = req.app_data::<web::Data<AuthState>>().cloned() {
+                            if let Ok((_, source)) =
+                                extract_user_id_with_source(req.request(), &state)
+                            {
+                                if let Some(resp) = common::csrf::csrf_gate(req.request(), source) {
+                                    log::warn!(
+                                        "ngac_pep: CSRF rejected {} {} (source {:?})",
+                                        method,
+                                        path,
+                                        source
+                                    );
+                                    return Ok(req.into_response(resp).map_into_right_body());
+                                }
+                            }
+                        }
+                    }
                     let res = service.call(req).await?;
                     return Ok(res.map_into_left_body());
                 }
             };
 
-            // 解析 AuthState 与 user_id（JWT，由外层 RequireAuth 已校验）。
+            // 解析 AuthState 与 `(user_id, 凭据来源)`（JWT，由外层 RequireAuth 已校验）。
+            // 来源 MUST 与产出 token 的提取分支同源（`extract_user_id_with_source`，
+            // design.md §3——CSRF 豁免/校验判据的唯一输入）。
             let auth_state = match req.app_data::<web::Data<AuthState>>().cloned() {
                 Some(s) => s,
                 None => {
@@ -474,12 +634,24 @@ where
                         .map_into_right_body());
                 }
             };
-            let user_id = match extract_user_id(req.request(), &auth_state) {
-                Ok(id) => id,
-                Err(resp) => {
-                    return Ok(req.into_response(resp).map_into_right_body());
-                }
-            };
+            let (user_id, credential_source) =
+                match extract_user_id_with_source(req.request(), &auth_state) {
+                    Ok(v) => v,
+                    Err(resp) => {
+                        return Ok(req.into_response(resp).map_into_right_body());
+                    }
+                };
+
+            // CSRF 校验（design.md §4）：鉴权成功之后、NGAC 决策/分发之前短路 403 平铺体。
+            if let Some(resp) = common::csrf::csrf_gate(req.request(), credential_source) {
+                log::warn!(
+                    "ngac_pep: CSRF rejected {} {} (source {:?})",
+                    method,
+                    path,
+                    credential_source
+                );
+                return Ok(req.into_response(resp).map_into_right_body());
+            }
 
             // PgPool（决策与审计落库所需）。
             let pool_data = match req.app_data::<web::Data<PgPool>>() {
@@ -568,44 +740,27 @@ where
     }
 }
 
-/// 将 SSO 管理面请求映射为 NGAC `(object_type, resource_id, action)`。
+/// SSO 管理/审计面 PEP 映射（**消费判定链 PEP 段唯一实现** `ResourceRegistry::resolve_path`）。
 ///
-/// - `/api/admin/api-{clients,plans,subscriptions,reconcile}` → `(openapi_admin, 0, action)`
-///   （OpenAPI 管理面独立 OA——refactor-openapi-admin-ngac-pdp，迁移 029）
-/// - 其余 `/api/admin/<entity>(/<id>)?` → `(sso_admin, 0, action)`（管理面资源，不区分实体）
-/// - `/api/audit/*` → `(sso_audit, 0, action)`（审计面资源）
-///
-/// 资源标识遵循 NGAC_SPEC §2.1 `{type}:{id}`；OA/关联由迁移 019（sso_admin/
-/// sso_audit）与 029（openapi_admin）seed。
-/// action：GET→read / POST→create / PUT|PATCH→update / DELETE→delete（其余→access）。
+/// 映射声明（唯一实现）：`ResourceRegistry::with_sso_face_defaults` ——
+/// `/api/admin/api-{clients,plans,subscriptions,reconcile}` → `openapi_admin:0`、
+/// 其余 `/api/admin/…` → `sso_admin:0`、`/api/audit/…` → `sso_audit:0`。
+/// 动作映射同样单源（`ngac_contract::action_for_method`：未知方法 ⇒ `access`）。
 fn map_pep_resource(path: &str, method: &str) -> Option<(String, i64, String)> {
-    // OpenAPI 管理面四族端点独立 OA（其余 admin 端点保持 sso_admin 不动）
-    let (object_type, rest) = match path.strip_prefix("/api/admin/") {
-        Some(r)
-            if r.starts_with("api-clients")
-                || r.starts_with("api-plans")
-                || r.starts_with("api-subscriptions")
-                || r.starts_with("api-reconcile") =>
-        {
-            ("openapi_admin".to_string(), r)
-        }
-        Some(r) => ("sso_admin".to_string(), r),
-        None => {
-            let r = path.strip_prefix("/api/audit/")?;
-            ("sso_audit".to_string(), r)
-        }
-    };
-    if rest.is_empty() {
+    static REGISTRY: std::sync::OnceLock<ngac_contract::ResourceRegistry> =
+        std::sync::OnceLock::new();
+    // 空子路径（`/api/admin/`）在旧实现中不拦截——保持该边界语义。
+    if path.ends_with('/') {
         return None;
     }
-    let action = match method.to_uppercase().as_str() {
-        "GET" => "read",
-        "POST" => "create",
-        "PUT" | "PATCH" => "update",
-        "DELETE" => "delete",
-        _ => "access",
-    };
-    Some((object_type, 0, action.to_string()))
+    let registry =
+        REGISTRY.get_or_init(|| ngac_contract::ResourceRegistry::new().with_sso_face_defaults());
+    let resolved = registry.resolve_path(path)?;
+    Some((
+        resolved.type_name,
+        resolved.resource_id,
+        ngac_contract::action_for_method(method).to_string(),
+    ))
 }
 
 #[cfg(test)]
@@ -641,28 +796,41 @@ mod tests {
         // 窗口 1s 在高负载机（多次认证轮实测）会跨窗翻转致假放行——放宽到 30s，
         // 测试总耗 << 窗长即确定
         let window_secs = 30u64;
-        for _ in 0..max {
-            assert!(
-                db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
-                    .await
-                    .expect("check"),
-                "first {} requests should be allowed",
-                max
-            );
-        }
-        assert!(
-            !db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
+        for i in 1..=max {
+            let d = db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
                 .await
-                .expect("check"),
-            "request above max should be blocked"
+                .expect("check");
+            assert!(d.allowed, "first {} requests should be allowed", max);
+            assert_eq!(d.count, i, "计数随判定原子返回");
+        }
+        let blocked = db_rate_limit_check(&pool, &scope, &ip, max, window_secs)
+            .await
+            .expect("check");
+        assert!(!blocked.allowed, "request above max should be blocked");
+        assert_eq!(
+            blocked.count,
+            max + 1,
+            "超限请求同样计入窗口计数（响应 details 用它定位）"
         );
         // 不同 key（ip）不受影响
         assert!(
             db_rate_limit_check(&pool, &scope, "10.0.0.254", max, window_secs)
                 .await
-                .expect("check"),
+                .expect("check")
+                .allowed,
             "different ip should be allowed"
         );
+
+        // 不同档（scope）互不串扰：同 IP 在另一档仍从 1 起（fix-auth-ratelimit-bucket-split）
+        let scope_other = format!("test-other-{}", uuid::Uuid::new_v4().simple());
+        let other = db_rate_limit_check(&pool, &scope_other, &ip, max, window_secs)
+            .await
+            .expect("check");
+        assert!(other.allowed && other.count == 1, "档位之间互不串扰");
+        let _ = sqlx::query("DELETE FROM isahl_auth.auth_rate_limits WHERE scope = $1")
+            .bind(&scope_other)
+            .execute(&pool)
+            .await;
 
         // 窗口翻转语义（独立 scope 探针，免 sleep——高负载机跨窗翻转会假放行/假阻塞）：
         // 新 scope 预置「两个窗口前已打满」的历史行；当前窗口计数独立 ⇒ 应放行
@@ -681,7 +849,8 @@ mod tests {
         assert!(
             db_rate_limit_check(&pool, &scope_flip, &ip, max, window_secs)
                 .await
-                .expect("check"),
+                .expect("check")
+                .allowed,
             "new window should reset count"
         );
         let _ = sqlx::query("DELETE FROM isahl_auth.auth_rate_limits WHERE scope = $1")
@@ -704,6 +873,90 @@ mod tests {
         assert!(!is_auth_throttled_path("/.well-known/jwks.json"));
         assert!(!is_auth_throttled_path("/api/ngac/eval"));
         assert!(!is_auth_throttled_path("/oauth/callback"));
+    }
+
+    /// 限流分档判定（fix-auth-ratelimit-bucket-split）：
+    /// 会话只读白名单按**段边界**命中；未登记路径落 `credential` 默认档（fail-safe）。
+    #[test]
+    fn test_throttle_tier_classification() {
+        let scope_of = |p: &str| throttle_tier(p).0;
+
+        // 会话只读面（含子路径）——两种挂载前缀必须同档
+        for p in [
+            "/api/auth/me",
+            "/api/auth/me/profile",
+            "/api/auth/me/mfa/status",
+            "/api/auth/portal-context",
+            "/api/auth/check-access",
+            "/api/auth/refresh",
+            "/api/auth/mode",
+            "/api/auth/oauth/providers",
+            "/api/auth/sessions",
+            "/api/auth/sessions/abc",
+            "/auth/me",
+            "/auth/me/profile",
+            "/auth/portal-context",
+            "/auth/check-access",
+            "/auth/refresh",
+            "/auth/mode",
+            "/auth/oauth/providers",
+            "/auth/sessions",
+        ] {
+            assert_eq!(scope_of(p), "session", "{} 应为 session 档", p);
+        }
+
+        // 段边界：同前缀异段 MUST NOT 被放宽；凭证面与其它认证路径落默认档
+        for p in [
+            "/api/auth/messaging",
+            "/api/auth/men",
+            "/api/auth/session-refresh-helper",
+            "/auth/messaging",
+            "/auth/men",
+            "/auth/sessions-legacy",
+            "/api/auth/login",
+            "/api/auth/login/email-code",
+            "/auth/login",
+            "/api/auth/token",
+            "/api/auth/introspect",
+            "/api/auth/register",
+            "/api/auth/reset-password/request",
+            "/api/auth/webauthn/authenticate/start",
+            // 外部主体签发面（move-apikey-issuance-to-external-portal D6）：凭据写面落更严默认档
+            "/api/auth/external/api-clients",
+            "/auth/external/api-clients",
+            "/oidc/token",
+            "/oidc/authorize",
+        ] {
+            assert_eq!(scope_of(p), "credential", "{} 应落 credential 默认档", p);
+        }
+
+        // 外部注册通道：精确匹配（子路径不享更严档，落默认档）
+        assert_eq!(scope_of("/auth/register/external"), "register");
+        assert_eq!(scope_of("/api/auth/register/external"), "register");
+        assert_eq!(scope_of("/api/auth/register/external/x"), "credential");
+    }
+
+    /// 段边界前缀判定单测（`throttle_tier` 的判据基元）。
+    #[test]
+    fn test_matches_segment_prefix() {
+        assert!(matches_segment_prefix("/me", "/me"));
+        assert!(matches_segment_prefix("/me/profile", "/me"));
+        assert!(!matches_segment_prefix("/messaging", "/me"));
+        assert!(!matches_segment_prefix("/m", "/me"));
+        assert!(!matches_segment_prefix("", "/me"));
+    }
+
+    /// 挂载前缀剥离：`/api/auth/*` 与 `/auth/*` 归一到同一子路径（独立部署形态同档）。
+    #[test]
+    fn test_auth_subpath_strips_both_mount_prefixes() {
+        assert_eq!(auth_subpath("/api/auth/me"), Some("/me"));
+        assert_eq!(auth_subpath("/auth/me"), Some("/me"));
+        assert_eq!(auth_subpath("/api/auth"), Some(""));
+        assert_eq!(auth_subpath("/auth"), Some(""));
+        // 同前缀异段不剥成子路径（`/api/authx` 不得被当成 `/api/auth` + `x`）
+        assert_eq!(auth_subpath("/api/authx"), Some("x"));
+        assert_eq!(auth_subpath("/api/ngac/decide"), None);
+        assert_eq!(auth_subpath("/health"), None);
     }
 
     #[test]
@@ -734,5 +987,32 @@ mod tests {
         assert_eq!(map_pep_resource("/api/admin/", "GET"), None);
         assert_eq!(map_pep_resource("/health", "GET"), None);
         assert_eq!(map_pep_resource("/api/ngac/decide", "POST"), None);
+        // OpenAPI 管理面四族独立 OA（长前缀优先于 /api/admin/）
+        assert_eq!(
+            map_pep_resource("/api/admin/api-clients", "GET"),
+            Some(("openapi_admin".to_string(), 0, "read".to_string()))
+        );
+        assert_eq!(
+            map_pep_resource("/api/admin/api-subscriptions/7", "POST"),
+            Some(("openapi_admin".to_string(), 0, "create".to_string()))
+        );
+        // org-policy 管理面按族独立资源（add-org-policy-admin-resource-granularity）
+        assert_eq!(
+            map_pep_resource("/api/admin/ngac/org-policy/classes", "GET"),
+            Some(("org_policy_admin".to_string(), 0, "read".to_string()))
+        );
+        assert_eq!(
+            map_pep_resource("/api/admin/ngac/org-policy/rules/42", "PATCH"),
+            Some(("org_policy_admin".to_string(), 0, "update".to_string()))
+        );
+        assert_eq!(
+            map_pep_resource("/api/admin/ngac/org-policy/labels/L1", "DELETE"),
+            Some(("org_policy_admin".to_string(), 0, "delete".to_string()))
+        );
+        // 未知方法 ⇒ access（单源动作映射；MUST NOT 退化为 read）
+        assert_eq!(
+            map_pep_resource("/api/admin/users", "TRACE"),
+            Some(("sso_admin".to_string(), 0, "access".to_string()))
+        );
     }
 }

@@ -2,12 +2,14 @@
 //!
 //! POST /api/legal/search
 //!   keywords: ["承运", "赔偿"]
-//!   scopes:   ["civil", "common", "intl"]  (可选,空=全部)
+//!   scopes:   ["civil", "common", "common-holding", "intl"]  (可选,空=全部)
 //!   max_results: 5 (可选)
 //!
-//! 按 scope 过滤 pg_inherits 叶表，keyword 匹配 notice/comments。
+//! 检索/排序/分页/转义单源 = `common::scoped_search`（本文件只剩注册表 + 适配映射）；
+//! 关键词匹配 notice/comments（含扩展词 OR 并集），`jurisdiction` 由附加列投影回填。
 
 use actix_web::{web, HttpResponse};
+use common::scoped_search::{search_scoped, ScopeTable, ScopedRequest};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -35,59 +37,34 @@ pub struct LegalSearchResp {
     pub total: usize,
 }
 
-/// 叶表检索 SQL（编译期固化：表名内嵌为字面量）。
-macro_rules! leaf_sql {
-    ($t:literal) => {
-        concat!(
-            "SELECT id, code, notice, comments, fk_jurisdiction FROM isahl.\"",
-            $t,
-            "\" \
-             WHERE deleted_at IS NULL \
-               AND (notice ILIKE '%' || $1 || '%' OR comments ILIKE '%' || $1 || '%') \
-             LIMIT $2"
-        )
-    };
-}
-
-/// scope → (叶表, 检索 SQL) 静态注册表（表名与 SQL 均为编译期字面量）。
-const SCOPES: [(&str, &str, &str); 4] = [
-    (
-        "civil",
-        "zc_id_law-civil-article",
-        leaf_sql!("zc_id_law-civil-article"),
-    ),
-    (
-        "common",
-        "zc_id_law-common-section",
-        leaf_sql!("zc_id_law-common-section"),
-    ),
-    (
-        "common-holding",
-        "zc_id_law-common-holding",
-        leaf_sql!("zc_id_law-common-holding"),
-    ),
-    (
-        "intl",
-        "zc_id_law-intl-article",
-        leaf_sql!("zc_id_law-intl-article"),
-    ),
+/// scope → 叶表注册表（表名/列名均为编译期字面量）。
+/// `fk_jurisdiction` 为附加列（本端点无 level 过滤语义，仅投影回 `jurisdiction`）。
+const SCOPES: &[ScopeTable] = &[
+    ScopeTable {
+        scope: "civil",
+        table: "zc_id_law-civil-article",
+        columns: &["notice", "comments"],
+        level_column: Some("fk_jurisdiction"),
+    },
+    ScopeTable {
+        scope: "common",
+        table: "zc_id_law-common-section",
+        columns: &["notice", "comments"],
+        level_column: Some("fk_jurisdiction"),
+    },
+    ScopeTable {
+        scope: "common-holding",
+        table: "zc_id_law-common-holding",
+        columns: &["notice", "comments"],
+        level_column: Some("fk_jurisdiction"),
+    },
+    ScopeTable {
+        scope: "intl",
+        table: "zc_id_law-intl-article",
+        columns: &["notice", "comments"],
+        level_column: Some("fk_jurisdiction"),
+    },
 ];
-
-/// scope 列表 → (叶表, 检索 SQL)（未知 scope 忽略；空列表 = 全部登记叶表）。
-fn resolve_tables(scopes: &[String]) -> Vec<(&'static str, &'static str)> {
-    if scopes.is_empty() {
-        return SCOPES.iter().map(|(_, t, sql)| (*t, *sql)).collect();
-    }
-    scopes
-        .iter()
-        .filter_map(|s| {
-            SCOPES
-                .iter()
-                .find(|(name, _, _)| name == s)
-                .map(|(_, t, sql)| (*t, *sql))
-        })
-        .collect()
-}
 
 pub async fn legal_search(
     pool: web::Data<PgPool>,
@@ -100,50 +77,36 @@ pub async fn legal_search(
     }
     let max_results = req.max_results.unwrap_or(5).clamp(1, 20) as i64;
     let scopes = req.scopes.as_deref().unwrap_or(&[]);
-    let tables = resolve_tables(scopes);
+    let page = search_scoped(
+        pool.get_ref(),
+        SCOPES,
+        &ScopedRequest {
+            keywords: req.keywords.as_slice(),
+            scopes,
+            level: None,
+            limit: max_results,
+            offset: 0,
+        },
+    )
+    .await
+    .map_err(|e| actix_web::error::ErrorInternalServerError(format!("legal search: {}", e)))?;
 
-    let mut hits: Vec<LegalArticleHit> = Vec::new();
-    'outer: for (table, sql) in &tables {
-        // 表名与 SQL 均来自编译期静态注册表；keyword / limit 一律参数绑定。
-        for kw in &req.keywords {
-            let rows = sqlx::query_as::<
-                _,
-                (
-                    i64,
-                    Option<String>,
-                    Option<String>,
-                    Option<String>,
-                    Option<i64>,
-                ),
-            >(*sql)
-            .bind(kw)
-            .bind(max_results)
-            .fetch_all(pool.get_ref())
-            .await
-            .map_err(|e| {
-                actix_web::error::ErrorInternalServerError(format!("legal search: {}", e))
-            })?;
-
-            for (id, code, notice, comments, jurisdiction) in rows {
-                if hits.iter().any(|h| h.article_id == id) {
-                    continue;
-                }
-                hits.push(LegalArticleHit {
-                    article_id: id,
-                    article_code: code,
-                    article_title: notice,
-                    article_body: comments,
-                    source_table: table.to_string(),
-                    jurisdiction: jurisdiction.map(|j| j.to_string()),
-                });
-                if hits.len() >= max_results as usize {
-                    break 'outer;
-                }
-            }
-        }
-    }
-    let total = hits.len();
-    Ok(HttpResponse::Ok().json(LegalSearchResp { hits, total }))
+    let hits: Vec<LegalArticleHit> = page
+        .hits
+        .into_iter()
+        .map(|hit| LegalArticleHit {
+            article_id: hit.id,
+            article_code: hit.code,
+            article_title: hit.title,
+            article_body: hit.body,
+            source_table: hit.source_table.to_string(),
+            jurisdiction: hit.level,
+        })
+        .collect();
+    Ok(HttpResponse::Ok().json(LegalSearchResp {
+        hits,
+        total: page.total as usize,
+    }))
 }
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {

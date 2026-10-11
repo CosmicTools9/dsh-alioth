@@ -55,7 +55,9 @@ pub struct SetStatusRequest {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct CreateSubscriptionRequest {
+    #[serde(with = "common::serde_zuid")]
     pub fk_client: i64,
+    #[serde(with = "common::serde_zuid")]
     pub fk_plan: i64,
     pub starts_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -430,6 +432,27 @@ pub async fn update_subscription(
     }
 }
 
+/// `api_usage` 保留期（天）——跨进程口径来源 = Gateway `openapi/metering.rs` 的
+/// `RETENTION_DAYS`（跨 crate 不共享常量：此处登记同值，本模块单测钉住判定语义；
+/// 变更保留期 MUST 两处同步）。
+const API_USAGE_RETENTION_DAYS: i64 = 90;
+
+/// 保留期内的**最早可查月份**（`YYYY-MM`；纯函数，便于单测）。
+/// `pub(crate)`：计费聚合（`admin::billing`）MUST 复用同一判定（禁复刻）。
+pub(crate) fn reconcile_earliest_month(now: chrono::DateTime<chrono::Utc>) -> String {
+    let earliest = (now - chrono::Duration::days(API_USAGE_RETENTION_DAYS)).date_naive();
+    format!("{:04}-{:02}", earliest.year(), earliest.month())
+}
+
+/// 对账窗口是否早于保留期（纯函数）：`month_start` 早于 `earliest_month` 月首 ⇒ 不可查。
+pub(crate) fn window_out_of_retention(month_start: NaiveDate, earliest_month: &str) -> bool {
+    match NaiveDate::parse_from_str(&format!("{}-01", earliest_month), "%Y-%m-%d") {
+        Ok(boundary) => month_start < boundary,
+        // 解析失败（不应发生）⇒ 按「超窗」处理（fail-closed：MUST NOT 静默给空数据）
+        Err(_) => true,
+    }
+}
+
 /// GET /api/admin/api-reconcile?month=YYYY-MM
 ///
 /// 对接用量对账（企业应用 ↔ 第三方系统对接）：按月聚合每个对接方
@@ -460,6 +483,28 @@ pub async fn reconcile_export(
     } else {
         NaiveDate::from_ymd_opt(month_start.year(), month_start.month() + 1, 1).unwrap()
     };
+
+    // 窗口下界：`api_usage` 保留期（跨进程口径来源 = Gateway
+    // `openapi/metering.rs::RETENTION_DAYS`，当前 90 天）之外的月份**无数据可查**——
+    // MUST NOT 返回空数据（对账双方会误读为「该月零调用」）。
+    let earliest_month = reconcile_earliest_month(now);
+    if window_out_of_retention(month_start, &earliest_month) {
+        log::warn!(
+            "api-reconcile window out of retention: requested {} (< earliest {})",
+            month_str,
+            earliest_month
+        );
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "WINDOW_OUT_OF_RETENTION",
+            "message": format!(
+                "api_usage 保留期为 {} 天，最早可查月份为 {}",
+                API_USAGE_RETENTION_DAYS,
+                earliest_month
+            ),
+            "retention_days": API_USAGE_RETENTION_DAYS,
+            "earliest_month": earliest_month,
+        }));
+    }
 
     // 按月聚合：每对接方（client × plan）的调用量/错误/平均延迟/P95
     // 注意 p.tier 是 smallint → i16（i32 解码失败会被静默吞成 items=[]）
@@ -573,5 +618,32 @@ mod tests {
             derive_subscription_status(now - Duration::days(1), Some(now), now),
             "suspended"
         );
+    }
+
+    /// 对账窗口下界：边界月可查；保留期前一月超窗；保留期常量与 Gateway metering 同值。
+    #[test]
+    fn reconcile_window_bound_matches_retention() {
+        let now = Utc::now();
+        let earliest = reconcile_earliest_month(now);
+        let boundary = NaiveDate::parse_from_str(&format!("{}-01", earliest), "%Y-%m-%d").unwrap();
+
+        assert!(
+            !window_out_of_retention(boundary, &earliest),
+            "保留期边界月 MUST 可查（{earliest}）"
+        );
+
+        let before = if boundary.month() == 1 {
+            NaiveDate::from_ymd_opt(boundary.year() - 1, 12, 1).unwrap()
+        } else {
+            NaiveDate::from_ymd_opt(boundary.year(), boundary.month() - 1, 1).unwrap()
+        };
+        assert!(
+            window_out_of_retention(before, &earliest),
+            "保留期前一月 MUST 超窗（{}）",
+            before
+        );
+
+        // 保留期口径（跨 crate 同值口径；改一处 MUST 两处同步）
+        assert_eq!(API_USAGE_RETENTION_DAYS, 90);
     }
 }

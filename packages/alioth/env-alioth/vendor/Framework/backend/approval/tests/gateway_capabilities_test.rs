@@ -34,9 +34,9 @@ macro_rules! build_app {
 async fn test_user(pool: &sqlx::PgPool) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'gw-test', 'gw-test', 'gw@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'gw-test', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(USER_ID)
@@ -224,7 +224,7 @@ async fn loop_and_branch_publish_materialize_timeline() {
         "nodes": [
             {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop", "type": "loop", "label": "循环", "loopExpr": "{{count}} < 3", "maxIter": 10,
-             "next": [{"to": 2, "cond": "{{count}} < 3"}, {"to": 3}]},
+             "next": [{"to": 2, "cond": "count < 3"}, {"to": 3}]},
             {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-branch", "type": "branch", "label": "汇聚", "joinRule": "any", "next": [{"to": 4}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
@@ -392,7 +392,7 @@ async fn loop_formula_publish_materializes_chain_and_rejects_bad_formula() {
         "nodes": [
             {"id": "n-start", "type": "start", "label": "提交", "drive": "event", "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "n-loop", "type": "loop", "label": "循环", "loopExpr": "{{count}} < 3", "maxIter": 10,
-             "next": [{"to": 2, "cond": "{{count}} < 3"}, {"to": 3}]},
+             "next": [{"to": 2, "cond": "count < 3"}, {"to": 3}]},
             {"id": "n-approve", "type": "approval", "label": "审批", "mode": "or_sign", "next": [{"to": 3}]},
             {"id": "n-end", "type": "end", "label": "完成", "statementLeaf": "zc_id_stat-inspection"},
         ]

@@ -52,7 +52,9 @@ static ORG_DESIGN_SCHEME_ENSURED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 /// 建表 + 部分唯一/状态索引；失败返回 Err（写端点 500，下次调用重试）。
-pub(crate) async fn ensure_org_design_scheme(pool: &PgPool) -> Result<(), ApiError> {
+/// 测试侧（identity-org/tests）MUST 经本函数建表（同源义务，禁止第二份建表 SQL——
+/// 对齐 SSO ensure.rs 测试复用先例；这是本函数 pub 的唯一原因）。
+pub async fn ensure_org_design_scheme(pool: &PgPool) -> Result<(), ApiError> {
     use std::sync::atomic::Ordering;
     if ORG_DESIGN_SCHEME_ENSURED.load(Ordering::Relaxed) {
         return Ok(());
@@ -125,7 +127,7 @@ pub(crate) async fn ensure_org_design_scheme(pool: &PgPool) -> Result<(), ApiErr
 #[serde(rename_all = "camelCase")]
 pub struct SchemePositionTemplate {
     /// 引用既有岗位编制范例行（D-2a 设计态行）→ 仅实例化落岗（与内联字段互斥）。
-    #[serde(default)]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub template_id: Option<i64>,
     /// 内联建范例名（缺省回退 category_code）。
     #[serde(default)]
@@ -142,7 +144,7 @@ pub struct SchemePositionTemplate {
     /// 编制部门（可选，仅内联形态；template_id 引用互斥 → 400）：激活派生时
     /// 该 (category_code, name) 链的在册实例经 org_rr_position 桥挂到该组织
     /// （同类别多部门共享单实例，各自挂接）。
-    #[serde(default)]
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub department_id: Option<i64>,
 }
 

@@ -17,9 +17,9 @@ async fn publish_creates_event_rows() {
     let user_id = 424242;
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'publish-test', 'publish-test', 'publish@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'publish-test', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
@@ -96,9 +96,9 @@ async fn publish_rejects_subflow_with_missing_target() {
     let user_id = 424243;
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'publish-test-2', 'publish-test-2', 'publish2@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'publish-test-2', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
@@ -190,9 +190,9 @@ async fn publish_retires_old_batch_and_marks_version() {
     let user_id = 424244;
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'publish-test-3', 'publish-test-3', 'publish3@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'publish-test-3', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
@@ -420,9 +420,9 @@ async fn publish_blocked_by_inflight_instance() {
     let user_id = 424245;
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, is_active, created_at, updated_at,
+           (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'publish-test-4', 'publish-test-4', 'publish4@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'publish-test-4', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
@@ -569,9 +569,9 @@ async fn publish_review_action_nodes_materialize_operation() {
 
     let user_id = 424246;
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, user_type, is_active, created_at, updated_at,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'ra-node', 'ra-node', 'ra@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'ra-node', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)
@@ -752,9 +752,9 @@ async fn publish_unpublish_code_column_authority() {
 
     let user_id = 424244;
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, user_type, is_active, created_at, updated_at,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, user_type, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES ($1, 'status-sync', 'status-sync', 'status@test.local', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
+           VALUES ($1, 'status-sync', 'standard', TRUE, NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT DO NOTHING"#,
     )
     .bind(user_id)

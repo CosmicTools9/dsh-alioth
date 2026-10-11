@@ -12,23 +12,13 @@ pub async fn list_sessions(
     pool: web::Data<PgPool>,
     state: web::Data<AuthState>,
 ) -> HttpResponse {
-    // Extract and validate access token（cookie 优先，Bearer header 兜底，与 /auth/me 一致）
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
+    // Extract and validate access token（单一实现 = `common::csrf`；delta auth「不内联提取」）
+    let access_token = match common::csrf::extract_token(&req) {
+        Some(token) => token,
         None => {
-            match req
-                .headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|auth| auth.strip_prefix("Bearer "))
-            {
-                Some(token) => token.to_string(),
-                None => {
-                    return HttpResponse::Unauthorized().json(AuthError {
-                        error: "Missing authorization".to_string(),
-                    })
-                }
-            }
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "Missing authorization".to_string(),
+            })
         }
     };
     let claims = match decode_token_any(&access_token, &state.verification_keys()) {
@@ -39,6 +29,11 @@ pub async fn list_sessions(
             })
         }
     };
+
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点（DELETE 会话），鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
 
     let user_id = match claims.sub.parse::<i64>() {
         Ok(id) => id,
@@ -68,23 +63,13 @@ pub async fn revoke_session(
     state: web::Data<AuthState>,
     path: web::Path<String>,
 ) -> HttpResponse {
-    // Extract and validate access token（cookie 优先，Bearer header 兜底，与 /auth/me 一致）
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
+    // Extract and validate access token（单一实现 = `common::csrf`；delta auth「不内联提取」）
+    let access_token = match common::csrf::extract_token(&req) {
+        Some(token) => token,
         None => {
-            match req
-                .headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|auth| auth.strip_prefix("Bearer "))
-            {
-                Some(token) => token.to_string(),
-                None => {
-                    return HttpResponse::Unauthorized().json(AuthError {
-                        error: "Missing authorization".to_string(),
-                    })
-                }
-            }
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "Missing authorization".to_string(),
+            })
         }
     };
     let claims = match decode_token_any(&access_token, &state.verification_keys()) {
@@ -95,6 +80,11 @@ pub async fn revoke_session(
             })
         }
     };
+
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点（DELETE 会话），鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
 
     let user_id = match claims.sub.parse::<i64>() {
         Ok(id) => id,
@@ -143,23 +133,13 @@ pub async fn revoke_other_sessions(
     pool: web::Data<PgPool>,
     state: web::Data<AuthState>,
 ) -> HttpResponse {
-    // Extract and validate access token（cookie 优先，Bearer header 兜底，与 /auth/me 一致）
-    let access_token = match req.cookie("access_token") {
-        Some(c) => c.value().to_string(),
+    // Extract and validate access token（单一实现 = `common::csrf`；delta auth「不内联提取」）
+    let access_token = match common::csrf::extract_token(&req) {
+        Some(token) => token,
         None => {
-            match req
-                .headers()
-                .get(actix_web::http::header::AUTHORIZATION)
-                .and_then(|h| h.to_str().ok())
-                .and_then(|auth| auth.strip_prefix("Bearer "))
-            {
-                Some(token) => token.to_string(),
-                None => {
-                    return HttpResponse::Unauthorized().json(AuthError {
-                        error: "Missing authorization".to_string(),
-                    })
-                }
-            }
+            return HttpResponse::Unauthorized().json(AuthError {
+                error: "Missing authorization".to_string(),
+            })
         }
     };
     let claims = match decode_token_any(&access_token, &state.verification_keys()) {
@@ -170,6 +150,11 @@ pub async fn revoke_other_sessions(
             })
         }
     };
+
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点（DELETE 会话），鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
 
     let user_id = match claims.sub.parse::<i64>() {
         Ok(id) => id,

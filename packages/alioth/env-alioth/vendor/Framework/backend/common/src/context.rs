@@ -376,3 +376,59 @@ mod tests {
         assert!(audit.updated_by_id.is_none());
     }
 }
+
+/// 从 JWT `sub` 解析自然人主体 id——**全仓唯一判定实现**。
+///
+/// 仅「`trim` 后为十进制正整数」算自然人主体：`client:<client_id>`（OpenAPI 服务令牌）、
+/// 空串（含纯空白）、`0`、负数、非十进制（`42.0` / `1e3` / `0x10` / i64 溢出）一律 `None`。
+///
+/// 调用方 MUST 以 `None` 为 fail-closed（401），MUST NOT 将主体降级为 `0`
+/// （`user_id=0` / `fk_user=0`）注入请求上下文、写入会话载体或写审计署名
+/// （`openspec/specs/access-control` §`jwt-subject-principal-fail-closed`；
+///  `docs/specs/OPENAPI_SPEC.md` §3.1 同口径）。
+pub fn natural_subject_id(sub: &str) -> Option<i64> {
+    sub.trim().parse::<i64>().ok().filter(|id| *id > 0)
+}
+
+#[cfg(test)]
+mod subject_id_tests {
+    use super::natural_subject_id;
+
+    #[test]
+    fn accepts_positive_decimal_subject() {
+        assert_eq!(natural_subject_id("42"), Some(42));
+        assert_eq!(natural_subject_id(" 7 "), Some(7), "trim 容忍首尾空白");
+        assert_eq!(natural_subject_id("1"), Some(1));
+        assert_eq!(
+            natural_subject_id(&i64::MAX.to_string()),
+            Some(i64::MAX),
+            "边界：i64 上界仍是合法主体 id"
+        );
+    }
+
+    /// 服务令牌与畸形 sub 必须 `None`（⇒ 调用方 fail-closed 401），
+    /// MUST NOT 被降级为主体 0。
+    #[test]
+    fn rejects_service_token_and_malformed_subject() {
+        for sub in [
+            "client:partner-a", // OpenAPI 服务令牌
+            "client:",
+            "",
+            " ",
+            "\t",
+            "0", // 0 是「无主体」哨兵，不是合法主体
+            "-5",
+            "abc",
+            "42.0",
+            "1e3",
+            "0x10",
+            "9223372036854775808", // i64 溢出
+        ] {
+            assert_eq!(
+                natural_subject_id(sub),
+                None,
+                "sub={sub:?} 必须判 None（fail-closed）"
+            );
+        }
+    }
+}

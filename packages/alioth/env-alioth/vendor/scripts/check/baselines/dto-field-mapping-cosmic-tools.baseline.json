@@ -3,5 +3,118 @@
   "rule_reference": "docs/specs/SERVICE_SPEC.md §4.1（DB 物理列 → DTO 字段命名分层）＋ §3.1（field_mappings 必填）",
   "note": "存量 DTO 字段映射缺口归线（SPEC_ENFORCEMENT_SUBSTRATE §设计原则 1：增量，非全量）。指纹=sha256(ns|判据|服务|实体|列|期望 DTO|实际别名)——未命中指纹的缺口为新增，阻断；缺口清零后应 --write-baseline 收缩（check-gate-hygiene 报 rot）。",
   "generatedBy": "bun scripts/check/audit-dto-field-mapping.ts --ns cosmic-tools --write-baseline",
-  "violations": []
+  "violations": [
+    {
+      "fp": "8d7969238c5e5eb5",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_amount"
+    },
+    {
+      "fp": "8573c44a1497dad4",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_p_capacity"
+    },
+    {
+      "fp": "45d845e363bebce9",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_period"
+    },
+    {
+      "fp": "09d3ef32704187b1",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_qty"
+    },
+    {
+      "fp": "c4784ab5dd0fc974",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_s_capacity"
+    },
+    {
+      "fp": "5803454d86a48658",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_v_qty"
+    },
+    {
+      "fp": "d62fdc89ae543522",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_vp_capacity"
+    },
+    {
+      "fp": "d42b92eba377759d",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_vs_capacity"
+    },
+    {
+      "fp": "5e832030040d0e0e",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_w_qty"
+    },
+    {
+      "fp": "a76b8b843dac5e68",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_w_total"
+    },
+    {
+      "fp": "da222e426f7d10ff",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_wp_capacity"
+    },
+    {
+      "fp": "e1e080dc9ff3d233",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "qk_ws_capacity"
+    },
+    {
+      "fp": "7b2e6d55d9519a8b",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "sk_currency"
+    },
+    {
+      "fp": "6f2a4c0688076471",
+      "ns": "Cosmic-Tools",
+      "service": "inventory",
+      "entity": "StockStat",
+      "rule": "P1-missing-projection",
+      "column": "sk_unit"
+    }
+  ]
 }

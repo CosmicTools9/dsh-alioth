@@ -1,0 +1,4 @@
+# 前端服务端状态——棘轮基线（只减不增；check-frontend-resource-state.ts）
+# 生成：bun scripts/check/check-frontend-resource-state.ts --write-baseline
+# 格式：文件路径（每行一个）；基线内文件只报归线，不算 FAIL。
+# 迁移一个文件到 @/hooks/useResource 后，请删除对应行（基线只减不增）。

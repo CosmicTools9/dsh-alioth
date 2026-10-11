@@ -4,7 +4,7 @@
 
 [tasks]
 # cargo 目标目录统一经映射取值（scripts/lib/cargo-target-dirs.sh 的用途 check =
-# root workspace 唯一构建缓存 /tmp/alioth-check），MUST NOT 依赖 cwd 默认推导（根 target/）。
+# root workspace 唯一构建缓存 <仓父目录>/.tmp/alioth-check），MUST NOT 依赖 cwd 默认推导（根 target/）。
 # 安装/验证依赖
 setup = { description = "下载依赖并验证编译", run = [
   "cargo fetch",
@@ -17,7 +17,7 @@ build = { description = "构建整个 workspace", run = [
 ] }
 
 # 运行 workspace 测试
-test = { description = "运行 workspace 所有测试", run = ["bash ../../scripts/cargo-test.sh --workspace"] }
+test = { description = "运行 workspace 所有测试", run = ["RUST_TEST_THREADS=1 bash ../../scripts/cargo-test.sh --workspace"] }
 
 # 代码检查和格式化验证
 lint = { description = "运行 clippy 和格式化检查", run = [
@@ -29,7 +29,7 @@ lint = { description = "运行 clippy 和格式化检查", run = [
 fmt = { description = "自动格式化代码", run = ["cargo fmt"] }
 
 # 清理 root workspace 的构建缓存（映射目录）。清空的是**整个** root workspace 缓存
-# （Framework/Gateway/SSO/OpenActivity 共用 /tmp/alioth-check）——只清单包用
+# （Framework/Gateway/SSO/OpenActivity 共用 <仓父目录>/.tmp/alioth-check）——只清单包用
 # `CARGO_TARGET_DIR=... cargo clean -p <pkg>`。
 clean = { description = "清理构建产物", run = [
   "env CARGO_TARGET_DIR=\"$(bash ../../scripts/cargo-target.sh check)\" cargo clean",

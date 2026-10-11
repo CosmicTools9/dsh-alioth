@@ -36,7 +36,15 @@ pub async fn list_resource_access(
     };
 
     // Bootstrap phase: no policies configured, return all resources
+    // 分级（密级）上限（NGAC_SPEC §2.7）：**先于 bootstrap 全量短路**——白名单资源类型上即便处于
+    // bootstrap（零 association）MUST NOT 以 `None`（全量）返回高于密级的行（与 Framework 内层门/
+    // `decide_access` 的「上限先于 bootstrap」同序）。
     if !has_policies.0 {
+        if let Some(resp) =
+            ceiling_list_response(pool.get_ref(), req.user_id, &req.resource_type).await
+        {
+            return resp;
+        }
         return HttpResponse::Ok().json(ngac_contract::PdpListResponse {
             permitted: true,
             reason: "Bootstrap phase — no policies configured, all resources visible".to_string(),
@@ -51,7 +59,18 @@ pub async fn list_resource_access(
         .get_all_user_attributes_with_inheritance(req.user_id)
         .await
     {
-        Ok(attrs) if attrs.iter().any(|a| a.o_name == "admin") => {
+        Ok(attrs)
+            if ngac_host::attr_names_include_admin(attrs.iter().map(|a| a.o_name.as_str())) =>
+        {
+            // 分级（密级）上限对 admin 同样生效（NGAC_SPEC §2.7，与 prohibition 同族）：白名单资源类型
+            // MUST NOT 用 `visible_ids = None`（全量不过滤）规避上限——否则 `decide` 拒绝而列表仍返回
+            // 该行数据（读取旁路）。命中白名单 ⇒ 显式可见集；非白名单 ⇒ 维持 §6.2 全量语义（None）。
+            // 实现单源 = `ceiling_list_response`（bootstrap 分支同源）。
+            if let Some(resp) =
+                ceiling_list_response(pool.get_ref(), req.user_id, &req.resource_type).await
+            {
+                return resp;
+            }
             return HttpResponse::Ok().json(ngac_contract::PdpListResponse {
                 permitted: true,
                 reason: "Admin user — all resources visible".to_string(),
@@ -96,6 +115,77 @@ pub async fn list_resource_access(
     }
 }
 
+/// 上限前置响应：白名单资源类型 ⇒ `Some(过滤后的 id 集)`；非白名单 ⇒ `None`（调用方维持既有全量语义）。
+///
+/// 用于**「全量不过滤」两条短路**（bootstrap 零 association 与 admin 豁免）之前：二者都会返回
+/// `visible_ids = None`（不过滤），若先短路则白名单类型上的高密级行会被整行读回（读取旁路）。
+async fn ceiling_list_response(
+    pool: &PgPool,
+    user_id: i64,
+    resource_type: &str,
+) -> Option<HttpResponse> {
+    match ceiling_only_visible_ids(pool, user_id, resource_type).await {
+        Ok(Some(ids)) => Some(HttpResponse::Ok().json(ngac_contract::PdpListResponse {
+            permitted: true,
+            reason: format!("Label ceiling: {} rows within clearance", ids.len()),
+            visible_ids: Some(ids),
+        })),
+        Ok(None) => None,
+        Err(e) => {
+            // 降级（§2.7）：基础设施不可用 ⇒ 不介入 + 告警，维持既有全量语义
+            log::warn!("label ceiling unavailable, skipping: {e}");
+            None
+        }
+    }
+}
+
+/// 密级白名单资源类型上的**可见 id 集**（NGAC_SPEC §2.7）——供「全量不过滤」短路前置使用。
+///
+/// 返回 `Ok(None)` = 该资源类型不在白名单内 ⇒ 调用方维持 §6.2 的「admin 全量不过滤」语义；
+/// 返回 `Ok(Some(ids))` = 白名单内 ⇒ 只能看到标签等级 ≤ 自身 clearance 的行（**缺 clearance
+/// ⇒ rank 0 ⇒ 只见无标签行**，fail-closed）。成本：仅白名单类型才会枚举该类型行（零数据面下
+/// 不发生；opt-in 语义）。
+async fn ceiling_only_visible_ids(
+    pool: &PgPool,
+    user_id: i64,
+    resource_type: &str,
+) -> sqlx::Result<Option<Vec<i64>>> {
+    let whitelisted: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM isahl_auth.org_policy_class c \
+          WHERE c.deleted_at IS NULL AND c.state = 'active' AND c.scope IS NOT NULL \
+            AND c.scope -> 'resource_types' @> to_jsonb($1::text))",
+    )
+    .bind(resource_type)
+    .fetch_one(pool)
+    .await?;
+    if !whitelisted {
+        return Ok(None);
+    }
+    let subj_rank: Option<i32> = sqlx::query_scalar(
+        "SELECT MAX(l.rank) FROM isahl_auth.ngac_user_attribute ua \
+           JOIN isahl_auth.org_policy_label l \
+             ON l.code = (ua.property ->> 'clearance') AND l.deleted_at IS NULL AND l.is_active \
+          WHERE ua.deleted_at IS NULL \
+            AND ua.id IN (SELECT ua_id FROM isahl_auth.effective_ua_ids($1))",
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT oa.fk_resource FROM isahl_auth.ngac_object_attribute oa \
+           LEFT JOIN isahl_auth.org_policy_label l \
+             ON l.code = (oa.property ->> 'label') AND l.deleted_at IS NULL AND l.is_active \
+          WHERE oa.resource_type = $1 AND oa.deleted_at IS NULL AND oa.fk_resource IS NOT NULL \
+            AND (l.rank IS NULL OR l.rank <= COALESCE($2, 0)) \
+          ORDER BY oa.fk_resource",
+    )
+    .bind(resource_type)
+    .bind(subj_rank)
+    .fetch_all(pool)
+    .await?;
+    Ok(Some(ids))
+}
+
 /// NGAC 列级授权——返回用户对某资源类型可访问的列集合（DTO 字段名）。
 ///
 /// 语义：遍历 user_attrs × resource_type 的 collection OA（fk_resource=0）的 association，
@@ -129,6 +219,24 @@ pub async fn list_column_access(
             });
         }
     };
+    // 分级（密级）上限（NGAC_SPEC §2.7）：白名单资源类型上 clearance < 标签 ⇒ 列级授权整体不可见
+    // （否则 `decide` 拒绝该资源而列名仍外泄，构成元数据旁路）。**先于 bootstrap 全通配短路**：
+    // 白名单已存在即平台非未配置态（与 `decide_access`/RLS 的「上限先于 bootstrap」同序）。
+    match ngac_host::label_clearance_denies(pool.get_ref(), &req.resource_type, 0, req.user_id)
+        .await
+    {
+        Ok(true) => {
+            return HttpResponse::Ok().json(ngac_contract::PdpColumnsResponse {
+                permitted: true,
+                reason: "Denied by label ceiling: subject clearance below resource label"
+                    .to_string(),
+                columns: vec![],
+            });
+        }
+        Ok(false) => {}
+        Err(e) => log::warn!("column label ceiling unavailable, skipping: {e}"),
+    }
+
     if !has_policies.0 {
         return HttpResponse::Ok().json(ngac_contract::PdpColumnsResponse {
             permitted: true,
@@ -140,15 +248,10 @@ pub async fn list_column_access(
     // 收集授权列：user 的有效 UA 经 association → collection OA（fk_resource=0）→ read:* / read:{col}
     let cols: Vec<String> = match sqlx::query_scalar(
         r#"
-        WITH RECURSIVE user_attrs AS (
-            SELECT fk_user_attribute AS ua_id, 0 AS depth
-            FROM isahl_auth.ngac_user_rr_attribute
-            WHERE fk_user = $1 AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
-            UNION ALL
-            SELECT unnest(ua.ancestor_ids)::BIGINT AS ua_id, depth + 1
-            FROM isahl_auth.ngac_user_attribute ua
-            INNER JOIN user_attrs AS c ON ua.id = c.ua_id
-            WHERE c.depth < 10 AND ua.deleted_at IS NULL
+        WITH user_attrs AS (
+            -- 判定链 PIP 单源（直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包 + 时效，闭包已在函数内展开）；
+            -- 此前本处手写闭包（漏委托/认知派生），与决策面口径不一致。
+            SELECT ua_id, 0 as depth FROM isahl_auth.effective_ua_ids($1)
         )
         SELECT DISTINCT ar.o_name
         FROM isahl_auth.ngac_association a

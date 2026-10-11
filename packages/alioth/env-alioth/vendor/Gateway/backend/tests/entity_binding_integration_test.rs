@@ -58,22 +58,34 @@ async fn call_status(pool: &PgPool, user_id: i64) -> serde_json::Value {
     json_body(resp).await
 }
 
-/// 幂等建用户（负 ID；重复运行先重置 entity 绑定）。
+/// 幂等建用户（负 ID；重复运行先重置 entity 绑定与邮箱）。
 async fn ensure_test_user(pool: &PgPool, uid: i64) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, 'active', true, NOW(), NOW())
+           (id, username, status, is_active, created_at, updated_at)
+           VALUES ($1, $2, 'active', true, NOW(), NOW())
            ON CONFLICT (id) DO UPDATE
              SET entity_table = NULL, entity_id = NULL, is_active = true"#,
     )
     .bind(uid)
     .bind(format!("eb-test-{uid}"))
-    .bind(format!("eb-test-{uid}"))
-    .bind(format!("eb-test-{uid}@test.local"))
     .execute(pool)
     .await
     .expect("insert auth_users fixture");
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(uid)
+        .execute(pool)
+        .await
+        .expect("reset auth user email");
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+           VALUES ($1, $2, TRUE)"#,
+    )
+    .bind(uid)
+    .bind(format!("eb-test-{uid}@test.local"))
+    .execute(pool)
+    .await
+    .expect("insert auth user email");
 }
 
 async fn cleanup(pool: &PgPool) {
@@ -123,6 +135,12 @@ async fn cleanup(pool: &PgPool) {
         .ok();
     sqlx::query(r#"DELETE FROM isahl."zc_id_empl-natural" WHERE id = $1"#)
         .bind(EMPL_PERSONAL_ID)
+        .execute(pool)
+        .await
+        .ok();
+    // 邮箱先于账号删（auth_user_emails.fk_user FK 无级联）
+    sqlx::query(r#"DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)"#)
+        .bind(&users[..])
         .execute(pool)
         .await
         .ok();
@@ -1071,8 +1089,8 @@ async fn read_system_binding(pool: &PgPool) -> SystemBinding {
 async fn ensure_system_user_fixture(pool: &PgPool) {
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, status, is_active, created_at, updated_at)
-           VALUES (1, 'system', 'system', 'active', true, NOW(), NOW())
+           (id, username, status, is_active, created_at, updated_at)
+           VALUES (1, 'system', 'active', true, NOW(), NOW())
            ON CONFLICT (id) DO NOTHING"#,
     )
     .execute(pool)

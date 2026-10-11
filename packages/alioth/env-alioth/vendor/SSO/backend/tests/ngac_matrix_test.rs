@@ -18,6 +18,19 @@ use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Cl
 use gateway_sso::auth::AuthState;
 use serde_json::{json, Value};
 use sqlx::PgPool;
+use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
+
+/// 文件级串行化（**本文件刻意的共享场景夹具**）。
+///
+/// 5 个测试共用同一套 `mtx-*` 场景夹具（`seed(pool)` 无参、`cleanup(pool)` 按全局前缀清空），
+/// 并行执行必然互相清空 ⇒ 实测非确定性红（544/688 行随机失败，且单文件耗时 173s 含锁等待）。
+/// 共享场景是设计选择（同一 scenario 的多个切面断言），故串行而非改名。
+static SERIAL_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn lock_serial() -> MutexGuard<'static, ()> {
+    SERIAL_LOCK.lock().await
+}
 
 struct Seed {
     admin_user: i64,
@@ -41,32 +54,47 @@ fn test_auth_state() -> AuthState {
 async fn ensure_user(pool: &PgPool, email: &str) -> i64 {
     let username = email.split('@').next().unwrap_or("mmx").replace('-', "_");
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES (isahl.gen_next_zuid(), $2, $2, $1, 'active', true, NOW(), NOW())
-           ON CONFLICT (name) DO NOTHING"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+           ON CONFLICT (username) DO NOTHING"#,
     )
-    .bind(email)
     .bind(&username)
     .execute(pool)
     .await
     .ok();
-    sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email=$1 LIMIT 1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .expect("test user")
+    let user_id: i64 =
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username=$1 LIMIT 1")
+            .bind(&username)
+            .fetch_one(pool)
+            .await
+            .expect("test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
+    user_id
 }
 
 /// 清理全部 mmx-* 测试数据（起点 + 终点各调用一次）。
 async fn cleanup(pool: &PgPool) {
     sqlx::query(
         "DELETE FROM isahl_auth.ngac_user_rr_attribute \
-         WHERE fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE email LIKE 'mmx-%@test.local')",
+         WHERE fk_user IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email LIKE 'mmx-%@test.local')",
     )
     .execute(pool)
     .await
     .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email LIKE 'mmx-%@test.local'")
+    // 邮箱行（唯一存储）先行；主行按 username（由同一 email 派生，1:1 句柄）删——入边 FK 不阻断
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email LIKE 'mmx-%@test.local'")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username LIKE 'mmx\\_%'")
         .execute(pool)
         .await
         .ok();
@@ -142,8 +170,12 @@ async fn seed(pool: &PgPool) -> Seed {
     .await
     .ok();
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        // 必须按策略类过滤：`o_name='admin'` 在每个策略类下各有一行；无过滤器时 LIMIT 1 可能取到
+        // 他测试残留的、他类 admin UA ⇒ 绑定到错类 UA 使 require_admin 的 NGAC 判定 Deny（非确定性 403）。
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");
@@ -308,6 +340,7 @@ fn find_cell(cells: &[Value], ua_id: i64, oa_id: i64) -> Option<&Value> {
 
 #[tokio::test]
 async fn matrix_three_state_cells_and_shape() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -442,6 +475,7 @@ async fn matrix_three_state_cells_and_shape() {
 
 #[tokio::test]
 async fn matrix_missing_policy_class_returns_400() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -470,6 +504,7 @@ async fn matrix_missing_policy_class_returns_400() {
 
 #[tokio::test]
 async fn matrix_consistent_with_explain() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -551,6 +586,7 @@ async fn matrix_consistent_with_explain() {
 
 #[tokio::test]
 async fn matrix_instance_oa_folding_caps_at_200() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;
@@ -611,6 +647,7 @@ async fn matrix_instance_oa_folding_caps_at_200() {
 
 #[tokio::test]
 async fn matrix_cache_invalidated_on_policy_version_bump() {
+    let _guard = lock_serial().await;
     let pool = connect_test_db().await;
     common::setup_schema(&pool).await.expect("setup schema");
     cleanup(&pool).await;

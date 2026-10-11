@@ -1,0 +1,4 @@
+# schema-single-source 存量登记（ratchet，只拦新增）
+# 判据 = Pre-Proc/{ns}/_schema/*.schema.json MUST 为指向 scripts/schema/ 的符号链接；
+# 收敛（实体 → 符号链接）后 MUST 以 --write-baseline 收缩至 0 条。
+# 写入唯一入口 = scripts/check/lib/baseline-store.ts（ns 仓内写共享面被 INV-1 拒绝）。

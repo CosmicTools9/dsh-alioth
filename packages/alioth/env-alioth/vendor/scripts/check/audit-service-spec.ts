@@ -29,30 +29,41 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { gatewaySourcesKindDir } from "../lib/preproc-layout.mjs";
 
+import { defineCheck } from './lib/check-interface';
+
+const META_CHANNEL = '__meta';
+
+class ExitSignal {
+  constructor(readonly rc: number) {}
+}
+let SINK: { out: (l: string) => void; err: (l: string) => void } = {
+  out: (l) => process.stdout.write(`${l}\n`),
+  err: (l) => process.stderr.write(`${l}\n`),
+};
+const exit: (rc: number) => never = (rc) => {
+  throw new ExitSignal(rc);
+};
+/** 判定面注入的取值旗标（`--ns` / `--factor`，均缺省 = 不限） */
+let ARGS: Record<string, string> = {};
+
 const ROOT = resolve(import.meta.dirname, "../..");
 const FDIR = join(ROOT, "Pre-Proc");
 
 interface Service { ns: string; id: string; dir: string; }
 
-function parseArgs(argv: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--") && i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
-      out[argv[i].slice(2)] = argv[i + 1];
-      i++;
-    }
-  }
-  return out;
-}
-
-/** 候选 Service 根目录：Apps 布局优先、扁平回退（同一 ns 只取实际存在的那一个） */
+/** 候选 Service 根目录：Apps 布局优先、扁平回退（同一 ns 只取实际存在的那一个），
+ *  **另含 OpenActivity 层根 `Sources/Open/Services`** —— 层级契约 `preproc-layout.mjs` 定
+ *  `Sources/Apps` = Gateway 单元、`Sources/Open` = OpenActivity 单元；缺该根则 Open 层服务
+ *  不被枚举 = 审计假绿（2026-10-04 实测：`Sources/Open/Services/system-settings` 整节缺失）。 */
 function candidateRoots(nsFilter?: string): Array<{ ns: string; root: string }> {
   const out: Array<{ ns: string; root: string }> = [];
   for (const ns of readdirSync(FDIR).sort()) {
     if (nsFilter && ns !== nsFilter) continue;
     if (!existsSync(join(FDIR, ns, "Sources"))) continue;
-    const root = gatewaySourcesKindDir(ROOT, ns, "Services");
-    if (existsSync(root)) out.push({ ns, root });
+    const appsRoot = gatewaySourcesKindDir(ROOT, ns, "Services");
+    if (existsSync(appsRoot)) out.push({ ns, root: appsRoot });
+    const openRoot = join(FDIR, ns, "Sources", "Open", "Services");
+    if (existsSync(openRoot)) out.push({ ns, root: openRoot });
   }
   return out;
 }
@@ -117,34 +128,50 @@ function grep(pat: string, dir: string, exclude?: string): string[] {
   return lines;
 }
 
-const args = parseArgs(process.argv.slice(2));
+interface AuditServiceSpecOutcome {
+  out: string[];
+  err: string[];
+  rc: number;
+}
+
+/** 判定面（Service 规格审计：目录契约/backend 存在性/交付面）；输出经 SINK 记录，报告面回放。 */
+export function auditServiceSpecState(nsFilter: string | null, factorFilter: string | null): AuditServiceSpecOutcome {
+  const out: string[] = [];
+  const err: string[] = [];
+  const saved = SINK;
+  SINK = { out: (l) => out.push(l), err: (l) => err.push(l) };
+  ARGS = {};
+  if (nsFilter !== null) ARGS.ns = nsFilter;
+  if (factorFilter !== null) ARGS.factor = factorFilter;
+  const args = ARGS;
+  try {
 const services = discoverServices(args.ns, args.factor);
 
 if (services.length === 0) {
   const known = undeclaredServiceJson(args.ns, args.factor);
   if (known.length > 0) {
-    console.error(
+    SINK.err(
       `audit-service-spec: FAIL — 发现 0 个可审计单元，但候选根下存在 ${known.length} 个 service.json（缺 backend/src 或布局不符）:`,
     );
-    for (const p of known.slice(0, 10)) console.error(`  - ${p}`);
-    console.error(`  候选根（Apps 优先/扁平回退）: ${candidateRoots(args.ns).map((c) => c.root.replace(`${ROOT}/`, "")).join(", ") || "（无）"}`);
-    process.exit(1);
+    for (const p of known.slice(0, 10)) SINK.err(`  - ${p}`);
+    SINK.err(`  候选根（Apps 优先/扁平回退）: ${candidateRoots(args.ns).map((c) => c.root.replace(`${ROOT}/`, "")).join(", ") || "（无）"}`);
+    exit(1);
   }
-  console.log(`audit-service-spec: 无可审计 Service 单元（ns=${args.ns ?? "*"} factor=${args.factor ?? "*"}）`);
-  process.exit(0);
+  SINK.out(`audit-service-spec: 无可审计 Service 单元（ns=${args.ns ?? "*"} factor=${args.factor ?? "*"}）`);
+  exit(0);
 }
 
 let allPass = true;
 const phantomBackends = declaredBackendWithoutDir(args.ns, args.factor);
 if (phantomBackends.length > 0) {
-  console.error(
+  SINK.err(
     `audit-service-spec: FAIL \u2014 ${phantomBackends.length} 个 Service 声明 hasBackend=true 但本 ns 无 backend/src（跨 ns 复用内核 crate 的形态 MUST 声明 hasBackend=false + backendCrate 记录复用来源）:`,
   );
-  for (const p of phantomBackends) console.error(`  - ${p}`);
+  for (const p of phantomBackends) SINK.err(`  - ${p}`);
   allPass = false;
 }
 for (const svc of services) {
-  console.log(`\n== ${svc.ns}/${svc.id} ==`);
+  SINK.out(`\n== ${svc.ns}/${svc.id} ==`);
   const checks: [string, string, boolean, string][] = [
     ["F1", "Cargo.toml", existsSync(join(svc.dir, "backend", "Cargo.toml")),
       existsSync(join(svc.dir, "backend", "Cargo.toml")) ? "OK" : "MISSING"],
@@ -175,8 +202,45 @@ for (const svc of services) {
       (h => h.length === 0 ? "OK" : `sqlx queries in ${h.length} lines`)(grep("sqlx::(query|execute|fetch|begin)", join(svc.dir, "backend", "src", "handlers")))],
   ];
   for (const [code, name, pass, detail] of checks) {
-    console.log(`  ${pass ? "\u2713" : "\u2717"} ${code}: ${name} \u2014 ${detail}`);
+    SINK.out(`  ${pass ? "\u2713" : "\u2717"} ${code}: ${name} \u2014 ${detail}`);
     if (!pass) allPass = false;
   }
 }
-process.exit(allPass ? 0 : 1);
+exit(allPass ? 0 : 1);
+  } catch (e) {
+    if (!(e instanceof ExitSignal)) throw e;
+    return { out, err, rc: e.rc };
+  } finally {
+    SINK = saved;
+  }
+  return { out, err, rc: 0 };
+}
+
+const gate = defineCheck({
+  id: 'audit-service-spec',
+  label: 'audit-service-spec',
+  valueFlags: ['--ns', '--factor'],
+  predicate: () => [],
+  report: (ctx, _res, io) => {
+    const s = auditServiceSpecState(
+      ctx.valueFlags.get('--ns')?.[0] ?? null,
+      ctx.valueFlags.get('--factor')?.[0] ?? null,
+    );
+    for (const line of s.out) io.out(`${line}\n`);
+    for (const line of s.err) io.err(`${line}\n`);
+    return s.rc;
+  },
+  selfTest() {
+    // 判据自证：同参两次求值等价（ARGS/SINK 复位生效，枚举/判定幂等）
+    const a = auditServiceSpecState(null, null);
+    const b = auditServiceSpecState(null, null);
+    if (a.rc !== b.rc || a.out.join('') !== b.out.join('') || a.err.join('') !== b.err.join('')) {
+      process.stderr.write(`❌ audit-service-spec self-test 失败：两次求值不等价（rc=${a.rc}/${b.rc}）\n`);
+      return 1;
+    }
+    process.stdout.write(`✅ audit-service-spec self-test 通过（rc=${a.rc}）\n`);
+    return 0;
+  },
+});
+
+if (import.meta.main) process.exit(await gate.main());

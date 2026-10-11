@@ -3,14 +3,28 @@
  *
  * 契约（bug 由用户实测报出）：**只读路径 MUST NOT 进入拦截/询问面**，判定依据 = 执行内容，
  * 而非命令文本形态；文件与管道载荷 MUST 被读取后判定；内容确实不可读才归入人工裁决面。
- * 被测实现 = `.omp/extensions/{db-pipeline-guard,safety-guard}.ts` 依赖的两个共享库。
+ * 被测实现 = `.omp/extensions/safety-guard.ts` 依赖的两个共享库。
  */
 import { afterAll, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { scanDbCommand } from './psql-invocation.ts';
-import { decideSqlScope } from './sql-scope.ts';
+import { decideSqlScope, parseStatements } from './sql-scope.ts';
+
+// 解析器可用性探针（真实解析依赖 `pg-query-emscripten`，来自平台 node_modules）：
+// push 钩子的校验 worktree 是纯净检出（无 node_modules）⇒ 依赖不可用时「内容判定」整组断言
+// **显式 skip 并打印原因**（仓内惯例：不可用即显式 skip，MUST NOT 静默判过/静默判错）。
+const parserOk = await (async () => {
+  const r = await parseStatements('SELECT 1;');
+  return 'stmts' in r && r.stmts.length === 1;
+})();
+if (!parserOk) {
+  console.warn(
+    '⚠ psql-invocation.test.ts: pg-query-emscripten 不可用 —— 「内容判定：冻结面/声明面/允许面/只读」整组断言 skip（判据面 = 平台本机依赖）',
+  );
+}
+const itParser = parserOk ? it : it.skip;
 
 const DIR = mkdtempSync(join(tmpdir(), 'db-guard-unit-'));
 writeFileSync(join(DIR, 'read.sql'), 'SELECT count(*) FROM isahl.zc_id_scene;\n', 'utf8');
@@ -120,7 +134,7 @@ describe('内容判定：冻结面 / 声明面 / 允许面 / 只读', () => {
     ['DO 块内 isahl 删表', 'DO $$ BEGIN DROP TABLE isahl.x CASCADE; END $$', 'isahl'],
   ];
   for (const [name, sql, cause] of causes) {
-    it(`${name} → ${cause ?? '放行'}`, async () => {
+    itParser(`${name} → ${cause ?? '放行'}`, async () => {
       expect((await decideSqlScope(sql)).cause).toBe(cause);
     });
   }

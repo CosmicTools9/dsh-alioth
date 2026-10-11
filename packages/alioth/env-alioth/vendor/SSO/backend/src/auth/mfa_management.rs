@@ -57,6 +57,11 @@ fn extract_user_id(req: &HttpRequest, public_keys: &[&[u8]]) -> Result<i64, Http
         }
     };
 
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(req) {
+        return Err(resp);
+    }
+
     match claims.sub.parse::<i64>() {
         Ok(id) => Ok(id),
         Err(_) => Err(HttpResponse::Unauthorized().json(AuthError {
@@ -79,13 +84,16 @@ pub async fn mfa_init(
         Err(resp) => return resp,
     };
 
-    let user_email: Option<String> =
-        sqlx::query_scalar("SELECT email FROM isahl_auth.auth_users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(pool.get_ref())
-            .await
-            .unwrap_or(None)
-            .flatten();
+    let user_email: Option<String> = sqlx::query_scalar(
+        "(SELECT e.email FROM isahl_auth.auth_user_emails e \
+          WHERE e.fk_user = $1 AND e.deleted_at IS NULL \
+          ORDER BY e.is_primary DESC, e.id LIMIT 1)",
+    )
+    .bind(user_id)
+    .fetch_optional(pool.get_ref())
+    .await
+    .unwrap_or(None)
+    .flatten();
 
     let account = user_email.unwrap_or_else(|| format!("user-{}", user_id));
     let setup = match generate_totp_secret(&account, "AliothStudio") {

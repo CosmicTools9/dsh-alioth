@@ -347,7 +347,7 @@ fn proven_empty_fanout_graph() -> Value {
              "eventLeaf": "zc_id_even-accident", "next": [{"to": 1}]},
             {"id": "c1", "type": "condition", "label": "必停条件", "next": [
                 {"to": 2, "cond": "2 > 3"},
-                {"to": 3, "cond": "amount > 9999 AND amount < 1"},
+                {"to": 3, "cond": "amount > 9999 && amount < 1"},
             ]},
             end_node("e1", "结束A"),
             end_node("e2", "结束B"),

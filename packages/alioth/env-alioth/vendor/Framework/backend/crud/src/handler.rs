@@ -22,9 +22,9 @@ fn ngac_resource_name<E: AliothDbEntity>() -> String {
     E::ENTITY_NAME.replace('-', "_") + "s"
 }
 
-/// NGAC：为 API 创建的资源注册行级 OA + 创建者 UA 全 CRUD 关联
-/// （与通用 crud_create 一致；自定义 create handler 必须调用，否则新行对创建者
-///  不可见/不可编辑/不可删除 —— NGAC_SPEC 创建者访问模式）。
+/// NGAC：为 API 创建的资源注册**锚点单行**（derive-creator-grants-from-lifecycle：创建者授权
+/// 由判定时刻派生，这里只落类型化枚举/管理员增量授权所需的 `ngac_object_attribute` 锚点，
+/// 不扇出 `ngac_association`）。失败有日志不阻断（锚点缺失 ⇒ 清单缺行，判定仍由派生放行）。
 pub async fn register_created_resource_ngac<E: AliothDbEntity>(
     pool: &sqlx::PgPool,
     item_id: i64,
@@ -46,31 +46,24 @@ pub async fn register_created_resource_ngac<E: AliothDbEntity>(
     let identifier =
         readable.unwrap_or_else(|| format!("{}-{}", ngac_resource_name::<E>(), item_id));
 
-    // NGAC: create Object Attribute for this resource (best-effort)
-    let _ = sqlx::query(
-        "INSERT INTO isahl_auth.ngac_object_attribute (o_name, fk_policy_class, resource_type, fk_resource, resource_identifier, created_by_id) \
-         VALUES ($1, (SELECT id FROM isahl_auth.ngac_policy_class LIMIT 1), $2, $3, $4, $5) \
-         ON CONFLICT(resource_type, fk_resource) DO NOTHING",
-    ).bind(format!("{}-{}", ngac_resource_name::<E>(), item_id))
-     .bind(ngac_resource_name::<E>()).bind(item_id).bind(identifier).bind(user_id)
-     .execute(pool).await;
-    // NGAC: associate creator's user attributes with the new resource OA (full CRUD)
-    let _ = sqlx::query(
-        "INSERT INTO isahl_auth.ngac_association (fk_user_attribute, fk_object_attribute, ak_access_rights, fk_policy_class, created_at) \
-         SELECT rr.fk_user_attribute, oa.id, \
-                ARRAY(SELECT id FROM isahl_auth.ngac_access_right WHERE o_name IN ('read','write','delete','update','create')), \
-                oa.fk_policy_class, NOW() \
-         FROM isahl_auth.ngac_user_rr_attribute rr \
-         JOIN isahl_auth.ngac_object_attribute oa \
-           ON oa.resource_type = $2 AND oa.fk_resource = $3 AND oa.deleted_at IS NULL \
-         WHERE rr.fk_user = $1 AND rr.deleted_at IS NULL \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM isahl_auth.ngac_association a2 \
-               WHERE a2.fk_user_attribute = rr.fk_user_attribute AND a2.fk_object_attribute = oa.id AND a2.deleted_at IS NULL) \
-         ON CONFLICT DO NOTHING",
-    ).bind(user_id)
-     .bind(ngac_resource_name::<E>()).bind(item_id)
-     .execute(pool).await;
+    // NGAC：锚点单行（ensure_resource_oa；零授权语义；授权写入单源仍是 common::ngac_grants，
+    // 但创建者授权不在此物化——派生层唯一实现 = common::ngac_org）。
+    let ngac_resource = ngac_resource_name::<E>();
+    if let Err(e) = common::ngac_grants::ensure_resource_oa(
+        pool,
+        &common::ngac_grants::ResourceOaSpec {
+            o_name: format!("{ngac_resource}-{item_id}"),
+            resource_type: &ngac_resource,
+            resource_id: item_id,
+            resource_identifier: Some(&identifier),
+            created_by: Some(user_id),
+            policy_class_name: None,
+        },
+    )
+    .await
+    {
+        common::telemetry::warn!("crud NGAC 锚点写入失败（{ngac_resource} {item_id}）: {e}");
+    }
 }
 
 /// 从请求中提取用户 ID

@@ -12,20 +12,37 @@
 # 建立基线后：`run --gate` 阻断未达标/回归；回归经 plans/（source: eval-regression）投递修复意图。
 #
 # 校验：bun scripts/eval/appagent-build-eval.ts validate
+#
+# 维度白名单（`scripts/eval/appagent-build-eval.ts::KNOWN_DIMENSIONS`）：
+#   extension_verify / e2e / closure_audit / eval_report_rules / artifacts / runtime / visual
+# 可得性三态（change `add-eval-verify-layer-dims`；规约 `build-eval-dim-evidence-availability`）：
+#   产物存在 ⇒ 正常 pass/fail/degraded；产物缺失且**未声明** ⇒ missing + 该 case degraded（反伪造）；
+#   产物缺失且**已声明** `pending_evidence` ⇒ `unavailable`（不入加权分母、不降级、逐条载明 reason/producer）；
+#   产物一旦出现，声明即失效（回落严格语义）。
+# 本轮实测：`visual` 证据面**齐备**（`Prototypes/Apps/{app}/a-v{N}-report.json`，6/6 case 都有）
+#   ⇒ 正常计分；`runtime` 证据面**齐备**（`runtime-verify.json` 6/6，**全部 `ready`**）⇒ 两维均按严格语义
+#   计分，无需 `pending_evidence` 声明。（首轮曾因 Alioth 组合根「每 worker 重复装载 provider 注册表」
+#   产生 1 个 `failed`；已修复并复验转 `ready`——change `fix-ns-provider-install-per-worker-guard`。）
 
 schema: appagent-build-eval/v1
 threshold: 0.8
 # 单 case 相对基线允许的最大降幅（超过即判回归）
 tolerance: 0.1
 
+# 维度证据可得性声明（`pending_evidence`；见上方三态说明）。键 ∈ 维度白名单，reason/producer 必填。
+pending_evidence:
+  closure_audit:
+    reason: 该维证据面 `Pre-Proc/{ns}/AppAgentTraces/closure-audit/` 位于各 ns 仓 `.gitignore` 忽略的目录 ⇒ 检查面结构性不可得（实质执法点在 publish 前置，不在此报告面）
+    producer: closure_audit 工具 → Pre-Proc/{ns}/AppAgentTraces/closure-audit/{app}/{seq:04}.json
+
 cases:
   - id: ct-wms
     namespace: Cosmic-Tools
     app: ct-wms
     goal: 重建 Cosmic-Tools 的 ct-wms 应用：仓库管理（产品/库存/入库/出库），保留既有模块组合与扩展声明
-    weight: 0.25
+    weight: 0.2
     rubric_weight: 0.0
-    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+    dimensions: { extension_verify: 0.3, e2e: 0.2, closure_audit: 0.15, eval_report_rules: 0.1, artifacts: 0.1, runtime: 0.1, visual: 0.05 }
 
   - id: ct-git
     namespace: Cosmic-Tools
@@ -33,7 +50,7 @@ cases:
     goal: 重建 Cosmic-Tools 的 ct-git 应用：代码仓库与流水线管理，保留既有模块组合与扩展声明
     weight: 0.2
     rubric_weight: 0.0
-    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+    dimensions: { extension_verify: 0.3, e2e: 0.2, closure_audit: 0.15, eval_report_rules: 0.1, artifacts: 0.1, runtime: 0.1, visual: 0.05 }
 
   - id: ct-bv-local
     namespace: Cosmic-Tools
@@ -41,7 +58,7 @@ cases:
     goal: 重建 Cosmic-Tools 的 ct-bv-local 应用：本地生活服务订单管理，保留既有模块组合与扩展声明
     weight: 0.2
     rubric_weight: 0.0
-    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+    dimensions: { extension_verify: 0.3, e2e: 0.2, closure_audit: 0.15, eval_report_rules: 0.1, artifacts: 0.1, runtime: 0.1, visual: 0.05 }
 
   - id: mall-erp
     namespace: Cosmic-Tools
@@ -49,12 +66,25 @@ cases:
     goal: 重建 Cosmic-Tools 的 mall-erp 应用：商城 ERP 主数据与订单，保留既有模块组合与扩展声明
     weight: 0.15
     rubric_weight: 0.0
-    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+    dimensions: { extension_verify: 0.3, e2e: 0.2, closure_audit: 0.15, eval_report_rules: 0.1, artifacts: 0.1, runtime: 0.1, visual: 0.05 }
 
-  - id: wz-yy-wms
+  - id: wz-transit-ops
     namespace: WZ
-    app: wz-yy-wms
-    goal: 重建 WZ 的 wz-yy-wms 应用：仓库管理，保留既有模块组合与扩展声明
+    app: wz-transit-ops
+    goal: 重建 WZ 的 wz-transit-ops 应用（中转运营）：仓库管理，保留既有模块组合与扩展声明
     weight: 0.2
     rubric_weight: 0.0
-    dimensions: { extension_verify: 0.35, e2e: 0.25, closure_audit: 0.2, eval_report_rules: 0.1, artifacts: 0.1 }
+    dimensions: { extension_verify: 0.3, e2e: 0.2, closure_audit: 0.15, eval_report_rules: 0.1, artifacts: 0.1, runtime: 0.1, visual: 0.05 }
+
+  # Alioth 命名空间回归（openspec: add-appagent-ns-alioth-e2e-verification）——
+  # 证据来源 = mock LLM 驱动的全链产物（脚本 scripts/e2e/appagent-ns-alioth-dialog.ts，
+  # 产物落 Pre-Proc/Alioth/Apps/alioth-envcfg/）。mock 链路不含 extension-verify.json 与
+  # e2e-report.json（需 Gateway 部署链 / e2e 脚本，不在本 case 范围）→ 该两维不声明，
+  # 维度按**实际可得证据**配置（closure_audit / eval_report_rules / artifacts）。
+  - id: alioth-envcfg
+    namespace: Alioth
+    app: alioth-envcfg
+    goal: 以 mock LLM 驱动的 AppAgent 全链构建：环境变量配置管理应用（本体分析 → 区块/模块骨架 → 本体转移 → 组装 → 校验 → 闭环审计）
+    weight: 0.05
+    rubric_weight: 0.0
+    dimensions: { closure_audit: 0.35, eval_report_rules: 0.3, artifacts: 0.2, runtime: 0.1, visual: 0.05 }

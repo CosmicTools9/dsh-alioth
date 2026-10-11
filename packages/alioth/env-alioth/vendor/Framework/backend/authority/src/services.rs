@@ -282,3 +282,16 @@ impl ApproverService {
         self.repo.delete(id, user_id).await
     }
 }
+
+// ── 审批岗位只读列表 ───────────────────────────────────────────
+
+/// 审批岗位任职账号行（每 (真实岗位, 活跃任职账号) 一行 `{ id, name, fk_user }`）。
+///
+/// 行粒度与判据（任职账号集合 = `common::position_incumbent_accounts_sql!()` 唯一实现）
+/// 见 repositories 层实现文档；本函数为 services 层收口
+///（分层规约 BACKEND_FRAMEWORK §4.5：handlers MUST NOT 直引 repositories）。
+pub async fn list_position_options(
+    pool: &PgPool,
+) -> Result<Vec<super::repositories::PositionOption>, AliothError> {
+    super::repositories::list_position_options(pool).await
+}

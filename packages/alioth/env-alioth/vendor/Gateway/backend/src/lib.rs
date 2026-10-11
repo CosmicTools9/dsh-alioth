@@ -15,6 +15,7 @@ pub mod namespace_schema;
 pub mod ngac;
 pub mod notification;
 pub mod openapi;
+pub mod paths;
 pub mod pep;
 pub mod schedule;
 /// 跨 namespace 通用种子自愈组件（add-gateway-seed-self-heal）

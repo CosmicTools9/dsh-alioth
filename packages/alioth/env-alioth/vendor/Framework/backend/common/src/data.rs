@@ -131,12 +131,27 @@ pub struct ListQuery {
     pub sort_field: Option<String>,
     #[serde(rename = "sort_order", default)]
     pub sort_order: Option<String>,
+    /// 关键词检索输入（`API_DESIGN_SPEC.md` §2.1 的 `search` 参数）。
+    ///
+    /// 消费方 = 泛型列表读径：实体在 `AliothDbEntity::SEARCH_COLUMNS` 声明检索列后，
+    /// `QueryBuilder::from_list_query` 自动施加谓词（见 `crud::search`）。
+    /// 未声明列的实体忽略本字段（零回归）。
+    #[serde(rename = "search", default)]
+    pub search: Option<String>,
 }
 
 impl ListQuery {
     /// 计算 SQL OFFSET
     pub fn offset(&self) -> i64 {
         (self.page - 1) * self.page_size
+    }
+
+    /// 关键词检索输入：trim 后非空才生效（空串 / 全空白 ⇒ `None`）。
+    pub fn search_trimmed(&self) -> Option<&str> {
+        self.search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -151,6 +166,7 @@ impl Default for ListQuery {
             filter_value: None,
             sort_field: None,
             sort_order: None,
+            search: None,
         }
     }
 }
@@ -196,6 +212,7 @@ mod tests {
             filter_value: None,
             sort_field: None,
             sort_order: None,
+            search: None,
         };
         assert_eq!(q.offset(), 40);
     }

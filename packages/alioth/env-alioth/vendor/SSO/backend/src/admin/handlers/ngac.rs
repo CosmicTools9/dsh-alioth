@@ -4,10 +4,22 @@
 //! 的管理面端点。写路径统一经 `ngac::integrity::with_validated_write` 做完整性校验。
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use common::search::like_pattern;
 use serde::{Deserialize, Serialize};
 use sqlx::{AssertSqlSafe, PgPool};
 
 use crate::ngac::pip::PostgresPip;
+
+/// `conditions` 写径白名单校验（tasks 1.5）：未知键在核心 `evaluate_conditions` 中 fail-closed
+/// （该策略永不满足）⇒ 写径 MUST 更早拒绝，避免「写入成功但永不生效」的静默面。
+/// 键集唯一真源 = `ngac_decision::CONDITION_KEYS`（经 `ngac_host::validate_condition_keys`）。
+fn check_conditions(conditions: &Option<serde_json::Value>) -> Option<HttpResponse> {
+    let v = conditions.clone().unwrap_or(serde_json::Value::Null);
+    match ngac_host::validate_condition_keys(&v) {
+        Ok(()) => None,
+        Err(e) => Some(HttpResponse::BadRequest().json(serde_json::json!({"error": e}))),
+    }
+}
 
 /// User attribute response
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -95,6 +107,9 @@ pub struct CreateObjectAttributeRequest {
     pub fk_resource: Option<i64>,
     /// 业务可读标识（NGAC_SPEC §2.2，add-ngac-oa-readable-identifier）；缺省 null。
     pub resource_identifier: Option<String>,
+    /// 分级标签（wire-instance-oa-labels / §2.7 实例级写径①）：值 MUST 是
+    /// `org_policy_label` 在册 active 字典码；写 `property.label`（分级上限 carrier）。
+    pub property_label: Option<String>,
     /// 父属性 id（属性层级）
     #[serde(default)]
     #[serde(with = "common::serde_zuid::seq")]
@@ -108,6 +123,9 @@ pub struct UpdateObjectAttributeRequest {
     pub resource_type: Option<String>,
     /// 业务可读标识（NGAC_SPEC §2.2，add-ngac-oa-readable-identifier）；None 不更新。
     pub resource_identifier: Option<String>,
+    /// 分级标签（wire-instance-oa-labels / §2.7 实例级写径①）：None 不触碰；
+    /// Some(code) ⇒ 校验字典后合并写 `property.label`。
+    pub property_label: Option<String>,
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_policy_class: Option<i64>,
     #[serde(default)]
@@ -184,7 +202,7 @@ pub async fn list_all_user_attributes(
     let limit = query.limit.unwrap_or(100).clamp(1, 5000);
     let offset = query.offset.unwrap_or(0).max(0);
     let q = query.q.as_deref().unwrap_or("").trim();
-    let like = format!("%{}%", q);
+    let like = like_pattern(q);
 
     let attrs = sqlx::query_as::<_, UserAttributeResponse>(
         r#"
@@ -689,7 +707,7 @@ pub async fn list_object_attributes(
     let limit = query.limit.unwrap_or(100).clamp(1, 5000);
     let offset = query.offset.unwrap_or(0).max(0);
     let q = query.q.as_deref().unwrap_or("").trim();
-    let like = format!("%{}%", q);
+    let like = like_pattern(q);
     let _admin_id = match require_admin(&req, pool.get_ref(), state.get_ref()).await {
         Ok(id) => id,
         Err(resp) => return resp,
@@ -716,13 +734,11 @@ pub async fn list_object_attributes(
     .await;
     match attrs {
         Ok(mut rows) => {
-            // 展示名批量解析（一次 meta_collections 查询；NGAC_SPEC §2.2）
-            let types: std::collections::HashSet<String> = rows
-                .iter()
-                .filter_map(|r| r.resource_type.clone())
-                .filter(|t| !t.is_empty())
-                .collect();
-            let meta_names = crate::ngac::display::meta_display_names(pool.get_ref(), &types).await;
+            // 展示名解析（NGAC_SPEC §2.2 解析链）：**不再查 `isahl_meta`** —— SSO 连接池指向
+            // auth/ns 库，`isahl_meta` 不在其库内 ⇒ 原批量查询**恒失败**并降级为空 map
+            // （2026-09-29 删除该查询，满足 `check-gateway-isahl-meta` 容器边界）。
+            // 链 2（meta_collections.name）由链 3（内置资源域映射）承担，故此处传空 map。
+            let meta_names = std::collections::HashMap::new();
             for row in &mut rows {
                 let rt = row.resource_type.as_deref().unwrap_or("");
                 row.display_name = crate::ngac::display::resolve_display_name(
@@ -790,6 +806,23 @@ pub async fn create_object_attribute(
     let resource_type = body.resource_type.clone();
     let fk_resource = body.fk_resource;
     let resource_identifier = body.resource_identifier.clone();
+    let property_label = body.property_label.clone();
+    // 分级标签字典校验（§2.7 实例级写径①）：Some(code) MUST 命中在册 active 字典行
+    if let Some(code) = property_label.as_deref() {
+        let ok: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM isahl_auth.org_policy_label \
+             WHERE code = $1 AND is_active AND deleted_at IS NULL)",
+        )
+        .bind(code)
+        .fetch_one(pool.get_ref())
+        .await
+        .unwrap_or(false);
+        if !ok {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": format!("property_label 不在分级字典内（org_policy_label 无 active 码 {code}）")
+            }));
+        }
+    }
     let ancestor_ids = body.ancestor_ids.clone();
     let ancestor_ids_w = ancestor_ids.clone();
     let ip = crate::ngac::audit_writer::client_ip(&req);
@@ -803,8 +836,10 @@ pub async fn create_object_attribute(
             let id: (i64,) = sqlx::query_as(
                 r#"
                 INSERT INTO isahl_auth.ngac_object_attribute
-                    (o_name, fk_policy_class, resource_type, fk_resource, resource_identifier, ancestor_ids, children_ids, created_by_id)
-                VALUES ($1, COALESCE($2, (SELECT MIN(id) FROM isahl_auth.ngac_policy_class WHERE is_active)), $3, $4, $5, COALESCE($6, '{}'::bigint[]), '{}'::bigint[], $7)
+                    (o_name, fk_policy_class, resource_type, fk_resource, resource_identifier, property, ancestor_ids, children_ids, created_by_id)
+                VALUES ($1, COALESCE($2, (SELECT MIN(id) FROM isahl_auth.ngac_policy_class WHERE is_active)), $3, $4, $5,
+                        CASE WHEN $8::text IS NULL THEN NULL ELSE jsonb_build_object('label', $8) END,
+                        COALESCE($6, '{}'::bigint[]), '{}'::bigint[], $7)
                 RETURNING id
                 "#,
             )
@@ -815,6 +850,7 @@ pub async fn create_object_attribute(
             .bind(&resource_identifier)
             .bind(&ancestor_ids_w)
             .bind(admin_id)
+            .bind(&property_label)
             .fetch_one(&mut *tx)
             .await?;
             // 同事务审计（D1）
@@ -875,13 +911,17 @@ pub async fn update_object_attribute(
 
     let attr_id = path.into_inner();
 
-    // 恒定 SET（COALESCE 语义）：占位符恒为 $1..$7，避免条件拼接导致 bind 数错位
+    // 恒定 SET（COALESCE 语义）：占位符恒为 $1..$8，避免条件拼接导致 bind 数错位。
+    // $8 = property_label：NULL 不触碰；非 NULL ⇒ 字典校验后合并写 property.label
+    //（wire-instance-oa-labels，§2.7 实例级写径①——None 不更新的 COALESCE 同族语义）。
     let sql = r#"
         UPDATE isahl_auth.ngac_object_attribute SET
             o_name = COALESCE($2, o_name),
             resource_type = COALESCE($3, resource_type),
             fk_policy_class = COALESCE($5, fk_policy_class),
             resource_identifier = COALESCE($7, resource_identifier),
+            property = CASE WHEN $8::text IS NULL THEN property
+                            ELSE COALESCE(property, '{}'::jsonb) || jsonb_build_object('label', $8) END,
             ancestor_ids = COALESCE($6, '{}'::bigint[]),
             updated_at = NOW(),
             updated_by_id = $4
@@ -891,6 +931,23 @@ pub async fn update_object_attribute(
     let o_name = body.o_name.clone();
     let resource_type = body.resource_type.clone();
     let resource_identifier = body.resource_identifier.clone();
+    let property_label = body.property_label.clone();
+    // 分级标签字典校验（§2.7 实例级写径①）：Some(code) MUST 命中在册 active 字典行
+    if let Some(code) = property_label.as_deref() {
+        let ok: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM isahl_auth.org_policy_label \
+             WHERE code = $1 AND is_active AND deleted_at IS NULL)",
+        )
+        .bind(code)
+        .fetch_one(pool.get_ref())
+        .await
+        .unwrap_or(false);
+        if !ok {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": format!("property_label 不在分级字典内（org_policy_label 无 active 码 {code}）")
+            }));
+        }
+    }
     let fk_policy_class = body.fk_policy_class;
     let ancestor_ids = body.ancestor_ids.clone();
     let ancestor_ids_w = ancestor_ids.clone();
@@ -916,6 +973,7 @@ pub async fn update_object_attribute(
                     .bind(fk_policy_class)
                     .bind(&ancestor_ids_w)
                     .bind(resource_identifier)
+                    .bind(&property_label)
                     .execute(&mut *tx)
                     .await?;
                 if r.rows_affected() > 0 {
@@ -1060,6 +1118,8 @@ pub struct CreateAssociationRequest {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_policy_class: Option<i64>,
     pub conditions: Option<serde_json::Value>,
+    /// 到期时刻（`None` = 永不过期）——change `add-ngac-grant-revocation-and-expiry`。
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1074,6 +1134,19 @@ pub struct UpdateAssociationRequest {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_policy_class: Option<i64>,
     pub conditions: Option<serde_json::Value>,
+    /// 到期时刻（未传 = 保持原值）——change `add-ngac-grant-revocation-and-expiry`。
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// POST /api/admin/ngac/associations/revoke —— 按 (UA, OA) 撤销指定 right 集（差异收缩）。
+#[derive(Debug, Deserialize)]
+pub struct RevokeAssociationRequest {
+    #[serde(with = "common::serde_zuid")]
+    pub fk_user_attribute: i64,
+    #[serde(with = "common::serde_zuid")]
+    pub fk_object_attribute: i64,
+    #[serde(with = "common::serde_zuid::seq")]
+    pub ak_access_rights: Vec<i64>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -1209,7 +1282,7 @@ pub async fn list_associations(
     let limit = query.limit.unwrap_or(100).clamp(1, 5000);
     let offset = query.offset.unwrap_or(0).max(0);
     let q = query.q.as_deref().unwrap_or("").trim();
-    let like = format!("%{}%", q);
+    let like = like_pattern(q);
     let sql = format!(
         "{} WHERE a.deleted_at IS NULL AND ($1 = '' OR ua.o_name ILIKE $2 OR oa.o_name ILIKE $2) ORDER BY a.created_at DESC LIMIT $3 OFFSET $4",
         ASSOCIATION_SELECT
@@ -1252,6 +1325,9 @@ pub async fn create_association(
     };
     let ip = crate::ngac::audit_writer::client_ip(&req);
 
+    if let Some(resp) = check_conditions(&body.conditions) {
+        return resp;
+    }
     // 同事务审计（D1）：INSERT + 审计行同生共死
     let mut tx = match pool.get_ref().begin().await {
         Ok(tx) => tx,
@@ -1266,8 +1342,8 @@ pub async fn create_association(
             r#"
             INSERT INTO isahl_auth.ngac_association
                 (o_name, fk_user_attribute, fk_object_attribute, ak_access_rights,
-                 fk_policy_class, conditions, created_by_id)
-            VALUES ($1, $2, $3, $4, COALESCE($5, (SELECT MIN(id) FROM isahl_auth.ngac_policy_class WHERE is_active)), $6, $7)
+                 fk_policy_class, conditions, expires_at, created_by_id)
+            VALUES ($1, $2, $3, $4, COALESCE($5, (SELECT MIN(id) FROM isahl_auth.ngac_policy_class WHERE is_active)), $6, $8, $7)
             RETURNING id
             "#,
         )
@@ -1278,6 +1354,7 @@ pub async fn create_association(
         .bind(body.fk_policy_class)
         .bind(&body.conditions)
         .bind(admin_id)
+        .bind(body.expires_at)
         .fetch_one(&mut *tx)
         .await?;
         let new_values =
@@ -1335,6 +1412,9 @@ pub async fn update_association(
     let ip = crate::ngac::audit_writer::client_ip(&req);
 
     let assoc_id = path.into_inner();
+    if let Some(resp) = check_conditions(&body.conditions) {
+        return resp;
+    }
     // 同事务审计（D1）：变更前镜像 → UPDATE → 变更后镜像
     let mut tx = match pool.get_ref().begin().await {
         Ok(tx) => tx,
@@ -1356,6 +1436,7 @@ pub async fn update_association(
                 ak_access_rights = COALESCE($5, ak_access_rights),
                 fk_policy_class = COALESCE($6, fk_policy_class),
                 conditions = COALESCE($7, conditions),
+                expires_at = COALESCE($9, expires_at),
                 updated_at = NOW(),
                 updated_by_id = $8
             WHERE id = $1 AND deleted_at IS NULL
@@ -1369,6 +1450,7 @@ pub async fn update_association(
         .bind(body.fk_policy_class)
         .bind(&body.conditions)
         .bind(admin_id)
+        .bind(body.expires_at)
         .execute(&mut *tx)
         .await?;
         if r.rows_affected() > 0 {
@@ -1405,6 +1487,113 @@ pub async fn update_association(
             log::error!("update_association DB error: {}", e);
             HttpResponse::InternalServerError()
                 .json(serde_json::json!({"error": "Failed to update association"}))
+        }
+    }
+}
+
+/// POST /api/admin/ngac/associations/revoke
+/// 撤销访问策略的指定 right 集（差异收缩）——唯一实现 `common::ngac_grants::revoke_rights`；
+/// 剩余为空 ⇒ 软删 association。同事务审计（收缩 = association 行的 update）。
+pub async fn revoke_association(
+    req: HttpRequest,
+    body: web::Json<RevokeAssociationRequest>,
+    pool: web::Data<PgPool>,
+    state: web::Data<AuthState>,
+) -> HttpResponse {
+    let (admin_id, claims) = match require_admin_claims(&req, pool.get_ref(), state.get_ref()).await
+    {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let session_id = if claims.sid.is_empty() {
+        None
+    } else {
+        Some(claims.sid)
+    };
+    let ip = crate::ngac::audit_writer::client_ip(&req);
+
+    let mut tx = match pool.get_ref().begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            log::error!("revoke_association tx begin error: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "Failed to revoke association rights"}));
+        }
+    };
+    let result: sqlx::Result<u64> = async {
+        // 解析为授权单源的名称/坐标口径：`revoke_rights` 以 (ua.o_name, oa.resource_type, oa.fk_resource) 匹配。
+        let resolved: Option<(String, String, i64)> = sqlx::query_as(
+            "SELECT ua.o_name, oa.resource_type, oa.fk_resource \
+               FROM isahl_auth.ngac_user_attribute ua \
+               JOIN isahl_auth.ngac_object_attribute oa ON oa.id = $2 AND oa.deleted_at IS NULL \
+              WHERE ua.id = $1 AND ua.deleted_at IS NULL",
+        )
+        .bind(body.fk_user_attribute)
+        .bind(body.fk_object_attribute)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((ua_name, resource_type, resource_id)) = resolved else {
+            return sqlx::Result::Ok(0);
+        };
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT o_name FROM isahl_auth.ngac_access_right WHERE id = ANY($1)",
+        )
+        .bind(&body.ak_access_rights)
+        .fetch_all(&mut *tx)
+        .await?;
+        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let affected = common::ngac_grants::revoke_rights(
+            &mut *tx,
+            &resource_type,
+            resource_id,
+            &ua_name,
+            &refs,
+        )
+        .await
+        .map_err(|e| sqlx::Error::Protocol(format!("revoke_rights: {e}")))?;
+        if affected > 0 {
+            let ids: Vec<i64> = sqlx::query_scalar(
+                "SELECT a.id FROM isahl_auth.ngac_association a \
+                   JOIN isahl_auth.ngac_user_attribute ua ON ua.id = a.fk_user_attribute \
+                   JOIN isahl_auth.ngac_object_attribute oa ON oa.id = a.fk_object_attribute \
+                  WHERE ua.o_name = $1 AND oa.resource_type = $2 AND oa.fk_resource = $3",
+            )
+            .bind(&ua_name)
+            .bind(&resource_type)
+            .bind(resource_id)
+            .fetch_all(&mut *tx)
+            .await?;
+            for id in ids {
+                let new_values =
+                    crate::ngac::audit_writer::row_mirror_tx(&mut tx, "ngac_association", id)
+                        .await?;
+                crate::ngac::audit_writer::write_audit_tx(
+                    &mut tx,
+                    &crate::ngac::audit_writer::AuditRecord {
+                        action: "update",
+                        entity_type: "association",
+                        entity_id: id,
+                        old_values: None,
+                        new_values,
+                        actor: admin_id,
+                        session_id: session_id.clone(),
+                        ip_address: ip.clone(),
+                    },
+                )
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        sqlx::Result::Ok(affected)
+    }
+    .await;
+
+    match result {
+        Ok(n) => HttpResponse::Ok().json(serde_json::json!({"status": "revoked", "affected": n})),
+        Err(e) => {
+            log::error!("revoke_association DB error: {}", e);
+            HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "Failed to revoke association rights"}))
         }
     }
 }
@@ -1576,7 +1765,7 @@ pub async fn list_prohibitions(
     let limit = query.limit.unwrap_or(100).clamp(1, 5000);
     let offset = query.offset.unwrap_or(0).max(0);
     let q = query.q.as_deref().unwrap_or("").trim();
-    let like = format!("%{}%", q);
+    let like = like_pattern(q);
     let sql = format!(
         "{} WHERE p.deleted_at IS NULL AND ($1 = '' OR ua.o_name ILIKE $2 OR oa.o_name ILIKE $2) ORDER BY p.created_at DESC LIMIT $3 OFFSET $4",
         PROHIBITION_SELECT
@@ -1618,6 +1807,9 @@ pub async fn create_prohibition(
     };
     let ip = crate::ngac::audit_writer::client_ip(&req);
 
+    if let Some(resp) = check_conditions(&body.conditions) {
+        return resp;
+    }
     // 同事务审计（D1）：INSERT + 审计行同生共死
     let mut tx = match pool.get_ref().begin().await {
         Ok(tx) => tx,
@@ -1706,6 +1898,9 @@ pub async fn update_prohibition(
     let ip = crate::ngac::audit_writer::client_ip(&req);
 
     let prohibition_id = path.into_inner();
+    if let Some(resp) = check_conditions(&body.conditions) {
+        return resp;
+    }
     // 同事务审计（D1）：变更前镜像 → UPDATE → 变更后镜像
     let mut tx = match pool.get_ref().begin().await {
         Ok(tx) => tx,

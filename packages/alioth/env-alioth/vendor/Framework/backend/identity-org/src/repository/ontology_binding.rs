@@ -10,7 +10,6 @@ pub fn coords_for_entity(entity: &str) -> Result<Coords, ApiError> {
         "Identity" => Ok(("JE", "FJA", "↑_DA")),
         "Environment" => Ok(("JC", "GEC", "↑_DA")),
         "License" => Ok(("JC", "GID", "↑_DA")),
-        "Consignment" => Ok(("GC", "FJA", "↓_GG")),
         "Vehicle" => Ok(("GC", "FJA", "↓_GG")),
         "NaturalPerson" => Ok(("GC", "FJA", "↓_GG")),
         "TransportTracking" => Ok(("GC", "FJA", "↓_GG")),
@@ -30,7 +29,6 @@ pub fn coords_for_entity(entity: &str) -> Result<Coords, ApiError> {
         "TrafficLine" => Ok(("GC", "FJA", "↓_GG")),
         "FreightProduct" => Ok(("GC", "FJA", "↓_GG")),
         "PricingAgreement" => Ok(("GC", "FJA", "↓_GG")),
-        "Contract" => Ok(("GC", "FJA", "↓_GG")),
         // 铅封叶表：与 transport-operations 三单录入同款三元组（TX/FJA/↓_GG，
         // transport_ops.rs insert_three_info 与 wz-outgo-waybill-enrich.sql 一致）
         "Seal" => Ok(("TX", "FJA", "↓_GG")),

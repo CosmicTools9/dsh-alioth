@@ -3,7 +3,11 @@
 //! 工具是 Agent 感知-推理-行动闭环中的「行动」层。
 //! 每个工具是一个可执行函数，由 LLM 根据上下文决定是否调用。
 
+pub mod action_catalogue;
 pub mod executor;
+pub mod form_contract;
+pub mod ngac_ops;
+pub mod proposal;
 pub mod registry;
 pub mod row_value;
 
@@ -52,4 +56,8 @@ pub struct ToolContext {
     /// None = execute_action 维持预览行为（测试/未注入场景）；
     /// Some = 按 confirmation_level 门禁真实执行或返回「需确认」预览。
     pub action_handler: Option<std::sync::Arc<dyn ActionHandler>>,
+    /// 表单契约（change `add-form-contract-seam`，ADR D-053）：页面登记后随本轮上下文注入。
+    /// `None` = 本 turn 无可用契约 ⇒ `validate_form` MUST fail-closed（`CONTRACT_UNAVAILABLE`），
+    /// MUST NOT 回落模型自备 schema。
+    pub form_contract: Option<crate::tools::form_contract::FormContract>,
 }

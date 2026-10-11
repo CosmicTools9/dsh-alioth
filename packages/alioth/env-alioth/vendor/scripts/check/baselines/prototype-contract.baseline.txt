@@ -1,0 +1,17 @@
+Alioth|ai-b3ac30776a3a725d|App MUST NOT 用 hideNavigation 关闭壳导航（契约：App 承载导航）
+Alioth|ai-b3ac30776a3a725d|App MUST 把 activeId/onSelect 交给 GatewayShell（契约：App 承载导航）
+Alioth|ai-b3ac30776a3a725d|App MUST 把 navGroups 交给 GatewayShell（契约：App 承载导航）
+Alioth|alioth-biz|App MUST NOT 用 hideNavigation 关闭壳导航（契约：App 承载导航）
+Alioth|alioth-biz|App MUST 把 activeId/onSelect 交给 GatewayShell（契约：App 承载导航）
+Alioth|alioth-biz|App MUST 把 navGroups 交给 GatewayShell（契约：App 承载导航）
+Alioth|alioth-envcfg|App MUST NOT 用 hideNavigation 关闭壳导航（契约：App 承载导航）
+Alioth|alioth-envcfg|App MUST 把 activeId/onSelect 交给 GatewayShell（契约：App 承载导航）
+Alioth|alioth-envcfg|App MUST 把 navGroups 交给 GatewayShell（契约：App 承载导航）
+Alioth|inventory-balance|未定义 embedded 分支
+AVIC-CAASEC|ai-98ab565fc9610cfd|App MUST NOT 用 hideNavigation 关闭壳导航（契约：App 承载导航）
+AVIC-CAASEC|ai-98ab565fc9610cfd|App MUST 把 activeId/onSelect 交给 GatewayShell（契约：App 承载导航）
+AVIC-CAASEC|ai-98ab565fc9610cfd|App MUST 把 navGroups 交给 GatewayShell（契约：App 承载导航）
+Cosmic-Tools|ct-wms-menu-modes|activeId 可能由外部控制（契约要求 Module 内部管理）
+SE|se-budget|App MUST NOT 用 hideNavigation 关闭壳导航（契约：App 承载导航）
+SE|se-budget|App MUST 把 activeId/onSelect 交给 GatewayShell（契约：App 承载导航）
+SE|se-budget|App MUST 把 navGroups 交给 GatewayShell（契约：App 承载导航）

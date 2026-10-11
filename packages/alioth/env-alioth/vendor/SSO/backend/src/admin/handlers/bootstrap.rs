@@ -65,7 +65,7 @@ pub async fn get_system_subject_status(
         Option<String>,
         Option<serde_json::Value>,
     )> = sqlx::query_as(
-        "SELECT entity_table, entity_id, status, settings \
+        "SELECT entity_table, entity_id, status::text, settings \
              FROM isahl_auth.auth_users WHERE username = 'system'",
     )
     .fetch_optional(pool.get_ref())

@@ -2,7 +2,7 @@
 
 ### 1. `const styles = {...}` 必须唯一命名
 
-多个 `const styles = {...}` 在不同 `<script type="text/babel">` 标签中会覆盖。每个文件用唯一前缀：
+多个 `const styles = {...}` 在不同内联 `<script>` 块中会覆盖。每个文件用唯一前缀：
 
 ```jsx
 // terminal.jsx
@@ -16,7 +16,7 @@ const sidebarStyles = { container: {...}, item: {...} };
 
 ### 2. 跨 `<script>` 组件共享
 
-每个 `<script type="text/babel">` 被 Babel 独立编译，scope 不通。在定义文件末尾显式 export：
+每个内联 `<script>` 块独立编译（构建期），scope 不通。在定义文件末尾显式 export：
 
 ```jsx
 Object.assign(window, { MyComponent, helperFn });
@@ -75,7 +75,6 @@ function PayablePage() {
 <script src="../../vendor/react-dom.umd.js"></script>
 <script src="../../vendor/react-dom-client.umd.js"></script>
 <script src="../../vendor/react-bridge.js"></script>
-<script src="../../vendor/babel.min.js"></script>
 ```
 
 **CDN 回退**（本地 vendor 不可用时）：
@@ -86,7 +85,6 @@ function PayablePage() {
 <script src="https://cdn.jsdelivr.net/npm/react-umd@19.2.7/dist/react-dom.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/react-umd@19.2.7/dist/react-dom-client.umd.js"></script>
 <script src="../../vendor/react-bridge.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@8.0.3/babel.min.js"></script>
 
 > React 19 移除了官方 UMD 构建，故使用 `react-umd` 包装包。CDN 回退也使用 `react-umd` 而非官方
 `react/umd/` 路径。 > **CDN 选择依据**：团队主要在中国大陆开发时，默认使用 jsDelivr（国内 CDN
@@ -107,7 +105,7 @@ function PayablePage() {
 grep -n 'iframe\|fetch(\|XMLHttpRequest\|srcdoc\|document.write\|file://\|window\.open' Pre-Proc/{ns}/Prototypes/Modules/{name}/v{version}.html
 ```
 
-> 若仅出现于 Babel standalone 内部实现，可容忍。若出现在 `<script type="text/babel">` 内，必须删除。
+> 若出现在原型的内联 JS（`<script>`）内，必须删除。
 
 Chrome 将 `file://` 视为唯一安全起源。以下在 `file://` 下触发安全错误但仍通过 grep（跨域载入被执行前被 CSP 拦截）：
 

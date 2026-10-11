@@ -81,9 +81,11 @@ impl FileTableKind {
         match self {
             Self::Document => &[
                 // 文档族（chat 附件契约 chat-attachment-multi-format：txt/md/csv/json/pdf/docx/xlsx
-                // 及同类文本/办公格式；其余由 validate_magic 按扩展名校验）
-                "pdf", "png", "jpg", "jpeg", "doc", "docx", "ods", "xls", "xlsx", "xlsm", "txt",
-                "md", "markdown", "csv", "tsv", "json", "log", "yaml", "yml", "xml",
+                // 及同类文本/办公格式；其余由 validate_magic 按扩展名校验）。
+                // Office 全覆盖（用户指令 2026-10-08：「合同、附件、单据这些的文件类型都支持
+                // office 类型」）：Word doc/docx、Excel xls/xlsx/xlsm/ods、PowerPoint ppt/pptx。
+                "pdf", "png", "jpg", "jpeg", "doc", "docx", "ods", "xls", "xlsx", "xlsm", "ppt",
+                "pptx", "txt", "md", "markdown", "csv", "tsv", "json", "log", "yaml", "yml", "xml",
             ],
             Self::Image | Self::Avatar => &["png", "jpg", "jpeg"],
             Self::Package | Self::Versioned => &["zip"],
@@ -212,6 +214,7 @@ pub struct FileRecord {
     #[serde(with = "common::serde_zuid::opt")]
     pub dk_function: Option<i64>,
     /// 文件分类（ck_category，可选）
+    #[serde(default, with = "common::serde_zuid::opt")]
     pub ck_category: Option<i64>,
     /// 行级授权列（bigint[]）
     #[serde(with = "common::serde_zuid::opt_seq")]

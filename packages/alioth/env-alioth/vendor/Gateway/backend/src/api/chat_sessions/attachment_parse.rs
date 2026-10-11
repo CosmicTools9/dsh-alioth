@@ -205,15 +205,11 @@ fn extract_docx(bytes: &[u8]) -> Result<String, ParseError> {
     let mut in_text = false;
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) => {
-                if local_name(e.name().as_ref()) == "t" {
-                    in_text = true;
-                }
+            Ok(Event::Start(e)) if local_name(e.name().as_ref()) == "t" => {
+                in_text = true;
             }
-            Ok(Event::Text(t)) => {
-                if in_text {
-                    out.push_str(&quick_xml::escape::unescape(&t).unwrap_or_default());
-                }
+            Ok(Event::Text(t)) if in_text => {
+                out.push_str(&quick_xml::escape::unescape(&t).unwrap_or_default());
             }
             Ok(Event::End(e)) => match local_name(e.name().as_ref()) {
                 "t" => in_text = false,

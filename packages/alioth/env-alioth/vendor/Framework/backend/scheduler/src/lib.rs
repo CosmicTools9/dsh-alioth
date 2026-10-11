@@ -9,6 +9,8 @@
 //! - 调度状态内存态（重启丢失可接受——计划定义持久，丢失触发由下次到点补偿或幂等兜底）。
 //! - 执行以 SYSTEM_USER_ID 系统身份，写实例前经 NGAC 授权（对齐 sla_timeout 先例）。
 //! - 幂等：同分钟不重复触发；业务副作用由各 handler 自行幂等（code 唯一/事务+行锁）。
+//! - 多副本安全：触发前以 `pg_try_advisory_lock`（key 由 plan_code 派生）抢占执行权，
+//!   未抢到即跳过本轮（scheduler-infra :: 调度执行多副本安全）。
 
 mod cron;
 pub mod mv_refresh;
@@ -76,6 +78,51 @@ struct PlanRow {
     cron: String,
 }
 
+/// 多副本执行安全：以 PG advisory lock 抢占计划执行权
+///
+/// 规约：scheduler-infra :: 调度执行多副本安全（change add-backend-service-discipline-gates）。
+/// 锁用双 int4 形态 `pg_try_advisory_lock(ADVISORY_NS, hashtext(plan_code))`：命名空间段
+/// 与仓内既有 bigint 单参形态（sla_timeout 的 instance_id、dialog_runtime 的
+/// hashtextextended 等）天然隔离，MUST NOT 改回单参形态（撞 key 风险）。
+/// 锁为会话级，持有期间独占一条池连接，`unlock` 显式释放后连接才归还池
+///（未 unlock 的会话锁会随连接入池残留，MUST NOT 省略）。
+struct PlanExecutionLock {
+    conn: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    key: i32,
+}
+
+/// advisory lock 命名空间段（双 int4 形态的高位）
+const ADVISORY_NS: i32 = 9187;
+
+impl PlanExecutionLock {
+    /// 抢占执行权：Ok(None) = 其他副本执行中（调用方跳过本轮）；Err = DB 故障（调用方记日志跳过）
+    async fn try_acquire(pool: &PgPool, plan_code: &str) -> Result<Option<Self>, SchedulerError> {
+        let mut conn = pool.acquire().await?;
+        let locked: Option<(bool, i32)> =
+            sqlx::query_as("SELECT pg_try_advisory_lock($1, hashtext($2)), hashtext($2)")
+                .bind(ADVISORY_NS)
+                .bind(format!("scheduler-plan:{plan_code}"))
+                .fetch_optional(&mut *conn)
+                .await?;
+        match locked {
+            Some((true, key)) => Ok(Some(Self { conn, key })),
+            _ => Ok(None),
+        }
+    }
+
+    /// 显式释放锁并归还连接；unlock 失败仅 warn（连接关闭/重建时会话锁由 PG 自动回收）
+    async fn unlock(mut self) {
+        if let Err(e) = sqlx::query("SELECT pg_advisory_unlock($1, $2)")
+            .bind(ADVISORY_NS)
+            .bind(self.key)
+            .execute(&mut *self.conn)
+            .await
+        {
+            log::warn!("[scheduler] advisory unlock 失败（会话终结时锁自动释放）: {e}");
+        }
+    }
+}
+
 /// 通用调度服务
 pub struct SchedulerService {
     pool: PgPool,
@@ -109,6 +156,12 @@ impl SchedulerService {
     pub async fn register(&self, handler: Arc<dyn ScheduledHandler>) {
         let code = handler.plan_code().to_string();
         self.handlers.write().await.insert(code, handler);
+    }
+
+    /// 调度器持有的连接池（ns 组合根在 `register_ns_schedules` 内构造业务 handler 用）。
+    /// 只读借用——不改变调度器语义。
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// 启动调度循环（后台 tokio task，不阻塞）
@@ -165,6 +218,20 @@ impl SchedulerService {
                 last.insert(plan.id, now_minute);
             }
 
+            // 多副本安全：advisory lock 抢占执行权（进程内幂等 MUST NOT 作为唯一防重）
+            let lock = match PlanExecutionLock::try_acquire(&self.pool, &plan.code).await {
+                Ok(Some(l)) => l,
+                Ok(None) => continue, // 其他副本执行中，跳过本轮
+                Err(e) => {
+                    log::error!(
+                        "[scheduler] plan {} advisory lock 获取失败: {}",
+                        plan.code,
+                        e
+                    );
+                    continue;
+                }
+            };
+
             // 找 handler
             let handler = {
                 let handlers = self.handlers.read().await;
@@ -189,6 +256,7 @@ impl SchedulerService {
                 if let Err(e) = self.record_execution(&ctx, &result).await {
                     log::error!("[scheduler] plan {} 执行实例写入失败: {}", plan.code, e);
                 }
+                lock.unlock().await;
                 continue;
             };
 
@@ -202,6 +270,7 @@ impl SchedulerService {
                     log::error!("[scheduler] plan {} handler 执行失败: {}", plan.code, e);
                 }
             }
+            lock.unlock().await;
         }
         Ok(())
     }
@@ -267,5 +336,27 @@ mod tests {
         let handlers = svc.handlers.read().await;
         assert_eq!(handlers.len(), 1);
         assert!(handlers.contains_key("t"));
+    }
+
+    /// 多副本安全集成测试：同 plan_code 第二副本 MUST 抢不到锁；unlock 后 MUST 可再抢
+    #[tokio::test]
+    async fn advisory_lock_excludes_second_replica() {
+        let Some(pool) = common::testing::try_connect_test_db().await else {
+            return; // 测试库不可用则跳过（try_connect_test_db 语义）
+        };
+        let first = PlanExecutionLock::try_acquire(&pool, "test-multi-replica")
+            .await
+            .expect("first acquire ok")
+            .expect("first replica acquires lock");
+        let second = PlanExecutionLock::try_acquire(&pool, "test-multi-replica")
+            .await
+            .expect("second acquire ok");
+        assert!(second.is_none(), "第二副本 MUST 抢不到锁（多副本防重）");
+        first.unlock().await;
+        let third = PlanExecutionLock::try_acquire(&pool, "test-multi-replica")
+            .await
+            .expect("third acquire ok");
+        assert!(third.is_some(), "unlock 后 MUST 可再次抢占");
+        third.unwrap().unlock().await;
     }
 }

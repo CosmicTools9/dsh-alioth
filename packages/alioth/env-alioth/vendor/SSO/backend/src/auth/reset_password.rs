@@ -188,8 +188,10 @@ pub async fn confirm_reset(
         "message": "Password reset successful. Please log in again."
     }));
     let response = crate::auth::jwt::clear_access_cookie(response, None);
+    let response = crate::auth::jwt::clear_refresh_cookie(response, None);
 
-    crate::auth::jwt::clear_refresh_cookie(response, None)
+    // 同批清 CSRF（design.md §6：登出与吊销同批清除）
+    crate::auth::jwt::clear_csrf_cookie(response, None)
 }
 
 #[derive(serde::Deserialize)]

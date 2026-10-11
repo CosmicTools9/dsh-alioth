@@ -7,6 +7,10 @@ license.workspace = true
 
 [dependencies]
 actix-web = { workspace = true }
+# NGAC 决策核心唯一实现（extract-ngac-decision-core）：conditions 求值/合并/决策序
+ngac-decision = { path = "../ngac-decision" }
+# NGAC 宿主侧求值器 + 决策输入 SQL 单一定义（extract-ngac-decision-host）
+ngac-host = { path = "../ngac-host" }
 actix-cors = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -33,6 +37,9 @@ sha1 = "0.11"
 sha2 = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
+# CSRF 单实现（src/auth.rs）：常量时间比较 + 256bit CSPRNG
+subtle = { workspace = true }
+rand = { workspace = true }
 percent-encoding = "2"
 uuid = { workspace = true }
 # 生产依赖：`src/plan_execution.rs`（record_plan_execution/record_slice_flip，被 schedule/scheduler 调用）

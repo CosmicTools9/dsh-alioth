@@ -1,18 +1,42 @@
-//! LLM 辅助设施（migrate-dmn-assist-to-framework）
+//! LLM 辅助设施（migrate-dmn-assist-to-framework；consolidate-ai-chat-chain 4.0 收敛为单实现）
 //!
-//! ns 服务化部署（AVIC commitment 等经 `/service/{svc}` scope 委托
-//! `approval::configure_routes`）缺 dmn-assist——该端点原仅 Gateway 主
-//! `approval_formula.rs`（依赖 Gateway chat_sessions DbLlmConfigAdapter）。本模块把
-//! LLM 服务构建下沉 Framework：读 `isahl."zc_id_prot-llm_config"`（enabled 行，
-//! enc_fields.api_key 解密）+ env 兜底 → 构建 `llm::LlmService`。
-//! DSL 表达式校验 + JSON 提取亦下沉（dmn-assist cell 校验用）。
+//! 本模块是**唯一**的 LLM 服务装配实现：读 `isahl."zc_id_prot-llm_config"`
+//! （生效行经 `common::config_resolution` 解析，enc_fields.api_key AES-256-GCM 解密），
+//! 加 env 兜底后构建 `llm::LlmService`（含 model/flash_model 派生的角色映射与
+//! 「未配置」哨兵）。
+//! 消费方：Gateway `chat_sessions::adapters::db_llm_config`（`DbLlmConfigAdapter::load_service`
+//! 委托本模块）与 ns 服务化部署（AVIC commitment 等经 `/service/{svc}` scope 委托
+//! `approval::configure_routes`）的 dmn-assist。MUST NOT 在别处复制装配逻辑。
+//! DSL 表达式校验 + JSON 提取亦在此（dmn-assist cell 校验用）。
 
 use llm::{GenerationParams, LlmProvider, LlmService, LlmServiceConfig, ReasoningEffort};
 use sqlx::PgPool;
 
-/// 从 provider code + 已解密 api_key + settings 构建 `LlmService`。
-/// （迁移自 Gateway chat_sessions/db_llm_config.rs build_llm_service——行为一致，
-/// 防分叉：Gateway 版已改为委托 Framework 版。）
+/// 「LLM 未配置」内部哨兵前缀（fix-llm-unconfigured-visibility）。
+///
+/// 只在**进程内**错误串上流转，供端点受理侧分类为 `LLM_NOT_CONFIGURED`；
+/// MUST NOT 进入任何用户可见文本——落库/回响应前用 `visible_message()` 剥离。
+/// 配置缺失是用户可自行修复的前提缺失，与 DB/SQL 内部错误（`chat-ai-error-sanitized`
+/// 的泛化面）不同，故以哨兵显式区分。
+pub const LLM_UNCONFIGURED_MARKER: &str = "llm-unconfigured:";
+
+/// 是否为「LLM 未配置」类错误（仅哨兵判定，不做文案匹配）。
+pub fn is_unconfigured(err: &str) -> bool {
+    err.starts_with(LLM_UNCONFIGURED_MARKER)
+}
+
+/// 剥离内部哨兵 —— 用户可见文本入口（用户可见串 MUST NOT 含哨兵）。
+pub fn visible_message(err: &str) -> &str {
+    err.strip_prefix(LLM_UNCONFIGURED_MARKER)
+        .unwrap_or(err)
+        .trim()
+}
+
+/// 从 provider code + 已解密 api_key + settings 构建 `LlmService`（唯一实现）。
+/// `load_llm_service`（DB 优先/env 兜底）与系统配置「测试连接」端点共用——
+/// 测试端点从表单草稿或已存行（服务端解密）拿到同构输入后调用本函数，
+/// 禁止复制配置解析逻辑（REUSE_FIRST）。
+/// `env_fallback`：DB settings 缺失字段时的环境变量兜底（model/flash_model/base_url）。
 pub fn build_llm_service(
     provider_code: &str,
     api_key: &str,
@@ -82,12 +106,16 @@ pub fn build_llm_service(
     };
 
     if api_key.is_empty() {
-        return Err(
-            "LLM_API_KEY not configured. Add an LLM provider in System Config > LLM or set the LLM_API_KEY environment variable."
-                .to_string(),
-        );
+        return Err(format!(
+            "{} LLM_API_KEY not configured. Add an LLM provider in System Config > LLM or set the LLM_API_KEY environment variable.",
+            LLM_UNCONFIGURED_MARKER
+        ));
     }
 
+    // roles 由 model / flash_model 派生——必须在结构体字面量移动两者**之前**计算
+    // （2026-09-10 修复：HEAD 上 roles 内联在字面量里，导致 model/flash_model 先被
+    // 移入字段、再被借用 → E0382，整个 alioth-gateway lib 无法编译）。
+    let roles = LlmServiceConfig::resolve_roles(&model, &flash_model);
     let config = LlmServiceConfig {
         provider,
         api_key: api_key.to_string(),
@@ -97,7 +125,7 @@ pub fn build_llm_service(
         timeout_seconds,
         max_retries,
         generation_params,
-        roles: Default::default(),
+        roles,
     };
 
     LlmService::new(config).map_err(|e| format!("Failed to init LLM: {e}"))
@@ -122,7 +150,9 @@ fn map_provider(code: &str) -> LlmProvider {
 
 /// 加载 LLM 服务：DB `zc_id_prot-llm_config` enabled 行优先（enc_fields.api_key
 /// AES-256-GCM 解密），无行时 env 兜底（LLM_PROVIDER/LLM_API_KEY/LLM_MODEL/
-/// LLM_BASE_URL/LLM_FLASH_MODEL）。配置缺失/解密失败均 Err（调用方 fail-closed）。
+/// LLM_BASE_URL/LLM_FLASH_MODEL）。配置缺失/解密失败均 Err（调用方 fail-closed）；
+/// 「未配置」类错误串带 `LLM_UNCONFIGURED_MARKER` 哨兵，供调用方分类
+/// （`is_unconfigured`），回用户可见文本前 MUST `visible_message` 剥离。
 pub async fn load_llm_service(pool: &PgPool) -> Result<LlmService, String> {
     // ── Env var defaults (lowest priority) ──
     let env_provider = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "deepseek".to_string());
@@ -132,43 +162,25 @@ pub async fn load_llm_service(pool: &PgPool) -> Result<LlmService, String> {
     let env_flash_model =
         std::env::var("LLM_FLASH_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".to_string());
 
-    // ── DB 行（highest priority）──
-    let row = sqlx::query_as::<
-        _,
-        (
-            Option<String>,
-            Option<serde_json::Value>,
-            Option<serde_json::Value>,
-        ),
-    >(
-        r#"SELECT settings->>'provider' as provider_code, enc_fields, settings
-           FROM isahl."zc_id_prot-llm_config"
-           WHERE (settings->>'enabled')::boolean IS NOT FALSE AND deleted_at IS NULL
-           ORDER BY (settings->>'is_default')::boolean DESC, updated_at DESC
-           LIMIT 1"#,
+    // ── DB 行（highest priority；生效解析唯一实现 = `common::config_resolution`）──
+    let active = common::config_resolution::resolve_active(
+        pool,
+        common::config_resolution::ConfigFamily::Llm,
+        &system_config::crypto::decrypt_prefixed,
     )
-    .fetch_optional(pool)
     .await
     .map_err(|e| format!("DB error: {e}"))?;
 
-    let (provider_code, api_key, settings) = match row {
-        Some((provider_code, enc_fields, settings)) => {
-            let ak = enc_fields
-                .as_ref()
-                .and_then(|c| c.get("api_key").and_then(|v| v.as_str()))
+    let (provider_code, api_key, settings) = match active {
+        Some(cfg) => {
+            let ak = cfg
+                .credentials
+                .get("api_key")
+                .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
-                .map(|s| {
-                    if let Some(payload) = s.strip_prefix("enc:") {
-                        system_config::crypto::decrypt(payload).unwrap_or_else(|_| {
-                            common::telemetry::warn!("llm: api_key 解密失败（按明文处理）");
-                            s.to_string()
-                        })
-                    } else {
-                        s.to_string()
-                    }
-                })
+                .map(String::from)
                 .unwrap_or(env_api_key.clone());
-            (provider_code.unwrap_or(env_provider), ak, settings)
+            (cfg.provider.unwrap_or(env_provider), ak, Some(cfg.settings))
         }
         None => (env_provider, env_api_key, None),
     };
@@ -284,5 +296,55 @@ mod tests {
     fn extract_json_tolerates_fences() {
         let out = extract_json("```json\n{\"expression\": \"a > 1\"}\n```").unwrap();
         assert!(out.contains("a > 1"));
+    }
+
+    /// 4.0：缺 api_key ⇒ 错误串带未配置哨兵（端点可分类为 `LLM_NOT_CONFIGURED`）。
+    #[test]
+    fn unconfigured_error_carries_sentinel() {
+        let err = match build_llm_service("deepseek", "", None, None) {
+            Ok(_) => panic!("缺 api_key MUST fail-closed"),
+            Err(e) => e,
+        };
+        assert!(err.starts_with(LLM_UNCONFIGURED_MARKER), "{err}");
+        assert!(is_unconfigured(&err), "{err}");
+        assert_eq!(
+            visible_message(&err),
+            "LLM_API_KEY not configured. Add an LLM provider in System Config > LLM or set the LLM_API_KEY environment variable."
+        );
+        // 无哨兵文本原样透传（不误伤）
+        assert!(!is_unconfigured("DB error: connection refused"));
+        assert_eq!(visible_message("plain failure"), "plain failure");
+    }
+
+    /// 4.0：`roles` 由 model/flash_model 派生（`resolve_roles`），MUST NOT 为 `Default` 空表。
+    #[test]
+    fn roles_derive_from_model_and_flash_model() {
+        let settings = serde_json::json!({
+            "model": "test-main-model",
+            "flash_model": "test-flash-model",
+        });
+        let service = build_llm_service("deepseek", "sk-test", Some(&settings), None)
+            .expect("完整输入应构建成功");
+        let config = service.config();
+        assert_eq!(config.model, "test-main-model");
+        assert_eq!(config.flash_model, "test-flash-model");
+        let expected = LlmServiceConfig::resolve_roles(&config.model, &config.flash_model);
+        assert_eq!(
+            config.roles.len(),
+            expected.len(),
+            "roles 必须由 model/flash_model 派生，不得为 Default 空表"
+        );
+        assert!(!config.roles.is_empty(), "Default = 空表 ⇒ 角色映射失效");
+        for role in [
+            llm::ModelRole::Slow,
+            llm::ModelRole::Task,
+            llm::ModelRole::Vision,
+            llm::ModelRole::Advisor,
+            llm::ModelRole::Default,
+        ] {
+            let got = config.roles.get(&role).expect("resolve_roles 补齐全部角色");
+            let want = expected.get(&role).expect("resolve_roles 补齐全部角色");
+            assert_eq!(got.model, want.model, "角色 {role:?} 的模型名必须派生");
+        }
     }
 }

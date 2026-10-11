@@ -4,6 +4,7 @@
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::error::AliothError;
+use common::search::like_pattern;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 
@@ -20,6 +21,34 @@ pub struct EnrichedListQuery {
     /// 模糊搜索：节点名（实例 notice）/ 申请人姓名 ILIKE
     #[serde(default)]
     pub q: Option<String>,
+    /// 实例 code 白名单（逗号分隔，trim 后去空项，上限 20 项）。
+    /// 用途：管理端「注册审批队列」限定认证域 code（注册双通道），避免拉全量后本地过滤。
+    #[serde(default)]
+    pub codes: Option<String>,
+}
+
+/// `codes` 白名单上限（超出即 400——静默截断会让调用方以为过滤生效）。
+const CODES_MAX: usize = 20;
+
+/// 解析 `codes` 查询参数：逗号分隔 → trim → 去空项；超限或全空 → Validation。
+fn parse_codes(raw: Option<&str>) -> Result<Option<Vec<String>>, AliothError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let items: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if items.is_empty() {
+        return Ok(None);
+    }
+    if items.len() > CODES_MAX {
+        return Err(AliothError::Validation {
+            field: "codes".into(),
+            message: format!("too many codes: {} > {}", items.len(), CODES_MAX),
+        });
+    }
+    Ok(Some(items))
 }
 
 #[derive(Debug, FromRow)]
@@ -27,11 +56,13 @@ pub struct EnrichedListQuery {
 struct EnrichedRow {
     pub id: i64,
     // 列可空（实例 notice 允许 NULL）：Option 解码防御，避免共享库历史 NULL 行
-    // 触发整表 500（2026-08-26 实证：employee_onboarding 遗留 NULL notice 行）
+    // 触发整表 500（2026-08-26 实证：存量 NULL notice 行）
     pub node_name: Option<String>,
     pub code: Option<String>,
     pub fk_approve: Option<i64>,
     pub fk_subject: Option<i64>,
+    /// 重提链来源实例 id（`meta.original_id` 派生；NULL = 非重提）
+    pub original_id: Option<i64>,
     pub comments: Option<String>,
     #[allow(dead_code)]
     pub lk_urgent: Option<i64>,
@@ -58,13 +89,17 @@ pub struct EnrichedItem {
     #[serde(default)]
     #[serde(with = "common::serde_zuid::opt")]
     pub fk_subject: Option<i64>,
+    /// 重提链：再申请来源实例 id（zuid ⇒ JSON 字符串；无链为 null）
+    #[serde(default)]
+    #[serde(with = "common::serde_zuid::opt")]
+    pub original_id: Option<i64>,
     pub comments: Option<String>,
     pub applicant: Option<String>,
     pub status: String,
     pub result: String,
     pub priority: Option<String>,
-    #[serde(default)]
-    #[serde(with = "common::serde_zuid::opt")]
+    /// SLA 时长（小时，**非 id 语义** ⇒ 线上为数字，与 `approval-analytics-api` 的
+    /// `slaHours: 24` 同形；ID_JSON_PRECISION 只覆盖 id 语义键，原 serde_zuid 属过施加）
     pub sla: Option<i64>,
     pub timeline: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -74,11 +109,10 @@ pub struct EnrichedItem {
 #[derive(Debug, Serialize)]
 struct EnrichedListResponse {
     pub items: Vec<EnrichedItem>,
-    #[serde(with = "common::serde_zuid")]
+    // 计数/页码非 id 语义 ⇒ 线上为数字（前端 `PagedResult.total/page/pageSize: number` 同形；
+    // 原 serde_zuid 属过施加，唯一受害面是「声明 number 而实际收到 string」）
     pub total: i64,
-    #[serde(with = "common::serde_zuid")]
     pub page: i64,
-    #[serde(with = "common::serde_zuid")]
     pub page_size: i64,
 }
 
@@ -100,6 +134,15 @@ pub async fn list_enriched(
         }
     }
     let user_id = common::context::require_auth(&req)?;
+    // `scope=all` = 管理视角全量（跨 operator 可见）——MUST 持 admin UA，否则 403。
+    // 判据唯一实现 = common::permissions::is_admin_user（与 require_resource_access 的
+    // admin 兜底同源）；fail-closed：判定失败即拒绝，不回落任何「策略缺失即放行」分支。
+    if scope_key == "all" && !common::permissions::is_admin_user(pool.get_ref(), user_id).await? {
+        return Err(AliothError::Forbidden(
+            "scope=all 仅限 admin：非管理员不可读取全量审批实例".into(),
+        ));
+    }
+    let codes = parse_codes(query.codes.as_deref())?;
     if let Some(s) = &query.status {
         if ![
             "pending",
@@ -124,7 +167,7 @@ pub async fn list_enriched(
     let q_pattern = query
         .q
         .as_deref()
-        .map(|q| format!("%{}%", q.trim().replace('%', "")))
+        .map(|q| like_pattern(q.trim()))
         .filter(|p| p != "%%");
 
     // Single CTE: derive status in SQL, apply ALL filters, paginate, count via window function
@@ -152,11 +195,41 @@ pub async fn list_enriched(
                                   WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL)
                     ORDER BY oe.created_at LIMIT 1) AS fk_approve,
                    i.fk_subject, i.comments,
+                   -- 重提链：创建时写入的 meta.original_id（「再申请」入口；免 DDL 扩展槽）。
+                   -- 加数字形态守卫 ⇒ 手工写入的非数字值退化为 NULL 而非整表 500。
+                   CASE WHEN i.meta->>'original_id' ~ '^[0-9]+$'
+                        THEN (i.meta->>'original_id')::bigint END AS original_id,
                    ev.lk_urgent, ev.timeline,
-                   COALESCE(e.notice, u.display_name, u.name, u.username) AS applicant_name,
+                   COALESCE(e.notice, u.display_name, u.username) AS applicant_name,
                    lu.notice AS priority_label,
                    sd.mark::bigint AS sla_hours,
                    COALESCE(st.code, 'pending') AS derived_status,
+                   -- 置顶分组：注册 / 认证 / 授权的相关审批恒定优先（用户裁决 2026-09-27：
+                   -- 「我的审批的首个记录就应该是用户注册、认证、授权的相关审批」）。
+                   -- 判据 = 业务实例行（`_t_='实例'`，同 advance.rs 的模板/接线行判别口径）
+                   -- ∪ 实例 code（注册双通道写入的 code）∪ 实例事件所属流程为三条认证域流程
+                   -- （经既有归属桥链：实例 →操作↔事件桥→ 事件 →归属桥→ 流程，与同查询
+                   -- `fk_approve` 的解析同构）。**不含**流程节点模板行（`_t_='范例'`/NULL）
+                   -- ——否则模型种子物化的 N1/N2/N3 节点会被误置顶。
+                   CASE WHEN i._t_ = '实例'
+                             AND (
+                               i.code IN ('user-register-approval', 'external-subject-register-approval')
+                               OR EXISTS (
+                                    SELECT 1
+                                    FROM isahl.zc_id_operation_rr_event ev4
+                                    JOIN isahl.zc_id_process_rr_operation rro4
+                                      ON rro4.ref_right = ev4.ref_left AND rro4.deleted_at IS NULL
+                                    JOIN isahl.zc_id_process p4
+                                      ON p4.id = rro4.ref_left AND p4.deleted_at IS NULL
+                                    WHERE ev4.deleted_at IS NULL
+                                      AND p4.code IN ('FLOW-USER-VERIFY', 'FLOW-AUTHORIZATION', 'FLOW-EXTERNAL-SUBJECT')
+                                      AND ev4.ref_right = (SELECT oe4.ref_right
+                                                             FROM isahl.zc_id_operation_rr_event oe4
+                                                            WHERE oe4.ref_left = i.id AND oe4.deleted_at IS NULL
+                                                            ORDER BY oe4.created_at LIMIT 1)
+                                  )
+                             )
+                        THEN 0 ELSE 1 END AS sort_group,
                    i.created_at, i.updated_at
             FROM src i
             -- 员工主体行按 fk_user（用户 id → 员工）解析；兼容少量历史行直接存员工 id
@@ -218,12 +291,7 @@ pub async fn list_enriched(
                         WHERE inc.pos_id = br2.ref_right AND inc.uid = $3
                       )
                   )
-                  OR EXISTS (
-                    SELECT 1 FROM isahl_auth.ngac_user_rr_attribute ur
-                    JOIN isahl_auth.ngac_user_attribute ua ON ua.id = ur.fk_user_attribute
-                    WHERE ur.fk_user = $3 AND ua.o_name = 'admin'
-                      AND ur.deleted_at IS NULL AND ua.deleted_at IS NULL
-                  )
+                  OR isahl_auth.is_admin($3)
                 ))
               )
         )
@@ -231,7 +299,9 @@ pub async fn list_enriched(
         FROM base
         WHERE ($1::text IS NULL OR derived_status = $1)
           AND ($4::text IS NULL OR node_name ILIKE $4 OR applicant_name ILIKE $4)
-        ORDER BY created_at DESC
+          -- $7: 实例 code 白名单（管理端认证域队列用；NULL = 不过滤）
+          AND ($7::text[] IS NULL OR code = ANY($7::text[]))
+        ORDER BY sort_group, created_at DESC
         LIMIT $5 OFFSET $6
         "#
     );
@@ -242,6 +312,7 @@ pub async fn list_enriched(
         .bind(q_pattern.as_deref()) // $4: q ILIKE pattern (None = no filter)
         .bind(page_size) // $5: limit
         .bind(offset) // $6: offset
+        .bind(codes.as_deref()) // $7: instance code whitelist (None = no filter)
         .fetch_all(pool.get_ref())
         .await
         .map_err(|e| AliothError::Database(e.to_string()))?;
@@ -262,6 +333,7 @@ pub async fn list_enriched(
                 code: r.code,
                 fk_approve: r.fk_approve,
                 fk_subject: r.fk_subject,
+                original_id: r.original_id,
                 comments: r.comments,
                 applicant: r.applicant_name,
                 status: r.derived_status,

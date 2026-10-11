@@ -4,6 +4,7 @@
 //! enable / unlock / reset-password 子端点。
 
 use actix_web::{web, HttpRequest, HttpResponse};
+use common::search::like_pattern;
 use serde::{Deserialize, Serialize};
 use sqlx::{AssertSqlSafe, PgPool};
 
@@ -20,7 +21,8 @@ pub struct UserResponse {
     pub display_name: Option<String>,
     pub status: Option<String>,
     pub is_active: Option<bool>,
-    pub is_ldap_user: Option<bool>,
+    /// LDAP 绑定原文（非 LDAP 账号为 null）；判据 = `ldap IS NOT NULL`
+    pub ldap: Option<serde_json::Value>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
@@ -79,6 +81,14 @@ pub async fn list_users(
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
     let q = search.q.as_deref().unwrap_or("").trim();
+    // 搜索模式：空串保持 `$1 = ''` 守卫（不过滤；若空串也绑定转义模式则守卫失效，
+    // NULL username/display_name 行会被误排除）；非空时绑定 LIKE 转义模式
+    //（元字符 `\ % _` 按字面量匹配，单源 = `common::search::like_pattern`）。
+    let q_pattern = if q.is_empty() {
+        String::new()
+    } else {
+        like_pattern(q)
+    };
     // 非法筛选值归一为空串（不过滤）——SQL 侧以 $='' 短路，避免整表被排除
     // （等价于原 `match … { Some(s @ ("active" | "disabled")) => s, _ => "" }`）
     let status = search
@@ -96,35 +106,48 @@ pub async fn list_users(
         _ => "ASC",
     };
 
-    // 排序列白名单映射（ORDER BY 不可参数化——列名/方向禁止拼接用户输入）
+    // 排序列白名单映射（ORDER BY 不可参数化——列名/方向禁止拼接用户输入；表达式
+    // 均带表别名 u，与下方投影查询的 FROM 别名一致）
     let sort_col = match search.sort_by.as_deref() {
-        Some("name") => "LOWER(COALESCE(display_name, name, username, ''))",
-        Some("email") => "LOWER(COALESCE(email, ''))",
-        Some("created_at") => "created_at",
+        Some("name") => "LOWER(COALESCE(u.display_name, u.username, ''))",
+        Some("email") => "LOWER(COALESCE((SELECT e.email FROM isahl_auth.auth_user_emails e WHERE e.fk_user = u.id AND e.deleted_at IS NULL ORDER BY e.is_primary DESC, e.id LIMIT 1), ''))",
+        Some("created_at") => "u.created_at",
         // status 排序与前端启用判定一致（is_active + status 合成布尔）
-        Some("status") => "(is_active AND COALESCE(status, 'active') <> 'disabled')",
-        Some("type") => "COALESCE(is_ldap_user, false)",
-        _ => "id",
+        Some("status") => "(u.is_active AND COALESCE(u.status::text, 'active') <> 'disabled')",
+        Some("type") => "(u.ldap IS NOT NULL)",
+        _ => "u.id",
     };
-    let order_by = format!("{sort_col} {dir}, id {dir}");
+    let order_by = format!("{sort_col} {dir}, u.id {dir}");
     // 搜索/筛选条件走 NULL 短路（$='' 不过滤），单条 SQL 覆盖全部组合。
     // 注入审计（AssertSqlSafe 前置条件）：order_by 仅由 sort_col/dir 组成，
     // 二者均为上方 match 白名单产出的 &'static str，用户输入不进 SQL 文本。
     let users = sqlx::query_as::<_, UserResponse>(sqlx::AssertSqlSafe(format!(
         r#"
-        SELECT id, name, username, email, display_name, status, is_active, is_ldap_user, created_at, updated_at
-        FROM isahl_auth.auth_users
-        WHERE ($1 = '' OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%'
-               OR username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
-          AND ($2 = '' OR ($2 = 'active' AND is_active AND COALESCE(status, 'active') <> 'disabled')
-               OR ($2 = 'disabled' AND NOT (is_active AND COALESCE(status, 'active') <> 'disabled')))
-          AND ($3 = '' OR ($3 = 'ldap' AND COALESCE(is_ldap_user, false))
-               OR ($3 = 'local' AND NOT COALESCE(is_ldap_user, false)))
+        SELECT u.id,
+               COALESCE(u.display_name, u.username) AS name,
+               u.username,
+               (SELECT e.email FROM isahl_auth.auth_user_emails e
+                 WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+                 ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email,
+               u.display_name,
+               u.status::text AS status,
+               u.is_active,
+               u.ldap,
+               u.created_at, u.updated_at
+        FROM isahl_auth.auth_users u
+        WHERE ($1 = '' OR u.username ILIKE $1 OR u.display_name ILIKE $1
+               OR EXISTS (SELECT 1 FROM isahl_auth.auth_user_emails e
+                          WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+                            AND e.email ILIKE $1))
+          AND ($2 = '' OR ($2 = 'active' AND u.is_active AND COALESCE(u.status::text, 'active') <> 'disabled')
+               OR ($2 = 'disabled' AND NOT (u.is_active AND COALESCE(u.status::text, 'active') <> 'disabled')))
+          AND ($3 = '' OR ($3 = 'ldap' AND u.ldap IS NOT NULL)
+               OR ($3 = 'local' AND u.ldap IS NULL))
         ORDER BY {order_by}
         LIMIT $4 OFFSET $5
         "#,
     )))
-    .bind(q)
+    .bind(q_pattern.as_str())
     .bind(status)
     .bind(user_type)
     .bind(limit)
@@ -134,16 +157,18 @@ pub async fn list_users(
 
     let total: i64 = sqlx::query_scalar(
         r#"
-        SELECT COUNT(*) FROM isahl_auth.auth_users
-        WHERE ($1 = '' OR name ILIKE '%' || $1 || '%' OR email ILIKE '%' || $1 || '%'
-               OR username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%')
-          AND ($2 = '' OR ($2 = 'active' AND is_active AND COALESCE(status, 'active') <> 'disabled')
-               OR ($2 = 'disabled' AND NOT (is_active AND COALESCE(status, 'active') <> 'disabled')))
-          AND ($3 = '' OR ($3 = 'ldap' AND COALESCE(is_ldap_user, false))
-               OR ($3 = 'local' AND NOT COALESCE(is_ldap_user, false)))
+        SELECT COUNT(*) FROM isahl_auth.auth_users u
+        WHERE ($1 = '' OR u.username ILIKE $1 OR u.display_name ILIKE $1
+               OR EXISTS (SELECT 1 FROM isahl_auth.auth_user_emails e
+                          WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+                            AND e.email ILIKE $1))
+          AND ($2 = '' OR ($2 = 'active' AND u.is_active AND COALESCE(u.status::text, 'active') <> 'disabled')
+               OR ($2 = 'disabled' AND NOT (u.is_active AND COALESCE(u.status::text, 'active') <> 'disabled')))
+          AND ($3 = '' OR ($3 = 'ldap' AND u.ldap IS NOT NULL)
+               OR ($3 = 'local' AND u.ldap IS NULL))
         "#,
     )
-    .bind(q)
+    .bind(q_pattern.as_str())
     .bind(status)
     .bind(user_type)
     .fetch_one(pool.get_ref())
@@ -205,34 +230,76 @@ pub async fn create_user(
             }
         };
 
+    // 事务：用户行 + 首邮箱行（唯一存储 = auth_user_emails）原子落库
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            log::error!("create_user: begin tx error: {}", e);
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "Failed to create user"}));
+        }
+    };
+
+    // username 为唯一身份锚点；请求 `name` 值落 username（显示名读径 =
+    // COALESCE(display_name, username)）
     let result = sqlx::query_as::<_, (i64,)>(
         r#"
-        INSERT INTO isahl_auth.auth_users (name, email, password_hash, display_name, created_at, updated_at, created_by_id)
-        VALUES ($1, $2, $3, $4, NOW(), NOW(), $5)
+        INSERT INTO isahl_auth.auth_users (username, password_hash, display_name, created_at, updated_at, created_by_id)
+        VALUES ($1, $2, $3, NOW(), NOW(), $4)
         RETURNING id
         "#,
     )
     .bind(&body.name)
-    .bind(&body.email)
     .bind(&password_hash)
     .bind(&body.display_name)
     .bind(admin_id)
-    .fetch_one(pool.get_ref())
+    .fetch_one(&mut *tx)
     .await;
 
-    match result {
-        Ok((id,)) => HttpResponse::Created().json(serde_json::json!({
-            "id": id.to_string(),
-            "name": body.name,
-            "email": body.email,
-            "display_name": body.display_name,
-        })),
+    let id = match result {
+        Ok((id,)) => id,
         Err(e) => {
             log::error!("create_user DB error: {}", e);
-            HttpResponse::InternalServerError()
-                .json(serde_json::json!({"error": "Failed to create user"}))
+            let _ = tx.rollback().await;
+            return HttpResponse::InternalServerError()
+                .json(serde_json::json!({"error": "Failed to create user"}));
         }
+    };
+
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails（首邮箱 is_primary = TRUE）
+    if let Err(e) = sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) \
+         ON CONFLICT (fk_user, email) WHERE deleted_at IS NULL DO UPDATE \
+             SET is_primary = TRUE, deleted_at = NULL, updated_at = NOW()",
+    )
+    .bind(id)
+    .bind(&body.email)
+    .execute(&mut *tx)
+    .await
+    {
+        log::error!("create_user email insert error: {}", e);
+        let _ = tx.rollback().await;
+        return HttpResponse::InternalServerError()
+            .json(serde_json::json!({"error": "Failed to create user"}));
     }
+
+    // NGAC 基础身份接线（approval-endpoint-gates::user-ua-on-all-provisioning-channels）：
+    // 管理员建号即挂 user UA（此前仅下次 Gateway 重启兜底）；与建号同事务，best-effort。
+    let _ = common::registration_approval::ensure_user_ua(&mut tx, id).await;
+
+    if let Err(e) = tx.commit().await {
+        log::error!("create_user commit error: {}", e);
+        return HttpResponse::InternalServerError()
+            .json(serde_json::json!({"error": "Failed to create user"}));
+    }
+
+    HttpResponse::Created().json(serde_json::json!({
+        "id": id.to_string(),
+        "name": body.name,
+        "email": body.email,
+        "display_name": body.display_name,
+    }))
 }
 
 /// GET /api/admin/users/{id}
@@ -252,9 +319,19 @@ pub async fn get_user(
 
     let user = sqlx::query_as::<_, UserResponse>(
         r#"
-        SELECT id, name, username, email, display_name, status, is_active, is_ldap_user, created_at, updated_at
-        FROM isahl_auth.auth_users
-        WHERE id = $1
+        SELECT u.id,
+               COALESCE(u.display_name, u.username) AS name,
+               u.username,
+               (SELECT e.email FROM isahl_auth.auth_user_emails e
+                 WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+                 ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email,
+               u.display_name,
+               u.status::text AS status,
+               u.is_active,
+               u.ldap,
+               u.created_at, u.updated_at
+        FROM isahl_auth.auth_users u
+        WHERE u.id = $1
         "#,
     )
     .bind(user_id_param)
@@ -289,35 +366,32 @@ pub async fn update_user(
     let user_id_param = path.into_inner();
 
     // Build dynamic UPDATE — only set fields that were provided
-    let mut sets: Vec<&str> = Vec::new();
-    if body.name.is_some() {
-        sets.push("name = $2");
-    }
-    if body.email.is_some() {
-        sets.push("email = $3");
-    }
-    if body.display_name.is_some() {
-        sets.push("display_name = $4");
-    }
-    if body.status.is_some() {
-        sets.push("status = $5");
-    }
-    if body.is_active.is_some() {
-        sets.push("is_active = $6");
-    }
-    if sets.is_empty() {
-        return HttpResponse::BadRequest()
-            .json(serde_json::json!({"error": "No fields to update"}));
-    }
-    sets.push("updated_at = NOW()");
-    sets.push("updated_by_id = $7");
-    let sql = format!(
-        "UPDATE isahl_auth.auth_users SET {} WHERE id = $1",
-        sets.join(", ")
-    );
+    // `name` 与 `display_name` 同落 display_name 列（显示名读径 = COALESCE(display_name,
+    // username)）；两者均提供时以 display_name 优先。
+    let display_name_new = body.display_name.as_deref().or(body.name.as_deref());
+    // 静态分派（列集可枚举 ⇒ 不拼列位；`dynamic-table-name` 门禁要求编译期静态 SQL）：
+    // 三个可选字段的 2^3 组合各对应一条完整静态语句（$1..$7 绑定位序不变）。
+    let update_stmt: &'static str = match (
+        display_name_new.is_some(),
+        body.status.is_some(),
+        body.is_active.is_some(),
+    ) {
+        (true, true, true) => "UPDATE isahl_auth.auth_users SET display_name = $2, status = $5::isahl_auth.auth_user_status, is_active = $6, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (true, true, false) => "UPDATE isahl_auth.auth_users SET display_name = $2, status = $5::isahl_auth.auth_user_status, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (true, false, true) => "UPDATE isahl_auth.auth_users SET display_name = $2, is_active = $6, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (true, false, false) => "UPDATE isahl_auth.auth_users SET display_name = $2, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (false, true, true) => "UPDATE isahl_auth.auth_users SET status = $5::isahl_auth.auth_user_status, is_active = $6, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (false, true, false) => "UPDATE isahl_auth.auth_users SET status = $5::isahl_auth.auth_user_status, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (false, false, true) => "UPDATE isahl_auth.auth_users SET is_active = $6, updated_at = NOW(), updated_by_id = $7 WHERE id = $1",
+        (false, false, false) => {
+            return HttpResponse::BadRequest()
+                .json(serde_json::json!({"error": "No fields to update"}));
+        }
+    };
 
-    let mut q = sqlx::query(AssertSqlSafe(sql.as_str())).bind(user_id_param);
-    q = q.bind(&body.name);
+    // 绑定位序保持 $1..$7 不变（$3 = email、$4 = display_name 由同列/邮箱表路径消费）
+    let mut q = sqlx::query(AssertSqlSafe(update_stmt)).bind(user_id_param);
+    q = q.bind(display_name_new);
     q = q.bind(&body.email);
     q = q.bind(&body.display_name);
     q = q.bind(&body.status);
@@ -327,8 +401,19 @@ pub async fn update_user(
     let result = q.execute(pool.get_ref()).await;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => HttpResponse::Ok()
-            .json(serde_json::json!({"status": "updated", "user_id": user_id_param.to_string()})),
+        Ok(r) if r.rows_affected() > 0 => {
+            // 邮箱唯一存储 = isahl_auth.auth_user_emails：先降级旧主邮箱，再落新主邮箱
+            if let Some(email) = body.email.as_deref() {
+                if let Err(e) = write_primary_email(pool.get_ref(), user_id_param, email).await {
+                    log::error!("update_user email write error: {}", e);
+                    return HttpResponse::InternalServerError()
+                        .json(serde_json::json!({"error": "Failed to update user email"}));
+                }
+            }
+            HttpResponse::Ok().json(
+                serde_json::json!({"status": "updated", "user_id": user_id_param.to_string()}),
+            )
+        }
         Ok(_) => HttpResponse::NotFound().json(serde_json::json!({"error": "User not found"})),
         Err(e) => {
             log::error!("update_user DB error: {}", e);
@@ -336,6 +421,32 @@ pub async fn update_user(
                 .json(serde_json::json!({"error": "Failed to update user"}))
         }
     }
+}
+
+/// 写账号主邮箱（唯一存储 = `isahl_auth.auth_user_emails`）：
+/// 先降级旧主邮箱，再 upsert 目标邮箱行并置 `is_primary = TRUE`。
+async fn write_primary_email(pool: &PgPool, user_id: i64, email: &str) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE isahl_auth.auth_user_emails SET is_primary = FALSE, updated_at = NOW() \
+         WHERE fk_user = $1 AND deleted_at IS NULL AND is_primary AND email <> $2",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) \
+         ON CONFLICT (fk_user, email) WHERE deleted_at IS NULL DO UPDATE \
+             SET is_primary = TRUE, deleted_at = NULL, updated_at = NOW()",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 /// DELETE /api/admin/users/{id}

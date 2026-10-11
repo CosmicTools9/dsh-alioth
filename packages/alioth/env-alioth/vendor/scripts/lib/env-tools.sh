@@ -31,8 +31,8 @@ env_tools_registry() {
     cat <<'ENV_TOOLS_REGISTRY'
 tool|Git|git|version||true|2.30|install_git|brew install git（macOS）或 apt-get install git（Linux）
 tool|mise|mise|version||true|2026.9.6|install_mise|curl https://mise.jdx.dev/install.sh
-tool|Node.js|node|version||true|24.21|install_nodejs|mise install（根 .mise.toml [tools] pin）或 nvm install
-tool|pnpm|pnpm|version||true|12.6.0|install_pnpm|mise install pnpm（pin 见根 .mise.toml）
+tool|Node.js|node|version||true|26.10.0|install_nodejs|mise install（根 .mise.toml [tools] pin）或 nvm install
+tool|pnpm|pnpm|version||true|12.9.1|install_pnpm|mise install pnpm（pin 见根 .mise.toml）
 tool|bun|bun|version||true|1.4.2|install_bun|brew install bun
 tool|Rust/Cargo|cargo|version||true|1.98|install_rust|rustup update
 tool|Python 3|python3|version||true|3.14|install_python3|brew install python3（macOS）或 apt-get install python3（Linux）
@@ -42,7 +42,7 @@ tool|jq|jq|version||true||install_jq|brew install jq（macOS）或 apt-get insta
 tool|unzip|unzip|argv|-v|true||install_unzip|brew install unzip（macOS）或 apt-get install unzip（Linux）
 tool|yq|yq|version||true|4.53.3|install_yq|brew install yq（macOS）或 apt-get install yq（Linux）
 tool|GNU coreutils (timeout)|timeout|version||true||install_coreutils|bash scripts/setup/install-dev-tools.sh（coreutils + 软链 ~/.local/bin）
-tool|openspec|openspec|version||true|1.13.1|install_openspec|mise install npm:@fission-ai/openspec（pin 见根 .mise.toml）
+tool|openspec|openspec|version||true|1.14.0|install_openspec|mise install npm:@fission-ai/openspec（pin 见根 .mise.toml）
 tool|codegraph|codegraph|version||false|0.9.6|install_codegraph|bash scripts/codegraph/setup-codegraph.sh --install
 tool|ast-grep|ast-grep|version||false||install_ast_grep|npm install -g @ast-grep/cli 或 brew install ast-grep / cargo install ast-grep
 tool|lsof|lsof|argv|-v|false||install_lsof|brew install lsof（macOS）；Linux 随 util-linux/基础包

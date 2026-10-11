@@ -23,6 +23,10 @@ Gateway TopBar 的 badge 计数和 WorkspaceDock 面板数据源。聚合跨模�
 
 ### 2.1 zc_id_even-approve — 审批事件
 
+> **命名注（2026-10-03 用户裁决）**：`zc_id_even-*`（9 张：accident / alert / approve / counting / issue /
+> log / modify / report / tracking）为**既有命名、非笔误**，与基表 `zc_id_event` 并存；引用与建模时
+> MUST NOT 按 `zc_id_event-*` 改写。
+
 继承链：`zc_ad_tensor` ← `zc_ad_object` ← `zc_id_object` ← `zc_ad_variable` ← `zc_id_lifecycle` ← `zc_id_event` ← `zc_id_even-approve`
 
 叶表（15 张）：`zc_id_appr-purchase`, `zc_id_appr-pricing`, `zc_id_appr-process`, `zc_id_appr-bid-evaluation`, ...
@@ -76,7 +80,7 @@ Gateway TopBar 的 badge 计数和 WorkspaceDock 面板数据源。聚合跨模�
 | `code`            | `text`                           | —                                             | 消息类型代码                 |
 | `created_by_id`   | `bigint`                         | —                                             | 发送人 ID                    |
 | `created_at`      | `timestamptz`                    | `MessageItem.time`                            | 发送时间                     |
-| `fk_sender-addr`  | `bigint FK → zc_id_addr.id`      | —                                             | 发送方地址（系统发送时为空） |
+| `fk_sender-addr`  | `bigint FK → zc_id_contact_infos.id` | —                                             | 发送方联系方式（系统发送时为空） |
 | `fk_thread`       | `bigint FK → zc_id_message.id`   | —                                             | 所属会话线程（自引用）       |
 | `fk_previous`     | `bigint FK → zc_id_message.id`   | —                                             | 上一条消息（自引用）         |
 | `qk_date`         | `bigint FK → zc_id_scal-date.id` | —                                             | 消息日期标量                 |
@@ -88,7 +92,7 @@ Gateway TopBar 的 badge 计数和 WorkspaceDock 面板数据源。聚合跨模�
 | `_t_`             | `text` (auto)                    | —                                             | 六象限 _t_ 码                |
 | `tpl_id`          | `bigint`                         | —                                             | 模板溯源                     |
 
-**消息阅读状态**: 当前通过 `ak_benefit_user` 数组判断"消息是否送达当前用户"。`unread` 状态需接入阅读状态关系表（`zc_id_lifecycle_r_*` 或专用 `zc_id_msg-read-status`），当前硬编码 `true`。TODO。
+**消息阅读状态**: 当前通过 `ak_benefit_user` 数组判断"消息是否送达当前用户"。`unread` 状态需接入阅读状态关系表（`zc_id_lifecycle_r_*` 或专用 `zc_id_msgs-read-status`，待建），当前硬编码 `true`。TODO。
 
 ### 2.4 zc_id_lifecycle_r_primary-status — 生命体↔主状态关系
 

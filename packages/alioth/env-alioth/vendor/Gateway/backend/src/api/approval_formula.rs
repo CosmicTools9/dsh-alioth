@@ -7,8 +7,8 @@
 //!   → {ok, result, error}（可视化模拟执行）
 //!
 //! 校验复用唯一引擎（runtime-engine `RhaiExpressionEngine`：严格变量模式
-//! validate + 沙箱求值）。LLM 复用 chat 基础设施
-//! （DbLlmConfigAdapter，与 admin_ngac_assist 同模式）。
+//! validate + 沙箱求值）。LLM 调用经 assistant turn seam
+//! （`chat_sessions::turn`：装配/组装/契约/错误分类单实现，与 admin_ngac_assist 同模式）。
 
 use actix_web::{web, HttpRequest, HttpResponse};
 use common::context;
@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
 
-use crate::api::chat_sessions::adapters::db_llm_config::DbLlmConfigAdapter;
-use crate::api::chat_sessions::ports::LlmConfigPort;
+use crate::api::chat_sessions::turn::{self, OutputContract, PromptSection, TurnError, TurnSpec};
 
 #[derive(Debug, Deserialize)]
 pub struct FormulaAssistRequest {
@@ -102,26 +101,63 @@ fn evaluate_expression(
     runtime_engine::RhaiExpressionEngine::new().evaluate(expression, &vars)
 }
 
-/// 从 LLM 输出提取 JSON（容忍围栏/前后噪声）
-fn extract_json(text: &str) -> Option<&str> {
-    let trimmed = text.trim();
-    let trimmed = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed)
-        .trim();
-    let trimmed = trimmed.strip_suffix("```").unwrap_or(trimmed).trim();
-    let start = trimmed.find('{')?;
-    let end = trimmed.rfind('}')?;
-    if end > start {
-        Some(&trimmed[start..=end])
+/// turn 失败 → 端点响应（装配不可用 → 503；调用/契约失败 → 502）。
+/// 文案与改造前逐字一致（契约失败文案按 handler 传入）；日志前缀 `endpoint` 亦保持不变。
+fn turn_failure_response(
+    e: TurnError,
+    endpoint: &str,
+    engine: &str,
+    contract_msgs: (&'static str, &'static str),
+) -> HttpResponse {
+    let (not_json_msg, invalid_json_msg) = contract_msgs;
+    let unavailable = matches!(&e, TurnError::Config(_));
+    let message = match &e {
+        TurnError::Config(msg) => {
+            log::error!("{endpoint}: LLM unavailable: {msg}");
+            "LLM 服务不可用（fail-closed）"
+        }
+        TurnError::Call(msg) => {
+            log::error!("{endpoint}: LLM call failed: {msg}");
+            "LLM 调用失败（fail-closed）"
+        }
+        TurnError::NotJson { raw_len } => {
+            log::warn!("{endpoint}: LLM output not JSON (len={raw_len})");
+            not_json_msg
+        }
+        TurnError::InvalidJson(msg) => {
+            log::warn!("{endpoint}: LLM JSON invalid: {msg}");
+            invalid_json_msg
+        }
+    };
+    let body = FormulaAssistResponse {
+        expression: String::new(),
+        engine: engine.to_string(),
+        valid: false,
+        errors: vec![message.to_string()],
+        explanation: None,
+        variable_usage: vec![],
+    };
+    if unavailable {
+        HttpResponse::ServiceUnavailable().json(body)
     } else {
-        None
+        HttpResponse::BadGateway().json(body)
     }
 }
 
 const SYSTEM_PROMPT: &str = "你是 Alioth 流程条件表达式生成器。根据用户的自然语言诉求生成一条条件表达式。\
 输出必须是 JSON：{\"expression\": \"<表达式>\", \"explanation\": \"<中文说明>\"}，不要输出其他内容。";
+
+/// formula-assist 的契约失败文案（逐字：新生成需提示「请重述诉求」）。
+const ASSIST_CONTRACT_MSGS: (&str, &str) = (
+    "LLM 输出不可解析为 JSON（fail-closed），请重述诉求",
+    "LLM 输出 JSON 结构非法（fail-closed），请重述诉求",
+);
+
+/// formula-fix 的契约失败文案（逐字：修复分支不带「请重述诉求」）。
+const FIX_CONTRACT_MSGS: (&str, &str) = (
+    "LLM 输出不可解析为 JSON（fail-closed）",
+    "LLM 输出 JSON 结构非法（fail-closed）",
+);
 
 /// POST /api/approval-flows/formula-assist
 async fn formula_assist(
@@ -139,19 +175,16 @@ async fn formula_assist(
         })));
     }
 
-    // LLM 装配（复用 chat 基础设施；不可用 fail-closed）
-    let llm = match DbLlmConfigAdapter::new(pool.get_ref().clone())
-        .load_service()
-        .await
-    {
+    // LLM 装配（turn seam 单入口；不可用 fail-closed）
+    let llm = match turn::load_llm(pool.get_ref()).await {
         Ok(s) => s,
         Err(e) => {
-            log::error!("formula-assist: LLM unavailable: {}", e);
-            return Ok(HttpResponse::ServiceUnavailable().json(serde_json::json!({
-                "expression": "", "engine": engine, "valid": false,
-                "errors": vec!["LLM 服务不可用（fail-closed）".to_string()],
-                "explanation": null, "variable_usage": []
-            })));
+            return Ok(turn_failure_response(
+                e,
+                "formula-assist",
+                &engine,
+                ASSIST_CONTRACT_MSGS,
+            ))
         }
     };
 
@@ -174,51 +207,33 @@ async fn formula_assist(
         body.message
     );
 
-    let raw = match llm
-        .generate_with_system_preamble(
-            SYSTEM_PROMPT,
-            &prompt,
-            Some(0.2),
-            Some(4096),
-            None,
-            None,
-            None,
-        )
-        .await
+    let outcome = match turn::run_turn(
+        &llm,
+        TurnSpec {
+            system_preamble: SYSTEM_PROMPT,
+            sections: vec![PromptSection {
+                heading: "",
+                body: prompt,
+            }],
+            output: OutputContract::JsonObject,
+            temperature: Some(0.2),
+            max_tokens: Some(4096),
+        },
+    )
+    .await
     {
-        Ok(text) => text,
+        Ok(outcome) => outcome,
         Err(e) => {
-            log::error!("formula-assist: LLM call failed: {}", e);
-            return Ok(HttpResponse::BadGateway().json(serde_json::json!({
-                "expression": "", "engine": engine, "valid": false,
-                "errors": vec!["LLM 调用失败（fail-closed）".to_string()],
-                "explanation": null, "variable_usage": []
-            })));
+            return Ok(turn_failure_response(
+                e,
+                "formula-assist",
+                &engine,
+                ASSIST_CONTRACT_MSGS,
+            ))
         }
     };
-
-    let json_text = match extract_json(&raw) {
-        Some(t) => t,
-        None => {
-            log::warn!("formula-assist: LLM output not JSON (len={})", raw.len());
-            return Ok(HttpResponse::BadGateway().json(serde_json::json!({
-                "expression": "", "engine": engine, "valid": false,
-                "errors": vec!["LLM 输出不可解析为 JSON（fail-closed），请重述诉求".to_string()],
-                "explanation": null, "variable_usage": []
-            })));
-        }
-    };
-    let parsed: serde_json::Value = match serde_json::from_str(json_text) {
-        Ok(v) => v,
-        Err(e) => {
-            log::warn!("formula-assist: LLM JSON invalid: {}", e);
-            return Ok(HttpResponse::BadGateway().json(serde_json::json!({
-                "expression": "", "engine": engine, "valid": false,
-                "errors": vec!["LLM 输出 JSON 结构非法（fail-closed），请重述诉求".to_string()],
-                "explanation": null, "variable_usage": []
-            })));
-        }
-    };
+    // JsonObject 契约保证 json 非空；缺省 Null 使字段缺失走既有「缺少 expression」拒绝
+    let parsed = outcome.json.unwrap_or(serde_json::Value::Null);
     let expression = parsed
         .get("expression")
         .and_then(|v| v.as_str())
@@ -245,8 +260,14 @@ async fn formula_assist(
         })
         .unwrap_or_default();
 
-    // 强校验（fail-closed：校验失败即 invalid，不落库）
-    let (valid, errors) = validate_expression(&expression, &engine, &body.context_fields);
+    // 强校验（fail-closed：校验失败即 invalid，不落库）——**结论与阻断判定单源**
+    // （change consolidate-authoring-channel）：域校验器 `validate_expression` 作适配器，
+    // 「什么算阻断」由作者通道类型给出。
+    let (_adapter_ok, adapter_errors) =
+        validate_expression(&expression, &engine, &body.context_fields);
+    let verdict = common::authoring::AuthoringVerdict::from_messages("expression", adapter_errors);
+    let valid = verdict.valid;
+    let errors = verdict.messages();
 
     Ok(HttpResponse::Ok().json(FormulaAssistResponse {
         expression,
@@ -309,23 +330,15 @@ async fn formula_fix(
         }));
     }
 
-    let llm = match DbLlmConfigAdapter::new(pool.get_ref().clone())
-        .load_service()
-        .await
-    {
+    let llm = match turn::load_llm(pool.get_ref()).await {
         Ok(s) => s,
         Err(e) => {
-            log::error!("formula-fix: LLM unavailable: {}", e);
-            return Ok(
-                HttpResponse::ServiceUnavailable().json(FormulaAssistResponse {
-                    expression: String::new(),
-                    engine: engine.clone(),
-                    valid: false,
-                    errors: vec!["LLM 服务不可用（fail-closed）".to_string()],
-                    explanation: None,
-                    variable_usage: vec![],
-                }),
-            );
+            return Ok(turn_failure_response(
+                e,
+                "formula-fix",
+                &engine,
+                FIX_CONTRACT_MSGS,
+            ))
         }
     };
 
@@ -346,60 +359,33 @@ async fn formula_fix(
         body.expression, body.error
     );
 
-    let raw = match llm
-        .generate_with_system_preamble(
-            SYSTEM_PROMPT,
-            &prompt,
-            Some(0.2),
-            Some(4096),
-            None,
-            None,
-            None,
-        )
-        .await
+    let outcome = match turn::run_turn(
+        &llm,
+        TurnSpec {
+            system_preamble: SYSTEM_PROMPT,
+            sections: vec![PromptSection {
+                heading: "",
+                body: prompt,
+            }],
+            output: OutputContract::JsonObject,
+            temperature: Some(0.2),
+            max_tokens: Some(4096),
+        },
+    )
+    .await
     {
-        Ok(text) => text,
+        Ok(outcome) => outcome,
         Err(e) => {
-            log::error!("formula-fix: LLM call failed: {}", e);
-            return Ok(HttpResponse::BadGateway().json(FormulaAssistResponse {
-                expression: String::new(),
-                engine: engine.clone(),
-                valid: false,
-                errors: vec!["LLM 调用失败（fail-closed）".to_string()],
-                explanation: None,
-                variable_usage: vec![],
-            }));
+            return Ok(turn_failure_response(
+                e,
+                "formula-fix",
+                &engine,
+                FIX_CONTRACT_MSGS,
+            ))
         }
     };
-
-    let json_text = match extract_json(&raw) {
-        Some(t) => t,
-        None => {
-            log::warn!("formula-fix: LLM output not JSON (len={})", raw.len());
-            return Ok(HttpResponse::BadGateway().json(FormulaAssistResponse {
-                expression: String::new(),
-                engine: engine.clone(),
-                valid: false,
-                errors: vec!["LLM 输出不可解析为 JSON（fail-closed）".to_string()],
-                explanation: None,
-                variable_usage: vec![],
-            }));
-        }
-    };
-    let parsed: serde_json::Value = match serde_json::from_str(json_text) {
-        Ok(v) => v,
-        Err(e) => {
-            log::warn!("formula-fix: LLM JSON invalid: {}", e);
-            return Ok(HttpResponse::BadGateway().json(FormulaAssistResponse {
-                expression: String::new(),
-                engine,
-                valid: false,
-                errors: vec!["LLM 输出 JSON 结构非法（fail-closed）".to_string()],
-                explanation: None,
-                variable_usage: vec![],
-            }));
-        }
-    };
+    // JsonObject 契约保证 json 非空；缺省 Null 使字段缺失走既有「缺少 expression」拒绝
+    let parsed = outcome.json.unwrap_or(serde_json::Value::Null);
     let expression = parsed
         .get("expression")
         .and_then(|v| v.as_str())
@@ -421,7 +407,12 @@ async fn formula_fix(
         }));
     }
 
-    let (valid, errors) = validate_expression(&expression, &engine, &body.context_fields);
+    // 强校验：结论与阻断判定单源（change consolidate-authoring-channel），域校验器作适配器。
+    let (_adapter_ok, adapter_errors) =
+        validate_expression(&expression, &engine, &body.context_fields);
+    let verdict = common::authoring::AuthoringVerdict::from_messages("expression", adapter_errors);
+    let valid = verdict.valid;
+    let errors = verdict.messages();
     let variable_usage = runtime_engine::collect_variables(&expression)
         .map(|mut used| {
             used.sort();
@@ -546,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_extract_json_tolerates_fences() {
-        let out = extract_json("```json\n{\"expression\": \"a > 1\"}\n```").unwrap();
+        let out = turn::extract_json("```json\n{\"expression\": \"a > 1\"}\n```").unwrap();
         assert!(out.contains("a > 1"));
     }
 

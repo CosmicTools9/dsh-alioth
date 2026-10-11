@@ -7,7 +7,7 @@
 //!
 //! `common::serde_zuid` 只覆盖**有 DTO** 的路径；本模块覆盖**动态 JSON 行**路径
 //! （ontology leaf/reference 等按表名拼 SQL、无 DTO 的读取）。判据与规约一致：
-//! 键名 `id`/`*_id`/`ids`/`*_ids`、物理列前缀 `fk_`/`qk_`/`sk_`/`dk_`/`ak_`/`tpl_`、
+//! 键名 `id`/`*_id`/`ids`/`*_ids`、物理列前缀 `fk_`/`qk_`/`sk_`/`dk_`/`ak_`/`ck_`/`tk_`/`lk_`/`tpl_`、
 //! 桥表列 `ref_left`/`ref_right`，以及前端 camelCase 形态（`*Id`/`*Ids`）。
 //!
 //! 事故链：2026-08-30 车型字典 → 2026-09-16 适航证件「健康度」（`zc_id_leve-health`
@@ -15,8 +15,11 @@
 
 use serde_json::Value;
 
-/// 物理列 id 前缀（与 `ID_JSON_PRECISION.md` 判据一致）
-const ID_PREFIXES: [&str; 6] = ["fk_", "qk_", "sk_", "dk_", "ak_", "tpl_"];
+/// 物理列 id 前缀（与 `ID_JSON_PRECISION.md` 判据一致；三方词表一致性由
+/// `check-id-json-precision.ts` 运行期断言锁定——改这里必须同步规约与门禁）
+const ID_PREFIXES: [&str; 9] = [
+    "fk_", "qk_", "sk_", "dk_", "ak_", "ck_", "tk_", "lk_", "tpl_",
+];
 
 /// 键名是否为 id 语义（snake_case 物理列名 + camelCase 前端形态）
 pub fn is_id_key(key: &str) -> bool {
@@ -116,6 +119,9 @@ mod tests {
             "sk_unit",
             "dk_scene",
             "ak_permit_user",
+            "ck_category",
+            "tk_tag",
+            "lk_level",
             "tpl_id",
             "ref_left",
             "refRight",
@@ -138,6 +144,9 @@ mod tests {
             "notice": "已符合",
             "fk_subject": 338044226429804i64,
             "ak_permit_user": [1, 338044226429804i64],
+            "ck_category": 98234766872019999i64,
+            "tk_tags": [98234766872020000i64, 98234766872020001i64],
+            "lk_level": 77236712894361i64,
             "amount": 12.5,
             "count": 3,
             "nested": { "ref_left": 98234766872019999i64, "label": "x" }
@@ -147,6 +156,13 @@ mod tests {
         assert_eq!(row["id"], json!("98234766872020004"));
         assert_eq!(row["fk_subject"], json!("338044226429804"));
         assert_eq!(row["ak_permit_user"], json!(["1", "338044226429804"]));
+        // ck/tk/lk 前缀(2026-10-11 分叉修复:运行时曾缺这三个前缀)
+        assert_eq!(row["ck_category"], json!("98234766872019999"));
+        assert_eq!(
+            row["tk_tags"],
+            json!(["98234766872020000", "98234766872020001"])
+        );
+        assert_eq!(row["lk_level"], json!("77236712894361"));
         assert_eq!(row["nested"]["ref_left"], json!("98234766872019999"));
         // 非 id 语义 / 浮点保持数字
         assert_eq!(row["notice"], json!("已符合"));

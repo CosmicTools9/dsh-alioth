@@ -40,20 +40,12 @@ async fn current_status(pool: &PgPool, instance_id: i64) -> Result<Option<String
     .map(|r| r.flatten())
 }
 
-/// 是否 admin UA 成员（所有权豁免）
+/// 是否 admin UA 成员（所有权豁免）——判据唯一实现 = `common::permissions::is_admin_user`
+/// （有效 UA 集含派生与时效；此前本处自写 SQL 只查直派 + `deleted_at`，漏 `expires_at`）。
 async fn is_admin(pool: &PgPool, user_id: i64) -> bool {
-    sqlx::query_scalar::<_, bool>(
-        r#"SELECT EXISTS (
-               SELECT 1 FROM isahl_auth.ngac_user_rr_attribute rel
-               JOIN isahl_auth.ngac_user_attribute ua
-                 ON ua.id = rel.fk_user_attribute AND ua.deleted_at IS NULL
-               WHERE rel.fk_user = $1 AND ua.o_name = 'admin' AND rel.deleted_at IS NULL
-           )"#,
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false)
+    common::permissions::is_admin_user(pool, user_id)
+        .await
+        .unwrap_or(false)
 }
 
 /// 收集撤回级联集合：fk_previous 前向链 + 每个链成员的同节点 pending 兄弟

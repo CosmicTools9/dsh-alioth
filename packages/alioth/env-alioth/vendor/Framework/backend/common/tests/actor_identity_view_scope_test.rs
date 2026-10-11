@@ -7,7 +7,7 @@
 //!    关联行标签 MUST NOT 串入（修复前为岗位级并集——非雇员主体会拿到邻位主体的视角，如实测 `VIEW-EMPLOYEE`）。
 //!
 //! 运行（连共享测试库，`*_test` 由 `common::testing` 强制）：
-//!   CARGO_TARGET_DIR=/tmp/alioth-check \
+//!   CARGO_TARGET_DIR=<仓父目录>/.tmp/alioth-check \
 //!     cargo test -p common --test actor_identity_view_scope_test -- --nocapture
 //!
 //! 数据卫生：自建行以 `AIVS` 前缀标记，测试尾部硬删除（仅本测试创建的行）。

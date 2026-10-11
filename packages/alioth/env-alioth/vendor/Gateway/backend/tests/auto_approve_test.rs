@@ -59,8 +59,8 @@ async fn setup_fixtures(pool: &PgPool) {
     cleanup_fixtures(pool).await;
 
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, status, created_at, updated_at)
-           VALUES ($1, 'auto-approve-test', 'pending_approval', NOW(), NOW())"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, status, created_at, updated_at)
+           VALUES ($1, 'pending_approval', NOW(), NOW())"#,
     )
     .bind(USER_NEW)
     .execute(pool)
@@ -155,6 +155,7 @@ async fn run_handler(pool: &PgPool) {
     let handler = AutoApproveHandler::new(
         pool.clone(),
         std::sync::Arc::new(common::event_bus::InMemoryEventBus::new()),
+        None,
     );
     let ctx = SchedulerContext {
         pool: pool.clone(),
@@ -182,7 +183,7 @@ async fn terminal_status(pool: &PgPool, instance_id: i64) -> Option<String> {
 /// 申请人账号状态与主体绑定
 async fn applicant_state(pool: &PgPool) -> (String, Option<i64>, Option<String>) {
     sqlx::query_as(
-        "SELECT status, entity_id, entity_table FROM isahl_auth.auth_users WHERE id = $1",
+        "SELECT status::text, entity_id, entity_table FROM isahl_auth.auth_users WHERE id = $1",
     )
     .bind(USER_NEW)
     .fetch_one(pool)

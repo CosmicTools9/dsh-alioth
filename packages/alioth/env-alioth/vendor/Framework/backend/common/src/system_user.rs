@@ -22,26 +22,39 @@ pub async fn ensure_system_user(pool: &PgPool) -> Result<(), sqlx::Error> {
     // 创建 standard id=1 → 断言 user_type='system' 失败）。
     sqlx::query(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, password_hash, is_active, status,
+           (id, username, display_name, user_type, password_hash, is_active, status,
             created_at, updated_at, failed_login_attempts, notification_preferences)
-           VALUES ($1, '系统', 'system', 'system@aliothstudio.local', 'system', NULL, TRUE, 'active',
+           VALUES ($1, 'system', '系统', 'system', NULL, TRUE, 'active',
                    NOW(), NOW(), 0, '{}'::jsonb)
            ON CONFLICT (id) DO UPDATE SET
+             display_name = '系统',
              user_type = 'system',
              password_hash = NULL,
              is_active = TRUE,
              status = 'active',
-             username = 'system',
-             email = 'system@aliothstudio.local'"#,
+             username = 'system'"#,
     )
     .bind(SYSTEM_USER_ID)
     .execute(pool)
     .await?;
 
-    // 2. NGAC 授权：system → admin user_attribute
-    let admin_attr: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = 'admin' AND deleted_at IS NULL LIMIT 1",
+    // 1b. 邮箱唯一存储 = auth_user_emails（系统账号审计/通知地址；账号内幂等）
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+           SELECT $1, 'system@aliothstudio.local', TRUE
+           WHERE NOT EXISTS (
+               SELECT 1 FROM isahl_auth.auth_user_emails
+               WHERE fk_user = $1 AND email = 'system@aliothstudio.local' AND deleted_at IS NULL)"#,
     )
+    .bind(SYSTEM_USER_ID)
+    .execute(pool)
+    .await?;
+
+    // 2. NGAC 授权：system → admin user_attribute（名取自唯一名字集，不写字面量）
+    let admin_attr: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name = $1 AND deleted_at IS NULL LIMIT 1",
+    )
+    .bind(ngac_host::ADMIN_UA_NAME)
     .fetch_optional(pool)
     .await?
     .unwrap_or_default();

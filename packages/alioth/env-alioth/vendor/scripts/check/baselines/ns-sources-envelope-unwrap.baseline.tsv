@@ -1,0 +1,4 @@
+# ns Sources 信封解包重定义存量基线（**必须收缩**；无此文件 = 零容忍）。
+# 每行 <TAB> 分隔：<relPath>\t<name>（不含行号——去类型解析行号会漂移）。行外命中即阻断；
+# 本仓未命中的条目不算 stale（多仓可见性：平台仓见全部 ns，ns 仓只见本仓）。
+# 重生成：平台仓根 bun scripts/check/check-sources-envelope-unwrap.ts --init

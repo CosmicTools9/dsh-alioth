@@ -147,7 +147,13 @@ async fn tdd_reg_002_user_persists_in_database() {
 
     // Step 2: Verify database
     let row: (i64, String, Option<String>, String) = sqlx::query_as(
-        "SELECT id, email, username, name FROM isahl_auth.auth_users WHERE email = $1",
+        "SELECT a.id, \
+                (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                  WHERE e.fk_user = a.id AND e.deleted_at IS NULL \
+                  ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                a.username, COALESCE(a.display_name, a.username) AS name \
+           FROM isahl_auth.auth_users a \
+          WHERE a.id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(test_email)
     .fetch_one(&pool)
@@ -208,12 +214,14 @@ async fn tdd_reg_003_username_derived_from_email() {
     assert!(resp.status().is_success(), "Registration should succeed");
 
     // Verify username derived from email
-    let username: String =
-        sqlx::query_scalar("SELECT username FROM isahl_auth.auth_users WHERE email = $1")
-            .bind(test_email)
-            .fetch_one(&pool)
-            .await
-            .expect("User should exist");
+    let username: String = sqlx::query_scalar(
+        "SELECT username FROM isahl_auth.auth_users \
+          WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
+    )
+    .bind(test_email)
+    .fetch_one(&pool)
+    .await
+    .expect("User should exist");
 
     assert_eq!(
         username, "auto-user",
@@ -287,7 +295,9 @@ async fn tdd_reg_004_duplicate_email_shares_account() {
 
     // 两个账号共享同一 email
     let shared: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM isahl_auth.auth_users WHERE email = $1 AND username IN ('dup_user_1', 'dup_user_2')",
+        "SELECT COUNT(*) FROM isahl_auth.auth_users \
+          WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1) \
+            AND username IN ('dup_user_1', 'dup_user_2')",
     )
     .bind(test_email)
     .fetch_one(&pool)
@@ -502,12 +512,14 @@ async fn tdd_reg_008_email_case_normalization() {
     );
 
     // ASSERT: database email is lowercase
-    let db_email: String =
-        sqlx::query_scalar("SELECT email FROM isahl_auth.auth_users WHERE email = $1")
-            .bind(expected_email)
-            .fetch_one(&pool)
-            .await
-            .expect("User should exist with lowercased email");
+    let db_email: String = sqlx::query_scalar(
+        "SELECT email FROM isahl_auth.auth_user_emails \
+          WHERE email = $1 AND deleted_at IS NULL",
+    )
+    .bind(expected_email)
+    .fetch_one(&pool)
+    .await
+    .expect("User should exist with lowercased email");
 
     assert_eq!(
         db_email, expected_email,
@@ -565,11 +577,14 @@ async fn tdd_reg_009_register_then_login_succeeds() {
     );
 
     // 新注册用户默认 status='pending'，跳过身份审核后才能登录
-    sqlx::query("UPDATE isahl_auth.auth_users SET status = 'active' WHERE email = $1")
-        .bind(test_email)
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "UPDATE isahl_auth.auth_users SET status = 'active' \
+          WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
+    )
+    .bind(test_email)
+    .execute(&pool)
+    .await
+    .ok();
 
     // Step 2: Login with same credentials
     let login_req = test::TestRequest::post()
@@ -601,14 +616,16 @@ async fn tdd_reg_009_register_then_login_succeeds() {
 
     // CLEANUP
     sqlx::query(
-        "DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.sso_sessions \
+          WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(test_email)
     .execute(&pool)
     .await
     .ok();
     sqlx::query(
-        "DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.refresh_tokens \
+          WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(test_email)
     .execute(&pool)
@@ -657,11 +674,14 @@ async fn tdd_reg_010_wrong_password_login_returns_401() {
     );
 
     // 新注册用户默认 status='pending'，跳过身份审核后才能登录
-    sqlx::query("UPDATE isahl_auth.auth_users SET status = 'active' WHERE email = $1")
-        .bind(test_email)
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "UPDATE isahl_auth.auth_users SET status = 'active' \
+          WHERE id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
+    )
+    .bind(test_email)
+    .execute(&pool)
+    .await
+    .ok();
 
     // Step 2: Login with wrong password
     let login_req = test::TestRequest::post()
@@ -692,14 +712,16 @@ async fn tdd_reg_010_wrong_password_login_returns_401() {
 
     // CLEANUP
     sqlx::query(
-        "DELETE FROM isahl_auth.sso_sessions WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.sso_sessions \
+          WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(test_email)
     .execute(&pool)
     .await
     .ok();
     sqlx::query(
-        "DELETE FROM isahl_auth.refresh_tokens WHERE user_id IN (SELECT id FROM isahl_auth.auth_users WHERE email = $1)",
+        "DELETE FROM isahl_auth.refresh_tokens \
+          WHERE user_id IN (SELECT fk_user FROM isahl_auth.auth_user_emails WHERE email = $1)",
     )
     .bind(test_email)
     .execute(&pool)
@@ -984,8 +1006,9 @@ async fn tdd_reg_ext_011_external_channel_registers() {
     );
 
     // 账号身份类型：服务端强制 external（请求体 user_type=standard 被忽略）
+    // 枚举列读 MUST 显式 ::text（原生枚举不可直接解码进 String）
     let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT user_type, status FROM isahl_auth.auth_users WHERE username = 'tdd_reg_ext_011'",
+        "SELECT user_type::text, status::text FROM isahl_auth.auth_users WHERE username = 'tdd_reg_ext_011'",
     )
     .fetch_optional(&pool)
     .await
@@ -1023,15 +1046,15 @@ async fn tdd_reg_ext_012_me_returns_user_type() {
     common::setup_schema(&pool).await.expect("schema setup");
     common::cleanup_test_users(&pool).await.ok();
 
-    // 预清理：失败路径可能残留（username/email 唯一约束）
-    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = 'tdd_reg_ext_012'")
-        .execute(&pool)
-        .await;
+    // 预清理：失败路径可能残留（username/email 唯一约束）；子行（邮箱）先行——FK 无 cascade
     let _ = sqlx::query(
-        "DELETE FROM isahl_auth.auth_user_emails WHERE email = 'tdd-reg-ext-012@alioth.test'",
+        "DELETE FROM isahl_auth.auth_user_emails WHERE email = 'tdd-reg-ext-012@alioth.test' OR fk_user IN (SELECT id FROM isahl_auth.auth_users WHERE username = 'tdd_reg_ext_012')",
     )
     .execute(&pool)
     .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = 'tdd_reg_ext_012'")
+        .execute(&pool)
+        .await;
     let test_email = "tdd-reg-ext-012@alioth.test";
     // P1 邮箱所有权门禁已废：外部通道提供 email 亦无需前置验证
     let auth_state = common::test_auth_state();

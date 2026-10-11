@@ -14,7 +14,7 @@ use common::{ensure_role_member, setup_test_schema};
 
 const USER_ID: i64 = 425201;
 /// 收件人用户 id——每次调用唯一（进程内原子序号主导 + pid + 时间低位）：共享测试库
-/// 跨会话/线程并行时，固定 id/email（role-user-425202@test.local）必撞唯一键（三轮实测）
+/// 跨会话/线程并行时，固定 id/username（role-user-425202）必撞唯一键（三轮实测）
 fn cc_user() -> i64 {
     static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
     let nanos = std::time::SystemTime::now()
@@ -69,7 +69,7 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64, i64, String) {
     // 收件人用户（employee 实体：subj-employee.notice → fk_user；无 engineer 实体）
     // 坐标三元组（§6.12 声明即必须）：值经 ontology_binding 解析 code→ZUID，禁硬编码 ZUID
     let cc_uid = cc_user();
-    // username/name 亦须 per-run（auth_users_name_key 唯一）；解析/断言全链用此名
+    // username 亦须 per-run（username 唯一键）；解析/断言全链用此名
     let cc_name = format!("cc-target-{cc_uid}");
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve(pool, ("ZJ", "LNC", "↓_EH"))
         .await
@@ -91,7 +91,7 @@ async fn seed_scope(pool: &PgPool) -> (i64, i64, i64, String) {
     // 收件人用户（engineer 解析按 username/name）
     ensure_role_member(pool, "default", cc_uid).await.unwrap();
     sqlx::query(
-        r#"UPDATE isahl_auth.auth_users SET username = $2, name = $2
+        r#"UPDATE isahl_auth.auth_users SET username = $2
            WHERE id = $1"#,
     )
     .bind(cc_uid)

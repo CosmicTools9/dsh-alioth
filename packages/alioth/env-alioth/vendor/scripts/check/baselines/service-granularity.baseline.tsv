@@ -1,0 +1,16 @@
+# Service 粒度判据基线（ADR D-048 判据④ 薄壳静态分层：handlers/services 层 MUST NOT 直调 sqlx）
+# 语义：存量债务（分层未收敛的服务）——只减不增；清偿后 MUST 移除本行（否则判「基线过期」）。
+# 重生成：bun scripts/check/check-service-granularity.ts --write-baseline（平台仓执行；按名枚举挂载 ns 面）
+# 生成：2026-10-02（实测口径；判据 ①②③ 为回归守卫，无基线、零容忍）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/airworthiness/backend/src/handlers/ica_version_release.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/documentary/backend/src/handlers/requirements.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/knowledge/backend/src/handlers/articles.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/monitor/backend/src/handlers/ccb_vote.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend/src/handlers/project.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend/src/handlers/project_template.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend/src/handlers/risk_item.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/AVIC-CAASEC/Sources/Apps/Services/orchestration/backend/src/handlers/task.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/WZ/Sources/Apps/Services/accounts-payable/backend/src/services/mod.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/WZ/Sources/Apps/Services/transport-dispatch/backend/src/handlers/procure.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/WZ/Sources/Apps/Services/transport-operations/backend/src/handlers/proofs.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）
+Pre-Proc/WZ/Sources/Apps/Services/transport-operations/backend/src/handlers/three_check.rs	分层债务（handlers/services 直调 sqlx，应下沉 repositories）

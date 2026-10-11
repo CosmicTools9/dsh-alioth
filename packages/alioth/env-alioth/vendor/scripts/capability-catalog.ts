@@ -8,7 +8,8 @@
  * 它们给出相反结论（同一 loader：scripts/lib/preproc-artifacts.ts）。
  *
  * 与既有「能力发现」表格的差别：表格只有 LLM 自己读、与门禁不同源；本命令的清单
- * 可被脚本、门禁与 AppAgent 步骤共同消费，且枚举面取自 ns 的 JSON Schema（不臆造）。
+ * 可被脚本、门禁与 AppAgent 步骤共同消费，且枚举面取自 canonical JSON Schema
+ * （`scripts/schema/**`，单源门禁 `check-schema-single-source.ts`，不臆造）。
  *
  * Usage:
  *   bun scripts/capability-catalog.ts <ns> [--module <id>] [--block <id>]   # 清单（stdout JSON）
@@ -20,6 +21,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { isRecord } from "./lib/type-guards";
+import { readSchemaEnum, SCHEMA_DIR_REL, type SchemaName } from "./schema";
 import {
   DimensionCodesUnavailableError,
   dbDimensionCodes,
@@ -108,15 +110,25 @@ function strArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
 }
 
-function enumAt(root: string, ns: string, file: string, path: string[]): string[] | undefined {
-  const j = readJson(join(root, "Pre-Proc", ns, "_schema", file));
-  if (!j) return undefined;
-  let cur: unknown = j;
-  for (const k of path) {
-    if (!isRecord(cur)) return undefined;
-    cur = cur[k];
+/**
+ * 枚举面读取——canonical 单源（`scripts/schema/<name>.schema.json`；ns 面 `_schema/` 由
+ * `check-schema-single-source.ts` 维持为指向它的符号链接）。
+ *
+ * 解析失败 MUST 显式落账（`unresolved`），MUST NOT 静默返回 undefined：2026-10-03 实测
+ * WZ/AVIC-CAASEC/SE 的 ns 局部 `app.schema.json` 是陈旧最小代（0 enum）⇒ 旧读法静默缺 `appStatus`。
+ */
+function enumAt(
+  root: string,
+  file: SchemaName,
+  path: readonly string[],
+  unresolved: string[],
+): string[] | undefined {
+  const got = readSchemaEnum(root, file, path);
+  if (!got.ok) {
+    unresolved.push(got.error);
+    return undefined;
   }
-  return Array.isArray(cur) ? cur.filter((x): x is string => typeof x === "string") : undefined;
+  return got.values;
 }
 
 function loadBlocks(root: string, ns: string): CatalogBlock[] {
@@ -243,11 +255,11 @@ export function buildCatalog(
     services: loadServices(root, ns),
     modules: loadModules(root, ns),
     enums: {
-      blockSharingMode: enumAt(root, ns, "block.schema.json", ["properties", "sharing", "properties", "mode", "enum"]),
-      blockStatus: enumAt(root, ns, "block.schema.json", ["properties", "status", "enum"]),
-      moduleCategory: enumAt(root, ns, "module.schema.json", ["properties", "category", "enum"]),
-      moduleStatus: enumAt(root, ns, "module.schema.json", ["properties", "status", "enum"]),
-      appStatus: enumAt(root, ns, "app.schema.json", ["properties", "status", "enum"]),
+      blockSharingMode: enumAt(root, "block", ["properties", "sharing", "properties", "mode", "enum"], unresolved),
+      blockStatus: enumAt(root, "block", ["properties", "status", "enum"], unresolved),
+      moduleCategory: enumAt(root, "module", ["properties", "category", "enum"], unresolved),
+      moduleStatus: enumAt(root, "module", ["properties", "status", "enum"], unresolved),
+      appStatus: enumAt(root, "app", ["properties", "status", "enum"], unresolved),
     },
     referenceRules: {
       "blockAssembly.blocks[].id": "MUST 命中 blocks[].id",
@@ -257,8 +269,8 @@ export function buildCatalog(
     },
     unresolved,
   };
-  if (!existsSync(join(root, "Pre-Proc", ns, "_schema"))) {
-    unresolved.push(`_schema/ 缺失：${ns} 无 JSON Schema，枚举面不可得`);
+  if (!existsSync(join(root, SCHEMA_DIR_REL))) {
+    unresolved.push(`canonical schema 源缺失：${SCHEMA_DIR_REL}/（枚举面不可得）`);
   }
   if (scope.module && !full.modules.some((m) => m.id === scope.module)) {
     unresolved.push(`作用域 module '${scope.module}' 不在清单`);

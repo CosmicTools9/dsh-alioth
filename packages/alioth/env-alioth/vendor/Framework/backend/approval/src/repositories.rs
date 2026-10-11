@@ -873,17 +873,20 @@ impl
             None => None,
         };
 
+        // 注意：raw 字符串内**行尾反斜杠**是字面量（不是续行）⇒ PG 语法错误；SQL 内需要双引号时直接写 `"`。
         let instance: ApprovalInstance = sqlx::query_as::<_, ApprovalInstance>(
-            r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, comments, fk_subject, created_by_id, dk_scene, dk_factor, dk_function)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-               RETURNING id, notice AS node_name, code, \
-                 (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe \
-                  WHERE oe.ref_left = \"zc_id_oper-approve\".id AND oe.deleted_at IS NULL \
-                    AND EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_event oe2 \
-                                JOIN isahl.zc_id_process_rr_operation rro2 \
-                                  ON rro2.ref_right = oe2.ref_left AND rro2.deleted_at IS NULL \
-                                WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL) \
-                  ORDER BY oe.created_at LIMIT 1) AS fk_approve, \
+            r#"INSERT INTO isahl."zc_id_oper-approve" (notice, code, comments, fk_subject, created_by_id, dk_scene, dk_factor, dk_function, meta)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+                       CASE WHEN $9::bigint IS NULL THEN NULL
+                            ELSE jsonb_build_object('original_id', $9::bigint) END)
+               RETURNING id, notice AS node_name, code,
+                 (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe
+                  WHERE oe.ref_left = "zc_id_oper-approve".id AND oe.deleted_at IS NULL
+                    AND EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_event oe2
+                                JOIN isahl.zc_id_process_rr_operation rro2
+                                  ON rro2.ref_right = oe2.ref_left AND rro2.deleted_at IS NULL
+                                WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL)
+                  ORDER BY oe.created_at LIMIT 1) AS fk_approve,
                  fk_subject, comments, created_at, updated_at, deleted_at"#,
         )
         .bind(&req.node_name)
@@ -894,6 +897,7 @@ impl
         .bind(515i64)
         .bind(522i64)
         .bind(524i64)
+        .bind(req.original_id)
         .fetch_one(&self.pool)
         .await
         .map_err(AliothError::from)?;
@@ -932,14 +936,14 @@ impl
             r#"UPDATE isahl."zc_id_oper-approve"
                SET notice = $1, code = $2, comments = $3, updated_by_id = $4
                WHERE id = $5 AND deleted_at IS NULL
-               RETURNING id, notice AS node_name, code, \
-                 (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe \
-                  WHERE oe.ref_left = \"zc_id_oper-approve\".id AND oe.deleted_at IS NULL \
-                    AND EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_event oe2 \
-                                JOIN isahl.zc_id_process_rr_operation rro2 \
-                                  ON rro2.ref_right = oe2.ref_left AND rro2.deleted_at IS NULL \
-                                WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL) \
-                  ORDER BY oe.created_at LIMIT 1) AS fk_approve, \
+               RETURNING id, notice AS node_name, code,
+                 (SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe
+                  WHERE oe.ref_left = "zc_id_oper-approve".id AND oe.deleted_at IS NULL
+                    AND EXISTS (SELECT 1 FROM isahl.zc_id_operation_rr_event oe2
+                                JOIN isahl.zc_id_process_rr_operation rro2
+                                  ON rro2.ref_right = oe2.ref_left AND rro2.deleted_at IS NULL
+                                WHERE oe2.ref_right = oe.ref_right AND oe2.deleted_at IS NULL)
+                  ORDER BY oe.created_at LIMIT 1) AS fk_approve,
                  fk_subject, comments, created_at, updated_at, deleted_at"#,
         )
         .bind(&node_name)
@@ -1181,14 +1185,14 @@ impl
     ) -> Result<DelegationRule, AliothError> {
         // D8（fix-approval-engine-gap-closure）：委托人归因——前端仅发受托人姓名时
         // fk_subject 缺省为创建者（委托人）；fk_operator 缺失则按 req.name 解析活跃
-        // 用户（username 或 name 精确匹配，LIMIT 1）；解析不到 → Validation 400
+        // 用户（username 或 display_name 精确匹配，LIMIT 1）；解析不到 → Validation 400
         // fail-closed，不再产出永远无法转派的死规则。
         let fk_subject = req.fk_subject.unwrap_or(user_id);
         let fk_operator = match req.fk_operator {
             Some(uid) => Some(uid),
             None => sqlx::query_scalar::<_, i64>(
                 r#"SELECT id FROM isahl_auth.auth_users
-                   WHERE (username = $1 OR name = $1) AND is_active = TRUE
+                   WHERE (username = $1 OR display_name = $1) AND is_active = TRUE
                    ORDER BY id LIMIT 1"#,
             )
             .bind(&req.name)
@@ -1197,7 +1201,7 @@ impl
             .ok_or_else(|| AliothError::Validation {
                 field: "name".into(),
                 message: format!(
-                    "受托人不可解析：'{}' 不是活跃用户（username/name 均不匹配）",
+                    "受托人不可解析：'{}' 不是活跃用户（username/display_name 均不匹配）",
                     req.name
                 ),
             })

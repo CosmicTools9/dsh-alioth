@@ -30,7 +30,7 @@
 
 | 字段             | 类型     | 说明                                                                                                                                                                       |
 | ---------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `namespace`      | `string` | 所属 namespace。**路径权威**：以 `Pre-Proc/{namespace}/Sources/Blocks/{id}/` 目录名为唯一真相源，字段可选；存在则必须与路径一致（交叉校验，防复制/移动漂移），缺失不报错。 |
+| `namespace`      | `string` | 所属 namespace。**路径权威**：以 `Pre-Proc/{namespace}/Sources/Apps/Blocks/{id}/` 目录名为唯一真相源，字段可选；存在则必须与路径一致（交叉校验，防复制/移动漂移），缺失不报错。 |
 | `flows`          | `array`  | 工作流定义数组。AVIC-CAASEC(30/30)、Alioth(9/14) 使用。WZ 不使用此字段（通过 Service 层处理流程）。                                                                        |
 | `workbenchPosts` | `array`  | 工作台 post 定义。同上覆盖率模式。                                                                                                                                         |
 
@@ -154,3 +154,49 @@ Block 的**前端产物**分两种形态，**至少具备其一**（判定依据
 - `package.json` 名称 MUST 为 `@alioth/{id}-frontend`，exports MUST 暴露 `./single-spa`（与 Module 前端一致，见 `MODULE_SPEC.md` §11.1）
 - **两者皆无** = 该块尚未产出可挂载/可预览产物 → 校验器报 Warning（`GET /blocks/{id}/validate` 的 `frontend_structure` 检查），骨架期不阻断，交付期 MUST 消除
 - 脚手架 MUST 创建上述结构；不按本结构创建的块无法被 Gateway 挂载（门禁：`scripts/check/check-block-json.ts`）
+
+## 7. Block 粒度与视图轴
+
+> 判据来源：Cosmic-Tools 四 app 合并（92 块 → 域/操作粒度）实测。细目见 `openspec/changes/define-block-granularity-and-view-axis/`；跨 `ownerModule` 的同域收敛判据见 `openspec/changes/align-block-declaration-and-domain-merge/`。
+
+### 7.1 粒度判据
+
+块 = **业务域 × 操作闭环**（用户在一个域里连续做完一件事的范围）。MUST NOT 按 CRUD 页 / 子视图 / 状态页一一建块。
+
+**可机械判定的合并判据**：若 A、B 两块 `ownerModule` 相同、`services[]` 集合相同、且差异仅落在筛选维度（列表/新建/编辑/详情，或周/月/状态/阶段视图）⇒ 二者是同一域块的两个视图轴，**MUST 合并**，旧块 MUST 从 `Sources/Apps/Blocks/` 与 `Prototypes/Blocks/` 同步删除（禁多粒度并存）。
+
+**跨 `ownerModule` 的子视图级块**（`ownerModule` 相同仅是可机械判定的**充分**条件，非必要条件）：同一业务对象生命周期内的子视图级块（派生列表 / 发布基线 / 受控明细等），若 `services[]` 集合相同、且 `coordinates` 三元组相同（或为该域的派生视图坐标），**MUST 收敛**为该域主块（主块取承载主列表 / 工作台者），MUST NOT 以 `ownerModule` 不同为由保留为独立块。收敛时并入块的 `flows` MUST 并入主块、`consumers` MUST 取全部登记模块的并集（含 `ownerModule` 自身）；成员→主块映射与坐标留证 MUST 写入该 change 的 `design.md`（零模型中心写入）。
+
+**报告面（只读报告 / 看板）独立块判据**——上两支判据的边界：若某块的 `coordinates.function` 是模型中心签发的**独立功能码**（读径报告码，与主块功能码不同轴，如 `↓_GG`（操作执行）对 `↓_GN`（报告内容）），且该块承载**只读报告面**（KPI / 汇总 / 趋势类聚合读径，非同一数据集的切片），则二者 MUST NOT 视为「同一域块的两个视图轴」，该报告面 **MUST 独立成块**（可达性由同模块 `blockAssembly.blocks[]` 承载，MUST NOT 以页内 `data-section` 分区或 `?view=` 代替）。块 id 命名（如 `view-` 前缀）MUST NOT 参与判定。实测对照：Cosmic-Tools `org` 的 `block-manage-region`（`WE/FRA/↓_GG`）与 `block-view-operations-dashboard`（`WE/FRA/↓_GN`）为两个独立块（change `extract-operations-dashboard-block`）。
+
+### 7.2 视图轴唯一合法表达
+
+| 表达 | 合法性 |
+| --- | --- |
+| 块内筛选 pill（**≤5 项**）/ filter-bar 控件 | ✅ MUST |
+| `?view=` 路由参数、子 tab 栏（块内视图切换） | ❌ MUST NOT |
+| 跳转到另一个块 | ❌ MUST NOT |
+
+理由：块是 Gateway Navigator 的**可挂载单元**；视图轴若表达为路由或跨块跳转，`navigation.defaultBlock` 语义失效、块边界失真。pill 行 > 5 项在 tablet/mobile 宽度下溢出（视觉验证的窄屏维度）⇒ 是视图轴失控信号，应再合并或下沉为 filter-bar select。
+
+### 7.3 合并块的坐标与 service 继承
+
+- `coordinates`（§3）MUST 从**主视图成员**（该域的主列表/工作台视图）**原样复制** —— 坐标是设计腿既定事实，合并不得改写布局意图。
+- 成员间坐标冲突时 MUST 以主视图成员为准，其余成员坐标仅作留证。
+- `services[]` / `flows[]` MUST 取成员**并集**（去重）；`serviceBindings` MUST 按目标块聚合 `services` 与 `dtoTypes` 并集。
+
+### 7.4 声明面唯一真相源
+
+块的**可达性**声明唯一真相源 = 实现模块的 `blockAssembly.blocks[]`（`MODULE_SPEC.md`）。`ownerModule` MUST 在自身 `blockAssembly.blocks[]` 登记其块（门禁 `scripts/check/check-block-json.ts` 的 R9）。
+
+`app.json#config.blocks[]` 是 **App 归属同步面**（`_schema/app.schema.json` 一等字段）：
+
+| 情形 | 合法性 |
+| --- | --- |
+| 块的 `sharing.ownerModule` 所属模块已列入该 app 的 `config.modules[]` | ✅ **MUST 列全** —— `scripts/ns/sync-app-block-ownership.ts` 按 `sharing.ownerModule` 机械回填缺失项（只追加、幂等，`--check` 有差异即 rc=1）；门禁 `check-app-frontend-isolation` 以该字段计算「App 隔离特征」（未声明块 ⇒ 隔离特征不可计算） |
+| 声明**独立块**（无任何 module 登记它） | ✅ MAY —— schema 允许的正当用法 |
+| 声明在同 ns 无对应 `block.json` 的 id | ❌ MUST NOT —— `check-composition` **C3**（`dangling-app-block`）拦截，`sync-app-block-ownership.ts --check` 同判 |
+
+⚠️ 口径纠正：`config.blocks[]` **不是**「独立块专用清单」。把「已由 `config.modules[]` 覆盖」视为冗余声明与工具链**正面矛盾** —— 同一 id 既被模块登记、又出现在 App 归属面，是**预期形态**；归属面 MUST 与 `sharing.ownerModule` 逐块对齐，机器判据 = `sync-app-block-ownership.ts <ns> --check` rc=0。
+
+**合并过渡期**：模块已改指新块、旧块目录尚在时，R9 会短暂出现 —— 属**预期中间态**，删除面完成即 MUST 归零。**顺序约束**：先 build 新块原型（消 R10/T3）→ 再删旧目录（消 R9）；反序会使两类红灯同现、无法区分。

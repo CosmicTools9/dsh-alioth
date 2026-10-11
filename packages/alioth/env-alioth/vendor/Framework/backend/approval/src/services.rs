@@ -18,6 +18,7 @@ use crate::repositories::{
 use common::data::{ListQuery, PaginatedResponse};
 use common::error::AliothError;
 use crud::repository::AliothRepository;
+use sqlx::PgPool;
 
 // ── ApprovalFlowService ───────────────────────────────────────
 
@@ -242,4 +243,27 @@ impl DelegationRuleService {
     pub async fn delete(&self, id: i64, user_id: i64) -> Result<(), AliothError> {
         self.repo.delete(id, user_id).await
     }
+}
+
+// ── 催办留痕 ─────────────────────────────────────────────────
+
+/// 催办动作留痕（fk_index 契约：fk_list → zc_id_oper-approve.id）。
+///
+/// services 层收口（分层规约 BACKEND_FRAMEWORK §4.5：handlers MUST NOT 直引
+/// repositories）；通知投递（增强投递、非状态契约）仍归 handler 编排。
+pub async fn record_remind(
+    pool: &PgPool,
+    instance_id: i64,
+    user_id: i64,
+) -> Result<ApprovalAction, AliothError> {
+    let repo = ApprovalActionRepository::new(pool.clone());
+    repo.create(
+        CreateApprovalActionRequest {
+            summary: format!("remind:{instance_id}"),
+            code: Some("REMIND".to_string()),
+            fk_list: Some(instance_id),
+        },
+        user_id,
+    )
+    .await
 }

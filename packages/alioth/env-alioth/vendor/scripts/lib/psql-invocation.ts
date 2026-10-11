@@ -1,7 +1,7 @@
 /**
  * psql-invocation.ts — bash 命令 → psql / schema-info 的 **SQL 载荷**提取（内容可见性判定）
  *
- * 用途：OMP 运行期守卫（`.omp/extensions/{db-pipeline-guard,safety-guard}.ts`）在拦截前
+ * 用途：OMP 运行期守卫（`.omp/extensions/safety-guard.ts`）在拦截前
  * 先解析**执行内容或执行文件**——只读查询 MUST NOT 因「通道形态可疑」被拦或询问，
  * 只有「明确保护的内容」（见 `scripts/lib/sql-scope.ts`）与「内容确实不可读」才进判定。
  *

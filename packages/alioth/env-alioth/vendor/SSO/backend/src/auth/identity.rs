@@ -75,6 +75,11 @@ pub async fn submit_identity(
         }
     };
 
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
+
     // Create entity instance based on verification type
     let instance_id = match body.verification_type.as_str() {
         "personal" => {
@@ -235,9 +240,14 @@ pub async fn get_identity_status(
         }
     };
 
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
+
     let row = sqlx::query_as::<_, (Option<String>, Option<String>, Option<i64>, Option<String>, Option<String>)>(
         r#"
-        SELECT iv.verification_status, u.status, iv.approval_event_id, ast.code AS approval_status,
+        SELECT iv.verification_status, u.status::text, iv.approval_event_id, ast.code AS approval_status,
                iv.rejected_reason
         FROM isahl_auth.auth_users u
         LEFT JOIN isahl_auth.identity_verifications iv ON iv.user_id = u.id
@@ -289,6 +299,11 @@ pub async fn verify_identity(
             });
         }
     };
+
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(&req) {
+        return resp;
+    }
 
     let identity = match sqlx::query_as::<_, (i64, i64, String)>(
         r#"
@@ -346,7 +361,7 @@ pub async fn verify_identity(
         // - 旧路径（未注册直接建用户）→ 用存在列创建（原 ck_category/fk_object 列不存在，
         //   必失败并静默降级 approval_event_id=0——断链根源）。
         let user_status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+            sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
                 .bind(user_id)
                 .fetch_optional(pool.get_ref())
                 .await

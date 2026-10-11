@@ -44,20 +44,30 @@ struct Fixture {
 async fn seed_bound_user(pool: &PgPool, suffix: &str) -> Fixture {
     let email = format!("me_cognition_{}@alioth.test", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'me_cognition', $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'me_cognition', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&email)
     .execute(pool)
     .await
     .expect("insert user");
-    let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email)
-            .fetch_one(pool)
-            .await
-            .expect("fetch user");
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'me_cognition' LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("fetch user");
+    // 邮箱唯一存储 = isahl_auth.auth_user_emails（auth_users 无 email 列）
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+         VALUES ($1, $2, TRUE, NOW(), NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&email)
+    .execute(pool)
+    .await
+    .expect("insert user email");
 
     // 主体（企业法人叶表——生产规则：主体一律落叶表）
     // 坐标三元组（§6.12 声明即必须）：TX/FJA/↓_GG（主体族），值经 ontology_binding 解析 code→ZUID，
@@ -197,6 +207,10 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .bind(f.subject_id)
         .execute(pool)
         .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(f.user_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(f.user_id)
         .execute(pool)
@@ -269,20 +283,29 @@ async fn me_returns_null_subject_and_empty_perspectives_for_unbound_user() {
     let pool = connect().await;
     let email = "me_cognition_unbound@alioth.test";
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'me_unbound', $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'me_unbound', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(email)
     .execute(&pool)
     .await
     .expect("insert user");
-    let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(email)
-            .fetch_one(&pool)
-            .await
-            .expect("fetch user");
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'me_unbound' LIMIT 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("fetch user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at)
+         VALUES ($1, $2, TRUE, NOW(), NOW())
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(email)
+    .execute(&pool)
+    .await
+    .expect("insert user email");
 
     let body = call_me(&pool, user_id, email).await;
     assert!(
@@ -296,6 +319,10 @@ async fn me_returns_null_subject_and_empty_perspectives_for_unbound_user() {
         "无任职用户 perspectives 应为空数组"
     );
 
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_id)
         .execute(&pool)

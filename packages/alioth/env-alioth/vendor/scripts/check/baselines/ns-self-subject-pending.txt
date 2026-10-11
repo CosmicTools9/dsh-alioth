@@ -1,0 +1,25 @@
+# ns 本我声明待办登记（add-ns-self-subject-binding-contract）
+#
+# 语义（门禁 scripts/check/check-ns-subject-bootstrap.sh 断言 5）：system 哨兵 MUST 绑定该 ns 的
+# 业务主体（本我，非占位——settings 无 subject_binding 标记）。下列 ns 尚未完成声明式绑定，
+# 暂豁免该断言并输出「待声明」。
+#
+# 归属 = 各 ns owner（用户裁决：本文件在各 ns 自行处理）：主体信息（类型/名称/编码）与声明式种子
+# （先例 Pre-Proc/WZ/seed/seed-wz-system-subject.sql）均由各 ns 仓自行落地；平台侧只登记「谁是豁免方」，
+# 不代办声明、不代改 ns 库/种子面。条目所在 ns 达成后由该 ns 移除本 ns 行——只减不增，留行即门禁判红。
+#
+# 判定以**门禁判据**为准（它是阻断方）；`settings` JSON 占位标记与门禁所数「非占位绑定行」之间的
+# 语义差异由对应 ns owner 复核。
+#
+# 格式：<ns><TAB><状态说明>（当前无在册 ns：五 ns 门禁实测全部达成）
+# ── 入册史（只减不增；判定以**门禁判据**为准——它是阻断方）：
+#    2026-10-09（第 3 次复核 · 再入册）：alioth / se / cosmic_tools / avic_caasec 四库当时经判据实测
+#      报「本我非占位绑定未达成(计0)」（system 行带 `settings.subject_binding` 占位标记）⇒ 入册。
+#    2026-10-11（第 4 次复核 · **销行**）：同一判据实测四库均报「**本我登记已达成** —— 请从本文件移除本
+#      ns 条目」，WZ 报「主体认知基线齐备」⇒ 挂账使命结束，按本文件权威条款「条目所在 ns 达成后由该
+#      ns 移除本 ns 行」销行。可复现证据（本机 dev 库）：
+#        $ bash scripts/check/check-ns-subject-bootstrap.sh
+#          ❌ AVIC-CAASEC(avic_caasec) 违规: 本我登记已达成——请从 ns-self-subject-pending.txt 移除本 ns 条目
+#          ❌ Alioth(alioth) / ❌ Cosmic-Tools(cosmic_tools) / ❌ SE(se)      同上（逐库各一行）
+#          ✅ WZ(wz) 主体认知基线齐备
+#      后续若某 ns 判据回落为「未达成」，由该 ns owner 依判据输出重新入册（留行即门禁判红）。

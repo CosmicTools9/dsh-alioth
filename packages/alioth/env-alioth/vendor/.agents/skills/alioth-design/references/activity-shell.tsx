@@ -18,12 +18,19 @@
  * LanguageSwitch / ThemeToggle / ActionGroup / UserMenu / ActivityFooter /
  * ActivityWorkspaceDock / MobileSheet
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { useT } from './shared-i18n';
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+} from "react";
+import { useT as usePrototypeT } from "./shared-i18n";
 
 // 轻量 cn: 与生产代码的 tailwind-merge 行为等价,仅做过滤拼接
 function cn(...inputs: Array<string | false | null | undefined>): string {
-  return inputs.filter(Boolean).join(' ');
+  return inputs.filter(Boolean).join(" ");
 }
 
 // 全局 window 类型,避免 any
@@ -44,6 +51,25 @@ function icon(key: string, size = 16) {
   ) : (
     <span style={{ fontSize: size - 2 }}>•</span>
   );
+}
+
+/** 宿主 i18n 注入点（宿主差异的唯一表达面，无 provider ⇒ 原型内置字典回落）：
+ *  原型产物不提供 provider ⇒ 与引入注入点前的行为逐字一致（`./shared-i18n` 的 zh 字典）；
+ *  宿主（OpenActivity）以 `@alioth/i18n` 的 `t` 包 `ActivityI18nContext.Provider` 注入，
+ *  从而保留 en/zh 运行时切换（MUST NOT 以「按宿主改写导入行」的副本来表达该差异）。 */
+export type ShellTranslateFunction = (
+  key: string,
+  params?: Record<string, string | number>,
+) => string;
+export const ActivityI18nContext = createContext<ShellTranslateFunction | null>(
+  null,
+);
+
+/** 注入感知的翻译 hook：注入值优先，否则回落原型字典（两 hook 恒调用 ⇒ hook 顺序稳定）。 */
+function useShellT(): ShellTranslateFunction {
+  const injected = useContext(ActivityI18nContext);
+  const prototypeT = usePrototypeT();
+  return injected ?? prototypeT;
 }
 
 // ── 类型 ──
@@ -105,56 +131,74 @@ export interface LocaleOption {
  * （Gateway 完整版的 ai / approval / contacts 槽位在简化入口中移除。）
  */
 export const DEFAULT_ACTIVITY_TRIGGERS: WorkspaceTrigger[] = [
-  { id: 'search', icon: 'search', titleKey: 'dock.search' },
-  { id: 'inbox', icon: 'mail', titleKey: 'dock.inbox' },
-  { id: 'calendar', icon: 'calendar', titleKey: 'dock.calendar' },
+  { id: "search", icon: "search", titleKey: "dock.search" },
+  { id: "inbox", icon: "mail", titleKey: "dock.inbox" },
+  { id: "calendar", icon: "calendar", titleKey: "dock.calendar" },
 ];
 
 // ── 子组件 ──
 
 export function ActivityLogo({
   brand,
+  logoUrl,
   homeHref,
   homeTitle,
   showAppName,
   pageTitle,
 }: {
   brand: string;
+  /** 组合契约 `app.json` `brand.logo`（门户 VI）；未提供时回落内置标记 */
+  logoUrl?: string;
   homeHref?: string;
   homeTitle?: string;
   showAppName?: string;
   pageTitle?: string;
 }) {
-  const t = useT();
+  const t = useShellT();
   const displayText = showAppName || pageTitle || brand;
   return (
     <a
-      href={homeHref || '#'}
+      href={homeHref || "#"}
       className={cn(
-        'flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline min-w-0',
-        showAppName && 'w-60',
+        "flex items-center gap-2.5 transition-colors hover:opacity-80 overflow-hidden no-underline min-w-0",
+        showAppName && "w-60",
       )}
-      title={homeTitle || t('shell.backHome')}
+      title={homeTitle || t("shell.backHome")}
     >
-      <svg className="w-7 h-7 text-primary shrink-0" viewBox="0 0 32 32" fill="none">
-        <path
-          d="M4 28V14C4 8.477 8.477 4 14 4H18C23.523 4 28 8.477 28 14V28"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M12 28V20C12 17.791 13.791 16 16 16C18.209 16 20 17.791 20 20V28"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path d="M16 10V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        <circle cx="16" cy="7" r="1.5" fill="currentColor" />
-      </svg>
-      <span className="text-lg font-bold hidden sm:inline truncate">{displayText}</span>
+      {logoUrl ? (
+        <img src={logoUrl} alt={brand} className="h-7 w-auto shrink-0" />
+      ) : (
+        <svg
+          className="w-7 h-7 text-primary shrink-0"
+          viewBox="0 0 32 32"
+          fill="none"
+        >
+          <path
+            d="M4 28V14C4 8.477 8.477 4 14 4H18C23.523 4 28 8.477 28 14V28"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M12 28V20C12 17.791 13.791 16 16 16C18.209 16 20 17.791 20 20V28"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d="M16 10V13"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+          <circle cx="16" cy="7" r="1.5" fill="currentColor" />
+        </svg>
+      )}
+      <span className="text-lg font-bold hidden sm:inline truncate">
+        {displayText}
+      </span>
     </a>
   );
 }
@@ -166,13 +210,16 @@ export function ModuleTabs({
   tabs: ModuleTab[];
   onTabClick?: (id: string) => void;
 }) {
-  const t = useT();
+  const t = useShellT();
   if (!tabs || tabs.length === 0) return null;
   return (
-    <div className="relative flex items-center min-w-0 flex-1" data-testid="scroll-tabs">
+    <div
+      className="relative flex items-center min-w-0 flex-1"
+      data-testid="scroll-tabs"
+    >
       <div
         role="tablist"
-        aria-label={t('shell.navModule')}
+        aria-label={t("shell.navModule")}
         className="flex items-center gap-0.5 overflow-x-auto hide-scrollbar min-w-0 flex-1 "
       >
         {tabs.map((t) => {
@@ -185,14 +232,16 @@ export function ModuleTabs({
               aria-selected={isActive}
               data-tab-active={isActive}
               className={cn(
-                'relative flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-t-lg transition-all duration-150 whitespace-nowrap',
+                "relative flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-t-lg transition-all duration-150 whitespace-nowrap",
                 isActive
-                  ? 'text-foreground bg-background shadow-tab border-x border-t border-border z-10 before:absolute before:bottom-[-1px] before:left-[6px] before:right-[6px] before:h-[2px] before:bg-primary before:rounded-t-[1px]'
-                  : 'text-muted-foreground hover:bg-accent/60 border-b border-transparent',
+                  ? "text-foreground bg-background shadow-tab border-x border-t border-border z-10 before:absolute before:bottom-[-1px] before:left-[6px] before:right-[6px] before:h-[2px] before:bg-primary before:rounded-t-[1px]"
+                  : "text-muted-foreground hover:bg-accent/60 border-b border-transparent",
               )}
               title={t.label}
             >
-              {t.icon && <span className="w-4 h-4 shrink-0">{icon(t.icon)}</span>}
+              {t.icon && (
+                <span className="w-4 h-4 shrink-0">{icon(t.icon)}</span>
+              )}
               <span>{t.label}</span>
             </button>
           );
@@ -213,7 +262,7 @@ export function Breadcrumbs({ crumbs }: { crumbs: Breadcrumb[] }) {
             <span className="text-foreground font-medium">{c.label}</span>
           ) : (
             <a
-              href={c.href || '#'}
+              href={c.href || "#"}
               className="text-muted-foreground hover:text-foreground no-underline"
             >
               {c.label}
@@ -226,11 +275,22 @@ export function Breadcrumbs({ crumbs }: { crumbs: Breadcrumb[] }) {
 }
 
 /** 全文搜索（TopBar 内联槽位） */
-export function SearchSlot({ placeholder }: { placeholder?: string }) {
+export function SearchSlot({
+  placeholder,
+  onSearch,
+}: {
+  placeholder?: string;
+  /** 键入回调（fix-search-surfaces：壳层搜索接线到 dock 全文搜索；缺省时保留原本地态） */
+  onSearch?: (value: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const [value, setValue] = useState('');
-  const t = useT();
-  const resolvedPlaceholder = placeholder || t('dock.searchShortPlaceholder');
+  const [value, setValue] = useState("");
+  const t = useShellT();
+  const resolvedPlaceholder = placeholder || t("dock.searchShortPlaceholder");
+  const handleInput = (v: string) => {
+    setValue(v);
+    onSearch?.(v);
+  };
 
   if (expanded) {
     return (
@@ -242,15 +302,15 @@ export function SearchSlot({ placeholder }: { placeholder?: string }) {
             placeholder={resolvedPlaceholder}
             className="w-full h-10 pl-3 pr-9 rounded-lg border bg-muted/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/30 transition-colors"
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => handleInput(e.target.value)}
           />
           <button
             type="button"
             onClick={() => setExpanded(false)}
             className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-accent md:hidden"
-            aria-label={t('shell.closeSearch')}
+            aria-label={t("shell.closeSearch")}
           >
-            <span className="w-4 h-4">{icon('x', 16)}</span>
+            <span className="w-4 h-4">{icon("x", 16)}</span>
           </button>
         </div>
       </div>
@@ -265,17 +325,17 @@ export function SearchSlot({ placeholder }: { placeholder?: string }) {
           placeholder={resolvedPlaceholder}
           className="w-full h-9 pl-3 pr-3 rounded-lg border bg-muted/50 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 focus:bg-background transition-colors"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => handleInput(e.target.value)}
         />
       </div>
       <button
         type="button"
         onClick={() => setExpanded(true)}
         className="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-        aria-label={t('shell.search')}
-        title={t('shell.search')}
+        aria-label={t("shell.search")}
+        title={t("shell.search")}
       >
-        <span className="w-4 h-4">{icon('search', 16)}</span>
+        <span className="w-4 h-4">{icon("search", 16)}</span>
       </button>
     </>
   );
@@ -295,11 +355,11 @@ export function LanguageSwitch({
     locales && locales.length > 0
       ? locales
       : [
-          { code: 'zh-CN', label: '简体中文' },
-          { code: 'en', label: 'English' },
+          { code: "zh-CN", label: "简体中文" },
+          { code: "en", label: "English" },
         ];
   const [internal, setInternal] = useState(value || options[0].code);
-  const t = useT();
+  const t = useShellT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const current = value || internal;
@@ -307,20 +367,22 @@ export function LanguageSwitch({
   useEffect(() => {
     if (!open) return undefined;
     const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
   const select = (code: string) => {
     setInternal(code);
     setOpen(false);
-    if (typeof document !== 'undefined') document.documentElement.lang = code;
+    if (typeof document !== "undefined") document.documentElement.lang = code;
     onChange?.(code);
   };
 
-  const currentLabel = options.find((o) => o.code === current)?.label || current;
+  const currentLabel =
+    options.find((o) => o.code === current)?.label || current;
 
   return (
     <div className="relative" ref={ref}>
@@ -328,14 +390,14 @@ export function LanguageSwitch({
         type="button"
         onClick={() => setOpen((p) => !p)}
         className={cn(
-          'hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent',
-          open && 'bg-accent text-accent-foreground',
+          "hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent",
+          open && "bg-accent text-accent-foreground",
         )}
-        title={`${t('shell.language')}{t('common.colon')}${currentLabel}`}
-        aria-label={t('shell.languageSwitch')}
+        title={`${t("shell.language")}{t('common.colon')}${currentLabel}`}
+        aria-label={t("shell.languageSwitch")}
         aria-expanded={open}
       >
-        <span className="w-4 h-4">{icon('translate')}</span>
+        <span className="w-4 h-4">{icon("translate")}</span>
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-1 w-36 rounded-lg border bg-card shadow-lg py-1 z-50 max-w-[calc(100vw-1rem)]">
@@ -345,10 +407,10 @@ export function LanguageSwitch({
               type="button"
               onClick={() => select(o.code)}
               className={cn(
-                'w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors cursor-pointer border-none bg-transparent',
+                "w-full flex items-center gap-2 px-3 py-2 text-sm text-left transition-colors cursor-pointer border-none bg-transparent",
                 o.code === current
-                  ? 'text-primary font-semibold bg-primary/10'
-                  : 'text-foreground hover:bg-accent',
+                  ? "text-primary font-semibold bg-primary/10"
+                  : "text-foreground hover:bg-accent",
               )}
             >
               {o.label}
@@ -362,13 +424,14 @@ export function LanguageSwitch({
 
 /** 明暗主题切换 */
 export function ThemeToggle() {
-  const t = useT();
+  const t = useShellT();
   const [isDark, setDark] = useState(
-    typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
+    typeof document !== "undefined" &&
+      document.documentElement.classList.contains("dark"),
   );
   const toggleTheme = useCallback(() => {
     const next = !isDark;
-    document.documentElement.classList.toggle('dark', next);
+    document.documentElement.classList.toggle("dark", next);
     setDark(next);
   }, [isDark]);
 
@@ -377,9 +440,9 @@ export function ThemeToggle() {
       type="button"
       onClick={toggleTheme}
       className="hidden sm:flex w-9 h-9 rounded-lg items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
-      title={isDark ? t('shell.themeLight') : t('shell.themeDark')}
+      title={isDark ? t("shell.themeLight") : t("shell.themeDark")}
     >
-      <span className="w-4 h-4">{icon(isDark ? 'sun' : 'moon')}</span>
+      <span className="w-4 h-4">{icon(isDark ? "sun" : "moon")}</span>
     </button>
   );
 }
@@ -401,10 +464,14 @@ export function ActionGroup({
   locale?: string;
   onLocaleChange?: (code: string) => void;
 }) {
-  const t = useT();
+  const t = useShellT();
   return (
     <div className="flex items-center gap-3">
-      <LanguageSwitch locales={locales} value={locale} onChange={onLocaleChange} />
+      <LanguageSwitch
+        locales={locales}
+        value={locale}
+        onChange={onLocaleChange}
+      />
       <ThemeToggle />
       {triggers.map((tr) => (
         <button
@@ -440,18 +507,19 @@ export function UserMenu({
   /** 设置（缺省仅收起菜单） */
   onSettings?: () => void;
 }) {
-  const t = useT();
+  const t = useShellT();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const initial = (user.name || 'U').charAt(0).toUpperCase();
+  const initial = (user.name || "U").charAt(0).toUpperCase();
 
   useEffect(() => {
     if (!open) return undefined;
     const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
   return (
@@ -460,10 +528,10 @@ export function UserMenu({
         type="button"
         onClick={() => setOpen((p) => !p)}
         className={cn(
-          'flex items-center gap-1.5 cursor-pointer border-none bg-transparent p-1 rounded-lg transition-colors hover:bg-accent',
-          open && 'bg-accent',
+          "flex items-center gap-1.5 cursor-pointer border-none bg-transparent p-1 rounded-lg transition-colors hover:bg-accent",
+          open && "bg-accent",
         )}
-        aria-label={t('shell.userMenu')}
+        aria-label={t("shell.userMenu")}
         aria-expanded={open}
       >
         <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
@@ -471,12 +539,15 @@ export function UserMenu({
         </div>
         {/* 登录身份内联展示（门户登录账号优先；窄屏收起，仅下拉内可见） */}
         <span className="hidden md:inline max-w-[10rem] truncate text-xs font-medium text-foreground">
-          {user.name || user.account || ''}
+          {user.name || user.account || ""}
         </span>
         <span
-          className={cn('w-3 h-3 text-muted-foreground transition-transform', open && 'rotate-180')}
+          className={cn(
+            "w-3 h-3 text-muted-foreground transition-transform",
+            open && "rotate-180",
+          )}
         >
-          {icon('chevronDown', 12)}
+          {icon("chevronDown", 12)}
         </span>
       </button>
       {open && (
@@ -484,9 +555,15 @@ export function UserMenu({
           <div className="px-3 py-2 border-b border-border">
             <p className="text-sm font-medium truncate">{user.name}</p>
             {user.account && (
-              <p className="text-xs text-muted-foreground truncate">{t('shell.account')}{t('common.colon')}{user.account}</p>
+              <p className="text-xs text-muted-foreground truncate">
+                {t("shell.account")}
+                {t("common.colon")}
+                {user.account}
+              </p>
             )}
-            <p className="text-xs text-muted-foreground truncate">{user.email}</p>
+            <p className="text-xs text-muted-foreground truncate">
+              {user.email}
+            </p>
           </div>
           <a
             href="#"
@@ -497,7 +574,8 @@ export function UserMenu({
               onProfile?.();
             }}
           >
-            <span className="w-4 h-4">{icon('user')}</span>{t('scene.profile')}
+            <span className="w-4 h-4">{icon("user")}</span>
+            {t("scene.profile")}
           </a>
           <a
             href="#"
@@ -508,7 +586,8 @@ export function UserMenu({
               onSettings?.();
             }}
           >
-            <span className="w-4 h-4">{icon('settings')}</span>{t('scene.settings')}
+            <span className="w-4 h-4">{icon("settings")}</span>
+            {t("scene.settings")}
           </a>
           <div className="border-t border-border mt-1 pt-1">
             <button
@@ -519,7 +598,8 @@ export function UserMenu({
                 onLogout?.();
               }}
             >
-              <span className="w-4 h-4">{icon('logOut')}</span>{t('logout')}
+              <span className="w-4 h-4">{icon("logOut")}</span>
+              {t("logout")}
             </button>
           </div>
         </div>
@@ -530,9 +610,11 @@ export function UserMenu({
 
 export function ActivityTopBar({
   brand,
+  logoUrl,
   moduleTabs,
   breadcrumbs,
   searchPlaceholder,
+  onSearch,
   triggers,
   user,
   onTrigger,
@@ -550,6 +632,8 @@ export function ActivityTopBar({
   moduleTabs?: ModuleTab[];
   breadcrumbs?: Breadcrumb[];
   searchPlaceholder?: string;
+  /** 壳层搜索键入回调（fix-search-surfaces：接线 dock 全文搜索） */
+  onSearch?: (value: string) => void;
   triggers?: WorkspaceTrigger[];
   user: User;
   onTrigger?: (id: string) => void;
@@ -562,8 +646,10 @@ export function ActivityTopBar({
   locale?: string;
   onLocaleChange?: (code: string) => void;
   homeHref?: string;
+  /** 组合契约品牌标志（`app.json` `brand.logo`），透传给 `ActivityLogo` */
+  logoUrl?: string;
 }) {
-  const t = useT();
+  const t = useShellT();
   return (
     <header className="h-14 border-b flex items-center justify-between px-4 md:px-6 bg-background shrink-0">
       <div className="flex items-center gap-2 min-w-0 relative h-full">
@@ -572,23 +658,26 @@ export function ActivityTopBar({
             type="button"
             onClick={onMobileMenuToggle}
             className="md:hidden p-2 rounded-lg hover:bg-accent transition-colors"
-            aria-label={t('shell.openMenu')}
+            aria-label={t("shell.openMenu")}
           >
-            <span className="w-5 h-5">{icon('menu', 20)}</span>
+            <span className="w-5 h-5">{icon("menu", 20)}</span>
           </button>
         )}
         <ActivityLogo
           brand={brand}
+          logoUrl={logoUrl}
           homeHref={homeHref}
           showAppName={moduleTabs && moduleTabs.length > 0 ? brand : undefined}
         />
         {moduleTabs && moduleTabs.length > 0 && (
           <ModuleTabs tabs={moduleTabs} onTabClick={onModuleTabChange} />
         )}
-        {breadcrumbs && breadcrumbs.length > 0 && <Breadcrumbs crumbs={breadcrumbs} />}
+        {breadcrumbs && breadcrumbs.length > 0 && (
+          <Breadcrumbs crumbs={breadcrumbs} />
+        )}
       </div>
       <div className="flex items-center gap-3">
-        <SearchSlot placeholder={searchPlaceholder} />
+        <SearchSlot placeholder={searchPlaceholder} onSearch={onSearch} />
         <ActionGroup
           triggers={triggers || []}
           onTrigger={onTrigger}
@@ -596,7 +685,12 @@ export function ActivityTopBar({
           locale={locale}
           onLocaleChange={onLocaleChange}
         />
-        <UserMenu user={user} onLogout={onLogout} onProfile={onProfile} onSettings={onSettings} />
+        <UserMenu
+          user={user}
+          onLogout={onLogout}
+          onProfile={onProfile}
+          onSettings={onSettings}
+        />
       </div>
     </header>
   );
@@ -611,12 +705,12 @@ export function ActivityFooter({
   version: string;
   links?: { label: string; href?: string }[];
 }) {
-  const t = useT();
+  const t = useShellT();
   const defaultLinks =
     links === undefined
       ? [
-          { label: t('shell.help'), href: '#' },
-          { label: t('shell.privacy'), href: '#' },
+          { label: t("shell.help"), href: "#" },
+          { label: t("shell.privacy"), href: "#" },
         ]
       : links;
   return (
@@ -651,12 +745,12 @@ export function ActivityWorkspaceDock({
   onClose: () => void;
   children?: React.ReactNode;
 }) {
-
-  const t = useT();  return (
+  const t = useShellT();
+  return (
     <div
       className={cn(
-        'hidden md:flex shrink-0 overflow-hidden transition-all duration-300 ease-in-out',
-        active ? 'w-80 border-l' : 'w-0 border-l-0',
+        "hidden md:flex shrink-0 overflow-hidden transition-all duration-300 ease-in-out",
+        active ? "w-80 border-l" : "w-0 border-l-0",
       )}
     >
       <div className="w-80 h-full overflow-y-auto shrink-0 flex flex-col border-l border-border bg-card">
@@ -666,13 +760,18 @@ export function ActivityWorkspaceDock({
             type="button"
             onClick={onClose}
             className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer border-none bg-transparent"
-            title={t('docs.attachModal.close')}
+            title={t("docs.attachModal.close")}
           >
-            <span className="w-4 h-4">{icon('panelRight', 16)}</span>
+            <span className="w-4 h-4">{icon("panelRight", 16)}</span>
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
-          {children || <div className="text-sm text-muted-foreground p-4">{title}{t('shell.contentArea')}</div>}
+          {children || (
+            <div className="text-sm text-muted-foreground p-4">
+              {title}
+              {t("shell.contentArea")}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -696,8 +795,14 @@ function MobileSheet({
       <div className="absolute inset-0 bg-black/20" onClick={onClose} />
       <div className="absolute top-0 left-0 h-full w-[85vw] bg-background flex flex-col shadow-xl">
         <div className="h-14 flex items-center px-6 border-b border-border shrink-0">
-          <a href="#" className="flex items-center gap-2.5 no-underline" onClick={onClose}>
-            <span className="w-6 h-6 text-primary">{icon('gatewayLogo', 24)}</span>
+          <a
+            href="#"
+            className="flex items-center gap-2.5 no-underline"
+            onClick={onClose}
+          >
+            <span className="w-6 h-6 text-primary">
+              {icon("gatewayLogo", 24)}
+            </span>
             <span className="text-lg font-bold">{brand}</span>
           </a>
         </div>
@@ -768,17 +873,17 @@ export function NavItem({
       aria-disabled={disabled || undefined}
       onClick={() => onClick(item.id)}
       className={cn(
-        'flex items-center rounded-md text-sm font-medium transition-colors',
+        "flex items-center rounded-md text-sm font-medium transition-colors",
         collapsed
-          ? 'justify-center h-9 w-9 mx-auto my-0.5 px-2'
-          : 'w-[calc(100%-1rem)] mx-2 gap-2.5 py-2 px-4',
+          ? "justify-center h-9 w-9 mx-auto my-0.5 px-2"
+          : "w-[calc(100%-1rem)] mx-2 gap-2.5 py-2 px-4",
         disabled
-          ? 'opacity-50 text-muted-foreground cursor-not-allowed'
+          ? "opacity-50 text-muted-foreground cursor-not-allowed"
           : active
-            ? 'bg-primary/10 text-primary font-semibold'
-            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+            ? "bg-primary/10 text-primary font-semibold"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
-      title={disabled ? item.disabledHint ?? item.label : item.label}
+      title={disabled ? (item.disabledHint ?? item.label) : item.label}
     >
       <span className="h-4 w-4 shrink-0">{icon(item.icon)}</span>
       {!collapsed && (
@@ -787,8 +892,10 @@ export function NavItem({
           {badge !== undefined && (
             <span
               className={cn(
-                'inline-flex items-center justify-center h-5 min-w-5 px-1 text-xs font-medium border-0 rounded-md shrink-0',
-                active ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground',
+                "inline-flex items-center justify-center h-5 min-w-5 px-1 text-xs font-medium border-0 rounded-md shrink-0",
+                active
+                  ? "bg-primary/15 text-primary"
+                  : "bg-muted text-muted-foreground",
               )}
             >
               {badge}
@@ -823,17 +930,34 @@ export function ActivityNavigation({
     <>
       <aside
         className={cn(
-          'hidden md:flex flex-col h-full bg-secondary border-r border-border transition-all duration-300 ease-in-out shrink-0',
-          collapsed ? 'w-16' : 'w-60',
+          "hidden md:flex flex-col h-full bg-secondary border-r border-border transition-all duration-300 ease-in-out shrink-0",
+          collapsed ? "w-16" : "w-60",
         )}
       >
-        <MainNav groups={groups} activeId={activeId} collapsed={collapsed} onSelect={onSelect} />
+        <MainNav
+          groups={groups}
+          activeId={activeId}
+          collapsed={collapsed}
+          onSelect={onSelect}
+        />
         <SidebarFoot collapsed={collapsed} onToggle={onToggle} />
       </aside>
-      <MobileSheet open={!!mobileOpen} onClose={onMobileClose || (() => {})} brand={brand || 'OpenActivity'}>
+      <MobileSheet
+        open={!!mobileOpen}
+        onClose={onMobileClose || (() => {})}
+        brand={brand || "OpenActivity"}
+      >
         <div className="flex flex-col h-full">
-          <MainNav groups={groups} activeId={activeId} collapsed={false} onSelect={onSelect} />
-          <SidebarFoot collapsed={false} onToggle={onMobileClose || (() => {})} />
+          <MainNav
+            groups={groups}
+            activeId={activeId}
+            collapsed={false}
+            onSelect={onSelect}
+          />
+          <SidebarFoot
+            collapsed={false}
+            onToggle={onMobileClose || (() => {})}
+          />
         </div>
       </MobileSheet>
     </>
@@ -847,16 +971,20 @@ export function SidebarFoot({
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const t = useT();
+  const t = useShellT();
   return (
     <div className="shrink-0 flex items-center border-t border-border px-3 h-10 gap-2">
       <button
         type="button"
         onClick={onToggle}
         className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer border-none bg-transparent"
-        title={collapsed ? t('shell.expandSidebar') : t('shell.collapseSidebar')}
+        title={
+          collapsed ? t("shell.expandSidebar") : t("shell.collapseSidebar")
+        }
       >
-        <span className="w-3.5 h-3.5">{icon(collapsed ? 'panelRight' : 'panelLeft', 14)}</span>
+        <span className="w-3.5 h-3.5">
+          {icon(collapsed ? "panelRight" : "panelLeft", 14)}
+        </span>
       </button>
     </div>
   );
@@ -865,9 +993,13 @@ export function SidebarFoot({
 // ── ActivityShell（登录后 App 模式，直达 App/index，无工作台） ──
 export interface ActivityShellProps {
   brand: string;
+  /** 组合契约品牌标志（`app.json` `brand.logo`），透传 TopBar */
+  logoUrl?: string;
   moduleTabs?: ModuleTab[];
   breadcrumbs?: Breadcrumb[];
   searchPlaceholder?: string;
+  /** 壳层搜索键入回调（fix-search-surfaces：接线 dock 全文搜索） */
+  onSearch?: (value: string) => void;
   /** WorkspaceDock 触发器；缺省为 DEFAULT_ACTIVITY_TRIGGERS（全文搜索/站内信/日历） */
   triggers?: WorkspaceTrigger[];
   user: User;
@@ -893,8 +1025,8 @@ export interface ActivityShellProps {
   hideNavigation?: boolean;
   /** App 级模式：隐藏 Footer */
   hideFooter?: boolean;
-  /** App 级模式：children 不包 overflow-y-auto（由 Module 自己提供滚动视口） */
-  noContentScroll?: boolean;
+  /** 内容复位键：变更时重挂滚动体（滚动位置归零；场景切换语义） */
+  contentKey?: string;
   /** 隐藏右侧 WorkspaceDock，用于无 dock 的实现模块 */
   hideWorkspaceDock?: boolean;
   /** Logo 链接（缺省 '#'）；简化入口登录后直达 App/index，Logo 应指向 App index */
@@ -911,9 +1043,11 @@ export interface ActivityShellProps {
 export function ActivityShell(props: ActivityShellProps) {
   const {
     brand,
+    logoUrl,
     moduleTabs,
     breadcrumbs,
     searchPlaceholder,
+    onSearch,
     triggers,
     user,
     onTrigger,
@@ -936,7 +1070,7 @@ export function ActivityShell(props: ActivityShellProps) {
     showAccent = false,
     hideNavigation = false,
     hideFooter = false,
-    noContentScroll = false,
+    contentKey,
     hideWorkspaceDock = false,
     homeHref,
     locales,
@@ -946,26 +1080,39 @@ export function ActivityShell(props: ActivityShellProps) {
     onSettings,
   } = props;
 
-  const resolvedTriggers = triggers === undefined ? DEFAULT_ACTIVITY_TRIGGERS : triggers;
+  const resolvedTriggers =
+    triggers === undefined ? DEFAULT_ACTIVITY_TRIGGERS : triggers;
   const [internalCollapsed, setInternalCollapsed] = useState(collapsed);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const t = useT();
+  const t = useShellT();
   const effectiveCollapsed = onToggle ? collapsed : internalCollapsed;
   const handleToggle = onToggle || (() => setInternalCollapsed((p) => !p));
 
   const activeTrigger = activeWorkspace
     ? resolvedTriggers.find((t) => t.id === activeWorkspace)
     : undefined;
-  const dockTitle = workspaceTitle || (activeTrigger?.titleKey ? t(activeTrigger.titleKey) : activeTrigger?.title) || t('shell.workspace');
+  const dockTitle =
+    workspaceTitle ||
+    (activeTrigger?.titleKey
+      ? t(activeTrigger.titleKey)
+      : activeTrigger?.title) ||
+    t("shell.workspace");
 
   return (
-    <div className={cn('flex h-screen flex-col overflow-hidden bg-background', rootClass)}>
+    <div
+      className={cn(
+        "flex h-screen flex-col overflow-hidden bg-background",
+        rootClass,
+      )}
+    >
       <ActivityTopBar
         brand={brand}
+        logoUrl={logoUrl}
         moduleTabs={moduleTabs}
         breadcrumbs={breadcrumbs}
         searchPlaceholder={searchPlaceholder}
+        onSearch={onSearch}
         triggers={resolvedTriggers}
         user={user}
         onTrigger={onTrigger}
@@ -984,32 +1131,38 @@ export function ActivityShell(props: ActivityShellProps) {
         onSettings={onSettings}
       />
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {!hideNavigation && navGroups && navGroups.length > 0 && activeId != null && onSelect && (
-          <ActivityNavigation
-            groups={navGroups}
-            activeId={activeId || ''}
-            collapsed={effectiveCollapsed}
-            onSelect={(id) => {
-              onSelect?.(id);
-              setMobileOpen(false);
-            }}
-            onToggle={handleToggle}
-            mobileOpen={mobileOpen}
-            onMobileClose={() => setMobileOpen(false)}
-            brand={brand}
-          />
-        )}
+        {!hideNavigation &&
+          navGroups &&
+          navGroups.length > 0 &&
+          activeId != null &&
+          onSelect && (
+            <ActivityNavigation
+              groups={navGroups}
+              activeId={activeId || ""}
+              collapsed={effectiveCollapsed}
+              onSelect={(id) => {
+                onSelect?.(id);
+                setMobileOpen(false);
+              }}
+              onToggle={handleToggle}
+              mobileOpen={mobileOpen}
+              onMobileClose={() => setMobileOpen(false)}
+              brand={brand}
+            />
+          )}
         <div className="flex flex-col min-w-0 overflow-hidden flex-1">
-          {showAccent && <div className="accent-bar h-[3px] w-full bg-primary/15 shrink-0" />}
+          {showAccent && (
+            <div className="accent-bar h-[3px] w-full bg-primary/15 shrink-0" />
+          )}
           <main className="flex-1 w-full h-full bg-muted/30 overflow-hidden">
             <div className="flex flex-col h-full">
-              <div className={cn('flex-1 min-h-0', !noContentScroll && 'overflow-y-auto')}>
+              <div key={contentKey} className="flex-1 min-h-0 overflow-auto">
                 {children}
               </div>
               {!hideFooter && (
                 <ActivityFooter
                   brand={footerBrand || brand}
-                  version={footerVersion || ''}
+                  version={footerVersion || ""}
                   links={footerLinks}
                 />
               )}
@@ -1033,6 +1186,8 @@ export function ActivityShell(props: ActivityShellProps) {
 // ── ActivityAuthShell（登录 / 注册 / 授权申请 三页共享的简化认证壳） ──
 export interface ActivityAuthShellProps {
   brand: string;
+  /** 组合契约品牌标志（`app.json` `brand.logo`），透传 `ActivityLogo`；缺省回落内置标记 */
+  logoUrl?: string;
   /** 认证页标题（如「登录」「注册」「授权申请」），展示在卡片上方 */
   title?: string;
   /** 认证页副标题/说明 */
@@ -1049,6 +1204,7 @@ export interface ActivityAuthShellProps {
 export function ActivityAuthShell(props: ActivityAuthShellProps) {
   const {
     brand,
+    logoUrl,
     title,
     subtitle,
     children,
@@ -1063,9 +1219,18 @@ export function ActivityAuthShell(props: ActivityAuthShellProps) {
     <div className="flex min-h-screen flex-col bg-muted/30">
       {/* 顶部：品牌 + 语言/主题（无搜索、无工作台、无用户菜单） */}
       <header className="h-14 border-b flex items-center justify-between px-4 md:px-6 bg-background shrink-0">
-        <ActivityLogo brand={brand} homeHref="#" homeTitle={brand} />
+        <ActivityLogo
+          brand={brand}
+          logoUrl={logoUrl}
+          homeHref="#"
+          homeTitle={brand}
+        />
         <div className="flex items-center gap-3">
-          <LanguageSwitch locales={locales} value={locale} onChange={onLocaleChange} />
+          <LanguageSwitch
+            locales={locales}
+            value={locale}
+            onChange={onLocaleChange}
+          />
           <ThemeToggle />
         </div>
       </header>
@@ -1074,11 +1239,17 @@ export function ActivityAuthShell(props: ActivityAuthShellProps) {
         <div className="w-full max-w-md">
           {(title || subtitle) && (
             <div className="mb-6 text-center">
-              {title && <h1 className="text-2xl font-bold text-foreground">{title}</h1>}
-              {subtitle && <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>}
+              {title && (
+                <h1 className="text-2xl font-bold text-foreground">{title}</h1>
+              )}
+              {subtitle && (
+                <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>
+              )}
             </div>
           )}
-          <div className="rounded-xl border bg-card p-6 shadow-sm">{children}</div>
+          <div className="rounded-xl border bg-card p-6 shadow-sm">
+            {children}
+          </div>
         </div>
       </main>
       <ActivityFooter

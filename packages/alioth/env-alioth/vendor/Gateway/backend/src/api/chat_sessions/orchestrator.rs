@@ -7,9 +7,9 @@ use std::sync::Arc;
 use ai_agent::agents::tool_orchestrator::ActionHandler;
 use ai_agent::agents::{extract_json_block, tool_orchestrator};
 
+use super::context_envelope::ChatContextEnvelope;
 use crate::api::chat_sessions::ports::{
-    AIContactPort, AgentDispatchPort, LlmConfigPort, MessageMetaFields, MessageStorePort,
-    SessionStorePort,
+    AgentDispatchPort, LlmConfigPort, MessageMetaFields, MessageStorePort, SessionStorePort,
 };
 use crate::api::chat_sessions::{
     AgentInfoResponse, ChatMessageResponse, ChatSessionResponse, ExecuteActionResponse,
@@ -21,28 +21,26 @@ use crate::api::chat_sessions::{
 /// （主体层/对话方层各 1000，空层不注入）。
 /// 纯函数——process_turn 与单测共用（page-context 自动获取机制验证）。
 /// summary：早前对话滚动摘要（D2.11），None/空不注入段。
+///
+/// 失败语义（change `add-form-contract-seam` design D4a/D7）：登记的宿主表单契约
+/// （`pageContext.formContract`）若其序列化尺寸超 `FORM_CONTRACT_CAP`，本函数
+/// **不组装**而是返回可分类错误 `CONTRACT_UNAVAILABLE`（整轮 fail-closed）——
+/// MUST NOT 让契约静默落入 page_context 段的后缀截断。
 fn assemble_context_sections(
     system_prompt: &str,
-    page_context: Option<&Value>,
+    ctx: Option<&ChatContextEnvelope>,
     permissions: Option<&Value>,
     subject_memory: Option<&Value>,
     counterpart_memory: Option<&Value>,
     agent_state: Option<&Value>,
     summary: Option<&str>,
-) -> String {
+) -> Result<String, String> {
     let mut prompt = system_prompt.to_string();
 
     // 早前对话摘要（D2.11 滚动摘要段——长会话窗口剔除内容的压缩记忆）
     if let Some(s) = summary.map(str::trim).filter(|s| !s.is_empty()) {
         prompt.push_str("\n\n## 早前对话摘要\n");
-        const SUMMARY_CAP: usize = 2000;
-        if s.chars().count() > SUMMARY_CAP {
-            let mut truncated: String = s.chars().take(SUMMARY_CAP).collect();
-            truncated.push_str("…[truncated]");
-            prompt.push_str(&truncated);
-        } else {
-            prompt.push_str(s);
-        }
+        prompt.push_str(&truncate_chars_with(s, SUMMARY_CAP, "…[truncated]"));
     }
 
     // C4（fix-chat-ai-capability-gaps D2.1）会话草稿上下文：draft_context.content
@@ -58,53 +56,44 @@ fn assemble_context_sections(
     {
         prompt.push_str("\n\n## 会话草稿上下文\n");
         prompt.push_str("以下是本会话进行中事项/已确认偏好与关键实体的草稿，持续精炼保持最新：\n");
-        const DRAFT_CAP: usize = 3000;
-        if draft.chars().count() > DRAFT_CAP {
-            let mut truncated: String = draft.chars().take(DRAFT_CAP).collect();
-            truncated.push_str("…[truncated]");
-            prompt.push_str(&truncated);
-        } else {
-            prompt.push_str(draft);
-        }
+        prompt.push_str(&truncate_chars_with(draft, DRAFT_CAP, "…[truncated]"));
     }
 
-    // 知识注入结果（前端 AIChatContext.knowledgeContext）：独立「知识参考」段，
-    // 不入 conversation history、不占 PAGE_CONTEXT_CAP 预算。
-    let knowledge_ctx = page_context
-        .and_then(|pc| pc.get("knowledgeContext"))
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    // C6/D5：知识结果来自类型化信封的声明字段（不再从 page_context 内 probe）。
+    let knowledge_ctx = ctx.and_then(|c| c.knowledge_context.as_deref());
+    // design D4a：契约 MUST NOT 静默落入 page_context 段的后缀截断。该段（下方
+    // `to_string(pc)` + `PAGE_CONTEXT_CAP` 截断）与 currentData/pageState/rowSummary
+    // **共用**一个预算，后缀截断会腰斩契约并产出带标记的非法 JSON。故在序列化**前**
+    // 对契约做独立尺寸判定：超 `FORM_CONTRACT_CAP` 即整轮 fail-closed
+    // （`CONTRACT_UNAVAILABLE`），MUST NOT 截断后当完整契约使用。
+    if let Some(fc) = ctx.and_then(|c| c.form_contract.as_ref()) {
+        let contract_len = serde_json::to_string(fc)
+            .unwrap_or_default()
+            .chars()
+            .count();
+        if contract_len > FORM_CONTRACT_CAP {
+            return Err(format!(
+                "{}: form contract serialized size {} chars exceeds cap {}",
+                CONTRACT_UNAVAILABLE, contract_len, FORM_CONTRACT_CAP
+            ));
+        }
+    }
     prompt.push_str("\n\n## 当前页面上下文\n");
-    if let Some(pc) = page_context {
+    if let Some(pc) = ctx.and_then(|c| c.page_context.as_ref()) {
         // Server-side assembly cap (design D8): serialized page_context is
-        // truncated at 4000 chars to prevent prompt stuffing.
-        // knowledgeContext 已单独提取，渲染时排除（避免嵌套 JSON 语义混杂）。
-        let mut pc_clean = pc.clone();
-        if let serde_json::Value::Object(map) = &mut pc_clean {
-            map.remove("knowledgeContext");
-        }
-        let serialized = serde_json::to_string(&pc_clean).unwrap_or_default();
-        const PAGE_CONTEXT_CAP: usize = 4000;
-        if serialized.len() > PAGE_CONTEXT_CAP {
-            let mut truncated: String = serialized.chars().take(PAGE_CONTEXT_CAP).collect();
-            truncated.push_str("…[truncated]");
-            prompt.push_str(&truncated);
-        } else {
-            prompt.push_str(&serialized);
-        }
+        // truncated at PAGE_CONTEXT_CAP **characters** to prevent prompt stuffing.
+        let serialized = serde_json::to_string(pc).unwrap_or_default();
+        prompt.push_str(&truncate_chars_with(
+            &serialized,
+            PAGE_CONTEXT_CAP,
+            "…[truncated]",
+        ));
     } else {
         prompt.push_str("（无特定页面上下文）");
     }
     if let Some(k) = knowledge_ctx {
         prompt.push_str("\n\n## 知识参考\n");
-        const KNOWLEDGE_CAP: usize = 2000;
-        if k.chars().count() > KNOWLEDGE_CAP {
-            let mut truncated: String = k.chars().take(KNOWLEDGE_CAP).collect();
-            truncated.push_str("…[truncated]");
-            prompt.push_str(&truncated);
-        } else {
-            prompt.push_str(&k);
-        }
+        prompt.push_str(&truncate_chars_with(k, KNOWLEDGE_CAP, "…[truncated]"));
     }
 
     // 注入用户权限范围（NGAC），约束 LLM 数据 API 调用范围
@@ -113,13 +102,17 @@ fn assemble_context_sections(
         prompt.push_str(
             "以下是你当前可访问的数据权限范围，所有数据 API 调用必须严格限定在此范围内：\n",
         );
-        prompt.push_str(&serde_json::to_string_pretty(perm).unwrap_or_default());
+        let perm_str = serde_json::to_string_pretty(perm).unwrap_or_default();
+        prompt.push_str(&truncate_chars_with(
+            &perm_str,
+            PERMISSIONS_CAP,
+            "…[truncated]",
+        ));
     }
 
     // 双层记忆注入（refactor-chat-ai-subject-identity-memory）：
     // L1 主体层跨对话方共享（跨会话累积的经验/偏好），L2 对话方层仅本对话方可见；
     // 各 ≤1000 字符，空层不注入段。键维度是智能体主体，不是人类账号。
-    const MEMORY_LAYER_CAP: usize = 1000;
     if let Some(mem) = subject_memory {
         let memory_str = serde_json::to_string(mem).unwrap_or_default();
         if !memory_str.is_empty() && memory_str != "{}" {
@@ -127,13 +120,11 @@ fn assemble_context_sections(
             prompt.push_str(
                 "以下是你作为该智能体主体跨会话累积的记忆（对所有对话方通用），请据此保持一致：\n",
             );
-            if memory_str.chars().count() > MEMORY_LAYER_CAP {
-                let mut truncated: String = memory_str.chars().take(MEMORY_LAYER_CAP).collect();
-                truncated.push_str("…[truncated]");
-                prompt.push_str(&truncated);
-            } else {
-                prompt.push_str(&memory_str);
-            }
+            prompt.push_str(&truncate_chars_with(
+                &memory_str,
+                MEMORY_LAYER_CAP,
+                "…[truncated]",
+            ));
         }
     }
     if let Some(mem) = counterpart_memory {
@@ -141,17 +132,15 @@ fn assemble_context_sections(
         if !memory_str.is_empty() && memory_str != "{}" {
             prompt.push_str("\n\n## 本对话方记忆\n");
             prompt.push_str("以下是与本对话方相关的记忆（仅适用于本对话方，勿外传）：\n");
-            if memory_str.chars().count() > MEMORY_LAYER_CAP {
-                let mut truncated: String = memory_str.chars().take(MEMORY_LAYER_CAP).collect();
-                truncated.push_str("…[truncated]");
-                prompt.push_str(&truncated);
-            } else {
-                prompt.push_str(&memory_str);
-            }
+            prompt.push_str(&truncate_chars_with(
+                &memory_str,
+                MEMORY_LAYER_CAP,
+                "…[truncated]",
+            ));
         }
     }
 
-    prompt
+    Ok(prompt)
 }
 
 /// 工具白名单派生（E8，upgrade-chat-ai-tool-surface）：agent 声明的工具 →
@@ -196,20 +185,10 @@ pub struct TurnInput {
 
 /// 流式出向事件（D2.10 typed 帧 v2 的服务端模型）：文本增量 + 工具生命周期。
 /// WS 层把事件映射为 {"type":"chunk"|"tool",...} 帧；HTTP 轮询路径无事件。
-#[derive(Debug, Clone)]
-pub enum TurnStreamEvent {
-    /// LLM 文本增量（终答与工具前导均按原样转发）
-    Chunk(String),
-    ToolStart {
-        name: String,
-        arguments: serde_json::Value,
-    },
-    ToolEnd {
-        name: String,
-        success: bool,
-        output: String,
-    },
-}
+///
+/// **类型别名**（change `retire-tool-passthrough`）：单一类型定义 = ai-agent 的
+/// `ToolStreamEvent`——MUST NOT 逐变体对拷映射（旧 `map_tool_stream_event` 已删）。
+pub use ai_agent::agents::tool_orchestrator::ToolStreamEvent as TurnStreamEvent;
 
 pub struct TurnResult {
     pub message: ChatMessageResponse,
@@ -251,7 +230,6 @@ pub trait SessionOrchestrator: Send + Sync {
         agent_code: &str,
         user_id: i64,
     ) -> Result<(), String>;
-    #[allow(dead_code)]
     async fn execute_action(
         &self,
         session_id: i64,
@@ -265,6 +243,680 @@ pub trait SessionOrchestrator: Send + Sync {
     async fn list_model_options(&self) -> Result<Vec<ModelOptionResponse>, String>;
 }
 
+/// 单次 turn 结束后要派发的一个后台 job（design D2）。`process_turn` 只决定
+/// 「派发什么」；执行（`tokio::spawn` + 任务体）归 [`BackgroundScheduler`] 实现。
+///
+/// 任务体逐字搬自原 `process_turn` 内联闭包（零行为回归）；变体字段 = 原闭包捕获。
+#[derive(Debug, Clone)]
+pub enum BackgroundJob {
+    /// 记忆沉淀（每 5 轮 / 失败节流重试）：双层记忆 flash 抽取 + 按归属落库。
+    MemoryConsolidation {
+        session_id: i64,
+        user_id: i64,
+        subject_id: i64,
+        counterpart_id: Option<i64>,
+        old_subject: Value,
+        old_counterpart: Value,
+        recent_lines: Vec<String>,
+        attempt_at: i64,
+    },
+    /// 滚动摘要（超窗溢出条）：异步 flash 增量压缩存回 `conversation_summary`。
+    RollingSummary {
+        session_id: i64,
+        user_id: i64,
+        prev_summary: String,
+        spill_text: String,
+        attempt_at: i64,
+    },
+    /// 会话草稿持续精选（每 4 轮 / 失败节流重试）：重写式更新 `draft_context`。
+    DraftRefine {
+        session_id: i64,
+        user_id: i64,
+        old_draft: String,
+        recent_text: String,
+        source_turn_count: i64,
+        attempt_at: i64,
+    },
+    /// 默认标题会话的标题自动生成（≤16 字）。
+    AutoTitle {
+        session_id: i64,
+        user_id: i64,
+        user_text: String,
+        reply_text: String,
+    },
+}
+
+/// 后台任务派发 seam（design D2）：把 4 个 fire-and-forget job 的「派发」与
+/// 「执行」解耦——`process_turn` 只调 [`schedule`](BackgroundScheduler::schedule)。
+pub trait BackgroundScheduler: Send + Sync {
+    fn schedule(&self, job: BackgroundJob);
+}
+
+/// 生产实现：每 job 一次 `tokio::spawn`，任务体逐字搬自原 `process_turn` 内联闭包。
+#[derive(Clone)]
+pub struct TokioBackgroundScheduler {
+    pool: PgPool,
+    session_store: Arc<dyn SessionStorePort>,
+    llm_config: Arc<dyn LlmConfigPort>,
+}
+
+impl TokioBackgroundScheduler {
+    pub fn new(
+        pool: PgPool,
+        session_store: Arc<dyn SessionStorePort>,
+        llm_config: Arc<dyn LlmConfigPort>,
+    ) -> Self {
+        Self {
+            pool,
+            session_store,
+            llm_config,
+        }
+    }
+
+    async fn run(&self, job: BackgroundJob) {
+        match &job {
+            BackgroundJob::MemoryConsolidation { .. } => self.run_memory_consolidation(job).await,
+            BackgroundJob::RollingSummary { .. } => self.run_rolling_summary(job).await,
+            BackgroundJob::DraftRefine { .. } => self.run_draft_refine(job).await,
+            BackgroundJob::AutoTitle { .. } => self.run_auto_title(job).await,
+        }
+    }
+
+    async fn run_memory_consolidation(&self, job: BackgroundJob) {
+        let BackgroundJob::MemoryConsolidation {
+            session_id,
+            user_id,
+            subject_id,
+            counterpart_id,
+            old_subject,
+            old_counterpart,
+            recent_lines,
+            attempt_at,
+        } = job
+        else {
+            return;
+        };
+        let session_store = self.session_store.clone();
+        let llm_config = self.llm_config.clone();
+        let memory_store = super::memory_store::ChatMemoryStore::new(self.pool.clone());
+        // R5：attempt 起点标记 pending（节流锚点 = 尝试时刻）
+        let _ = session_store
+            .update_session_state(
+                session_id,
+                user_id,
+                bg_task_state_patch("memory_state", "pending", attempt_at),
+            )
+            .await;
+        let svc = match llm_config.load_service().await {
+            Ok(s) => s,
+            Err(e) => {
+                common::telemetry::warn!("memory: llm load failed: {}", e);
+                let _ = session_store
+                    .update_session_state(
+                        session_id,
+                        user_id,
+                        bg_task_state_patch("memory_state", "failed", attempt_at),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let flash_model = svc.config().flash_model.clone();
+        let prompt = format!(
+            "你是双层记忆管理员。主体记忆（跨对话方共享）：{}\n\n\
+             对话方记忆（仅本对话方）：{}\n\n最近对话：\n{}\n\n\
+             任务：提取/更新稳定的偏好与事实（增量，不臆造），输出 JSON：\
+             {{\"subject\": {{...合并后的完整主体记忆...}}, \
+             \"counterpart\": {{...合并后的完整对话方记忆...}}}}。\
+             约束：个人事实（金额/联系方式/身份标识/客户个人信息）MUST 只进 counterpart，\
+             MUST NOT 写进 subject；无更新的层保持原值；不要输出其它文字。",
+            serde_json::to_string(&old_subject).unwrap_or_default(),
+            serde_json::to_string(&old_counterpart).unwrap_or_default(),
+            recent_lines.join("\n")
+        );
+        let text = match svc
+            .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
+            .await
+        {
+            Ok((t, _)) => t,
+            Err(e) => {
+                common::telemetry::warn!("memory: generate failed: {}", e);
+                let _ = session_store
+                    .update_session_state(
+                        session_id,
+                        user_id,
+                        bg_task_state_patch("memory_state", "failed", attempt_at),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let Some(raw) = ai_agent::agents::extract_json_block(&text) else {
+            common::telemetry::warn!("memory: 输出非 JSON，放弃本轮沉淀");
+            let _ = session_store
+                .update_session_state(
+                    session_id,
+                    user_id,
+                    bg_task_state_patch("memory_state", "failed", attempt_at),
+                )
+                .await;
+            return;
+        };
+        if !raw.is_object() {
+            common::telemetry::warn!("memory: 输出非对象，放弃本轮沉淀");
+            let _ = session_store
+                .update_session_state(
+                    session_id,
+                    user_id,
+                    bg_task_state_patch("memory_state", "failed", attempt_at),
+                )
+                .await;
+            return;
+        }
+        // 归属解析：双层对象；缺键时容忍为「整对象即主体层」（旧形态兼容）
+        let (mut subject_mem, mut counterpart_mem) =
+            split_memory_layers(raw.clone(), &old_subject, &old_counterpart);
+        // 规则兜底：禁入类事实强制落 L2（模型误判在此被改写）
+        enforce_l1_deny_rules(&mut subject_mem, &mut counterpart_mem);
+        if let Err(e) = memory_store.save_subject(subject_id, subject_mem).await {
+            common::telemetry::warn!("memory: subject save failed: {}", e);
+            let _ = session_store
+                .update_session_state(
+                    session_id,
+                    user_id,
+                    bg_task_state_patch("memory_state", "failed", attempt_at),
+                )
+                .await;
+            return;
+        }
+        if let Some(cid) = counterpart_id {
+            if let Err(e) = memory_store
+                .save_counterpart(subject_id, cid, counterpart_mem)
+                .await
+            {
+                common::telemetry::warn!("memory: counterpart save failed: {}", e);
+            }
+        }
+        // R5：成功标记 ok（沉淀已落库）
+        let _ = session_store
+            .update_session_state(
+                session_id,
+                user_id,
+                bg_task_state_patch("memory_state", "ok", attempt_at),
+            )
+            .await;
+    }
+
+    async fn run_rolling_summary(&self, job: BackgroundJob) {
+        let BackgroundJob::RollingSummary {
+            session_id,
+            user_id,
+            prev_summary,
+            spill_text,
+            attempt_at,
+        } = job
+        else {
+            return;
+        };
+        let session_store = self.session_store.clone();
+        let llm_config = self.llm_config.clone();
+        // R5：attempt 起点标记 pending（节流锚点 = 尝试时刻）
+        let _ = session_store
+            .update_session_state(
+                session_id,
+                user_id,
+                bg_task_state_patch("summary_state", "pending", attempt_at),
+            )
+            .await;
+        let svc = match llm_config.load_service().await {
+            Ok(s) => s,
+            Err(e) => {
+                common::telemetry::warn!("summary: llm load failed: {}", e);
+                let _ = session_store
+                    .update_session_state(
+                        session_id,
+                        user_id,
+                        bg_task_state_patch("summary_state", "failed", attempt_at),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let flash_model = svc.config().flash_model.clone();
+        let prompt = format!(
+            "你是对话摘要器。已有摘要：{}\n\n新增待压缩的旧对话：\n{}\n\n\
+             任务：把新增内容合并进摘要（保留关键事实/决策/未竟事项，丢弃寒暄），\
+             输出更新后的摘要正文（≤800 字），只输出摘要本身。",
+            prev_summary, spill_text
+        );
+        let text = match svc
+            .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
+            .await
+        {
+            Ok((t, _)) => t,
+            Err(e) => {
+                common::telemetry::warn!("summary: generate failed: {}", e);
+                let _ = session_store
+                    .update_session_state(
+                        session_id,
+                        user_id,
+                        bg_task_state_patch("summary_state", "failed", attempt_at),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let new_summary: String = text.trim().chars().take(800).collect();
+        if new_summary.is_empty() {
+            // 空摘要 = 失败：留标记供下轮节流重试
+            let _ = session_store
+                .update_session_state(
+                    session_id,
+                    user_id,
+                    bg_task_state_patch("summary_state", "failed", attempt_at),
+                )
+                .await;
+            return;
+        }
+        // 成功：summary_state ok 与 conversation_summary 同 patch 落库
+        let mut ok_patch = bg_task_state_patch("summary_state", "ok", attempt_at);
+        ok_patch["conversation_summary"] = Value::String(new_summary);
+        if let Err(e) = session_store
+            .update_session_state(session_id, user_id, ok_patch)
+            .await
+        {
+            common::telemetry::warn!("summary: save failed (session {}): {}", session_id, e);
+        }
+    }
+
+    async fn run_draft_refine(&self, job: BackgroundJob) {
+        let BackgroundJob::DraftRefine {
+            session_id,
+            user_id,
+            old_draft,
+            recent_text,
+            source_turn_count,
+            attempt_at,
+        } = job
+        else {
+            return;
+        };
+        let session_store = self.session_store.clone();
+        let llm_config = self.llm_config.clone();
+        let _ = session_store
+            .update_session_state(
+                session_id,
+                user_id,
+                bg_task_state_patch("draft_context_state", "pending", attempt_at),
+            )
+            .await;
+        let svc = match llm_config.load_service().await {
+            Ok(s) => s,
+            Err(e) => {
+                common::telemetry::warn!("draft: llm load failed: {}", e);
+                let _ = session_store
+                    .update_session_state(
+                        session_id,
+                        user_id,
+                        bg_task_state_patch("draft_context_state", "failed", attempt_at),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let flash_model = svc.config().flash_model.clone();
+        let prompt = draft_refine_prompt(&old_draft, &recent_text);
+        let text = match svc
+            .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
+            .await
+        {
+            Ok((t, _)) => t,
+            Err(e) => {
+                common::telemetry::warn!("draft: generate failed: {}", e);
+                let _ = session_store
+                    .update_session_state(
+                        session_id,
+                        user_id,
+                        bg_task_state_patch("draft_context_state", "failed", attempt_at),
+                    )
+                    .await;
+                return;
+            }
+        };
+        let new_draft: String = text.trim().chars().take(1500).collect();
+        if new_draft.is_empty() {
+            // 空草稿 = 失败：留标记供下轮节流重试
+            let _ = session_store
+                .update_session_state(
+                    session_id,
+                    user_id,
+                    bg_task_state_patch("draft_context_state", "failed", attempt_at),
+                )
+                .await;
+            return;
+        }
+        // 成功：重写式更新（draft_context 整体替换，非 append）
+        let ok_patch = draft_context_success_patch(&new_draft, source_turn_count, attempt_at);
+        if let Err(e) = session_store
+            .update_session_state(session_id, user_id, ok_patch)
+            .await
+        {
+            common::telemetry::warn!("draft: save failed (session {}): {}", session_id, e);
+        }
+    }
+
+    async fn run_auto_title(&self, job: BackgroundJob) {
+        let BackgroundJob::AutoTitle {
+            session_id,
+            user_id,
+            user_text,
+            reply_text,
+        } = job
+        else {
+            return;
+        };
+        let session_store = self.session_store.clone();
+        let llm_config = self.llm_config.clone();
+        let svc = match llm_config.load_service().await {
+            Ok(s) => s,
+            Err(e) => {
+                common::telemetry::warn!("auto-title: llm load failed: {}", e);
+                return;
+            }
+        };
+        let flash_model = svc.config().flash_model.clone();
+        let prompt = format!(
+            "根据以下对话概括主题，不超过16个字，仅输出标题本身，不要引号。\n用户：{}\n助手：{}",
+            user_text, reply_text
+        );
+        match svc
+            .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
+            .await
+        {
+            Ok((text, _)) => {
+                let title: String = text
+                    .trim()
+                    .trim_matches(['"', '\'', '「', '」', '《', '》'])
+                    .chars()
+                    .take(16)
+                    .collect();
+                if title.is_empty() {
+                    return;
+                }
+                if let Err(e) = session_store
+                    .update_session_title(session_id, user_id, &title)
+                    .await
+                {
+                    common::telemetry::warn!(
+                        "auto-title: update session {} title failed: {}",
+                        session_id,
+                        e
+                    );
+                }
+            }
+            Err(e) => {
+                common::telemetry::warn!("auto-title: generate failed: {}", e);
+            }
+        }
+    }
+}
+
+impl BackgroundScheduler for TokioBackgroundScheduler {
+    fn schedule(&self, job: BackgroundJob) {
+        let this = self.clone();
+        tokio::spawn(async move { this.run(job).await });
+    }
+}
+
+/// 测试实现（design D2）：记录派发过的 job，不执行（无网络/无 DB）。
+#[cfg(test)]
+#[derive(Default)]
+pub struct RecordingScheduler {
+    jobs: std::sync::Mutex<Vec<BackgroundJob>>,
+}
+
+#[cfg(test)]
+impl RecordingScheduler {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 已派发 job 的快照（按派发顺序）。
+    pub fn recorded(&self) -> Vec<BackgroundJob> {
+        self.jobs
+            .lock()
+            .expect("recording scheduler poisoned")
+            .clone()
+    }
+}
+
+#[cfg(test)]
+impl BackgroundScheduler for RecordingScheduler {
+    fn schedule(&self, job: BackgroundJob) {
+        self.jobs
+            .lock()
+            .expect("recording scheduler poisoned")
+            .push(job);
+    }
+}
+
+/// turn 管线触及的直接 DB/外部服务 seam（design D3）：把 `process_turn` 里散落的
+/// 直取调用收拢到一处，使整轮可由测试假实现驱动（无需 DB）。端口已存在者
+/// （session / message / llm / agent dispatch / ai contact）不经此 seam。
+#[async_trait]
+pub trait TurnEnvironment: Send + Sync {
+    /// NGAC 权限范围（fail-closed：解析失败 → None，不注入权限段）。
+    async fn permissions(&self, user_id: i64) -> Option<Value>;
+    /// 智能体侧联系方式 id 集合（code 前缀 `agent-`）。
+    async fn agent_contact_ids(&self) -> std::collections::HashSet<i64>;
+    /// 智能体的独立联系方式 id（无 → None）。
+    async fn subject_contact_id(&self, agent_code: &str) -> Result<Option<i64>, String>;
+    /// 对话方联系人 id（参与方集合 ∖ 智能体侧 → 聚合；无 → None）。
+    async fn counterpart_id(
+        &self,
+        session_id: i64,
+        user_id: i64,
+        agent_side: &[i64],
+    ) -> Option<i64>;
+    /// 联系人首选联系方式 id（无 → None）。
+    async fn preferred_info_id(&self, contact_id: i64) -> Option<i64>;
+    /// 会话当前智能体的联系方式 id（无 → None）。经 `memory_scope::session_agent_contact_id`
+    /// 单实现（→ `session_agent_code` → pinned/last，二者亦单实现）。
+    async fn session_agent_contact_id(&self, session_id: i64) -> Result<Option<i64>, String>;
+    /// 会话最近一条 assistant 消息的 agent_code（无 → None）。经
+    /// `memory_scope::read_last_agent_code` 单实现（D10）。
+    async fn last_agent_code(&self, session_id: i64) -> Result<Option<String>, String>;
+    /// 会话内逐消息持久记录里的结构化动作（C1）：`chat_message_meta.structured
+    /// -> 'actions'` 中 `id` 匹配且 `kind = execute` 者，按消息时间倒序取最近一条。
+    /// 经 `memory_scope::find_structured_action` 单实现。
+    async fn find_structured_action(
+        &self,
+        session_id: i64,
+        action_id: &str,
+    ) -> Result<Option<Value>, String>;
+    /// 双层记忆（主体层 / 对话方层）。
+    async fn memory_layers(
+        &self,
+        subject_id: i64,
+        counterpart_id: Option<i64>,
+    ) -> super::memory_store::MemoryLayers;
+    /// 主体人格（`soul`；空/NULL → None）。
+    async fn subject_persona(&self, subject_id: i64) -> Option<String>;
+}
+
+/// 生产实现：逐字委托既有函数（ngac / memory_scope / ContactsService / ChatMemoryStore）。
+pub struct DbTurnEnvironment {
+    pool: PgPool,
+}
+
+impl DbTurnEnvironment {
+    pub fn new(pool: PgPool) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl TurnEnvironment for DbTurnEnvironment {
+    async fn permissions(&self, user_id: i64) -> Option<Value> {
+        match crate::ngac::resolve_user_permissions(&self.pool, user_id).await {
+            Ok(perm) => Some(perm),
+            Err(e) => {
+                common::telemetry::warn!(
+                    "permissions refresh failed: {} (fail-closed: no permission section)",
+                    e
+                );
+                None
+            }
+        }
+    }
+
+    async fn agent_contact_ids(&self) -> std::collections::HashSet<i64> {
+        super::memory_scope::agent_contact_id_set(&self.pool)
+            .await
+            .unwrap_or_default()
+    }
+
+    async fn subject_contact_id(&self, agent_code: &str) -> Result<Option<i64>, String> {
+        super::memory_scope::resolve_subject_contact_id(&self.pool, agent_code).await
+    }
+
+    async fn counterpart_id(
+        &self,
+        session_id: i64,
+        user_id: i64,
+        agent_side: &[i64],
+    ) -> Option<i64> {
+        super::memory_scope::CounterpartResolver::new(self.pool.clone())
+            .resolve(session_id, user_id, agent_side)
+            .await
+            .unwrap_or_else(|e| {
+                common::telemetry::warn!("counterpart resolve failed: {}", e);
+                None
+            })
+    }
+
+    async fn preferred_info_id(&self, contact_id: i64) -> Option<i64> {
+        framework_contacts::ContactsService::resolve_preferred_info(&self.pool, contact_id)
+            .await
+            .unwrap_or(None)
+    }
+
+    async fn session_agent_contact_id(&self, session_id: i64) -> Result<Option<i64>, String> {
+        super::memory_scope::session_agent_contact_id(&self.pool, session_id).await
+    }
+
+    async fn last_agent_code(&self, session_id: i64) -> Result<Option<String>, String> {
+        super::memory_scope::read_last_agent_code(&self.pool, session_id).await
+    }
+
+    async fn find_structured_action(
+        &self,
+        session_id: i64,
+        action_id: &str,
+    ) -> Result<Option<Value>, String> {
+        super::memory_scope::find_structured_action(&self.pool, session_id, action_id).await
+    }
+
+    async fn memory_layers(
+        &self,
+        subject_id: i64,
+        counterpart_id: Option<i64>,
+    ) -> super::memory_store::MemoryLayers {
+        super::memory_store::ChatMemoryStore::new(self.pool.clone())
+            .load(subject_id, counterpart_id)
+            .await
+            .unwrap_or_else(|e| {
+                common::telemetry::warn!("memory load failed: {}", e);
+                super::memory_store::MemoryLayers::default()
+            })
+    }
+
+    async fn subject_persona(&self, subject_id: i64) -> Option<String> {
+        super::memory_scope::load_subject_persona(&self.pool, subject_id)
+            .await
+            .unwrap_or_else(|e| {
+                common::telemetry::warn!("subject persona load failed: {}", e);
+                None
+            })
+    }
+}
+
+/// 测试假实现（design D3）：返回确定值 ⇒ 无 DB 即可驱动整轮（T7 依赖）。
+#[cfg(test)]
+#[derive(Default)]
+pub struct FakeTurnEnvironment {
+    pub permissions: Option<Value>,
+    pub agent_contact_ids: std::collections::HashSet<i64>,
+    pub subject_contact_id: Option<i64>,
+    pub counterpart_id: Option<i64>,
+    pub preferred_info_id: Option<i64>,
+    pub memory_layers: super::memory_store::MemoryLayers,
+    pub subject_persona: Option<String>,
+    pub session_agent_contact_id: Option<i64>,
+    pub last_agent_code: Option<String>,
+    /// C1：逐消息持久记录里的结构化动作（假实现按 id 无关返回给定值）。
+    pub structured_action: Option<Value>,
+}
+
+#[cfg(test)]
+#[async_trait]
+impl TurnEnvironment for FakeTurnEnvironment {
+    async fn permissions(&self, _user_id: i64) -> Option<Value> {
+        self.permissions.clone()
+    }
+    async fn agent_contact_ids(&self) -> std::collections::HashSet<i64> {
+        self.agent_contact_ids.clone()
+    }
+    async fn subject_contact_id(&self, _agent_code: &str) -> Result<Option<i64>, String> {
+        Ok(self.subject_contact_id)
+    }
+    async fn counterpart_id(
+        &self,
+        _session_id: i64,
+        _user_id: i64,
+        _agent_side: &[i64],
+    ) -> Option<i64> {
+        self.counterpart_id
+    }
+    async fn preferred_info_id(&self, _contact_id: i64) -> Option<i64> {
+        self.preferred_info_id
+    }
+    async fn session_agent_contact_id(&self, _session_id: i64) -> Result<Option<i64>, String> {
+        Ok(self.session_agent_contact_id)
+    }
+    async fn last_agent_code(&self, _session_id: i64) -> Result<Option<String>, String> {
+        Ok(self.last_agent_code.clone())
+    }
+    async fn find_structured_action(
+        &self,
+        _session_id: i64,
+        _action_id: &str,
+    ) -> Result<Option<Value>, String> {
+        Ok(self.structured_action.clone())
+    }
+    async fn memory_layers(
+        &self,
+        _subject_id: i64,
+        _counterpart_id: Option<i64>,
+    ) -> super::memory_store::MemoryLayers {
+        self.memory_layers.clone()
+    }
+    async fn subject_persona(&self, _subject_id: i64) -> Option<String> {
+        self.subject_persona.clone()
+    }
+}
+
+/// turn 管线端口束（design D3 `with_dependencies` 的基础形状）：把端口 + env
+/// 一束传入，避免多参构造（clippy::too_many_arguments）。
+pub struct TurnDependencies {
+    pub session_store: Arc<dyn SessionStorePort>,
+    pub message_store: Arc<dyn MessageStorePort>,
+    pub llm_config: Arc<dyn LlmConfigPort>,
+    pub agent_dispatch: Arc<dyn AgentDispatchPort>,
+    pub background: Arc<dyn BackgroundScheduler>,
+    pub env: Arc<dyn TurnEnvironment>,
+}
+
 pub struct DefaultSessionOrchestrator {
     pool: PgPool,
     i18n: crate::i18n::I18nManagerRef,
@@ -272,7 +924,14 @@ pub struct DefaultSessionOrchestrator {
     message_store: Arc<dyn MessageStorePort>,
     llm_config: Arc<dyn LlmConfigPort>,
     agent_dispatch: Arc<dyn AgentDispatchPort>,
-    ai_contact: Arc<dyn AIContactPort>,
+    /// 后台 job 派发 seam（design D2）：阶段 8 只「决定派发什么」，不 `tokio::spawn`。
+    background: Arc<dyn BackgroundScheduler>,
+    /// turn 路径 DB/外部服务 seam（design D3）：turn 路径的直取（权限 / 联系人集合 /
+    /// 主体联系方式 / 对话方 / 首选联系方式 / 会话 agent 联系方式 / 最近 agent code /
+    /// 记忆 / 人格）经此收拢于 `DbTurnEnvironment`。`self.pool` 仅余工具执行
+    /// （DbToolAdapter / 动作 handler）、审计（`audit_action_execution`）与文件存储
+    /// （`files_state`）路径。
+    env: Arc<dyn TurnEnvironment>,
     /// 文件存储状态（upgrade-chat-ai-context-coverage E4）：文档附件经
     /// `file_id` 引用取其字节。惰性构造一次——规避 8 处 `build_orchestrator`
     /// 调用点与 handler 签名改动。
@@ -280,23 +939,16 @@ pub struct DefaultSessionOrchestrator {
 }
 
 impl DefaultSessionOrchestrator {
-    pub fn new(
-        pool: PgPool,
-        i18n: crate::i18n::I18nManagerRef,
-        session_store: Arc<dyn SessionStorePort>,
-        message_store: Arc<dyn MessageStorePort>,
-        llm_config: Arc<dyn LlmConfigPort>,
-        agent_dispatch: Arc<dyn AgentDispatchPort>,
-        ai_contact: Arc<dyn AIContactPort>,
-    ) -> Self {
+    pub fn new(pool: PgPool, i18n: crate::i18n::I18nManagerRef, deps: TurnDependencies) -> Self {
         Self {
             pool,
             i18n,
-            session_store,
-            message_store,
-            llm_config,
-            agent_dispatch,
-            ai_contact,
+            session_store: deps.session_store,
+            message_store: deps.message_store,
+            llm_config: deps.llm_config,
+            agent_dispatch: deps.agent_dispatch,
+            background: deps.background,
+            env: deps.env,
             files_state: tokio::sync::OnceCell::new(),
         }
     }
@@ -942,6 +1594,28 @@ fn take_chars(text: &str, cap: usize) -> String {
     truncate_chars_with(text, cap, "…[截断]")
 }
 
+// ── prompt 上下文段上限（字符数）——单一来源，由 `assemble_context_sections` 消费 ──
+/// 早前对话滚动摘要段上限。
+const SUMMARY_CAP: usize = 2000;
+/// 会话草稿上下文段上限。
+const DRAFT_CAP: usize = 3000;
+/// 页面上下文段上限（按**字符**判，MUST NOT 按序列化字节判）。
+const PAGE_CONTEXT_CAP: usize = 4000;
+/// 知识参考段上限。
+const KNOWLEDGE_CAP: usize = 2000;
+/// 用户权限范围段上限（此前无上限——补界）。
+const PERMISSIONS_CAP: usize = 4000;
+/// 单层记忆段上限（L1/L2 各）。
+const MEMORY_LAYER_CAP: usize = 1000;
+/// 表单契约段**独立**上限（按**字符**判）——change `add-form-contract-seam` design D4a：
+/// 契约（`pageContext.formContract`）与 `currentData`/`pageState`/`rowSummary` 共用
+/// `PAGE_CONTEXT_CAP` 段预算，后缀截断会静默腰斩契约。故对契约单独判限：超此即整轮
+/// fail-closed，MUST NOT 截断。取值须 < `PAGE_CONTEXT_CAP`（契约本身不成为被截断方）。
+const FORM_CONTRACT_CAP: usize = 2000;
+/// 契约不可用（缺失/不可解析/超限）的**可分类错误码**（design D7）——该轮 fail-closed，
+/// 助手 MUST NOT 以自备 schema 冒充校验，MUST NOT 把未校验结果当可应用结果。
+const CONTRACT_UNAVAILABLE: &str = "CONTRACT_UNAVAILABLE";
+
 /// R6：语言指令段——注入 system_prompt 尾（design D2.9 措辞：用户界面语言 +
 /// 始终使用该语言回复），约束 LLM 以与 UI 一致的语言作答；\n 包裹为独立段。
 fn locale_instruction(locale: &str) -> String {
@@ -1070,21 +1744,64 @@ fn validate_structured(v: Value) -> Option<Value> {
     }
 }
 
-#[async_trait]
-impl SessionOrchestrator for DefaultSessionOrchestrator {
-    async fn process_turn(
-        &self,
-        input: TurnInput,
-        on_chunk: Option<Box<dyn Fn(TurnStreamEvent) + Send + Sync>>,
-    ) -> Result<TurnResult, String> {
-        let locale = i18n::Locale::new(&input.locale);
-        let locale_str = input.locale;
+// ============================================================
+// C1（deepen-chat-action-seam）：提案值化
+// ============================================================
 
-        // 1. 会话验证
-        let session = self
-            .session_store
-            .get_session(input.session_id, input.user_id)
-            .await?;
+/// 结构化产出合成（**唯一实现**）：工具提案优先，正文 ```` ```json ```` 回落。
+///
+/// 工具提案是服务端从工具产出提升的、已经过工具自身校验的动作记录；正文块是
+/// **模型生成的文本**。二者并存时以工具提案为准——否则用户确认的是模型的抄写
+/// （模型可在抄写时改动 `params`），而非工具已校验的提案。
+fn compose_structured(proposal: Option<Value>, content: &str) -> Option<Value> {
+    match proposal {
+        Some(p) => Some(serde_json::json!({ "actions": [p] })),
+        None => extract_json_block(content).and_then(validate_structured),
+    }
+}
+
+/// 自本轮工具调用记录中提升提案（取**最后一次**提案族产出）。
+///
+/// 产出在工具调用记录里是序列化字符串（`ExecutedToolCall.output`，可能已按
+/// 4000 字符口径截断）⇒ 解析失败即视为「本轮无提案」，回落正文路径（行为不变）。
+fn lift_proposal(calls: &[ai_agent::agents::tool_orchestrator::ExecutedToolCall]) -> Option<Value> {
+    calls.iter().rev().find_map(|call| {
+        if !call.success {
+            return None;
+        }
+        let output: Value = serde_json::from_str(&call.output).ok()?;
+        ai_agent::tools::proposal::proposal_from_tool_output(&call.name, &output)
+    })
+}
+
+/// 阶段 1 产出（D1）：权限范围（解析失败 → None，fail-closed）与标题自动生成判定。
+struct SessionPhase {
+    permissions: Option<Value>,
+    needs_auto_title: bool,
+}
+
+/// 阶段 2 产出（D1）：一次 turn 的输入快照。
+struct TurnInputsPhase {
+    envelope: ChatContextEnvelope,
+    agent_state: Option<Value>,
+    agent_contacts: std::collections::HashSet<i64>,
+    user_content: String,
+    turn_knowledge_refs: Option<Value>,
+    turn_attachments: Option<Value>,
+    overflow: Option<super::ports::MessageRow>,
+    history: Vec<(String, String)>,
+    old_summary: Option<String>,
+}
+
+impl DefaultSessionOrchestrator {
+    /// 阶段 1 · 会话验证 + 权限刷新（fail-closed）+ 标题自动生成判定（D1）。
+    async fn validate_session(
+        &self,
+        session_id: i64,
+        user_id: i64,
+        locale: &i18n::Locale,
+    ) -> Result<SessionPhase, String> {
+        let session = self.session_store.get_session(session_id, user_id).await?;
         if session.is_none() {
             return Err("SESSION_NOT_FOUND".to_string());
         }
@@ -1093,17 +1810,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         // 重新解析 NGAC 权限范围，MUST NOT 沿用会话创建时的快照（主体/岗位变化即时生效）。
         // 解析失败 ⇒ **fail-closed**：不注入权限段（`None`），MUST NOT 回退陈旧快照
         // （陈旧范围可能已含被回收的授权）。数据访问仍由 PEP 每次调用独立裁决。
-        let permissions =
-            match crate::ngac::resolve_user_permissions(&self.pool, input.user_id).await {
-                Ok(perm) => Some(perm),
-                Err(e) => {
-                    common::telemetry::warn!(
-                        "permissions refresh failed: {} (fail-closed: no permission section)",
-                        e
-                    );
-                    None
-                }
-            };
+        let permissions = self.env.permissions(user_id).await;
 
         // D2.8 标题自动生成前置判定：会话 notice 仍为默认值时本轮成功后异步生成。
         let needs_auto_title = {
@@ -1115,7 +1822,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 .i18n
                 .read()
                 .await
-                .get(&locale, "chat.session.defaultTitle")
+                .get(locale, "chat.session.defaultTitle")
                 .unwrap_or("New Chat")
                 .to_string();
             session_title == default_i18n
@@ -1123,21 +1830,33 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 || session_title == "EmpAgent"
         };
 
+        Ok(SessionPhase {
+            permissions,
+            needs_auto_title,
+        })
+    }
+
+    /// 阶段 2 · 输入载入：信封解析 + 参与方 + 最后用户消息 + 历史窗口 + 旧摘要（D1）。
+    async fn load_turn_inputs(
+        &self,
+        session_id: i64,
+        user_id: i64,
+    ) -> Result<TurnInputsPhase, String> {
         // 2. 加载 page_context + agent_state
         let (page_context, agent_state) = self
             .session_store
-            .get_session_context(input.session_id, input.user_id)
+            .get_session_context(session_id, user_id)
             .await?;
+        // C6/D5：入站上下文一次解析为类型化信封（单一形状发现实现）；后续 reader
+        // 直接消费声明字段，MUST NOT 各自 probe 嵌套键。
+        let envelope = ChatContextEnvelope::from_raw(page_context.as_ref());
 
         // 3. 获取最后一条用户消息（完整行：content + meta——本轮附件/知识引用）
-        //    角色判定按「发送方是否为智能体侧联系方式」（code 前缀 agent-），
-        //    取代单一共享联系人（refactor-chat-ai-subject-identity-memory D-3）。
-        let agent_contacts = super::memory_scope::agent_contact_id_set(&self.pool)
-            .await
-            .unwrap_or_default();
+        //    角色判定按「发送方是否为智能体侧联系方式」（code 前缀 agent-）。
+        let agent_contacts = self.env.agent_contact_ids().await;
         let last_user = self
             .message_store
-            .get_last_user_message_row(input.session_id)
+            .get_last_user_message_row(session_id)
             .await?
             .ok_or_else(|| "NO_USER_MESSAGE".to_string())?;
         let user_content = last_user.content.clone().unwrap_or_default();
@@ -1150,7 +1869,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         let history_window = self.llm_config.max_history_messages().await.max(2);
         let mut history_rows = self
             .message_store
-            .get_history(input.session_id, input.user_id, history_window + 1)
+            .get_history(session_id, user_id, history_window + 1)
             .await?;
         // rows ASC（最近窗口+1）——超窗时最老一条 = 溢出，移出窗口
         let overflow = if history_rows.len() as i64 > history_window {
@@ -1180,6 +1899,28 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             .map(String::from)
             .filter(|s| !s.is_empty());
 
+        Ok(TurnInputsPhase {
+            envelope,
+            agent_state,
+            agent_contacts,
+            user_content,
+            turn_knowledge_refs,
+            turn_attachments,
+            overflow,
+            history,
+            old_summary,
+        })
+    }
+
+    /// 阶段 3 · LLM 加载 + 模型档位 + Agent 路由 + 主体/记忆作用域（D1）。
+    async fn load_llm_and_route(
+        &self,
+        input: &TurnInput,
+        envelope: &ChatContextEnvelope,
+        history: &[(String, String)],
+        user_content: &str,
+        locale_str: &str,
+    ) -> Result<RoutedPhase, String> {
         // 5. 加载 LLM 服务
         let llm = self.llm_config.load_service().await?;
 
@@ -1192,10 +1933,10 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             .agent_dispatch
             .resolve_agent(
                 input.session_id,
-                &user_content,
-                page_context.clone(),
-                &history,
-                &locale_str,
+                user_content,
+                envelope,
+                history,
+                locale_str,
                 &llm,
             )
             .await
@@ -1213,105 +1954,119 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         // 按人类账号（user_id）写记忆。
         let subject_id = require_subject_id(&agent_config, &agent_code)?;
         let subject_contact_id =
-            super::memory_scope::resolve_subject_contact_id(&self.pool, &agent_code)
+            self.env
+                .subject_contact_id(&agent_code)
                 .await?
                 .ok_or_else(|| {
                     format!(
                         "AGENT_CONTACT_MISSING: agent '{agent_code}' 无独立联系方式\
-                         （isahl.zc_id_contact_infos code=agent-{agent_code}）；\
-                         MUST 由 namespace 级种子 materialize（无共享联系人兜底）"
+                    （isahl.zc_id_contact_infos code=agent-{agent_code}）；\
+                    MUST 由 namespace 级种子 materialize（无共享联系人兜底）"
                     )
                 })?;
         let agent_side_info_ids: Vec<i64> = vec![subject_contact_id];
-        let counterpart_id = super::memory_scope::CounterpartResolver::new(self.pool.clone())
-            .resolve(input.session_id, input.user_id, &agent_side_info_ids)
-            .await
-            .unwrap_or_else(|e| {
-                common::telemetry::warn!("counterpart resolve failed: {}", e);
-                None
-            });
+        let counterpart_id = self
+            .env
+            .counterpart_id(input.session_id, input.user_id, &agent_side_info_ids)
+            .await;
         // D-2：AI 回复收件人 = 对话方首选联系方式（使「最后一条消息」可直接算出对话方）
         let counterpart_info = match counterpart_id {
-            Some(cid) => {
-                framework_contacts::ContactsService::resolve_preferred_info(&self.pool, cid)
-                    .await
-                    .unwrap_or(None)
-            }
+            Some(cid) => self.env.preferred_info_id(cid).await,
             None => None,
         };
         let assistant_recipients: Vec<i64> = counterpart_info.into_iter().collect();
-        let memory_layers = super::memory_store::ChatMemoryStore::new(self.pool.clone())
-            .load(subject_id, counterpart_id)
-            .await
-            .unwrap_or_else(|e| {
-                common::telemetry::warn!("memory load failed: {}", e);
-                super::memory_store::MemoryLayers::default()
-            });
+        let memory_layers = self.env.memory_layers(subject_id, counterpart_id).await;
 
         // 批 ④/⑤（add-agent-persona-channel D4）：主体人格每轮直读主体行（`soul`，
         // 由 agent 管理面写入）⇒ 管理页保存后下一轮即生效（不经 registry TTL）；
         // 空/NULL 不产段；读取失败 warn 降级不阻断该轮。
-        let persona = super::memory_scope::load_subject_persona(&self.pool, subject_id)
-            .await
-            .unwrap_or_else(|e| {
-                common::telemetry::warn!("subject persona load failed: {}", e);
-                None
-            });
+        let persona = self.env.subject_persona(subject_id).await;
 
-        // 8. 统一构建 prompt（上下文段组装为纯函数 assemble_context_sections，
-        //    页面上下文/知识/权限/双层记忆/agent_state 段可单测——page-context 机制验证）
-        //    R6（D2.9）语言感知：先向 system_prompt 尾追加 UI locale 语言指令段
-        //    （locale 短码→中文/English 自然语言名），约束回复语言与界面一致；
-        //    仅本 turn 生效——不动 agent 定义文件。
-        //    批 ④/⑤：system 前言 = system_prompt + 语言指令 + 主体人格（静态，
-        //    主体级）+ 运行身份（静态）；时刻段见 prompt 尾部。
+        Ok(RoutedPhase {
+            llm,
+            model_override,
+            agent_code,
+            agent_config,
+            subject_id,
+            subject_contact_id,
+            counterpart_id,
+            assistant_recipients,
+            memory_layers,
+            persona,
+        })
+    }
+
+    /// 阶段 4 · prompt 装配：system 前言 + 上下文段 + 附件段 + 历史 + 用户消息 + 时刻段（D1）。
+    /// `system_prompt` 折入段组装（不单独返回——生成调用以 `""` 作 system）；故本阶段
+    /// 仅返回装配完成的 `prompt`。
+    ///
+    /// 失败语义（design D4a/D7）：段组装对表单契约做独立尺寸判定，超限即 fail-closed
+    /// （`CONTRACT_UNAVAILABLE`）⇒ 本阶段以 `Err` 透传，MUST NOT 产出截断后的 prompt。
+    async fn assemble_prompt(
+        &self,
+        inputs: AssembleInputs<'_>,
+        llm: &llm::LlmService,
+    ) -> Result<String, String> {
+        let AssembleInputs {
+            agent_config,
+            persona,
+            locale_str,
+            agent_code,
+            subject_id,
+            envelope,
+            permissions,
+            memory_layers,
+            agent_state,
+            old_summary,
+            attachments,
+            history,
+            user_content,
+            user_id,
+        } = inputs;
+
+        // 8. 统一构建 prompt（上下文段组装为纯函数 assemble_context_sections）
+        //    R6（D2.9）语言感知：先向 system_prompt 尾追加 UI locale 语言指令段。
+        //    批 ④/⑤：system 前言 = system_prompt + 语言指令 + 主体人格（静态）
+        //    + 运行身份（静态）；时刻段见 prompt 尾部。
         let runtime_ns = runtime_namespace();
         let runtime_app = runtime_app_code();
         let runtime_identity = RuntimeIdentity {
             namespace: &runtime_ns,
             app_code: &runtime_app,
-            agent_code: &agent_code,
+            agent_code,
             subject_id,
         };
         let system_prompt = format!(
             "{}{}{}{}",
             agent_config.system_prompt,
-            locale_instruction(&locale_str),
-            subject_persona_section(persona.as_deref()),
+            locale_instruction(locale_str),
+            subject_persona_section(persona),
             runtime_identity_block(&runtime_identity)
         );
         let mut prompt = assemble_context_sections(
             &system_prompt,
-            page_context.as_ref(),
-            permissions.as_ref(),
+            Some(envelope),
+            permissions,
             Some(&memory_layers.subject),
             memory_layers.counterpart.as_ref(),
-            agent_state.as_ref(),
-            old_summary.as_deref(),
-        );
+            agent_state,
+            old_summary,
+        )?;
 
         // D2.6 attachments→vision：本轮图片（≤4）逐图 llm.inspect_image 分析，
-        // 文本拼「## 附件图片内容」段；S2 data_base64 唯一通道（url 兜底已删）；
-        // 单图失败 warn 跳过不阻断（vision 后端未配置时 provider 报错同降级）。
-        if let Some(image_analyses) =
-            Self::analyze_turn_images(&llm, turn_attachments.as_ref()).await
-        {
+        // 文本拼「## 附件图片内容」段；单图失败 warn 跳过不阻断。
+        if let Some(image_analyses) = Self::analyze_turn_images(llm, attachments).await {
             prompt.push_str("\n\n## 附件图片内容\n");
             for (i, text) in image_analyses.iter().enumerate() {
                 prompt.push_str(&format!("图片{}：{}\n", i + 1, text));
             }
         }
 
-        // E4：文档附件（txt/md/csv/json/pdf/docx/xlsx）经 `file_id` → 文件存储取字节
-        // → 抽取文本拼「## 附件文档内容」段；单份失败标「附件未解析」+ 原因，不阻断该轮。
+        // E4：文档附件经 `file_id` → 文件存储取字节 → 抽取文本拼「## 附件文档内容」段；
         // 无文档附件的轮次 MUST NOT 触碰文件存储（不构造 FilesState、不加 DB 往返）。
-        if has_document_attachments(turn_attachments.as_ref()) {
-            let document_parses = analyze_turn_documents(
-                self.files_state().await,
-                input.user_id,
-                turn_attachments.as_ref(),
-            )
-            .await;
+        if has_document_attachments(attachments) {
+            let document_parses =
+                analyze_turn_documents(self.files_state().await, user_id, attachments).await;
             prompt.push_str("\n\n## 附件文档内容\n");
             for parse in &document_parses {
                 match &parse.text {
@@ -1326,22 +2081,105 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         }
 
         prompt.push_str("\n\n## 对话历史\n");
-        for (role, content) in &history {
+        for (role, content) in history {
             prompt.push_str(&format!("{}: {}\n", role, content));
         }
 
         prompt.push_str(&format!("\n\n## 用户最新消息\n{}\n", user_content));
 
         // 批 ④ T1（design D2/W4）：当前运行时刻段置 **prompt 尾部**——秒级动态事实
-        // 不进 system 前言（否则每轮 system 变化、前缀缓存归零；纪律同
-        // `docs/specs/META_AI_SPEC.md`「动态环境事实置 user prompt 尾部」）。
-        prompt.push_str(&runtime_time_section(&local_now_label(), &locale_str));
+        // 不进 system 前言（否则每轮 system 变化、前缀缓存归零）。
+        prompt.push_str(&runtime_time_section(&local_now_label(), locale_str));
 
-        // 9. 统一执行：ToolOrchestrator（有工具）或直调 LLM（无工具）
+        Ok(prompt)
+    }
+
+    /// 页面特化生成（wire-ngac-proposal-into-assistant）：`page_context.specializedTurn`
+    /// 声明 `ngac_proposal` 的 turn 由 NGAC 提案生成器接管（同 `nl-assist` 管线）。
+    /// `None` = 不适用（走通用 generate）；`Some(Ok)` = 专属产出；`Some(Err)` = fail-closed。
+    #[cfg(feature = "sso")]
+    async fn specialized_generation(
+        &self,
+        input: &TurnInput,
+        envelope: &ChatContextEnvelope,
+        user_content: &str,
+        history: &[(String, String)],
+    ) -> Option<Result<GeneratedPhase, String>> {
+        let flag = envelope
+            .page_context
+            .as_ref()
+            .and_then(|pc| pc.get("specializedTurn"))
+            .and_then(|v| v.as_str())?;
+        if flag != "ngac_proposal" {
+            return None;
+        }
+        if Self::cancelled(input.cancel.as_ref()) {
+            return Some(Err("CANCELLED".to_string()));
+        }
+        // 历史转提案管线形态（仅 user/assistant，旧→新；截断在管线内 HISTORY_CAP）
+        let history_turns: Vec<crate::api::admin_ngac_assist::NlHistoryTurn> = history
+            .iter()
+            .filter(|(role, _)| role == "user" || role == "assistant")
+            .map(
+                |(role, content)| crate::api::admin_ngac_assist::NlHistoryTurn {
+                    role: if role == "user" { "user" } else { "assistant" }.to_string(),
+                    content: content.clone(),
+                },
+            )
+            .collect();
+        match crate::api::admin_ngac_assist::try_ngac_proposal_content(
+            &self.pool,
+            input.user_id,
+            user_content,
+            &history_turns,
+            &input.locale,
+        )
+        .await
+        {
+            Ok(Some(content)) => Some(Ok(GeneratedPhase {
+                content,
+                usage: None,
+                tool_calls: None,
+                // 提案在 content 内（`build_chat_content` 的 ```json 块）⇒ 经正文路径解析，
+                // 不占用工具提案通道（C1）。
+                proposal: None,
+            })),
+            Ok(None) => None,
+            Err(e) => Some(Err(e)),
+        }
+    }
+
+    /// 非 sso 宿主：无 NGAC 提案面（恒走通用生成）。
+    #[cfg(not(feature = "sso"))]
+    async fn specialized_generation(
+        &self,
+        _input: &TurnInput,
+        _envelope: &ChatContextEnvelope,
+        _user_content: &str,
+        _history: &[(String, String)],
+    ) -> Option<Result<GeneratedPhase, String>> {
+        None
+    }
+
+    /// 阶段 5 · 生成：工具编排或直调 LLM（含取消检查点 1/2/3，D1）。
+    async fn generate(&self, inputs: GenerateInputs<'_>) -> Result<GeneratedPhase, String> {
+        let GenerateInputs {
+            prompt,
+            llm,
+            agent_config,
+            agent_code,
+            model_override,
+            session_id,
+            user_id,
+            cancel,
+            on_chunk,
+            form_contract,
+        } = inputs;
+
         //    turn_usage：本轮 token 用量（assistant meta/响应回显；流式路径无 usage）
         let mut turn_usage: Option<Value> = None;
-        // D2.9 取消检查点：整个生成段之前
-        if Self::cancelled(input.cancel.as_ref()) {
+        // D2.9 取消检查点 1：整个生成段之前
+        if Self::cancelled(cancel) {
             return Err("CANCELLED".to_string());
         }
         // 工具白名单派生（E8，upgrade-chat-ai-tool-surface）：仅 `ExecutionTarget::Backend`
@@ -1357,10 +2195,12 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         // E7：本轮工具调用记录（落 meta，供追溯；读取侧由历史重建渲染有界注记
         // ——批 ④ tool-trace-cross-turn，见 chat-ai#chat-ai-tool-result-persistence）
         let mut turn_tool_calls: Option<Value> = None;
+        // C1：本轮工具提案（服务端提升，非模型抄写）
+        let mut turn_proposal: Option<Value> = None;
         let content = if !allowed_names.is_empty() {
             let llm_port = Box::new(
-                tool_orchestrator::LlmServiceAdapter::new(&llm)
-                    .with_model_override(model_override.clone()),
+                tool_orchestrator::LlmServiceAdapter::new(llm)
+                    .with_model_override(model_override.map(str::to_string)),
             );
             let db_tools = tool_orchestrator::DbToolAdapter::new(self.pool.clone())
                 .with_allowed_tools(allowed_names.clone());
@@ -1375,34 +2215,36 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                     )),
                     self.pool.clone(),
                     &allowed_names,
+                    // 本轮页面登记的表单契约（change add-form-contract-seam）：
+                    // 未登记/不可解析 ⇒ None ⇒ validate_form fail-closed。
+                    form_contract,
                 ));
             let mut orchestrator = tool_orchestrator::ToolOrchestrator::new(llm_port, tool_port)
                 .with_max_steps(agent_config.max_execution_steps);
             // D2.3/D2.10：on_chunk（WS typed 帧）存在时注册事件 sink——LLM 每步
             // 走流式，文本 delta → Chunk；工具生命周期 → ToolStart/ToolEnd
             if let Some(cb) = on_chunk {
-                orchestrator = orchestrator.with_event_sink(Box::new(move |ev| {
-                    if let Some(ev) = super::adapters::tool_bridge::map_tool_stream_event(ev) {
-                        cb(ev);
-                    }
-                }));
+                orchestrator = orchestrator.with_event_sink(cb);
             }
             let tool_ctx = tool_orchestrator::ToolRunContext {
                 initial_prompt: prompt,
-                session_id: input.session_id,
-                user_id: Some(input.user_id),
+                session_id,
+                user_id: Some(user_id),
                 allowed_schemas: agent_config.allowed_schemas.clone(),
             };
             let result = orchestrator.run(&tool_ctx).await?;
-            // D2.9：工具步执行期间可能已取消（run 内部步间由 M1 sink 事件承载，
-            // Gateway 侧检查点在 run 返回后）——取消则不落库、直接放弃本轮
-            if Self::cancelled(input.cancel.as_ref()) {
+            // D2.9 取消检查点 2：工具步执行期间可能已取消（run 内部步间由 M1 sink
+            // 事件承载，Gateway 侧检查点在 run 返回后）——取消则不落库、直接放弃本轮
+            if Self::cancelled(cancel) {
                 return Err("CANCELLED".to_string());
             }
             // D2.4：ToolRunResult.usage → canonical JSON（无工具路径同构形态）
             turn_usage = super::adapters::tool_bridge::tool_result_usage(&result);
             // E7：工具调用记录（含截断后的原始输出）落 meta
             turn_tool_calls = super::adapters::tool_bridge::tool_calls_json(&result);
+            // C1：提案提升（服务端）——提案族工具产出的 needs_confirmation 对象归一为
+            // 本轮提案；此后模型正文里的 ```json 块降为回落，不再是被确认的对象。
+            turn_proposal = lift_proposal(&result.tool_calls);
             result.final_text
         } else {
             // 无工具：LLM 真流式（P1-6）——on_chunk 存在时逐 chunk 回调并累积，
@@ -1423,7 +2265,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                         None,
                         None,
                         None,
-                        model_override.as_deref(),
+                        model_override,
                     );
                     use futures::StreamExt;
                     while let Some(chunk) = stream.next().await {
@@ -1434,8 +2276,8 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                             }
                             Err(e) => return Err(e.to_string()),
                         }
-                        // D2.9：流式 chunk 间取消检查
-                        if Self::cancelled(input.cancel.as_ref()) {
+                        // D2.9 取消检查点 3：流式 chunk 间取消检查
+                        if Self::cancelled(cancel) {
                             return Err("CANCELLED".to_string());
                         }
                     }
@@ -1443,15 +2285,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 }
                 None => {
                     let (text, usage) = llm
-                        .generate_detailed(
-                            "",
-                            &prompt,
-                            None,
-                            None,
-                            None,
-                            None,
-                            model_override.as_deref(),
-                        )
+                        .generate_detailed("", &prompt, None, None, None, None, model_override)
                         .await
                         .map_err(|e| e.to_string())?;
                     // 归一为 ai-agent TokenUsage 形态（prompt/completion/total），
@@ -1468,6 +2302,20 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             }
         };
 
+        Ok(GeneratedPhase {
+            content,
+            usage: turn_usage,
+            tool_calls: turn_tool_calls,
+            proposal: turn_proposal,
+        })
+    }
+
+    /// 阶段 6 · 后处理：空回复守卫 + 形态校验（剔除幻觉 filled_fields/actions）→ AgentResult（D1）。
+    fn postprocess(
+        content: String,
+        agent_config: &ai_agent::agents::AgentConfig,
+        proposal: Option<Value>,
+    ) -> Result<ai_agent::agents::AgentResult, String> {
         // 空回复守卫（fix-chat-ai-empty-reply）：thinking 模型思考耗尽预算或
         // 模型未输出时 content 为空，静默落库会沿 WS/HTTP 传播成前端空气泡。
         // 显式失败——错误经 error 帧 / failed 链透传到用户界面。
@@ -1478,10 +2326,10 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             );
         }
 
-        // 10. 统一后处理：C7/D2.3 服务端形态校验——extract_json_block 结果经
-        // validate_structured 剔除幻觉 filled_fields/actions；全剔 → None（降级
-        // 纯文本，structured 不落 meta/响应）
-        let structured = extract_json_block(&content).and_then(validate_structured);
+        // 10. 统一后处理：C1 工具提案优先；无提案时 C7/D2.3 服务端形态校验——
+        // extract_json_block 结果经 validate_structured 剔除幻觉 filled_fields/actions；
+        // 全剔 → None（降级纯文本，structured 不落 meta/响应）
+        let structured = compose_structured(proposal, &content);
         let requires_input = agent_config.requires_input_default
             || structured
                 .as_ref()
@@ -1501,20 +2349,38 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 })
                 .unwrap_or(false);
 
-        let agent_result = ai_agent::agents::AgentResult::new(
+        Ok(ai_agent::agents::AgentResult::new(
             &agent_config.code,
             content,
             structured,
             requires_input,
             agent_config.suggested_actions.clone(),
-        );
+        ))
+    }
+
+    /// 阶段 7 · 持久化：agent_state + 落库前终检 + assistant 消息/meta + 时间戳
+    /// → `ChatMessageResponse`（D1；响应装配归本阶段）。
+    async fn persist(&self, inputs: PersistInputs<'_>) -> Result<ChatMessageResponse, String> {
+        let PersistInputs {
+            agent_result,
+            session_id,
+            user_id,
+            agent_code,
+            subject_contact_id,
+            assistant_recipients,
+            usage,
+            tool_calls,
+            knowledge_refs,
+            agent_contacts,
+            cancel,
+        } = inputs;
 
         // 11. 保存 agent_state
         let _ = self
             .session_store
             .update_session_state(
-                input.session_id,
-                input.user_id,
+                session_id,
+                user_id,
                 serde_json::json!({
                     "last_result": {
                         "structured": agent_result.structured,
@@ -1526,7 +2392,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             .await;
 
         // D2.9：落库前终检——取消则不写 assistant 消息（半途内容无价值，保持原子）
-        if Self::cancelled(input.cancel.as_ref()) {
+        if Self::cancelled(cancel) {
             return Err("CANCELLED".to_string());
         }
 
@@ -1536,23 +2402,23 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         let row = self
             .message_store
             .add_message(
-                input.session_id,
+                session_id,
                 &agent_result.content,
                 Some(subject_contact_id),
-                &assistant_recipients,
+                assistant_recipients,
             )
             .await?;
         if let Err(e) = self
             .message_store
             .save_message_meta(
                 row.id,
-                input.session_id,
+                session_id,
                 MessageMetaFields {
-                    agent_code: &agent_code,
+                    agent_code,
                     structured: agent_result.structured.as_ref(),
-                    usage: turn_usage.as_ref(),
-                    knowledge_refs: turn_knowledge_refs.as_ref(),
-                    tool_calls: turn_tool_calls.as_ref(),
+                    usage: usage.as_ref(),
+                    knowledge_refs: knowledge_refs.as_ref(),
+                    tool_calls: tool_calls.as_ref(),
                     ..Default::default()
                 },
             )
@@ -1561,7 +2427,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             // meta 写失败不阻断主链（消息正文已落库；仅衍生数据缺失）
             common::telemetry::warn!(
                 "save assistant message meta failed (session {}): {}",
-                input.session_id,
+                session_id,
                 e
             );
         }
@@ -1569,20 +2435,38 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         // 13. 更新会话时间戳
         let _ = self
             .session_store
-            .update_session_timestamp(input.session_id, input.user_id)
+            .update_session_timestamp(session_id, user_id)
             .await;
-        let resp = ChatMessageResponse {
+        Ok(ChatMessageResponse {
             id: row.id,
-            role: self.derive_role(row.fk_sender_addr, &agent_contacts),
+            role: self.derive_role(row.fk_sender_addr, agent_contacts),
             content: row.content.unwrap_or_default(),
             created_at: row.created_at,
-            agent_code: agent_code.clone(),
+            agent_code: agent_code.to_string(),
             structured: agent_result.structured,
             requires_input: agent_result.requires_input,
             suggested_actions: agent_result.suggested_actions,
-            usage: turn_usage,
-            knowledge_refs: turn_knowledge_refs,
-        };
+            usage,
+            knowledge_refs,
+        })
+    }
+
+    /// 阶段 8 · 后台派发：turn_count/状态补丁 + 四个 job 经单一 seam 派发（D1/D2）。
+    async fn dispatch_background(&self, inputs: DispatchInputs<'_>) {
+        let DispatchInputs {
+            session_id,
+            user_id,
+            agent_state,
+            history,
+            user_content,
+            resp,
+            subject_id,
+            counterpart_id,
+            memory_layers,
+            overflow,
+            old_summary,
+            needs_auto_title,
+        } = inputs;
 
         // 13.5 记忆沉淀（refactor-chat-ai-subject-identity-memory）：turn_count++；
         //     每 5 轮 spawn flash 提取「归属 + 内容」，按归属分流写入 L1 主体层与
@@ -1597,8 +2481,8 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         let _ = self
             .session_store
             .update_session_state(
-                input.session_id,
-                input.user_id,
+                session_id,
+                user_id,
                 serde_json::json!({ "turn_count": turn_count }),
             )
             .await;
@@ -1609,17 +2493,6 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             chrono::Utc::now().timestamp(),
         );
         if memory_due {
-            let user_id = input.user_id;
-            let session_id = input.session_id;
-            let attempt_at = chrono::Utc::now().timestamp();
-            let llm_config = self.llm_config.clone();
-            let session_store = self.session_store.clone();
-            let memory_store = super::memory_store::ChatMemoryStore::new(self.pool.clone());
-            let old_subject = memory_layers.subject.clone();
-            let old_counterpart = memory_layers
-                .counterpart
-                .clone()
-                .unwrap_or_else(|| serde_json::json!({}));
             // 最近对话（历史尾 4 轮 + 本轮问答）
             let mut recent_lines: Vec<String> = history
                 .iter()
@@ -1630,114 +2503,20 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             recent_lines.reverse();
             recent_lines.push(format!("user: {}", user_content));
             recent_lines.push(format!("assistant: {}", resp.content));
-            tokio::spawn(async move {
-                // R5：attempt 起点标记 pending（节流锚点 = 尝试时刻）
-                let _ = session_store
-                    .update_session_state(
-                        session_id,
-                        user_id,
-                        bg_task_state_patch("memory_state", "pending", attempt_at),
-                    )
-                    .await;
-                let svc = match llm_config.load_service().await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        common::telemetry::warn!("memory: llm load failed: {}", e);
-                        let _ = session_store
-                            .update_session_state(
-                                session_id,
-                                user_id,
-                                bg_task_state_patch("memory_state", "failed", attempt_at),
-                            )
-                            .await;
-                        return;
-                    }
-                };
-                let flash_model = svc.config().flash_model.clone();
-                let prompt = format!(
-                    "你是双层记忆管理员。主体记忆（跨对话方共享）：{}\n\n\
-                     对话方记忆（仅本对话方）：{}\n\n最近对话：\n{}\n\n\
-                     任务：提取/更新稳定的偏好与事实（增量，不臆造），输出 JSON：\
-                     {{\"subject\": {{...合并后的完整主体记忆...}}, \
-                     \"counterpart\": {{...合并后的完整对话方记忆...}}}}。\
-                     约束：个人事实（金额/联系方式/身份标识/客户个人信息）MUST 只进 counterpart，\
-                     MUST NOT 写进 subject；无更新的层保持原值；不要输出其它文字。",
-                    serde_json::to_string(&old_subject).unwrap_or_default(),
-                    serde_json::to_string(&old_counterpart).unwrap_or_default(),
-                    recent_lines.join("\n")
-                );
-                let text = match svc
-                    .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
-                    .await
-                {
-                    Ok((t, _)) => t,
-                    Err(e) => {
-                        common::telemetry::warn!("memory: generate failed: {}", e);
-                        let _ = session_store
-                            .update_session_state(
-                                session_id,
-                                user_id,
-                                bg_task_state_patch("memory_state", "failed", attempt_at),
-                            )
-                            .await;
-                        return;
-                    }
-                };
-                let Some(raw) = ai_agent::agents::extract_json_block(&text) else {
-                    common::telemetry::warn!("memory: 输出非 JSON，放弃本轮沉淀");
-                    let _ = session_store
-                        .update_session_state(
-                            session_id,
-                            user_id,
-                            bg_task_state_patch("memory_state", "failed", attempt_at),
-                        )
-                        .await;
-                    return;
-                };
-                if !raw.is_object() {
-                    common::telemetry::warn!("memory: 输出非对象，放弃本轮沉淀");
-                    let _ = session_store
-                        .update_session_state(
-                            session_id,
-                            user_id,
-                            bg_task_state_patch("memory_state", "failed", attempt_at),
-                        )
-                        .await;
-                    return;
-                }
-                // 归属解析：双层对象；缺键时容忍为「整对象即主体层」（旧形态兼容）
-                let (mut subject_mem, mut counterpart_mem) =
-                    split_memory_layers(raw.clone(), &old_subject, &old_counterpart);
-                // 规则兜底：禁入类事实强制落 L2（模型误判在此被改写）
-                enforce_l1_deny_rules(&mut subject_mem, &mut counterpart_mem);
-                if let Err(e) = memory_store.save_subject(subject_id, subject_mem).await {
-                    common::telemetry::warn!("memory: subject save failed: {}", e);
-                    let _ = session_store
-                        .update_session_state(
-                            session_id,
-                            user_id,
-                            bg_task_state_patch("memory_state", "failed", attempt_at),
-                        )
-                        .await;
-                    return;
-                }
-                if let Some(cid) = counterpart_id {
-                    if let Err(e) = memory_store
-                        .save_counterpart(subject_id, cid, counterpart_mem)
-                        .await
-                    {
-                        common::telemetry::warn!("memory: counterpart save failed: {}", e);
-                    }
-                }
-                // R5：成功标记 ok（沉淀已落库）
-                let _ = session_store
-                    .update_session_state(
-                        session_id,
-                        user_id,
-                        bg_task_state_patch("memory_state", "ok", attempt_at),
-                    )
-                    .await;
-            });
+            self.background
+                .schedule(BackgroundJob::MemoryConsolidation {
+                    session_id,
+                    user_id,
+                    subject_id,
+                    counterpart_id,
+                    old_subject: memory_layers.subject.clone(),
+                    old_counterpart: memory_layers
+                        .counterpart
+                        .clone()
+                        .unwrap_or_else(|| serde_json::json!({})),
+                    recent_lines,
+                    attempt_at: chrono::Utc::now().timestamp(),
+                });
         }
 
         // 13.6 D2.11/R5 滚动摘要：超窗溢出条（最老 1 条）+ 旧 summary → 异步 flash
@@ -1750,93 +2529,12 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         if summary_due {
             if let Some(spill_row) = overflow {
                 if let Some(spill_content) = spill_row.content {
-                    let session_id = input.session_id;
-                    let user_id = input.user_id;
-                    let attempt_at = chrono::Utc::now().timestamp();
-                    let llm_config = self.llm_config.clone();
-                    let session_store = self.session_store.clone();
-                    let prev_summary = old_summary.clone().unwrap_or_default();
-                    let spill_text = spill_content;
-                    tokio::spawn(async move {
-                        // R5：attempt 起点标记 pending（节流锚点 = 尝试时刻）
-                        let _ = session_store
-                            .update_session_state(
-                                session_id,
-                                user_id,
-                                bg_task_state_patch("summary_state", "pending", attempt_at),
-                            )
-                            .await;
-                        let svc = match llm_config.load_service().await {
-                            Ok(s) => s,
-                            Err(e) => {
-                                common::telemetry::warn!("summary: llm load failed: {}", e);
-                                let _ = session_store
-                                    .update_session_state(
-                                        session_id,
-                                        user_id,
-                                        bg_task_state_patch("summary_state", "failed", attempt_at),
-                                    )
-                                    .await;
-                                return;
-                            }
-                        };
-                        let flash_model = svc.config().flash_model.clone();
-                        let prompt = format!(
-                            "你是对话摘要器。已有摘要：{}\n\n新增待压缩的旧对话：\n{}\n\n\
-                             任务：把新增内容合并进摘要（保留关键事实/决策/未竟事项，丢弃寒暄），\
-                             输出更新后的摘要正文（≤800 字），只输出摘要本身。",
-                            prev_summary, spill_text
-                        );
-                        let text = match svc
-                            .generate_detailed(
-                                "",
-                                &prompt,
-                                None,
-                                None,
-                                None,
-                                None,
-                                Some(&flash_model),
-                            )
-                            .await
-                        {
-                            Ok((t, _)) => t,
-                            Err(e) => {
-                                common::telemetry::warn!("summary: generate failed: {}", e);
-                                let _ = session_store
-                                    .update_session_state(
-                                        session_id,
-                                        user_id,
-                                        bg_task_state_patch("summary_state", "failed", attempt_at),
-                                    )
-                                    .await;
-                                return;
-                            }
-                        };
-                        let new_summary: String = text.trim().chars().take(800).collect();
-                        if new_summary.is_empty() {
-                            // 空摘要 = 失败：留标记供下轮节流重试
-                            let _ = session_store
-                                .update_session_state(
-                                    session_id,
-                                    user_id,
-                                    bg_task_state_patch("summary_state", "failed", attempt_at),
-                                )
-                                .await;
-                            return;
-                        }
-                        // 成功：summary_state ok 与 conversation_summary 同 patch 落库
-                        let mut ok_patch = bg_task_state_patch("summary_state", "ok", attempt_at);
-                        ok_patch["conversation_summary"] = Value::String(new_summary);
-                        if let Err(e) = session_store
-                            .update_session_state(session_id, user_id, ok_patch)
-                            .await
-                        {
-                            common::telemetry::warn!(
-                                "summary: save failed (session {}): {}",
-                                session_id,
-                                e
-                            );
-                        }
+                    self.background.schedule(BackgroundJob::RollingSummary {
+                        session_id,
+                        user_id,
+                        prev_summary: old_summary.unwrap_or_default(),
+                        spill_text: spill_content,
+                        attempt_at: chrono::Utc::now().timestamp(),
                     });
                 }
             }
@@ -1856,12 +2554,6 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             chrono::Utc::now().timestamp(),
         );
         if draft_due {
-            let session_id = input.session_id;
-            let user_id = input.user_id;
-            let attempt_at = chrono::Utc::now().timestamp();
-            let source_turn_count = turn_count;
-            let llm_config = self.llm_config.clone();
-            let session_store = self.session_store.clone();
             let old_draft = agent_state
                 .as_ref()
                 .and_then(|s| s.get("draft_context"))
@@ -1878,125 +2570,263 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 .collect();
             recent_lines.reverse();
             recent_lines.push(format!("assistant: {}", resp.content));
-            let recent_text = recent_lines.join("\n");
-            tokio::spawn(async move {
-                let _ = session_store
-                    .update_session_state(
-                        session_id,
-                        user_id,
-                        bg_task_state_patch("draft_context_state", "pending", attempt_at),
-                    )
-                    .await;
-                let svc = match llm_config.load_service().await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        common::telemetry::warn!("draft: llm load failed: {}", e);
-                        let _ = session_store
-                            .update_session_state(
-                                session_id,
-                                user_id,
-                                bg_task_state_patch("draft_context_state", "failed", attempt_at),
-                            )
-                            .await;
-                        return;
-                    }
-                };
-                let flash_model = svc.config().flash_model.clone();
-                let prompt = draft_refine_prompt(&old_draft, &recent_text);
-                let text = match svc
-                    .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
-                    .await
-                {
-                    Ok((t, _)) => t,
-                    Err(e) => {
-                        common::telemetry::warn!("draft: generate failed: {}", e);
-                        let _ = session_store
-                            .update_session_state(
-                                session_id,
-                                user_id,
-                                bg_task_state_patch("draft_context_state", "failed", attempt_at),
-                            )
-                            .await;
-                        return;
-                    }
-                };
-                let new_draft: String = text.trim().chars().take(1500).collect();
-                if new_draft.is_empty() {
-                    // 空草稿 = 失败：留标记供下轮节流重试
-                    let _ = session_store
-                        .update_session_state(
-                            session_id,
-                            user_id,
-                            bg_task_state_patch("draft_context_state", "failed", attempt_at),
-                        )
-                        .await;
-                    return;
-                }
-                // 成功：重写式更新（draft_context 整体替换，非 append）
-                let ok_patch =
-                    draft_context_success_patch(&new_draft, source_turn_count, attempt_at);
-                if let Err(e) = session_store
-                    .update_session_state(session_id, user_id, ok_patch)
-                    .await
-                {
-                    common::telemetry::warn!("draft: save failed (session {}): {}", session_id, e);
-                }
+            self.background.schedule(BackgroundJob::DraftRefine {
+                session_id,
+                user_id,
+                old_draft,
+                recent_text: recent_lines.join("\n"),
+                source_turn_count: turn_count,
+                attempt_at: chrono::Utc::now().timestamp(),
             });
         }
 
         // 14. D2.8 标题自动生成：默认标题会话在本轮成功后异步 flash 生成
         //     （≤16 字，取首条用户消息 + 首回复为输入）；失败仅 telemetry warn。
         if needs_auto_title {
-            let session_id = input.session_id;
-            let user_id = input.user_id;
-            let llm_config = self.llm_config.clone();
-            let session_store = self.session_store.clone();
-            let user_text = user_content;
-            let reply_text = resp.content.clone();
-            tokio::spawn(async move {
-                let svc = match llm_config.load_service().await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        common::telemetry::warn!("auto-title: llm load failed: {}", e);
-                        return;
-                    }
-                };
-                let flash_model = svc.config().flash_model.clone();
-                let prompt = format!(
-                    "根据以下对话概括主题，不超过16个字，仅输出标题本身，不要引号。\n用户：{}\n助手：{}",
-                    user_text, reply_text
-                );
-                match svc
-                    .generate_detailed("", &prompt, None, None, None, None, Some(&flash_model))
-                    .await
-                {
-                    Ok((text, _)) => {
-                        let title: String = text
-                            .trim()
-                            .trim_matches(['"', '\'', '「', '」', '《', '》'])
-                            .chars()
-                            .take(16)
-                            .collect();
-                        if title.is_empty() {
-                            return;
-                        }
-                        if let Err(e) = session_store
-                            .update_session_title(session_id, user_id, &title)
-                            .await
-                        {
-                            common::telemetry::warn!(
-                                "auto-title: update session {} title failed: {}",
-                                session_id,
-                                e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        common::telemetry::warn!("auto-title: generate failed: {}", e);
-                    }
-                }
+            self.background.schedule(BackgroundJob::AutoTitle {
+                session_id,
+                user_id,
+                user_text: user_content.to_string(),
+                reply_text: resp.content.clone(),
             });
         }
+    }
+}
+
+/// 阶段 3 产出（D1）：LLM 服务 + 模型档位 + 路由结果 + 主体/记忆作用域。
+struct RoutedPhase {
+    llm: llm::LlmService,
+    model_override: Option<String>,
+    agent_code: String,
+    agent_config: ai_agent::agents::AgentConfig,
+    subject_id: i64,
+    subject_contact_id: i64,
+    counterpart_id: Option<i64>,
+    assistant_recipients: Vec<i64>,
+    memory_layers: super::memory_store::MemoryLayers,
+    persona: Option<String>,
+}
+
+/// 阶段 4 输入（借用束，避免多参）：prompt 装配所需的全部上下文。
+struct AssembleInputs<'a> {
+    agent_config: &'a ai_agent::agents::AgentConfig,
+    persona: Option<&'a str>,
+    locale_str: &'a str,
+    agent_code: &'a str,
+    subject_id: i64,
+    envelope: &'a ChatContextEnvelope,
+    permissions: Option<&'a Value>,
+    memory_layers: &'a super::memory_store::MemoryLayers,
+    agent_state: Option<&'a Value>,
+    old_summary: Option<&'a str>,
+    attachments: Option<&'a Value>,
+    history: &'a [(String, String)],
+    user_content: &'a str,
+    user_id: i64,
+}
+
+/// 阶段 5 产出（D1）：生成正文 + 用量 + 工具调用记录 + 工具提案（C1）。
+struct GeneratedPhase {
+    content: String,
+    usage: Option<Value>,
+    tool_calls: Option<Value>,
+    /// 工具产出中归一出的提案（change `deepen-chat-action-seam` C1）：服务端自
+    /// `tool_calls` 提升，MUST NOT 依赖模型在正文里抄写。`None` = 本轮无提案
+    /// （此时结构化产出回落正文 ```` ```json ```` 块，行为不变）。
+    proposal: Option<Value>,
+}
+
+/// 阶段 5 输入（一束）：生成所需上下文 + 流式回调（owned prompt 以免额外分配）。
+struct GenerateInputs<'a> {
+    prompt: String,
+    llm: &'a llm::LlmService,
+    agent_config: &'a ai_agent::agents::AgentConfig,
+    agent_code: &'a str,
+    model_override: Option<&'a str>,
+    session_id: i64,
+    user_id: i64,
+    cancel: Option<&'a tokio::sync::watch::Receiver<bool>>,
+    on_chunk: Option<Box<dyn Fn(TurnStreamEvent) + Send + Sync>>,
+    /// 本轮页面登记的表单契约（change `add-form-contract-seam`）：原样透传给工具执行端口。
+    /// `None` = 未登记/不可解析 ⇒ `validate_form` fail-closed（`CONTRACT_UNAVAILABLE`）。
+    form_contract: Option<&'a Value>,
+}
+
+/// 阶段 7 输入（一束）：持久化所需的 agent 结果 + 写径字段（usage/knowledge_refs 入响应故 owned）。
+struct PersistInputs<'a> {
+    agent_result: ai_agent::agents::AgentResult,
+    session_id: i64,
+    user_id: i64,
+    agent_code: &'a str,
+    subject_contact_id: i64,
+    assistant_recipients: &'a [i64],
+    usage: Option<Value>,
+    tool_calls: &'a Option<Value>,
+    knowledge_refs: Option<Value>,
+    agent_contacts: &'a std::collections::HashSet<i64>,
+    cancel: Option<&'a tokio::sync::watch::Receiver<bool>>,
+}
+
+/// 阶段 8 输入（一束）：后台派发所需的判定源 + 载荷（overflow/old_summary 为末次消费故 owned）。
+struct DispatchInputs<'a> {
+    session_id: i64,
+    user_id: i64,
+    agent_state: Option<&'a Value>,
+    history: &'a [(String, String)],
+    user_content: &'a str,
+    resp: &'a ChatMessageResponse,
+    subject_id: i64,
+    counterpart_id: Option<i64>,
+    memory_layers: &'a super::memory_store::MemoryLayers,
+    overflow: Option<super::ports::MessageRow>,
+    old_summary: Option<String>,
+    needs_auto_title: bool,
+}
+
+#[async_trait]
+impl SessionOrchestrator for DefaultSessionOrchestrator {
+    async fn process_turn(
+        &self,
+        input: TurnInput,
+        on_chunk: Option<Box<dyn Fn(TurnStreamEvent) + Send + Sync>>,
+    ) -> Result<TurnResult, String> {
+        let locale = i18n::Locale::new(&input.locale);
+        let locale_str: &str = &input.locale;
+
+        // 阶段 1：会话验证 + 权限（fail-closed）+ 标题判定（D1）
+        let session_phase = self
+            .validate_session(input.session_id, input.user_id, &locale)
+            .await?;
+        let permissions = session_phase.permissions;
+        let needs_auto_title = session_phase.needs_auto_title;
+
+        // 阶段 2：输入载入（信封 / agent_state / 参与方 / 历史 / 溢出 / 旧摘要，D1）
+        let TurnInputsPhase {
+            envelope,
+            agent_state,
+            agent_contacts,
+            user_content,
+            turn_knowledge_refs,
+            turn_attachments,
+            overflow,
+            history,
+            old_summary,
+        } = self
+            .load_turn_inputs(input.session_id, input.user_id)
+            .await?;
+
+        // 阶段 3：LLM + 模型档位 + 路由 + 主体/记忆作用域（D1）
+        let RoutedPhase {
+            llm,
+            model_override,
+            agent_code,
+            agent_config,
+            subject_id,
+            subject_contact_id,
+            counterpart_id,
+            assistant_recipients,
+            memory_layers,
+            persona,
+        } = self
+            .load_llm_and_route(&input, &envelope, &history, &user_content, locale_str)
+            .await?;
+
+        // 阶段 4：prompt 装配（D1）
+        let prompt = self
+            .assemble_prompt(
+                AssembleInputs {
+                    agent_config: &agent_config,
+                    persona: persona.as_deref(),
+                    locale_str,
+                    agent_code: &agent_code,
+                    subject_id,
+                    envelope: &envelope,
+                    permissions: permissions.as_ref(),
+                    memory_layers: &memory_layers,
+                    agent_state: agent_state.as_ref(),
+                    old_summary: old_summary.as_deref(),
+                    attachments: turn_attachments.as_ref(),
+                    history: &history,
+                    user_content: &user_content,
+                    user_id: input.user_id,
+                },
+                &llm,
+            )
+            .await?;
+
+        // 阶段 5：生成（页面特化：NGAC 提案由专属生成器接管，wire-ngac-proposal-into-assistant；
+        // 其余走取消检查点 1/2/3 + 工具编排或直调 LLM，D1）
+        let GeneratedPhase {
+            content,
+            usage: turn_usage,
+            tool_calls: turn_tool_calls,
+            proposal: turn_proposal,
+        } = match self
+            .specialized_generation(&input, &envelope, &user_content, &history)
+            .await
+        {
+            Some(Ok(gen)) => {
+                // 专属生成非流式：完成后整段回放一次 Chunk（前端仍渲染流式气泡）
+                if let Some(cb) = &on_chunk {
+                    cb(TurnStreamEvent::Chunk(gen.content.clone()));
+                }
+                gen
+            }
+            Some(Err(e)) => return Err(e),
+            None => {
+                self.generate(GenerateInputs {
+                    prompt,
+                    llm: &llm,
+                    agent_config: &agent_config,
+                    agent_code: &agent_code,
+                    model_override: model_override.as_deref(),
+                    session_id: input.session_id,
+                    user_id: input.user_id,
+                    cancel: input.cancel.as_ref(),
+                    on_chunk,
+                    // 页面登记的表单契约（change add-form-contract-seam）原样透传
+                    form_contract: envelope.form_contract.as_ref(),
+                })
+                .await?
+            }
+        };
+
+        // 阶段 6：后处理（空回复守卫 + 形态校验 → AgentResult，D1）
+        let agent_result = Self::postprocess(content, &agent_config, turn_proposal)?;
+
+        // 阶段 7：持久化（agent_state + assistant 消息/meta + 时间戳 → ChatMessageResponse，D1）
+        let resp = self
+            .persist(PersistInputs {
+                agent_result,
+                session_id: input.session_id,
+                user_id: input.user_id,
+                agent_code: &agent_code,
+                subject_contact_id,
+                assistant_recipients: &assistant_recipients,
+                usage: turn_usage,
+                tool_calls: &turn_tool_calls,
+                knowledge_refs: turn_knowledge_refs,
+                agent_contacts: &agent_contacts,
+                cancel: input.cancel.as_ref(),
+            })
+            .await?;
+
+        // 阶段 8：后台派发（D1/D2）
+        self.dispatch_background(DispatchInputs {
+            session_id: input.session_id,
+            user_id: input.user_id,
+            agent_state: agent_state.as_ref(),
+            history: &history,
+            user_content: &user_content,
+            resp: &resp,
+            subject_id,
+            counterpart_id,
+            memory_layers: &memory_layers,
+            overflow,
+            old_summary,
+            needs_auto_title,
+        })
+        .await;
 
         Ok(TurnResult { message: resp })
     }
@@ -2054,14 +2884,22 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
                 .await?;
         }
 
-        let sender_addr = self.ai_contact.resolve_user_contact_id(user_id).await?;
-        // D-2：用户消息收件人 = 会话当前智能体联系方式（无则空集，不阻断写入）
-        let recipients: Vec<i64> =
-            super::memory_scope::session_agent_contact_id(&self.pool, session_id)
-                .await
-                .unwrap_or(None)
-                .into_iter()
-                .collect();
+        // 用户发送方地址：账号 1:1 绑定实体 → 默认联系人 → 首选联系方式（framework_contacts
+        // 唯一实现；未绑定/无联系人 → None）。原 AIContactPort 单方法单实现单消费者，
+        // 按 delta 的删除测试直调既有 module。
+        let sender_addr =
+            framework_contacts::ContactsService::resolve_user_contact(&self.pool, user_id)
+                .await?
+                .and_then(|r| r.info_id);
+        // D-2：用户消息收件人 = 会话当前智能体联系方式（无则空集，不阻断写入）；
+        // 经 TurnEnvironment seam（不再直取 PgPool）。
+        let recipients: Vec<i64> = self
+            .env
+            .session_agent_contact_id(session_id)
+            .await
+            .unwrap_or(None)
+            .into_iter()
+            .collect();
 
         let row = self
             .message_store
@@ -2167,9 +3005,10 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
 
         // 动作上下文：action_type + target_ids 解析
         //  - "agent_action:<type>"：type 直接取，target_ids 必须来自 params.target_ids
-        //  - 其余：查 agent_state.last_result.structured.actions[]（上一轮 agent
-        //    建议的动作，id 匹配，kind="execute"）；target_ids 取 params.target_ids
-        //    > 动作记录内 params.target_ids
+        //  - 其余：**优先**查逐消息持久记录（C1：`chat_message_meta.structured.actions[]`，
+        //    工具提案经服务端提升后落此）；无 meta 命中时回落会话级 mirror
+        //    `agent_state.last_result.structured.actions[]`（兼容历史消息）。
+        //    target_ids 取 params.target_ids > 动作记录内 params.target_ids
         let (_, agent_state) = self
             .session_store
             .get_session_context(session_id, user_id)
@@ -2194,19 +3033,33 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             }
             (stripped.to_string(), ids)
         } else {
-            let action = agent_state
-                .as_ref()
-                .and_then(|s| s.get("last_result"))
-                .and_then(|lr| lr.get("structured"))
-                .and_then(|st| st.get("actions"))
-                .and_then(|a| a.as_array())
-                .and_then(|actions| {
-                    actions.iter().find(|a| {
-                        a.get("id").and_then(|v| v.as_str()) == Some(action_id)
-                            && a.get("kind").and_then(|v| v.as_str()) == Some("execute")
+            // ① 权威面：逐消息持久记录（失败不阻断——回落 mirror）
+            let durable = self
+                .env
+                .find_structured_action(session_id, action_id)
+                .await
+                .unwrap_or_else(|e| {
+                    common::telemetry::warn!("structured action lookup failed: {}", e);
+                    None
+                });
+            // ② 回落面：会话级 mirror
+            let action = match durable {
+                Some(a) => a,
+                None => agent_state
+                    .as_ref()
+                    .and_then(|s| s.get("last_result"))
+                    .and_then(|lr| lr.get("structured"))
+                    .and_then(|st| st.get("actions"))
+                    .and_then(|a| a.as_array())
+                    .and_then(|actions| {
+                        actions.iter().find(|a| {
+                            a.get("id").and_then(|v| v.as_str()) == Some(action_id)
+                                && a.get("kind").and_then(|v| v.as_str()) == Some("execute")
+                        })
                     })
-                })
-                .ok_or_else(|| format!("ACTION_NOT_FOUND: {}", action_id))?;
+                    .cloned()
+                    .ok_or_else(|| format!("ACTION_NOT_FOUND: {}", action_id))?,
+            };
             let action_type = action
                 .get("action_type")
                 .and_then(|v| v.as_str())
@@ -2245,21 +3098,13 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             match pinned {
                 Some(code) if !code.is_empty() => code,
                 _ => {
-                    // 最近 assistant 消息的 meta.agent_code
-                    let from_meta = sqlx::query_scalar::<_, String>(
-                        r#"SELECT cm.agent_code
-                           FROM isahl."zc_id_msgs-chat_ai" m
-                           JOIN isahl_auth.chat_message_meta cm ON cm.msg_id = m.id
-                           WHERE m.fk_thread = $1 AND cm.agent_code <> ''
-                             AND m.deleted_at IS NULL
-                           ORDER BY m.created_at DESC LIMIT 1"#,
-                    )
-                    .bind(session_id)
-                    .fetch_optional(&self.pool)
-                    .await
-                    .ok()
-                    .flatten();
-                    from_meta.unwrap_or_else(|| "general".to_string())
+                    // D10：最近 assistant 消息的 meta.agent_code 经单实现读取（env seam）。
+                    self.env
+                        .last_agent_code(session_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| "general".to_string())
                 }
             }
         };
@@ -2269,7 +3114,7 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
         // Explicit/High/Critical 级动作必须 confirmed=true（D2.1；与工具路径
         // needs_confirmation 门禁同口径）——拒绝即审计 Deny（动作已解析）
         let level = handler.confirmation_level(&action_type);
-        if super::adapters::tool_bridge::requires_confirmation(&level) && !confirmed {
+        if ai_agent::agents::tool_orchestrator::level_requires_confirmation(&level) && !confirmed {
             let err = format!("CONFIRMATION_REQUIRED: 动作 {} 需要显式确认", action_type);
             self.audit_action_execution(
                 session_id,
@@ -2290,6 +3135,9 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
             db_pool: self.pool.clone(),
             allowed_schemas: agent_config.allowed_schemas.clone(),
             action_handler: None,
+            // 本路径执行的是**已确认的动作**（不经 validate_form）；表单契约不参与，
+            // 故显式 None（contract 只服务于工具侧校验，见 change add-form-contract-seam）。
+            form_contract: None,
         };
         let outcome = handler
             .run_action(&action_type, &target_ids, &params, &ctx)
@@ -2386,10 +3234,470 @@ impl SessionOrchestrator for DefaultSessionOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D2 seam：派发/执行解耦——RecordingScheduler 记录 job 而不执行（无网络/无 DB）。
+    #[test]
+    fn recording_scheduler_records_dispatched_jobs() {
+        let sched = RecordingScheduler::new();
+        sched.schedule(BackgroundJob::AutoTitle {
+            session_id: 1,
+            user_id: 2,
+            user_text: "hi".to_string(),
+            reply_text: "hello".to_string(),
+        });
+        sched.schedule(BackgroundJob::RollingSummary {
+            session_id: 1,
+            user_id: 2,
+            prev_summary: "p".to_string(),
+            spill_text: "s".to_string(),
+            attempt_at: 5,
+        });
+        let jobs = sched.recorded();
+        assert_eq!(jobs.len(), 2);
+        assert!(matches!(jobs[0], BackgroundJob::AutoTitle { .. }));
+        assert!(matches!(jobs[1], BackgroundJob::RollingSummary { .. }));
+    }
+
+    /// D3 seam：假 env 返回确定值 ⇒ 无 DB 即可驱动整轮（T7 依赖）。
+    #[tokio::test]
+    async fn fake_turn_environment_returns_canned_values() {
+        let mut contacts = std::collections::HashSet::new();
+        contacts.insert(42);
+        let env = FakeTurnEnvironment {
+            permissions: Some(json!({"userId": 1})),
+            agent_contact_ids: contacts.clone(),
+            subject_contact_id: Some(42),
+            counterpart_id: Some(7),
+            preferred_info_id: Some(99),
+            subject_persona: Some("人格".to_string()),
+            ..Default::default()
+        };
+        assert!(env.permissions(1).await.is_some());
+        assert!(env.agent_contact_ids().await.contains(&42));
+        assert_eq!(env.subject_contact_id("general").await.unwrap(), Some(42));
+        assert_eq!(env.counterpart_id(1, 2, &[42]).await, Some(7));
+        assert_eq!(env.preferred_info_id(7).await, Some(99));
+        assert_eq!(env.subject_persona(1).await.as_deref(), Some("人格"));
+        let _ = env.memory_layers(1, Some(7)).await;
+    }
+
+    // ---- T7 harness：无 DB / 无网络的整轮驱动（composable 组合根） ----
+
+    use crate::api::chat_sessions::ports::{
+        AgentDispatchPort, ChatSession, LlmConfigPort, MessageMetaFields, MessageRow,
+        MessageStorePort, SessionStorePort,
+    };
+    use ai_agent::agents::AgentConfig;
+    use async_trait::async_trait;
+
+    /// 会话假实现：`present=false` → 模拟「会话不存在」（phase 1 契约）。
+    struct FakeSessionStore {
+        present: bool,
+    }
+
+    fn fake_chat_session(id: i64) -> ChatSession {
+        ChatSession {
+            id,
+            title: "既有会话".to_string(),
+            context: None,
+            agent_state: None,
+            permissions: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[async_trait]
+    impl SessionStorePort for FakeSessionStore {
+        async fn get_session(
+            &self,
+            session_id: i64,
+            _user_id: i64,
+        ) -> Result<Option<ChatSession>, String> {
+            Ok(if self.present {
+                Some(fake_chat_session(session_id))
+            } else {
+                None
+            })
+        }
+        async fn create_session(
+            &self,
+            _title: &str,
+            _context: Option<Value>,
+            _user_id: i64,
+        ) -> Result<ChatSession, String> {
+            Ok(fake_chat_session(1))
+        }
+        async fn update_session_timestamp(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn update_session_title(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+            _title: &str,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+        async fn update_session_context(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+            _context: Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn update_session_state(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+            _state_patch: Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn get_session_context(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+        ) -> Result<(Option<Value>, Option<Value>), String> {
+            Ok((None, None))
+        }
+        async fn list_sessions(&self, _user_id: i64) -> Result<Vec<ChatSession>, String> {
+            Ok(vec![])
+        }
+        async fn delete_session(&self, _session_id: i64, _user_id: i64) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn fake_message_row(content: &str) -> MessageRow {
+        MessageRow {
+            id: 100,
+            content: Some(content.to_string()),
+            fk_sender_addr: Some(1),
+            created_at: chrono::Utc::now(),
+            agent_code: None,
+            structured: None,
+            usage: None,
+            knowledge_refs: None,
+            attachments: None,
+            tool_calls: None,
+        }
+    }
+
+    struct FakeMessageStore;
+
+    #[async_trait]
+    impl MessageStorePort for FakeMessageStore {
+        async fn add_message(
+            &self,
+            _session_id: i64,
+            content: &str,
+            _sender_addr: Option<i64>,
+            _recipients: &[i64],
+        ) -> Result<MessageRow, String> {
+            Ok(fake_message_row(content))
+        }
+        async fn get_history(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+            _limit: i64,
+        ) -> Result<Vec<MessageRow>, String> {
+            Ok(vec![])
+        }
+        async fn get_messages(
+            &self,
+            _session_id: i64,
+            _user_id: i64,
+            _offset: i64,
+            _limit: i64,
+        ) -> Result<Vec<MessageRow>, String> {
+            Ok(vec![])
+        }
+        async fn get_last_user_message_row(
+            &self,
+            _session_id: i64,
+        ) -> Result<Option<MessageRow>, String> {
+            Ok(Some(fake_message_row("你好")))
+        }
+        async fn save_message_meta(
+            &self,
+            _msg_id: i64,
+            _session_id: i64,
+            _fields: MessageMetaFields<'_>,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+        async fn set_message_feedback(
+            &self,
+            _msg_id: i64,
+            _user_id: i64,
+            _rating: &str,
+            _comment: Option<&str>,
+        ) -> Result<Option<String>, String> {
+            Ok(None)
+        }
+        async fn message_belongs_to_user(
+            &self,
+            _msg_id: i64,
+            _user_id: i64,
+        ) -> Result<bool, String> {
+            Ok(true)
+        }
+        async fn soft_delete_message(&self, _msg_id: i64) -> Result<bool, String> {
+            Ok(true)
+        }
+    }
+
+    fn fake_agent_config() -> AgentConfig {
+        AgentConfig {
+            code: "general".to_string(),
+            name: "general".to_string(),
+            system_prompt: "你是助手".to_string(),
+            subject_id: Some(341_543_906_011_526),
+            ..Default::default()
+        }
+    }
+
+    struct FakeAgentDispatch;
+
+    #[async_trait]
+    impl AgentDispatchPort for FakeAgentDispatch {
+        async fn resolve_agent(
+            &self,
+            _session_id: i64,
+            _user_message: &str,
+            _envelope: &ChatContextEnvelope,
+            _history: &[(String, String)],
+            _locale: &str,
+            _llm: &llm::LlmService,
+        ) -> Result<String, String> {
+            Ok("general".to_string())
+        }
+        async fn get_agent_config(&self, _code: &str) -> Result<AgentConfig, String> {
+            Ok(fake_agent_config())
+        }
+        async fn agent_exists(&self, _code: &str) -> bool {
+            true
+        }
+        async fn list_agent_configs(&self) -> Result<Vec<AgentConfig>, String> {
+            Ok(vec![])
+        }
+    }
+
+    /// 假 LlmConfig：返回不可达 base_url 的 dummy 服务（不落网；取消路径在 load_service
+    /// 之后、generate 之前返回，故永不触网）。
+    struct FakeLlmConfig;
+
+    fn dummy_llm() -> llm::LlmService {
+        llm::LlmService::new(llm::LlmServiceConfig {
+            provider: llm::LlmProvider::DeepSeek,
+            api_key: "sk-test-dummy".to_string(),
+            model: "dummy".to_string(),
+            flash_model: "dummy".to_string(),
+            base_url: Some("http://127.0.0.1:9".to_string()),
+            timeout_seconds: 2,
+            max_retries: 0,
+            generation_params: Default::default(),
+            roles: Default::default(),
+        })
+        .expect("dummy llm")
+    }
+
+    #[async_trait]
+    impl LlmConfigPort for FakeLlmConfig {
+        async fn load_service(&self) -> Result<llm::LlmService, String> {
+            Ok(dummy_llm())
+        }
+    }
+
+    /// 注入式 LLM 配置端口：每次 load 经工厂构造（替身由调用方给定）。
+    struct FactoryLlmConfig<F: Fn() -> llm::LlmService + Send + Sync>(F);
+
+    #[async_trait]
+    impl<F: Fn() -> llm::LlmService + Send + Sync> LlmConfigPort for FactoryLlmConfig<F> {
+        async fn load_service(&self) -> Result<llm::LlmService, String> {
+            Ok((self.0)())
+        }
+    }
+
+    /// 最小替身后端：恒返回固定文本（finding 2026-10-03 收益面——
+    /// 经 `LlmService::from_backends` 公开构造器注入，无 env / 无网络）。
+    struct StubBackend {
+        text: String,
+    }
+
+    #[async_trait]
+    impl llm::LlmBackend for StubBackend {
+        fn provider_name(&self) -> &'static str {
+            "stub"
+        }
+        fn default_model(&self) -> &str {
+            "stub-model"
+        }
+        async fn complete(
+            &self,
+            _req: llm::CompletionRequest,
+        ) -> Result<llm::CompletionResponse, llm::BackendError> {
+            Ok(llm::CompletionResponse {
+                text: Some(self.text.clone()),
+                tool_calls: Vec::new(),
+                usage: None,
+                finish_reason: Some("stop".to_string()),
+                raw: serde_json::json!({}),
+            })
+        }
+    }
+
+    fn stub_llm(text: &str) -> llm::LlmService {
+        llm::LlmService::from_backends(
+            Box::new(StubBackend {
+                text: text.to_string(),
+            }),
+            llm::LlmServiceConfig {
+                provider: llm::LlmProvider::DeepSeek,
+                api_key: "sk-test-stub".to_string(),
+                model: "stub-model".to_string(),
+                flash_model: "stub-model".to_string(),
+                base_url: None,
+                timeout_seconds: 5,
+                max_retries: 0,
+                generation_params: Default::default(),
+                roles: Default::default(),
+            },
+            None,
+        )
+    }
+
+    /// 组装一个无 DB / 无网络的整轮编排器（D3 composable 组合根 + D2 seam）。
+    fn composable_orchestrator(
+        session_present: bool,
+        background: Arc<RecordingScheduler>,
+    ) -> DefaultSessionOrchestrator {
+        composable_orchestrator_with_llm(session_present, background, Arc::new(FakeLlmConfig))
+    }
+
+    fn composable_orchestrator_with_llm(
+        session_present: bool,
+        background: Arc<RecordingScheduler>,
+        llm_config: Arc<dyn LlmConfigPort>,
+    ) -> DefaultSessionOrchestrator {
+        DefaultSessionOrchestrator::new(
+            sqlx::PgPool::connect_lazy("postgres://u:p@127.0.0.1:1/none")
+                .expect("lazy pool（不建连）"),
+            crate::i18n::init_i18n_manager(),
+            TurnDependencies {
+                session_store: Arc::new(FakeSessionStore {
+                    present: session_present,
+                }),
+                message_store: Arc::new(FakeMessageStore),
+                llm_config,
+                agent_dispatch: Arc::new(FakeAgentDispatch),
+                background,
+                env: Arc::new(FakeTurnEnvironment {
+                    subject_contact_id: Some(555),
+                    ..Default::default()
+                }),
+            },
+        )
+    }
+
+    fn turn_input(cancel: Option<tokio::sync::watch::Receiver<bool>>) -> TurnInput {
+        TurnInput {
+            session_id: 1,
+            user_id: 2,
+            locale: "zh-CN".to_string(),
+            model: None,
+            cancel,
+        }
+    }
+
+    /// T7：整轮可由假实现驱动（无 DB）——生成段前的取消检查点先于任何 LLM 调用
+    /// 返回 `CANCELLED`，且取消轮 MUST NOT 派发后台 job（D3 composable + D2 seam）。
+    #[tokio::test]
+    async fn process_turn_composable_no_db_cancelled_before_generation() {
+        let background = Arc::new(RecordingScheduler::new());
+        let orch = composable_orchestrator(true, background.clone());
+
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        cancel_tx.send(true).unwrap();
+
+        let res = orch.process_turn(turn_input(Some(cancel_rx)), None).await;
+
+        assert_eq!(
+            res.err().as_deref(),
+            Some("CANCELLED"),
+            "生成段前的取消检查点必须先于任何生成调用返回 CANCELLED"
+        );
+        assert!(
+            background.recorded().is_empty(),
+            "取消的轮次 MUST NOT 派发后台 job"
+        );
+    }
+
+    /// T7：phase 1 契约——会话不存在时首个错误即 `SESSION_NOT_FOUND`（无 DB 驱动）。
+    #[tokio::test]
+    async fn process_turn_phase1_session_not_found_without_db() {
+        let background = Arc::new(RecordingScheduler::new());
+        let orch = composable_orchestrator(false, background.clone());
+
+        let res = orch.process_turn(turn_input(None), None).await;
+
+        assert_eq!(res.err().as_deref(), Some("SESSION_NOT_FOUND"));
+        assert!(background.recorded().is_empty());
+    }
+
+    /// finding 2026-10-03 收益面 1：注入替身 LLM 驱动一轮**成功路径**——
+    /// 助手回复经后处理原样返回（无 DB / 无网络）。
+    #[tokio::test]
+    async fn process_turn_success_path_with_injected_llm() {
+        let background = Arc::new(RecordingScheduler::new());
+        let orch = composable_orchestrator_with_llm(
+            true,
+            background.clone(),
+            Arc::new(FactoryLlmConfig(|| stub_llm("这是模型的回复"))),
+        );
+
+        let res = orch
+            .process_turn(turn_input(None), None)
+            .await
+            .expect("注入替身 LLM 后成功路径应返回 Ok");
+        assert_eq!(res.message.content, "这是模型的回复");
+        assert!(!res.message.requires_input);
+    }
+
+    /// finding 2026-10-03 收益面 2：**空回复守卫**——替身 LLM 输出空串 ⇒ 显式失败
+    /// （MUST NOT 静默落空内容沿 WS/HTTP 传播成前端空气泡）。
+    #[tokio::test]
+    async fn process_turn_empty_reply_guard_fires() {
+        let background = Arc::new(RecordingScheduler::new());
+        let orch = composable_orchestrator_with_llm(
+            true,
+            background.clone(),
+            Arc::new(FactoryLlmConfig(|| stub_llm(""))),
+        );
+
+        let res = orch.process_turn(turn_input(None), None).await;
+        let err = res.err().expect("空回复必须显式失败");
+        assert!(
+            err.contains("LLM_RETURNED_EMPTY"),
+            "空回复守卫应透传 LLM_RETURNED_EMPTY，实际：{err}"
+        );
+    }
     use serde_json::json;
 
     fn pc(v: Value) -> Option<Value> {
         Some(v)
+    }
+
+    /// 上下文信封（C6）：页面/知识段测试用——经单一形状发现实现。
+    fn cen(v: Value) -> Option<ChatContextEnvelope> {
+        Some(ChatContextEnvelope::from_raw(Some(&v)))
     }
 
     // ── 运行时上下文（批 ④ add-chat-ai-runtime-context）────────────────
@@ -2598,7 +3906,7 @@ mod tests {
     fn test_page_context_injected() {
         let prompt = assemble_context_sections(
             "system",
-            pc(json!({
+            cen(json!({
                 "page": "流程设计器",
                 "module": "wz",
                 "currentData": {"flow": "FLOW-FREIGHT", "nodes": 4}
@@ -2609,7 +3917,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         assert!(prompt.contains("## 当前页面上下文"));
         assert!(prompt.contains("流程设计器"));
         assert!(prompt.contains("FLOW-FREIGHT"));
@@ -2619,7 +3928,9 @@ mod tests {
     #[test]
     fn test_page_context_truncated_at_cap() {
         let big = json!({"page": "x".repeat(5000)});
-        let prompt = assemble_context_sections("s", pc(big).as_ref(), None, None, None, None, None);
+        let prompt =
+            assemble_context_sections("s", cen(big).as_ref(), None, None, None, None, None)
+                .unwrap();
         assert!(prompt.contains("…[truncated]"));
         // 4000 截断 + 标记
         let section = prompt.split("## 当前页面上下文").nth(1).unwrap_or_default();
@@ -2627,10 +3938,34 @@ mod tests {
     }
 
     #[test]
+    fn test_page_context_cap_is_chars_not_bytes_cjk() {
+        // T5 回归：页面上限 MUST 按**字符数**判。构造序列化后恰 4000 字符、
+        // 但字节数 ≈12000 的 CJK 页面上下文——旧代码 `serialized.len() > 4000`
+        // （字节判）会误判超限并追加 `…[truncated]`，而 `chars().take(4000)` 实际
+        // 未截断任何字符（判据与动作不一致）。新代码按字符判 ⇒ MUST NOT 追加标记。
+        let content = "字".repeat(3992); // + {"p":"…"} 包装 = 4000 字符
+        let ctx = json!({ "p": content });
+        let serialized = serde_json::to_string(&ctx).unwrap();
+        assert_eq!(serialized.chars().count(), 4000, "构造：字符数恰为上限");
+        assert!(
+            serialized.len() > 4000,
+            "构造：字节数超上限（旧判据在此误截）"
+        );
+        let prompt =
+            assemble_context_sections("s", cen(ctx).as_ref(), None, None, None, None, None)
+                .unwrap();
+        let section = prompt.split("## 当前页面上下文").nth(1).unwrap_or_default();
+        assert!(
+            !section.contains("…[truncated]"),
+            "字符数未超上限时 MUST NOT 追加截断标记（旧字节判据会误加）"
+        );
+    }
+
+    #[test]
     fn test_knowledge_context_excluded_and_separate() {
         let prompt = assemble_context_sections(
             "s",
-            pc(json!({
+            cen(json!({
                 "page": "托单跟踪",
                 "knowledgeContext": "LAB-44 赔偿标准：破损按运费的 3 倍赔付"
             }))
@@ -2640,7 +3975,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         // 页面上下文段不得嵌套 knowledgeContext 原文
         let page_section = prompt
             .split("## 当前页面上下文")
@@ -2658,8 +3994,65 @@ mod tests {
 
     #[test]
     fn test_no_page_context_fallback() {
-        let prompt = assemble_context_sections("s", None, None, None, None, None, None);
+        let prompt = assemble_context_sections("s", None, None, None, None, None, None).unwrap();
         assert!(prompt.contains("（无特定页面上下文）"));
+    }
+
+    #[test]
+    fn test_form_contract_within_budget_reaches_page_section() {
+        // 预算内的契约随 page_context 进入「## 当前页面上下文」段——原样、未被截断。
+        let contract = json!({
+            "fields": [
+                {
+                    "name": "customer",
+                    "type": "string",
+                    "required": true,
+                    "dto": { "kind": "m2o", "endpoint": "/api/crm/customers", "labelField": "name" }
+                }
+            ]
+        });
+        let prompt = assemble_context_sections(
+            "s",
+            cen(json!({ "page": "收据录入", "formContract": contract })).as_ref(),
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(prompt.contains("## 当前页面上下文"));
+        let section = prompt.split("## 当前页面上下文").nth(1).unwrap_or_default();
+        assert!(section.contains("formContract"), "契约必须进入页面上下文段");
+        assert!(
+            section.contains("/api/crm/customers"),
+            "契约内容必须原样进入段（未截断）"
+        );
+        assert!(
+            !section.contains("…[truncated]"),
+            "预算内契约 MUST NOT 触发 page_context 截断标记"
+        );
+    }
+
+    #[test]
+    fn test_form_contract_over_budget_fails_closed_not_truncated() {
+        // design D4a：契约超 FORM_CONTRACT_CAP ⇒ 整轮 fail-closed（可分类错误），
+        // MUST NOT 产出被 page_context 后缀截断的契约（即 MUST NOT 返回 Ok）。
+        let oversized = json!({
+            "fields": [{
+                "name": "f",
+                "type": "string",
+                "required": false,
+                "pattern": "x".repeat(FORM_CONTRACT_CAP + 100)
+            }]
+        });
+        let env = cen(json!({ "page": "P", "formContract": oversized }));
+        let res = assemble_context_sections("s", env.as_ref(), None, None, None, None, None);
+        let err = res.expect_err("超限契约必须 fail-closed");
+        assert!(
+            err.contains(CONTRACT_UNAVAILABLE),
+            "错误须可分类为 CONTRACT_UNAVAILABLE，实际：{err}"
+        );
     }
 
     #[test]
@@ -2672,7 +4065,8 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         assert!(prompt.contains("## 用户权限范围"));
         assert!(prompt.contains("approval.read"));
     }
@@ -2688,7 +4082,8 @@ mod tests {
             pc(json!({})).as_ref(),
             None,
             None,
-        );
+        )
+        .unwrap();
         assert!(!prompt.contains("## 主体记忆"));
         assert!(!prompt.contains("## 本对话方记忆"));
 
@@ -2702,7 +4097,8 @@ mod tests {
             pc(json!({"pref": "本对话方偏好"})).as_ref(),
             None,
             None,
-        );
+        )
+        .unwrap();
         assert!(prompt.contains("## 主体记忆"));
         assert!(prompt.contains("## 本对话方记忆"));
         assert!(prompt.contains("本对话方偏好"));
@@ -2794,12 +4190,13 @@ mod tests {
     fn test_permission_section_fail_closed_when_resolution_missing() {
         // 权限解析失败/缺失 ⇒ None 传入 ⇒ 权限段 MUST 不出现（fail-closed：
         // 不回落陈旧快照；数据访问仍由 PEP 每请求裁决）
-        let without = assemble_context_sections("sys", None, None, None, None, None, None);
+        let without = assemble_context_sections("sys", None, None, None, None, None, None).unwrap();
         assert!(!without.contains("## 用户权限范围"), "缺权限段原文");
 
         let permissions = json!({"userId": 1, "userAttributes": ["view:cust"]});
         let with =
-            assemble_context_sections("sys", None, Some(&permissions), None, None, None, None);
+            assemble_context_sections("sys", None, Some(&permissions), None, None, None, None)
+                .unwrap();
         assert!(with.contains("## 用户权限范围"), "有权限时 MUST 注入权限段");
         assert!(with.contains("view:cust"));
     }
@@ -2834,14 +4231,15 @@ mod tests {
             None,
             None,
             Some("早前：用户确认了运费分摊规则"),
-        );
+        )
+        .unwrap();
         assert!(prompt.contains("## 早前对话摘要"));
         assert!(prompt.contains("运费分摊规则"));
     }
 
     #[test]
     fn test_summary_empty_not_injected() {
-        let prompt = assemble_context_sections("s", None, None, None, None, None, None);
+        let prompt = assemble_context_sections("s", None, None, None, None, None, None).unwrap();
         assert!(!prompt.contains("## 早前对话摘要"));
     }
 
@@ -3076,14 +4474,16 @@ mod tests {
             }
         });
         let prompt =
-            assemble_context_sections("s", None, None, None, None, pc(state).as_ref(), None);
+            assemble_context_sections("s", None, None, None, None, pc(state).as_ref(), None)
+                .unwrap();
         assert!(prompt.contains("## 会话草稿上下文"), "草稿段必须注入");
         assert!(prompt.contains("运费分摊规则确认"));
         // 超长草稿 → 3000 字符截断
         let big = json!({
             "draft_context": { "content": "z".repeat(5000) }
         });
-        let p2 = assemble_context_sections("s", None, None, None, None, pc(big).as_ref(), None);
+        let p2 =
+            assemble_context_sections("s", None, None, None, None, pc(big).as_ref(), None).unwrap();
         assert!(p2.contains("…[truncated]"), "草稿 3000 截断");
         let section = p2.split("## 会话草稿上下文").nth(1).unwrap_or_default();
         assert!(section.chars().count() < 3100, "草稿段 ≤3000+标记");
@@ -3106,7 +4506,8 @@ mod tests {
                 None,
                 pc(state.clone()).as_ref(),
                 None,
-            );
+            )
+            .unwrap();
             assert!(
                 !prompt.contains("## 会话草稿上下文"),
                 "空草稿不得注入: {}",
@@ -3116,6 +4517,38 @@ mod tests {
     }
 
     // ── C7 structured 服务端校验（fix-chat-ai-capability-gaps D2.3）──
+
+    /// C1：工具提案优先于正文抄写——模型改过的正文块 MUST NOT 生效。
+    #[test]
+    fn test_compose_structured_prefers_tool_proposal() {
+        let proposal = json!({
+            "id": "syscfg:apply",
+            "label": "应用 1 项系统设置变更",
+            "kind": "execute",
+            "action_type": "system_config_apply",
+            "target_ids": [],
+            "params": { "operations": [{ "op": "create_config", "provider": "deepseek" }] }
+        });
+        // 正文里的抄写被篡改（provider 换成了别的值）
+        let content = "已生成提案\n\n```json\n{\"actions\":[{\"id\":\"syscfg:apply\",\"label\":\"x\",\"kind\":\"execute\",\"action_type\":\"system_config_apply\",\"params\":{\"operations\":[{\"op\":\"create_config\",\"provider\":\"EVIL\"}]}}]}\n```";
+        let got = compose_structured(Some(proposal), content).expect("提案在场即应有 structured");
+        let actions = got["actions"].as_array().expect("actions 数组");
+        assert_eq!(actions.len(), 1);
+        assert_eq!(
+            actions[0]["params"]["operations"][0]["provider"],
+            "deepseek"
+        );
+    }
+
+    /// C1：无工具提案时回落正文块（行为不变）。
+    #[test]
+    fn test_compose_structured_falls_back_to_content() {
+        let content = "回复\n\n```json\n{\"actions\":[{\"id\":\"a1\",\"label\":\"发送\",\"kind\":\"message\"}]}\n```";
+        let got = compose_structured(None, content).expect("合法正文块应被解析");
+        assert_eq!(got["actions"][0]["id"], "a1");
+        // 非法正文块 → None（既有降级语义）
+        assert!(compose_structured(None, "纯文本无块").is_none());
+    }
 
     #[test]
     fn test_validate_structured_keeps_valid_shape() {

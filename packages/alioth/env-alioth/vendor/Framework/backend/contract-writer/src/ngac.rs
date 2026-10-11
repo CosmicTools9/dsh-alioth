@@ -1,7 +1,11 @@
-//! 合同族**行级 NGAC 注册**（写件内单源）。
+//! 合同族**行级 NGAC 锚点注册**（写件内单源；derive-creator-grants-from-lifecycle 修正案）。
 //!
-//! 背景：NGAC 行级判定**无 collection fallback**——`isahl_auth.ngac_object_attribute` 缺行时
-//! 连创建者本人也不可见。合同行的写入方有多条链：
+//! 创建者授权已由判定时刻派生（`ngac_host::creator_derived_permits` / `CREATOR_DERIVED_EXISTS_OA`），
+//! 本模块只落**锚点单行**（类型化枚举 join 键 + 管理员增量授权对象锚），不再扇出
+//! `ngac_association` 创建者关联。
+//!
+//! 背景：NGAC 行级判定**无 collection fallback**——锚点缺行时清单不可见（判定仍由派生放行）。
+//! 合同行的写入方有多条链：
 //! ① 合同服务 create / 续约（`insert_contract_pair_tx` / `insert_mirror_of_contract_tx`）；
 //! ② `transport-dispatch` 询价 / 报价 / 选商分单（同上两写件）；
 //! ③ `consignment-writer` 下单合同对（同上）。
@@ -20,56 +24,26 @@ use common::AliothError;
 /// 合同行的 NGAC 资源类型（与服务侧行级判定一致）。
 pub const CONTRACT_RESOURCE_TYPE: &str = "contracts";
 
-/// 为合同族行注册行级 NGAC：对象属性（`ngac_object_attribute`）+ 属主关联（`ngac_association`）。
+/// 为合同族行注册行级 NGAC **锚点单行**（`ngac_object_attribute`；零授权语义）。
 ///
-/// `item_id` = 合同行 id；`user_id` = 创建者（关联其全部 NGAC 用户属性，授予 read/write/delete/update/create）。
+/// `item_id` = 合同行 id；`user_id` = 创建者（落 `created_by_id` 供派生/审计）。
 /// 与调用方事务同连接（`&mut PgConnection`），注册随业务写一同提交/回滚。
 pub async fn register_contract_row_ngac_tx(
     conn: &mut PgConnection,
     item_id: i64,
     user_id: i64,
 ) -> Result<(), AliothError> {
-    // 对象属性（无 policy class 行时不写：`fk_policy_class` 由子查询取首个）
-    // 注：`id` 显式取 `isahl.gen_next_zuid()`——与同 crate 合约行/产品行插入同范式，
-    // 且不依赖各环境 `isahl_auth` 表的 `id` DEFAULT（测试库曾实测缺省致 23502）。
-    sqlx::query(
-        r#"INSERT INTO isahl_auth.ngac_object_attribute
-           (id, o_name, fk_policy_class, resource_type, fk_resource, created_by_id)
-           VALUES (isahl.gen_next_zuid(), $1, (SELECT id FROM isahl_auth.ngac_policy_class LIMIT 1), $2, $3, $4)
-           ON CONFLICT(resource_type, fk_resource) DO NOTHING"#,
-    )
-    .bind(format!("{CONTRACT_RESOURCE_TYPE}-{item_id}"))
-    .bind(CONTRACT_RESOURCE_TYPE)
-    .bind(item_id)
-    .bind(user_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(AliothError::from_sqlx)?;
-
-    // 属主关联：创建者的全部 NGAC 用户属性 → 本对象属性，授予全套权限（已存在则跳过）
-    sqlx::query(
-        r#"INSERT INTO isahl_auth.ngac_association
-           (id, fk_user_attribute, fk_object_attribute, ak_access_rights, fk_policy_class, created_at)
-           SELECT isahl.gen_next_zuid(), rr.fk_user_attribute, oa.id,
-                  ARRAY(SELECT id FROM isahl_auth.ngac_access_right
-                        WHERE o_name IN ('read','write','delete','update','create')),
-                  oa.fk_policy_class, NOW()
-           FROM isahl_auth.ngac_user_rr_attribute rr
-           JOIN isahl_auth.ngac_object_attribute oa
-             ON oa.resource_type = $2 AND oa.fk_resource = $3 AND oa.deleted_at IS NULL
-           WHERE rr.fk_user = $1 AND rr.deleted_at IS NULL
-             AND NOT EXISTS (
-                 SELECT 1 FROM isahl_auth.ngac_association a2
-                 WHERE a2.fk_user_attribute = rr.fk_user_attribute
-                   AND a2.fk_object_attribute = oa.id AND a2.deleted_at IS NULL)
-           ON CONFLICT DO NOTHING"#,
-    )
-    .bind(user_id)
-    .bind(CONTRACT_RESOURCE_TYPE)
-    .bind(item_id)
-    .execute(&mut *conn)
-    .await
-    .map_err(AliothError::from_sqlx)?;
-
+    // 授权写入单源 = common::ngac_grants（consolidate-ngac-grant-authoring）：
+    // 事务内逐函数调用（`&mut *conn` 重借），与业务写同连接、同提交/回滚。
+    let spec = common::ngac_grants::ResourceOaSpec {
+        o_name: format!("{CONTRACT_RESOURCE_TYPE}-{item_id}"),
+        resource_type: CONTRACT_RESOURCE_TYPE,
+        resource_id: item_id,
+        resource_identifier: None,
+        created_by: Some(user_id),
+        policy_class_name: None,
+    };
+    common::ngac_grants::ensure_resource_oa_tx(&mut *conn, &spec).await?;
+    // 创建者授权：不物化（派生层唯一实现 = common::ngac_org；deny-overrides 同权）
     Ok(())
 }

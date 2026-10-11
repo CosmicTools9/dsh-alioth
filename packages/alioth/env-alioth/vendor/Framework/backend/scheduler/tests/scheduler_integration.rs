@@ -24,6 +24,15 @@ async fn test_pool() -> PgPool {
     pool
 }
 
+/// 串行化 DB 测试（多副本 advisory lock 语义下的必需配套）：
+/// 并行测试的多个 SchedulerService 实例共享同一份 zc_id_plan 扫描面，
+/// 互为「另一副本」会瞬时持锁使本实例跳过本轮（新语义，scheduler-infra :: 调度执行多副本安全），
+/// 而进程内分钟幂等标记使被跳过的一轮在同分钟内不重试 ⇒ 并行运行会出现 handler 未触发的假失败。
+fn serial_lock() -> &'static tokio::sync::Mutex<()> {
+    static L: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    L.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// 假 handler：计数调用
 struct CountHandler {
     code: String,
@@ -49,7 +58,7 @@ async fn seed_test_plan(pool: &PgPool, code: &str, cron: &str) -> i64 {
     // 坐标三元组（§6.12 声明即必须）：plan-perform 族坐标（JE/FMA/↓_CH，与 wz 既有行一致）
     let (dk_scene, dk_factor, dk_function) = ontology_binding::resolve_conn(
         // resolve_conn 需连接；此处以 pool 获取坐标（与 resolve 同源实现）
-        &mut *pool.acquire().await.unwrap(),
+        &mut pool.acquire().await.unwrap(),
         ("JE", "FMA", "↓_CH"),
     )
     .await
@@ -82,6 +91,7 @@ async fn cron_matches_current_minute() {
 
 #[tokio::test]
 async fn scan_once_triggers_handler_and_writes_oper_planing() {
+    let _serial = serial_lock().lock().await;
     let pool = test_pool().await;
     let code = format!("t-scan-{}", std::process::id());
     let plan_id = seed_test_plan(&pool, &code, "*/1 * * * *").await;
@@ -123,6 +133,7 @@ async fn scan_once_triggers_handler_and_writes_oper_planing() {
 
 #[tokio::test]
 async fn scan_once_same_minute_idempotent() {
+    let _serial = serial_lock().lock().await;
     let pool = test_pool().await;
     let code = format!("t-idem-{}", std::process::id());
     let plan_id = seed_test_plan(&pool, &code, "*/1 * * * *").await;
@@ -155,6 +166,7 @@ async fn scan_once_same_minute_idempotent() {
 
 #[tokio::test]
 async fn unregistered_plan_records_execution() {
+    let _serial = serial_lock().lock().await;
     let pool = test_pool().await;
     let code = format!("t-skip-{}", std::process::id());
     let plan_id = seed_test_plan(&pool, &code, "*/1 * * * *").await;

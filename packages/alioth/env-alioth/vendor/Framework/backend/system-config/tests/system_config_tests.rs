@@ -8,6 +8,7 @@ fn test_config_category_serde() {
         notice: "大语言模型".to_string(),
         description: Some("LLM providers".to_string()),
         icon: Some("Brain".to_string()),
+        supports_probe: true,
         providers: vec![ConfigProvider {
             code: "openai".to_string(),
             notice: "OpenAI".to_string(),
@@ -80,7 +81,6 @@ fn test_system_config_serde() {
         enabled: Some(true),
         is_default: Some(true),
         domain_: None,
-        public: Some(false),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
         created_by_id: None,
@@ -217,7 +217,6 @@ fn test_safe_response_fields() {
         enabled: Some(true),
         is_default: None,
         domain_: None,
-        public: Some(true),
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
     };

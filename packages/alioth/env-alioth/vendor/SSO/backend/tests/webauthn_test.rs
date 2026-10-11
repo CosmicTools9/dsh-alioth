@@ -221,17 +221,25 @@ async fn setup_pool() -> PgPool {
     ::common::testing::connect_test_db().await
 }
 
+/// 建 webauthn 测试用户（原 `name`/`username` 同值即 email；邮箱落 auth_user_emails）
 async fn create_user(pool: &PgPool, email: &str) -> i64 {
     let id: i64 = sqlx::query_scalar(
-        "INSERT INTO isahl_auth.auth_users (name, username, email, password_hash, status, is_active, created_at, updated_at) \
-         VALUES ($1, $2, $3, 'dummyhash', 'active', TRUE, NOW(), NOW()) RETURNING id",
+        "INSERT INTO isahl_auth.auth_users (username, password_hash, status, is_active, created_at, updated_at) \
+         VALUES ($1, 'dummyhash', 'active', TRUE, NOW(), NOW()) RETURNING id",
     )
-    .bind(email)
-    .bind(email)
     .bind(email)
     .fetch_one(pool)
     .await
     .expect("Failed to create test user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(email)
+    .execute(pool)
+    .await
+    .ok();
     id
 }
 
@@ -501,4 +509,35 @@ async fn test_unknown_credential_rejected() {
     assert_ne!(status, 200, "unknown credential must be rejected");
 
     common::cleanup_user_by_email(&pool, email).await.ok();
+}
+
+/// 路由对等回归（change `wire-sso-webauthn-passkey`）：webauthn 六路由 MUST 同时在
+/// `/auth/*`（`configure_public_routes`）与 `/api/auth/*`（`configure_public_routes_without_scope`）
+/// 两个前缀面可用——后者是 Gateway 内嵌 / sso-remote 反代形态下浏览器产品入口唯一可达的
+/// API 前缀（前端通行密钥登录/凭据管理只走 `/api/auth/webauthn/*`）。
+/// 判据：无 token 打 credentials ⇒ 401（= 路由存在 + 鉴权拒绝）；前缀面缺挂载会退化为 404。
+#[tokio::test]
+async fn test_webauthn_routes_mounted_on_both_auth_prefixes() {
+    let pool = setup_pool().await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(common::test_auth_state()))
+            // 生产同构：独立部署 SSO 的完整挂载
+            // （configure_routes = `/auth` 公开面 + `/api/auth` 别名面 + 受保护面）
+            .configure(gateway_sso::configure_routes),
+    )
+    .await;
+
+    for uri in [
+        "http://sso.localhost:8080/auth/webauthn/credentials",
+        "http://sso.localhost:8080/api/auth/webauthn/credentials",
+    ] {
+        let req = test::TestRequest::get().uri(uri).to_request();
+        let status = test::call_service(&app, req).await.status();
+        assert_eq!(
+            status, 401,
+            "{uri} MUST be routed as webauthn route (401 = 路由存在 + 鉴权拒绝); 404 = 该前缀面缺挂载"
+        );
+    }
 }

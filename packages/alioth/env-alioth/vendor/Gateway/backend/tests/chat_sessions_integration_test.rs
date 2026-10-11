@@ -14,7 +14,10 @@
 use ::common::testing::connect_test_db;
 use alioth_gateway::api::chat_sessions::adapters::agent_dispatch::AgentRouterAdapter;
 use alioth_gateway::api::chat_sessions::adapters::db_message::SqlxMessageAdapter;
-use alioth_gateway::api::chat_sessions::adapters::db_session::SqlxSessionAdapter;
+use alioth_gateway::api::chat_sessions::adapters::db_session::{
+    DbRoutingHistory, SqlxSessionAdapter,
+};
+use alioth_gateway::api::chat_sessions::context_envelope::ChatContextEnvelope;
 use alioth_gateway::api::chat_sessions::memory_scope::load_subject_persona;
 use alioth_gateway::api::chat_sessions::ports::{
     AgentDispatchPort, MessageMetaFields, MessageStorePort, SessionStorePort,
@@ -451,9 +454,19 @@ async fn pinned_agent_short_circuits_routing() {
     })
     .expect("dummy llm");
 
-    let adapter = AgentRouterAdapter::new(pool.clone());
+    let adapter = AgentRouterAdapter::new(
+        pool.clone(),
+        std::sync::Arc::new(DbRoutingHistory::new(pool.clone())),
+    );
     let decided = adapter
-        .resolve_agent(session_id, "你好", None, &[], "zh-CN", &llm)
+        .resolve_agent(
+            session_id,
+            "你好",
+            &ChatContextEnvelope::default(),
+            &[],
+            "zh-CN",
+            &llm,
+        )
         .await
         .expect("pinned resolve");
     assert_eq!(decided, "form_filling", "pin 命中必须直返不走路由");
@@ -466,7 +479,14 @@ async fn pinned_agent_short_circuits_routing() {
         .await
         .expect("unpin");
     let decided_after = adapter
-        .resolve_agent(session_id, "你好", None, &[], "zh-CN", &llm)
+        .resolve_agent(
+            session_id,
+            "你好",
+            &ChatContextEnvelope::default(),
+            &[],
+            "zh-CN",
+            &llm,
+        )
         .await;
     // 无 pin：进入路由（dummy LLM 会失败）→ adapter 不 Err（路由错误走 general? 这里 resolve 返回 Err 或 general——
     // AgentRouterAdapter.resolve_agent 路由失败时上层 fallback；本层可能 Err。兼容两种：不 panic 即可）

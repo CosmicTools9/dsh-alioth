@@ -19,6 +19,7 @@
  *   // → `const task = await useOrCreateTaskSpace("<name>")\n`（无 profile，行为与既有完全一致）
  *   // → `const task = await taskSpaceWithProfile("<name>", "<profile>")\n`（含 prelude）
  */
+import { egoCompatPrelude } from './ego-cli';
 
 /** 选择 ego profile 的环境变量（显式 `--profile` 优先）。 */
 export const EGO_PROFILE_ENV = 'EGO_PROFILE_ID';
@@ -64,18 +65,21 @@ export function egoCreateSpaceExpr(
     : `useOrCreateTaskSpace(${nameExpr}${v1Args})`;
 }
 
-/** heredoc 头：`const task = await <expr>\n`（指定 profile 时前置 prelude）。 */
+/** heredoc 头：`const task = await <expr>\n`（**compat 前导 MUST 在最前**——空间表达式本身调用 flat helper
+ * （`useOrCreateTaskSpace`），Linux 线需 compat 先定义，否则首行即 ReferenceError）。
+ * 注入策略（**每条路径只注入一次**）：指定 profile ⇒ `EGO_SPACE_PRELUDE` 自带 compat；无 profile ⇒ 本函数前置 compat。 */
 export function egoSpaceHeader(
   nameExpr: string,
   profileId?: string,
   v1OptionsExpr?: string,
 ): string {
   const expr = egoCreateSpaceExpr(nameExpr, profileId, v1OptionsExpr);
-  return `${profileId ? EGO_SPACE_PRELUDE : ''}const task = await ${expr}\n`;
+  return `${egoCompatPrelude()}\n${profileId ? EGO_SPACE_PRELUDE : ''}const task = await ${expr}\n`;
 }
 
-/** 列出可用 profile 的 heredoc JS（不需要 task space，故不经 egoSpaceHeader）。 */
-export const EGO_PROFILES_SCRIPT = `(async () => {
+/** 列出可用 profile 的 heredoc JS（不需要 task space，故不经 egoSpaceHeader；compat 前导同须）。 */
+export const EGO_PROFILES_SCRIPT = `${egoCompatPrelude()}
+(async () => {
   if (typeof profiles !== 'function') {
     cliLog('EGO_PROFILES:' + JSON.stringify({ v2: false, profiles: [] }));
     return;

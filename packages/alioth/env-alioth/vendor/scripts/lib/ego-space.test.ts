@@ -3,12 +3,13 @@
  *
  * 该模块的产物是喂给 `ego-browser nodejs` 的 heredoc 源码，被 5 个创建点共用；
  * 契约（任一条破坏都会静默改行为）：
- *  ① 未指定 profile ⇒ 逐字等于历史字面量 `useOrCreateTaskSpace("<name>")`（默认 profile 零漂移）；
+ *  ① 未指定 profile ⇒ `const task = await useOrCreateTaskSpace("<name>")\n` 逐字保留（默认 profile 零漂移；前置 `egoCompatPrelude()` 前导——Linux 线无 flat helper 时的运行期补齐）；
  *  ② 指定 profile ⇒ 走 v2 `taskSpaceWithProfile` 并注入 prelude，且 prelude 含「已存在」回退复用；
  *  ③ v1 专有选项只在无 profile 路径出现（v2 `taskSpace()` 拒绝未知选项）；
  *  ④ profile 解析：显式参数 > `EGO_PROFILE_ID` > 未设置（空白视为未设置）。
  */
 import { describe, expect, it } from 'bun:test';
+import { egoCompatPrelude } from './ego-cli';
 import {
   EGO_PROFILE_ENV,
   EGO_SPACE_PRELUDE,
@@ -33,14 +34,19 @@ describe('ego 空间创建表达式', () => {
 
   it('指定 profile 时注入含「已存在」回退的 prelude，head 用 v2 调用', () => {
     const header = egoSpaceHeader('"s"', 'Profile 4');
-    expect(header.startsWith(EGO_SPACE_PRELUDE)).toBe(true);
+    // compat 前导 MUST 在最前（Linux 线无 flat helper：空间表达式首行即调用 useOrCreateTaskSpace/taskSpaceWithProfile）
+    expect(header.startsWith(egoCompatPrelude())).toBe(true);
+    expect(header).toContain(EGO_SPACE_PRELUDE);
     expect(header).toContain('const task = await taskSpaceWithProfile("s", "Profile 4")');
     expect(EGO_SPACE_PRELUDE).toContain('taskSpace(name, { profileId })');
     expect(EGO_SPACE_PRELUDE).toContain('only applies when creating');
   });
 
-  it('未指定 profile 时不注入 prelude', () => {
-    expect(egoSpaceHeader('"s"')).toBe('const task = await useOrCreateTaskSpace("s")\n');
+  it('未指定 profile 时不注入 prelude（但 compat 前导在场）', () => {
+    const header = egoSpaceHeader('"s"');
+    expect(header).not.toContain('taskSpaceWithProfile'); // 未注入 v2 prelude
+    expect(header.endsWith('const task = await useOrCreateTaskSpace("s")\n')).toBe(true);
+    expect(header.startsWith(egoCompatPrelude())).toBe(true);
   });
 });
 

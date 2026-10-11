@@ -23,7 +23,9 @@ pub struct NgacUserAttribute {
     pub ancestor_ids: Vec<i64>,
     #[serde(with = "common::serde_zuid::seq")]
     pub children_ids: Vec<i64>,
-    pub property: serde_json::Value,
+    /// jsonb NULLABLE（DB 真值）——按 Option 解码（NULL ⇒ None，勿拒整行）。
+    #[serde(default)]
+    pub property: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -42,7 +44,9 @@ pub struct NgacObjectAttribute {
     #[serde(with = "common::serde_zuid::opt", default)]
     pub fk_resource: Option<i64>,
     pub resource_identifier: Option<String>,
-    pub property: serde_json::Value,
+    /// jsonb NULLABLE（DB 真值）——按 Option 解码（NULL ⇒ None，勿拒整行）。
+    #[serde(default)]
+    pub property: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -219,6 +223,14 @@ impl PostgresPip {
 
                 UNION ALL
 
+                -- 通配对象属性（resource_type = '*'）：对全部资源类型生效。与 Framework
+                -- `permissions::require_resource_access` 的 resource_attrs 同义（M16 判定链对齐）。
+                SELECT id, o_name, fk_policy_class, ancestor_ids, children_ids, resource_type, fk_resource, resource_identifier, property, created_at
+                FROM isahl_auth.ngac_object_attribute
+                WHERE resource_type = '*' AND deleted_at IS NULL
+
+                UNION ALL
+
                 SELECT ua.id, ua.o_name, ua.fk_policy_class, ua.ancestor_ids, ua.children_ids, ua.resource_type, ua.fk_resource, ua.resource_identifier, ua.property, ua.created_at
                 FROM isahl_auth.ngac_object_attribute ua
                 INNER JOIN object_attr_inheritance oai ON ua.id = ANY(oai.ancestor_ids)
@@ -235,6 +247,76 @@ impl PostgresPip {
         .await?;
 
         Ok(attributes)
+    }
+
+    /// 资源受限有效 UA 解析（NGAC_SPEC §2.2 属权派生 + §2.5 同源义务）。
+    ///
+    /// 语义 = [`Self::get_inherited_user_attributes`]（直派 ∪ 认知派生 ∪ 委托派生 ∪ 祖先闭包）
+    /// **∪ 属权派生**——属权按 `(fk_user, resource_type, fk_resource)` 从
+    /// `ngac_host::ownership_cte` 取四路属性 id（owner / benefit / permit / access），
+    /// 并展开其祖先闭包（与全局闭包同口径）。
+    ///
+    /// 为什么必须**资源受限**：属权 UA 的取值随资源行变化（`r.id = $3`），不属于用户全局
+    /// 有效 UA 集 ⇒ MUST NOT 并入 `effective_ua_ids`（全局函数）或
+    /// [`Self::get_inherited_user_attributes`]；只能由**有资源上下文**的判定点（decide /
+    /// explain / list 候选超集 / review / impact）叠加。SQL 单源 = `ngac_org::ownership_cte`，
+    /// 消费方 MUST NOT 复制。
+    pub async fn get_resource_scoped_user_attributes(
+        &self,
+        fk_user: i64,
+        resource_type: &str,
+        fk_resource: i64,
+    ) -> sqlx::Result<Vec<NgacUserAttribute>> {
+        // 认知派生 UA 先物化（幂等），与全局入口同序
+        ensure_cognition_uas(&self.pool, fk_user).await;
+        let mut attrs = self.get_inherited_user_attributes(fk_user).await?;
+        let sql = format!(
+            r#"
+            WITH RECURSIVE {ownership},
+            ownership_tree AS (
+                SELECT ua.id, ua.o_name, ua.fk_policy_class, ua.ancestor_ids, ua.children_ids, ua.property, ua.created_at
+                FROM isahl_auth.ngac_user_attribute ua
+                WHERE ua.deleted_at IS NULL
+                  AND ua.id IN (SELECT ua_id FROM ownership_ua)
+
+                UNION ALL
+
+                SELECT parent.id, parent.o_name, parent.fk_policy_class, parent.ancestor_ids, parent.children_ids, parent.property, parent.created_at
+                FROM isahl_auth.ngac_user_attribute parent
+                INNER JOIN ownership_tree child ON parent.id = ANY(child.ancestor_ids)
+                WHERE parent.deleted_at IS NULL
+            )
+            SELECT DISTINCT id, o_name, fk_policy_class, ancestor_ids, children_ids, property, created_at
+            FROM ownership_tree
+            ORDER BY id
+            "#,
+            ownership = ngac_host::ownership_cte()
+        );
+        let extra: Vec<NgacUserAttribute> = sqlx::query_as(AssertSqlSafe(sql.as_str()))
+            .bind(fk_user)
+            .bind(resource_type)
+            .bind(fk_resource)
+            .fetch_all(&self.pool)
+            .await?;
+        let mut seen: std::collections::HashSet<i64> = attrs.iter().map(|a| a.id).collect();
+        for a in extra {
+            if seen.insert(a.id) {
+                attrs.push(a);
+            }
+        }
+        Ok(attrs)
+    }
+
+    /// 用户有效 UA 名集（wire-obligations-into-pep-audit 响应义务求值上下文）：
+    /// 委托同 impl 私有 `get_inherited_user_attributes`（判定链同源）——pub 薄转发，
+    /// 非第二实现。
+    pub async fn inherited_ua_names(&self, fk_user: i64) -> sqlx::Result<Vec<String>> {
+        Ok(self
+            .get_inherited_user_attributes(fk_user)
+            .await?
+            .into_iter()
+            .map(|ua| ua.o_name)
+            .collect())
     }
 }
 
@@ -372,6 +454,15 @@ impl Pip for PostgresPip {
 
         // 候选行 OA 超集：行 OA 闭包（自身 ∪ ancestor_ids）内存在用户 UA 闭包
         // 的任一 association（rights/conditions 不限——Rust 侧精确求值收敛）
+        // 属权派生（资源受限）：把 `ownership_cte()` 的 $2/$3 绑定到外层行表达式后嵌入 LATERAL
+        // 子查询（单源用法二，见 `ngac_host::ownership_cte` 文档；禁复制 SQL）。
+        // LATERAL 结构 = `WITH {ownership_cte()} SELECT (ua_ids 子查询), (ua_names 子查询),
+        // ({CREATOR_DERIVED_EXISTS_OA}) AS creator_ua`——creator 判定与 own_res 同层求值
+        // （视图单次枚举；MUST NOT 移回外层 WHERE，见该常量文档）。
+        // 属权 UA 随资源行变化 ⇒ MUST 逐行解析，MUST NOT 并入全局 `effective_ua_ids`。
+        let ownership_row_cte = ngac_host::ownership_cte()
+            .replace("$2", "oa.resource_type")
+            .replace("$3", "oa.fk_resource");
         let cand_sql = format!(
             r#"
             WITH RECURSIVE {COGNITION_CTE},
@@ -396,26 +487,47 @@ impl Pip for PostgresPip {
                 INNER JOIN user_attrs AS ua_cte ON ua.id = ua_cte.ua_id
                 WHERE depth < 10
             )
-            SELECT DISTINCT oa.id, oa.fk_resource
+            SELECT DISTINCT oa.id, oa.fk_resource,
+                   COALESCE(own.ua_ids, '{{}}'::bigint[]) AS own_ua_ids,
+                   COALESCE(own.ua_names, '{{}}'::text[]) AS own_ua_names,
+                   (oa.property ->> 'label') AS label_code
             FROM isahl_auth.ngac_object_attribute oa
+            LEFT JOIN LATERAL (
+                WITH {ownership_row_cte}
+                SELECT
+                    (SELECT array_agg(DISTINCT ua.id)
+                       FROM ownership_ua ou
+                       INNER JOIN isahl_auth.ngac_user_attribute ua
+                               ON ua.id = ou.ua_id AND ua.deleted_at IS NULL) AS ua_ids,
+                    (SELECT array_agg(DISTINCT ua.o_name)
+                       FROM ownership_ua ou
+                       INNER JOIN isahl_auth.ngac_user_attribute ua
+                               ON ua.id = ou.ua_id AND ua.deleted_at IS NULL) AS ua_names,
+                    ({creator_exists}) AS creator_ua
+            ) own ON TRUE
             WHERE oa.resource_type = $2
               AND oa.deleted_at IS NULL
-              AND EXISTS (
+              AND (EXISTS (
                   SELECT 1
                   FROM isahl_auth.ngac_association a
-                  JOIN user_attrs c ON a.fk_user_attribute = c.ua_id
                   WHERE a.deleted_at IS NULL
                     AND a.fk_object_attribute = ANY(oa.id || COALESCE(oa.ancestor_ids, '{{}}'::bigint[]))
+                    AND (a.fk_user_attribute IN (SELECT c.ua_id FROM user_attrs c)
+                         OR a.fk_user_attribute = ANY(COALESCE(own.ua_ids, '{{}}'::bigint[])))
               )
+              OR own.creator_ua)
             "#,
             COGNITION_CTE = COGNITION_CTE,
-            DELEGATED_CTE = DELEGATED_CTE
+            DELEGATED_CTE = DELEGATED_CTE,
+            ownership_row_cte = ownership_row_cte,
+            creator_exists = ngac_host::CREATOR_DERIVED_EXISTS_OA
         );
-        let candidates: Vec<(i64, i64)> = sqlx::query_as(AssertSqlSafe(cand_sql.as_str()))
-            .bind(fk_user)
-            .bind(resource_type)
-            .fetch_all(&self.pool)
-            .await?;
+        let candidates: Vec<(i64, i64, Vec<i64>, Vec<String>, Option<String>)> =
+            sqlx::query_as(AssertSqlSafe(cand_sql.as_str()))
+                .bind(fk_user)
+                .bind(resource_type)
+                .fetch_all(&self.pool)
+                .await?;
 
         // 该 resource_type 全部 OA（闭包解析与 conditions 的 object_attr_in 求值用）
         let oas: Vec<(i64, String, Vec<i64>)> = sqlx::query_as(
@@ -436,6 +548,10 @@ impl Pip for PostgresPip {
             .map_err(|e| sqlx::Error::Protocol(format!("policy load failed: {e}")))?;
         let pg = pdp.policy_graph();
 
+        // 索引化求值原语（indexed-evaluation-primitive）：一次建索引、逐行求值，
+        // 替代原先逐行自写的 deny-overrides 合并循环（唯一实现 = ngac-decision crate）。
+        let indexed = ngac_decision::IndexedPolicyGraph::from(&pg);
+
         let oa_index: std::collections::HashMap<i64, (String, Vec<i64>)> = oas
             .into_iter()
             .map(|(id, name, ancestors)| (id, (name, ancestors)))
@@ -444,8 +560,59 @@ impl Pip for PostgresPip {
         let ua_names: Vec<String> = user_attrs.iter().map(|(_, n)| n.clone()).collect();
         let now = Utc::now();
 
+        // 分级（密级）上限预取（NGAC_SPEC §2.7）：白名单 / 标签等级 / UA clearance 等级。
+        // 逐行 N+1 不可接受 ⇒ 一次取全、逐行按同一规则（`ngac_org::label_clearance_denies_rule`）
+        // 收敛。非白名单 ⇒ 完全不查（零成本）。表缺失（ns 库未 ensure）⇒ 视为无数据 + 告警。
+        let label_whitelisted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM isahl_auth.org_policy_class c \
+              WHERE c.deleted_at IS NULL AND c.state = 'active' AND c.scope IS NOT NULL \
+                AND c.scope -> 'resource_types' @> to_jsonb($1::text))",
+        )
+        .bind(resource_type)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or_else(|e| {
+            log::warn!("label ceiling unavailable (whitelist query), skipping: {e}");
+            false
+        });
+        let label_ranks: std::collections::HashMap<String, i32> = if label_whitelisted {
+            sqlx::query_as::<_, (String, i32)>(
+                "SELECT code, rank FROM isahl_auth.org_policy_label WHERE deleted_at IS NULL AND is_active",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+        let ua_clearance: std::collections::HashMap<i64, i32> = if label_whitelisted {
+            sqlx::query_as::<_, (i64, i32)>(
+                "SELECT ua.id, l.rank FROM isahl_auth.ngac_user_attribute ua \
+                 JOIN isahl_auth.org_policy_label l \
+                   ON l.code = (ua.property ->> 'clearance') AND l.deleted_at IS NULL AND l.is_active \
+                 WHERE ua.deleted_at IS NULL",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        // 创建者派生资源集（单查预取；逐行成员判定，避免 N+1）——同源实现 =
+        // common::ngac_org::creator_derived_resource_ids（与 decide/内层门同一谓词族）。
+        let creator_derived: std::collections::HashSet<i64> =
+            ngac_host::creator_derived_resource_ids(&self.pool, fk_user)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
         let mut visible: Vec<i64> = Vec::new();
-        for (oa_id, fk_resource) in candidates {
+        for (oa_id, fk_resource, own_ua_ids, own_ua_names, label_code) in candidates {
             // 行 OA 祖先闭包（含自身；ancestor_ids 为直接父边，迭代求可达集）
             let mut closure: Vec<i64> = Vec::new();
             let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -459,30 +626,53 @@ impl Pip for PostgresPip {
                     stack.extend(ancestors.iter().copied());
                 }
             }
+            // 属权派生（资源受限）并入本行求值：UA id 集与条件求值的 UA 名集
+            // （`user_attr_in` 需含属权派生名，§2.4 一致性义务）。
+            let mut row_ua_ids: Vec<i64> = ua_ids.clone();
+            row_ua_ids.extend(own_ua_ids.iter().copied());
+            let mut row_ua_names: Vec<String> = ua_names.clone();
+            row_ua_names.extend(own_ua_names.iter().cloned());
+            // 分级（密级）上限（NGAC_SPEC §2.7）：白名单资源上 clearance < 标签等级 ⇒ 该行不可见。
+            // 规则实现单源 = `common::ngac_org::label_clearance_denies_rule`（与单条 decide 同规则）。
+            // **主体 clearance 只取全局有效 UA 集**（密级 = 主体属性）：MUST NOT 并入本行的
+            // 属权派生 UA（`own_ua_ids`，资源级授权）——后者是「对该资源的操作权」，不是主体的密级。
+            if label_whitelisted {
+                let res_rank = label_code
+                    .as_deref()
+                    .and_then(|c| label_ranks.get(c))
+                    .copied();
+                let subj_rank = ua_ids
+                    .iter()
+                    .filter_map(|id| ua_clearance.get(id))
+                    .copied()
+                    .max();
+                if ngac_host::label_clearance_denies_rule(true, res_rank, subj_rank) {
+                    continue;
+                }
+            }
             let ctx = crate::ngac::pdp::ConditionContext {
                 now,
-                user_ua_names: ua_names.clone(),
+                user_ua_names: row_ua_names.clone(),
                 oa_closure_names: closure
                     .iter()
                     .filter_map(|id| oa_index.get(id).map(|(n, _)| n.clone()))
                     .collect(),
+                // 切片 B：RLS 列表与真决策**同源消费** `{"rhai": …}` 条件（逐行资源上下文，
+                // 主体 = 本请求用户）——否则「列表不可见而详情可读」的分叉。
+                rhai_eval: Some(ngac_host::rhai_condition_evaluator(
+                    fk_user,
+                    format!("{resource_type}:{fk_resource}"),
+                    action.to_string(),
+                )),
             };
-            // deny-overrides：任一对 Deny 即排除（早停）；Permit 记录后继续。
-            let mut saw_permit = false;
-            let mut denied = false;
-            'row: for &ua in &ua_ids {
-                for &oa in &closure {
-                    match pdp.evaluate_pair_in(&pg, ua, oa, action, &ctx).0 {
-                        crate::ngac::pdp::Decision::Deny => {
-                            denied = true;
-                            break 'row;
-                        }
-                        crate::ngac::pdp::Decision::Permit => saw_permit = true,
-                        crate::ngac::pdp::Decision::NotApplicable => {}
-                    }
-                }
-            }
-            if !denied && saw_permit {
+            // deny-overrides 合并走唯一实现（ngac-decision 索引原语；不构建轨迹 + Deny 短路）。
+            let pair_decision =
+                indexed.evaluate_decision(&row_ua_ids, &closure, action, &ctx, false);
+            let denied = pair_decision == ngac_decision::Decision::Deny;
+            let saw_permit = pair_decision == ngac_decision::Decision::Permit;
+            // 派生命中同样受 deny-overrides（denied 即排除）与密级上限（上方 continue）约束；
+            // 与单条 decide 同序：物理 Permit OR 派生命中。
+            if !denied && (saw_permit || creator_derived.contains(&fk_resource)) {
                 visible.push(fk_resource);
             }
         }
@@ -505,6 +695,10 @@ pub struct AuditContext {
 /// UA 指派 + 同事务审计（add-ngac-access-request D3 提取）——唯一实现，
 /// `set_user_attribute` 与 access-request approve 共用；禁止第二份实现。
 /// 语义与 `set_user_attribute` 完全一致：INSERT（含 expires_at）→ 行镜像 →
+/// 审计 insert/user_assignment；失败由调用方事务整体回滚。
+/// 指派级 `conditions` 的写径校验（唯一实现 = [`validate_assignment_conditions`]）由调用方
+/// 在进入本函数前执行（HTTP 面 ⇒ 400）。
+///
 /// 审计 insert/user_assignment；失败由调用方事务整体回滚。
 pub async fn assign_ua_with_audit_tx(
     tx: &mut sqlx::PgConnection,
@@ -540,6 +734,28 @@ pub async fn assign_ua_with_audit_tx(
     )
     .await?;
     Ok(id)
+}
+
+/// 指派级 `conditions` 写径校验（**唯一实现**；NGAC_SPEC §2.4 子集）。
+///
+/// 键集 MUST ⊆ §2.4 合法键集（`ngac_decision::CONDITION_KEYS`，经
+/// `ngac_host::validate_condition_keys`），且 MUST 仅含**解析点可求值**的键：
+/// `isahl_auth.effective_ua_ids` 在该点无资源/动作上下文，故仅 `not_before` / `not_after`
+/// 可求值；其余键（`rhai` / `user_attr_in` / `object_attr_in`）在此不可求值 ⇒ 接受即
+/// 「写入成功却静默失效」（解析期失败封闭 ⇒ 该 UA 被丢弃）⇒ 写径 MUST 显式拒绝。
+/// 两侧（本校验 + 闭包 SQL 谓词）合并即指派级条件的**键集契约**。
+pub fn validate_assignment_conditions(conditions: &serde_json::Value) -> Result<(), String> {
+    ngac_host::validate_condition_keys(conditions)?;
+    if let Some(obj) = conditions.as_object() {
+        for k in obj.keys() {
+            if k != "not_before" && k != "not_after" {
+                return Err(format!(
+                    "指派级 conditions 仅支持时间窗键（not_before / not_after）；`{k}` 在有效 UA 解析点不可求值（NGAC_SPEC §2.4 子集）"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn get_user_attributes(pool: web::Data<PgPool>, path: web::Path<i64>) -> HttpResponse {
@@ -580,13 +796,32 @@ pub async fn set_user_attribute(
                 });
             }
         };
-    let actor: i64 = claims.sub.parse().unwrap_or(0);
+    // 审计署名的主体 id：无法解析自然人主体（服务令牌 `client:*` / 畸形 sub）即拒绝该写操作，
+    // MUST NOT 以 actor=0 写审计行（判定唯一实现 = common::context::natural_subject_id）。
+    let Some(actor) = common::context::natural_subject_id(&claims.sub) else {
+        log::warn!(
+            "set_user_attribute: sub 非自然人主体 id，拒绝写操作: {}",
+            claims.sub
+        );
+        return HttpResponse::Unauthorized().json(ErrorResponse {
+            error: "Subject is not a natural-person principal".to_string(),
+        });
+    };
     let session_id = if claims.sid.is_empty() {
         None
     } else {
         Some(claims.sid)
     };
     let ip = crate::ngac::audit_writer::client_ip(&req);
+
+    // 指派级 `conditions` 写径校验（NGAC_SPEC §2.4 子集；`wire-ngac-zero-consumer-faces`）：
+    // 有效 UA 解析点无资源/动作上下文 ⇒ 仅时间窗键可求值；其余键（含 `rhai`）MUST 在此拒绝
+    // （400），否则 = 静默失效条件（解析期失败封闭 ⇒ 该 UA 被静默丢弃）。
+    if let Some(c) = assign_req.conditions.as_ref() {
+        if let Err(e) = validate_assignment_conditions(c) {
+            return HttpResponse::BadRequest().json(ErrorResponse { error: e });
+        }
+    }
 
     // 同事务审计（change add-ngac-audit-trail-view D1/W-2）
     let mut tx = match pool.get_ref().begin().await {

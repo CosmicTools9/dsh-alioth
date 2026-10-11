@@ -5,9 +5,10 @@
 //!      iss=STANDALONE_ISSUER）→ PEP token binding 对齐 STANDALONE_ISSUER → 200
 //!   2. 历史死锁回归：PEP 沿用默认 issuer 绑定（http://localhost:9002）→ 401
 //!
-//! 依赖真实测试库（aliothstudio_test，仅需连接池）。密钥对与
-//! src/standalone_auth/mod.rs 的 DEV_PRIVATE_KEY/DEV_PUBLIC_KEY **必须一致**
-//! （沿用 gateway_auth_tdd_test.rs 密钥内嵌模式）。
+//! 依赖真实测试库（aliothstudio_test，仅需连接池）。密钥对为**本测试自持的夹具**
+//! （历史与 standalone_auth 内嵌 dev 密钥同源；内嵌 dev 密钥已按
+//! fix-standalone-embedded-key-and-mode-field 移除——生产路径现只经 env 注入，
+//! 夹具 MUST NOT 与任何生产密钥同源），沿用 gateway_auth_tdd_test.rs 密钥内嵌模式。
 
 use actix_web::{test, web, App, HttpResponse};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
@@ -20,7 +21,7 @@ use alioth_gateway::pep::NgacEnforcer;
 /// 与 standalone_auth::STANDALONE_ISSUER 同值（单一事实源在源码模块，此处为测试副本）。
 const STANDALONE_ISSUER: &str = "gateway-standalone";
 
-/// standalone_auth/mod.rs DEV_PRIVATE_KEY 的测试副本（必须一致，否则签名校验失败）。
+/// 本测试自持的测试私钥（夹具；生产路径 MUST NOT 引用）。
 const STANDALONE_PRIVATE_KEY: &[u8] = b"-----BEGIN PRIVATE KEY-----
 \
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgvTkNZwK8WqNH/aEn
@@ -31,7 +32,7 @@ IVcpjkHR5sxTZhZ5eH/SSSV/ddphVgahp0cRM9H4HSgzNMIkDNv5dJuN
 \
 -----END PRIVATE KEY-----";
 
-/// standalone_auth/mod.rs DEV_PUBLIC_KEY 的测试副本（必须一致，否则签名校验失败）。
+/// 与上一个夹具私钥配对的公钥（夹具；生产路径 MUST NOT 引用）。
 const STANDALONE_PUBLIC_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
 \
 MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpsiReTKoidDJAO+02SZBgHaoqob9

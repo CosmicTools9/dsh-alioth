@@ -13,6 +13,31 @@
  *   - MODULE_SHELL_CSS：最小全局 reset + 滚动条/选区/焦点/无障碍（壳布局全部交给 Tailwind）
  */
 
+/**
+ * 窄档布局收口（visual-verify 窄屏劣化 `vstack` 的根因修复；三壳共用）。
+ *
+ * 根因（2026-10-04 实测）：窄档下壳侧栏 `w-60`(240px) 不收窄 + 内容无最小宽度 ⇒ 内容列被压到
+ * 数十像素，CJK 逐字竖排、表格列被压窄 ⇒ `Δvstack ≥ 3` 判窄屏劣化（报告分数 80–85 < 90 线）。
+ *
+ * 规则：① **仅壳侧栏**（`aside[data-shell-sidebar]`——标记由壳组件 `gateway-shell.tsx` 与
+ *    `shells/{app,module,block}-shell.tsx` 输出）收起为图标条且导航文案不换行；
+ *   2026-10-07 收窄：原裸选择器 `aside` 会误伤**内容级** `<aside>`（块视图的 `card` 分栏与
+ *   `drawer` 抽屉）——实测其内容列被压到 20–30px（`h3.card-title` 逐字竖排、CJK 4 行）⇒ 恢复劣化。
+ * ② 内容容器横向滚动、表格单元格不换行 ⇒ 不逐字竖排、不产生页面级水平溢出。
+ * ③ 内容最小宽度（`#root > * { min-width }`）**不在此处**——实测对部分原型会与固定顶栏重叠
+ *    （`realOverlap`）⇒ 由确需该规则的原型在自身样式内声明。
+ * 全部包在 `@media (max-width: 900px)` 内 ⇒ **桌面档视觉零变化**。
+ */
+export const NARROW_VIEWPORT_CSS = `
+      @media (max-width: 900px) {
+        aside[data-shell-sidebar] { width: var(--sidebar-collapsed-width, 4rem); overflow: hidden; }
+        aside[data-shell-sidebar] a, aside[data-shell-sidebar] span, aside[data-shell-sidebar] .nav-label { white-space: nowrap; }
+        #root { overflow-x: auto; }
+        table { min-width: 840px; }
+        th, td { white-space: nowrap; }
+      }
+`;
+
 export const BLOCK_SHELL_CSS = `
       /* ── 运行时注入变量缺省值 ──
          --vfd-node-color 由生产端 FlowDesigner 逐节点以内联 style 注入
@@ -326,6 +351,7 @@ export const BLOCK_SHELL_CSS = `
         border-color: hsl(var(--primary));
       }
 
+${NARROW_VIEWPORT_CSS}
       /* boot-skeleton 布局已统一到 shell-shared.ts BOOT_FADE_CSS(对齐 Gateway MainLayout) */
     `;
 
@@ -396,6 +422,7 @@ export const MODULE_SHELL_CSS = `
       *:focus-visible { outline: 2px solid hsl(var(--primary)); outline-offset: 2px; }
       @media (prefers-reduced-motion: reduce) { *, ::before, ::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }
 
+${NARROW_VIEWPORT_CSS}
       /* boot-skeleton 布局已统一到 shell-shared.ts BOOT_FADE_CSS(对齐 Gateway MainLayout);壳 chrome 一律用 Tailwind,禁止 gl-gateway-* */
     `;
 

@@ -237,7 +237,7 @@ async fn replay_model_seeds(pool: &PgPool, dir: &PathBuf, stats: &mut StartupSee
             .to_string();
         if !has_model_face && declaration_files.iter().any(|n| n == &name) {
             common::telemetry::info!(
-                "模型级种子跳过（目标库无 isahl_meta 判定面，声明文件不适用）: {}",
+                "模型级种子跳过（目标库无模型元数据面，声明文件不适用）: {}",
                 name
             );
             stats.model_skipped += 1;

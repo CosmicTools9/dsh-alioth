@@ -107,10 +107,9 @@ async fn ensure_ar(pool: &PgPool, name: &str) -> i64 {
 
 async fn bind_user(pool: &PgPool, user_id: i64, ua: i64) {
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
     .bind(user_id)
-    .bind(format!("do-tester-{}", user_id))
     .bind(format!("do-test-{}", user_id))
     .execute(pool)
     .await
@@ -128,8 +127,8 @@ async fn bind_user(pool: &PgPool, user_id: i64, ua: i64) {
 /// 播种：用户同时持有 allow UA（association 授予 read）与 deny UA（prohibition 禁止 read）。
 async fn seed_conflict(pool: &PgPool, user_id: i64) -> Seed {
     let pc = ensure_pc(pool).await;
-    let allow_ua = ensure_ua(pool, pc, "do-ua-allow").await;
-    let deny_ua = ensure_ua(pool, pc, "do-ua-deny").await;
+    let allow_ua = ensure_ua(pool, pc, &format!("do-ua-allow-{user_id}")).await;
+    let deny_ua = ensure_ua(pool, pc, &format!("do-ua-deny-{user_id}")).await;
     let coll_oa = ensure_oa(pool, pc, RT, 0).await;
     let read_ar = ensure_ar(pool, "read").await;
     bind_user(pool, user_id, allow_ua).await;
@@ -146,7 +145,8 @@ async fn seed_conflict(pool: &PgPool, user_id: i64) -> Seed {
     .execute(pool)
     .await
     .unwrap();
-    sqlx::query("DELETE FROM isahl_auth.ngac_prohibition WHERE o_name = 'do-prohibit-read'")
+    sqlx::query("DELETE FROM isahl_auth.ngac_prohibition WHERE o_name = $1")
+        .bind(format!("do-prohibit-read-{user_id}"))
         .execute(pool)
         .await
         .unwrap();
@@ -154,7 +154,7 @@ async fn seed_conflict(pool: &PgPool, user_id: i64) -> Seed {
         "INSERT INTO isahl_auth.ngac_prohibition (id, o_name, fk_user_attribute, fk_object_attribute, ak_access_rights, is_active) \
          VALUES (isahl.gen_next_zuid(), $1, $2, $3, ARRAY[$4], TRUE)",
     )
-    .bind("do-prohibit-read")
+    .bind(format!("do-prohibit-read-{user_id}"))
     .bind(deny_ua)
     .bind(coll_oa)
     .bind(read_ar)
@@ -166,9 +166,17 @@ async fn seed_conflict(pool: &PgPool, user_id: i64) -> Seed {
 }
 
 async fn cleanup(pool: &PgPool, user_ids: &[i64]) {
+    // 只清**本测试用户绑定**的测试自建 UA（`do-*` 前缀）——旧实现按全局硬编码名单
+    // （'do-ua-allow','do-rls-ua',…）取 UA，等价于跨测试共享：并发执行的兄弟测试其
+    // cleanup 会删掉本测试的 association/prohibition（实测非确定性红：同一用例
+    // 在 476/508/532 行随机失败）。绑定派生 + 前缀双重限定后，清理严格限于本测试。
     let ua_ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name IN ('do-ua-allow','do-ua-deny','do-ua-admin-deny','do-rls-ua')",
+        "SELECT DISTINCT r.fk_user_attribute \
+           FROM isahl_auth.ngac_user_rr_attribute r \
+           JOIN isahl_auth.ngac_user_attribute ua ON ua.id = r.fk_user_attribute \
+          WHERE r.fk_user = ANY($1) AND ua.o_name LIKE 'do-%'",
     )
+    .bind(user_ids)
     .fetch_all(pool)
     .await
     .unwrap();
@@ -183,6 +191,11 @@ async fn cleanup(pool: &PgPool, user_ids: &[i64]) {
         .await
         .unwrap();
     sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = ANY($1)")
+        .bind(user_ids)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
         .bind(user_ids)
         .execute(pool)
         .await
@@ -244,7 +257,7 @@ async fn decide_permit_without_prohibition() {
     common::setup_schema(&pool).await.expect("setup schema");
     let user_id = 999999999900202;
     let pc = ensure_pc(&pool).await;
-    let allow_ua = ensure_ua(&pool, pc, "do-ua-allow").await;
+    let allow_ua = ensure_ua(&pool, pc, &format!("do-ua-allow-{user_id}")).await;
     let coll_oa = ensure_oa(&pool, pc, RT, 0).await;
     let read_ar = ensure_ar(&pool, "read").await;
     bind_user(&pool, user_id, allow_ua).await;
@@ -279,14 +292,21 @@ async fn explain_matches_decide_with_full_steps() {
     // admin 调用方（explain 端点 require_admin）
     let admin_email = "do-explain-admin@test.local";
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
-         VALUES (999999999900204, 'do-explain-admin', 'do-explain-admin', $1, 'active', true, NOW(), NOW()) \
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at) \
+         VALUES (999999999900204, 'do-explain-admin', 'active', true, NOW(), NOW()) \
+         ON CONFLICT (username) DO NOTHING",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES (999999999900204, $1, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
     )
     .bind(admin_email)
     .execute(&pool)
     .await
-    .unwrap();
+    .ok();
     let admin_ua = ensure_ua(&pool, s.pc, "admin").await;
     bind_user(&pool, 999999999900204, admin_ua).await;
 
@@ -354,7 +374,7 @@ async fn admin_exemption_only_when_not_applicable() {
     let user_id = 999999999900205;
     let pc = ensure_pc(&pool).await;
     let admin_ua = ensure_ua(&pool, pc, "admin").await;
-    let deny_ua = ensure_ua(&pool, pc, "do-ua-admin-deny").await;
+    let deny_ua = ensure_ua(&pool, pc, &format!("do-ua-admin-deny-{user_id}")).await;
     let coll_oa = ensure_oa(&pool, pc, RT_ADMIN, 0).await;
     let read_ar = ensure_ar(&pool, "read").await;
     bind_user(&pool, user_id, admin_ua).await;
@@ -371,7 +391,8 @@ async fn admin_exemption_only_when_not_applicable() {
     .execute(&pool)
     .await
     .unwrap();
-    sqlx::query("DELETE FROM isahl_auth.ngac_prohibition WHERE o_name = 'do-prohibit-admin-read'")
+    sqlx::query("DELETE FROM isahl_auth.ngac_prohibition WHERE o_name = $1")
+        .bind(format!("do-prohibit-admin-read-{user_id}"))
         .execute(&pool)
         .await
         .unwrap();
@@ -379,7 +400,7 @@ async fn admin_exemption_only_when_not_applicable() {
         "INSERT INTO isahl_auth.ngac_prohibition (id, o_name, fk_user_attribute, fk_object_attribute, ak_access_rights, is_active) \
          VALUES (isahl.gen_next_zuid(), $1, $2, $3, ARRAY[$4], TRUE)",
     )
-    .bind("do-prohibit-admin-read")
+    .bind(format!("do-prohibit-admin-read-{user_id}"))
     .bind(deny_ua)
     .bind(coll_oa)
     .bind(read_ar)
@@ -408,7 +429,7 @@ async fn rls_visible_ids_subtracts_prohibition() {
     common::setup_schema(&pool).await.expect("setup schema");
     let user_id = 999999999900206;
     let pc = ensure_pc(&pool).await;
-    let ua = ensure_ua(&pool, pc, "do-rls-ua").await;
+    let ua = ensure_ua(&pool, pc, &format!("do-rls-ua-{user_id}")).await;
     let row_oa = ensure_oa(&pool, pc, RT_RLS, ROW_ID).await;
     let read_ar = ensure_ar(&pool, "read").await;
     bind_user(&pool, user_id, ua).await;
@@ -465,7 +486,8 @@ async fn rls_visible_ids_subtracts_prohibition() {
     assert!(visible.contains(&ROW_ID), "基线行应可见: {:?}", visible);
 
     // 加 prohibition → 行被扣减
-    sqlx::query("DELETE FROM isahl_auth.ngac_prohibition WHERE o_name = 'do-prohibit-rls-read'")
+    sqlx::query("DELETE FROM isahl_auth.ngac_prohibition WHERE o_name = $1")
+        .bind(format!("do-prohibit-rls-read-{user_id}"))
         .execute(&pool)
         .await
         .unwrap();
@@ -473,7 +495,7 @@ async fn rls_visible_ids_subtracts_prohibition() {
         "INSERT INTO isahl_auth.ngac_prohibition (id, o_name, fk_user_attribute, fk_object_attribute, ak_access_rights, is_active) \
          VALUES (isahl.gen_next_zuid(), $1, $2, $3, ARRAY[$4], TRUE)",
     )
-    .bind("do-prohibit-rls-read")
+    .bind(format!("do-prohibit-rls-read-{user_id}"))
     .bind(ua)
     .bind(row_oa)
     .bind(read_ar)
@@ -502,8 +524,9 @@ async fn rls_visible_ids_subtracts_prohibition() {
     // conditions 未满足（not_before 在未来）→ prohibition 不生效 → 行恢复可见
     sqlx::query(
         "UPDATE isahl_auth.ngac_prohibition SET conditions = '{\"not_before\": \"2999-01-01T00:00:00Z\"}'::jsonb \
-         WHERE o_name = 'do-prohibit-rls-read'",
+         WHERE o_name = $1",
     )
+    .bind(format!("do-prohibit-rls-read-{user_id}"))
     .execute(&pool)
     .await
     .unwrap();

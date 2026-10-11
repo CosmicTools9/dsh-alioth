@@ -13,7 +13,7 @@
  *   bun scripts/check/check-prototype-types.ts            # 报告，恒 exit 0
  *   bun scripts/check/check-prototype-types.ts --fail     # 有偏离时 exit 1（门禁语义）
  *   bun scripts/check/check-prototype-types.ts --json     # 机器可读
- *   bun scripts/check/check-prototype-types.ts --update-baseline   # 登记当前偏离为存量基线
+ *   bun scripts/check/check-prototype-types.ts --rebuild-baseline   # 登记当前偏离为存量基线
  *
  * 设计说明: 仅为 T1 生成**临时内联 tsconfig**（jsx: react-jsx / skipLibCheck /
  * strict:false / types:[]），因此无需在仓库内维护额外 tsconfig，也不受各 ns 前端
@@ -23,8 +23,14 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, w
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { writeBaseline } from './lib/baseline-store';
+import { callerRepoRoot } from '../lib/caller-root';
+import { nsFaceSkipNotice, nsFaceStatus, nsSourcesTracked } from '../lib/ns-surface';
 
-const REPO_ROOT = resolve(import.meta.dir, '../..');
+// 判定面归属（2026-09-25）：REPO_ROOT = **调用方仓**（ns 仓内调用判 ns 面；平台仓调用仍落平台仓）。
+const REPO_ROOT = callerRepoRoot();
+/** 工具链回落根 = 脚本位置派生（平台 checkout）：ns 仓无 `node_modules`，T1 的 tsc 只能取自平台
+ *  （`gate-adaptation-assessment.md` §3.1）——判定面归 ns 仓、工具链仍跨仓可用。 */
+const SCRIPT_ROOT = resolve(import.meta.dir, '../..');
 const NS_DIRS = ['Pre-Proc'];
 const SOURCE_GLOBS = [
   'Pre-Proc/*/Prototypes/Blocks/*/llm-tsx/**/*.tsx',
@@ -33,16 +39,43 @@ const SOURCE_GLOBS = [
   'Pre-Proc/*/Prototypes/Modules/*/llm-tsx/**/*.ts',
   'Pre-Proc/*/Prototypes/Apps/*/llm-tsx/**/*.tsx',
   'Pre-Proc/*/Prototypes/Apps/*/llm-tsx/**/*.ts',
+  // OpenActivity 层（层级契约 preproc-layout.mjs）：缺此分支则 Open 单元的设计腿**不进 T1/T2/T3 扫描面**
+  // ——2026-10-05 实证：`Prototypes/Open/Blocks/block-manage-{theme,language}` 的悬空
+  // `SettingsTheme.displayName`（求值期 ReferenceError，原型空白）**未被 T1 捕获**。
+  'Pre-Proc/*/Prototypes/Open/Blocks/*/llm-tsx/**/*.tsx',
+  'Pre-Proc/*/Prototypes/Open/Blocks/*/llm-tsx/**/*.ts',
+  'Pre-Proc/*/Prototypes/Open/Modules/*/llm-tsx/**/*.tsx',
+  'Pre-Proc/*/Prototypes/Open/Modules/*/llm-tsx/**/*.ts',
+  'Pre-Proc/*/Prototypes/Open/Apps/*/llm-tsx/**/*.tsx',
+  'Pre-Proc/*/Prototypes/Open/Apps/*/llm-tsx/**/*.ts',
   'Pre-Proc/*/Prototypes/_shared/**/*.tsx',
   'Pre-Proc/*/Prototypes/_shared/**/*.ts',
 ];
-const BLOCK_GLOBS = ['Pre-Proc/*/Prototypes/Blocks/*'];
+const BLOCK_GLOBS = ['Pre-Proc/*/Prototypes/Blocks/*', 'Pre-Proc/*/Prototypes/Open/Blocks/*'];
 
-const args = process.argv.slice(2);
-const FAIL = args.includes('--fail');
-const JSON_OUT = args.includes('--json');
+import { defineCheck } from './lib/check-interface';
 
-type Finding = { rule: 'T1' | 'T2'; file: string; detail: string };
+const META_CHANNEL = '__meta';
+
+class ExitSignal {
+  constructor(readonly rc: number) {}
+}
+let SINK: { out: (l: string) => void; err: (l: string) => void } = {
+  out: (l) => process.stdout.write(`${l}\n`),
+  err: (l) => process.stderr.write(`${l}\n`),
+};
+const exit: (rc: number) => never = (rc) => {
+  throw new ExitSignal(rc);
+};
+/** 判定面注入（旧自解析 argv；现由基座 ctx 供给） */
+let JSON_OUT = false;
+/** `--rebuild-baseline`（自有写面；原名 `--update-baseline` 属基座旗标 ⇒ 改名，见文件头） */
+let UPDATE_BASELINE = false;
+let NO_BASELINE = false;
+/** 门控位：旧 `FAIL && findings>0 ⇒ exit(1)` 的等价物 */
+let BLOCKED = false;
+
+type Finding = { rule: 'T1' | 'T2' | 'T3'; file: string; detail: string };
 
 function expandGlob(pattern: string): string[] {
   const out: string[] = [];
@@ -59,8 +92,12 @@ function collectPrototypeSources(): string[] {
 }
 
 function findTsc(): string | null {
-  const local = join(REPO_ROOT, 'node_modules/.bin/tsc');
-  return existsSync(local) ? local : null;
+  // 调用方仓优先；ns 仓无 node_modules 时回落脚本位置派生根（平台 checkout）——T1 不因 ROOT 归属而失效。
+  for (const root of [REPO_ROOT, SCRIPT_ROOT]) {
+    const local = join(root, 'node_modules/.bin/tsc');
+    if (existsSync(local)) return local;
+  }
+  return null;
 }
 
 /** T1：临时内联 tsconfig 跑 tsc，只取未定义标识符两类诊断。 */
@@ -68,7 +105,7 @@ function checkUndefinedIdentifiers(files: string[]): Finding[] {
   if (files.length === 0) return [];
   const tsc = findTsc();
   if (!tsc) {
-    console.error('[check-prototype-types] ⚠ 未找到 node_modules/.bin/tsc —— 跳过 T1（请先 pnpm install）');
+    SINK.err('[check-prototype-types] ⚠ 未找到 node_modules/.bin/tsc —— 跳过 T1（请先 pnpm install）');
     return [];
   }
   const dir = mkdtempSync(join(tmpdir(), 'proto-types-'));
@@ -180,16 +217,47 @@ function checkPointerIntegrity(): Finding[] {
   return findings;
 }
 
+/** 基线路径 + 键（键含 TAB ⇒ 自持解析/写盘，不适用基座「每行首段」口径）。 */
+const BASELINE_PATH = join(REPO_ROOT, 'scripts/check/.prototype-types-baseline.txt');
+const KEY_TAB = '\t';
+export const keyOf = (f: Finding): string => `${f.rule}${KEY_TAB}${f.file}${KEY_TAB}${f.detail}`;
+
+interface PrototypeTypesOutcome {
+  out: string[];
+  err: string[];
+  rc: number;
+  blocked: boolean;
+}
+
+/** 判定面（T1 未定义标识符 / T2 mock 行键同构 / T3 prototypeVersion 指针）；输出经 SINK 记录。 */
+export function prototypeTypesState(opts: { json: boolean; rebuildBaseline: boolean; noBaseline: boolean }): PrototypeTypesOutcome {
+  const OUT: string[] = [];
+  const ERR: string[] = [];
+  const saved = SINK;
+  SINK = { out: (l) => OUT.push(l), err: (l) => ERR.push(l) };
+  JSON_OUT = opts.json;
+  UPDATE_BASELINE = opts.rebuildBaseline;
+  NO_BASELINE = opts.noBaseline;
+  BLOCKED = false;
+  try {
 const sources = collectPrototypeSources();
+
+// 判定面归属（2026-09-25）：0 文件 = 本仓不持有 ns 面（显式跳过）或扫描面失效（fail-loud）——不得打印 ✅ 假绿。
+if (sources.length === 0) {
+  if (!nsSourcesTracked(REPO_ROOT)) {
+    nsFaceSkipNotice('check-prototype-types', REPO_ROOT);
+    exit(0);
+  }
+  const nsLabel = nsFaceStatus(REPO_ROOT).realDirs.join(', ');
+  SINK.err(
+    `❌ check-prototype-types: ns「${nsLabel}」被本仓跟踪但解析出 0 个原型源码文件（ROOT=${REPO_ROOT}）—— 扫描面失效，MUST NOT 静默通过`,
+  );
+  exit(1);
+}
 const rawFindings = [...checkUndefinedIdentifiers(sources), ...checkMockRowHomogeneity(), ...checkPointerIntegrity()];
 
-const BASELINE_PATH = join(REPO_ROOT, 'scripts/check/.prototype-types-baseline.txt');
-const UPDATE_BASELINE = args.includes('--update-baseline');
-const keyOf = (f: Finding): string => `${f.rule}\t${f.file}\t${f.detail}`;
 
 let baseline: Set<string> = new Set();
-// --no-baseline：不读基线（供「裁决存量」阶段/并发 worker 使用，避免 mv 共享文件竞态）
-const NO_BASELINE = args.includes('--no-baseline');
 if (!NO_BASELINE && existsSync(BASELINE_PATH)) {
   for (const line of readFileSync(BASELINE_PATH, 'utf8').split('\n')) {
     const t = line.trim();
@@ -201,30 +269,73 @@ if (!NO_BASELINE && existsSync(BASELINE_PATH)) {
 if (UPDATE_BASELINE) {
   const header = [
     '# check-prototype-types 基线（存量偏离，仅登记不阻断；--fail 只拦基线外新增）',
-    '# 生成: bun scripts/check/check-prototype-types.ts --update-baseline',
+    '# 生成: bun scripts/check/check-prototype-types.ts --rebuild-baseline',
     '# 形态: <rule>TAB<file>TAB<detail>',
     `# 生成时命中: ${rawFindings.length}`,
   ];
   writeBaseline(REPO_ROOT, 'scripts/check/.prototype-types-baseline.txt', [...header, ...[...new Set(rawFindings.map(keyOf))].sort()].join('\n') + '\n');
-  console.log(`[check-prototype-types] 已写入基线：${BASELINE_PATH}（${rawFindings.length} 项）`);
-  process.exit(0);
+  SINK.out(`[check-prototype-types] 已写入基线：${BASELINE_PATH}（${rawFindings.length} 项）`);
+  exit(0);
 }
 
 const findings = rawFindings.filter((f) => !baseline.has(keyOf(f)));
 const grandfathered = rawFindings.length - findings.length;
 
 if (JSON_OUT) {
-  console.log(JSON.stringify({ scanned: sources.length, findings, grandfathered }, null, 2));
+  SINK.out(JSON.stringify({ scanned: sources.length, findings, grandfathered }, null, 2));
 } else {
-  console.log(`[check-prototype-types] 扫描原型源码 ${sources.length} 个文件（ns 根: ${NS_DIRS.join(',')}）`);
+  SINK.out(`[check-prototype-types] 扫描原型源码 ${sources.length} 个文件（ns 根: ${NS_DIRS.join(',')}）`);
   if (findings.length === 0) {
-    console.log(
+    SINK.out(
       `[check-prototype-types] ✅ 基线外 0 命中（T1 未定义标识符 / T2 mock 行键同构 / T3 prototypeVersion 指针）；基线登记存量 ${grandfathered} 项`,
     );
   } else {
-    for (const f of findings) console.error(`❌ ${f.rule} ${f.file}\n    ${f.detail}`);
-    console.error(`[check-prototype-types] ❌ 基线外共 ${findings.length} 项偏离（基线登记存量 ${grandfathered} 项）`);
+    for (const f of findings) SINK.err(`❌ ${f.rule} ${f.file}\n    ${f.detail}`);
+    SINK.err(`[check-prototype-types] ❌ 基线外共 ${findings.length} 项偏离（基线登记存量 ${grandfathered} 项）`);
   }
 }
 
-process.exit(FAIL && findings.length > 0 ? 1 : 0);
+BLOCKED = findings.length > 0; // 门控位（旧 `FAIL && findings>0 ⇒ exit(1)`）
+  } catch (e) {
+    if (!(e instanceof ExitSignal)) throw e;
+    return { out: OUT, err: ERR, rc: e.rc, blocked: BLOCKED };
+  } finally {
+    SINK = saved;
+  }
+  return { out: OUT, err: ERR, rc: 0, blocked: BLOCKED };
+}
+
+const gate = defineCheck({
+  id: 'prototype-types',
+  label: 'check-prototype-types',
+  flags: ['--rebuild-baseline', '--no-baseline'],
+  predicate: () => [],
+  report: (ctx, res, io) => {
+    const st = prototypeTypesState({
+      json: res.json,
+      rebuildBaseline: ctx.flags.has('--rebuild-baseline'),
+      noBaseline: ctx.flags.has('--no-baseline'),
+    });
+    for (const line of st.out) io.out(`${line}\n`);
+    for (const line of st.err) io.err(`${line}\n`);
+    if (st.rc !== 0) return st.rc;
+    return res.fail && st.blocked ? 1 : 0;
+  },
+  selfTest() {
+    // 判据自证（R1）：基线键形态（TAB 三分段）+ 扫描面非空（glob 面可用性）
+    const k = keyOf({ rule: 'T1', file: 'a.ts', detail: 'd' });
+    if (k.split('\t').length !== 3 || k !== 'T1\ta.ts\td') {
+      process.stderr.write(`❌ prototype-types self-test 失败：基线键形态 ${JSON.stringify(k)}\n`);
+      return 1;
+    }
+    const globbed = expandGlob('Pre-Proc/*/Prototypes/Blocks/*');
+    if (!Array.isArray(globbed) || globbed.some((f) => f.startsWith('/'))) {
+      process.stderr.write('❌ prototype-types self-test 失败：glob 面返回非仓内相对路径\n');
+      return 1;
+    }
+    process.stdout.write(`✅ prototype-types self-test 通过（基线键 TAB 三分段 + glob 面 ${globbed.length} 项）\n`);
+    return 0;
+  },
+});
+
+if (import.meta.main) process.exit(await gate.main());

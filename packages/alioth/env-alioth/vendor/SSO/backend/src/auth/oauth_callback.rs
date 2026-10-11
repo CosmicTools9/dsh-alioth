@@ -369,12 +369,14 @@ async fn oauth_callback_handler(
         .append_header(("Location", redirect_to.as_str()))
         .finish();
 
-    set_refresh_cookie(
+    let response = set_refresh_cookie(
         response,
         &refresh_token,
         state_data.jwt_refresh_expiry_secs,
         None,
-    )
+    );
+    // 会话自举同批签发 CSRF（scope 命名 = 请求头 x-auth-cookie-scope，与令牌同规则）
+    super::jwt::attach_csrf_cookie(response, common::csrf::cookie_scope(&req).as_deref())
 }
 
 /// 获取身份提供商配置
@@ -589,7 +591,11 @@ async fn find_or_create_user(
     // 首先尝试查找已绑定的 OAuth 账户
     let existing = sqlx::query_as::<_, (i64, Option<String>, bool)>(
         r#"
-        SELECT u.id, u.email, u.mfa_enabled
+        SELECT u.id,
+               (SELECT e.email FROM isahl_auth.auth_user_emails e
+                 WHERE e.fk_user = u.id AND e.deleted_at IS NULL
+                 ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email,
+               u.mfa_enabled
         FROM isahl_auth.auth_users u
         JOIN isahl_auth.user_oauth_accounts oa ON u.id = oa.user_id
         WHERE oa.provider_id = $1
@@ -650,8 +656,12 @@ async fn find_or_create_user(
             );
         } else if let Some(id) = candidate_ids.first().copied() {
             let existing_user = sqlx::query_as::<_, (i64, Option<String>, bool)>(
-                "SELECT id, email, COALESCE(mfa_enabled, false) \
-                 FROM isahl_auth.auth_users WHERE id = $1",
+                "SELECT id, \
+                        (SELECT e.email FROM isahl_auth.auth_user_emails e \
+                          WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+                          ORDER BY e.is_primary DESC, e.id LIMIT 1) AS email, \
+                        COALESCE(mfa_enabled, false) \
+                 FROM isahl_auth.auth_users u WHERE u.id = $1",
             )
             .bind(id)
             .fetch_optional(pool)
@@ -675,19 +685,36 @@ async fn find_or_create_user(
     let display_name = user_info.name.clone();
 
     // 创建用户 (没有密码，只能通过 OAuth 登录)
-    // ID 由 gen_next_zuid() 自动生成
+    // ID 由 gen_next_zuid() 自动生成；username 为唯一锚点（无 name 列）
     let user_id = sqlx::query_scalar::<_, i64>(
         r#"
-        INSERT INTO isahl_auth.auth_users (name, email, password_hash, mfa_enabled, display_name, created_at, updated_at)
-        VALUES ($1, $2, NULL, false, $3, NOW(), NOW())
+        INSERT INTO isahl_auth.auth_users (username, password_hash, mfa_enabled, display_name, created_at, updated_at)
+        VALUES ($1, NULL, false, $2, NOW(), NOW())
         RETURNING id
         "#
     )
     .bind(user_info.name.as_deref().unwrap_or("oauth_users"))
-    .bind(&email)
     .bind(&display_name)
     .fetch_one(pool)
     .await?;
+
+    // NGAC 基础身份接线（approval-endpoint-gates::user-ua-on-all-provisioning-channels）：
+    // OAuth 首登建号即挂 user UA（此前仅下次 Gateway 重启兜底 ⇒ 窗口期内零策略身份账号）。
+    if let Ok(mut conn) = pool.acquire().await {
+        let _ = common::registration_approval::ensure_user_ua(&mut conn, user_id).await;
+    }
+
+    // 邮箱落唯一存储 auth_user_emails（OAuth 首个邮箱为主邮箱）
+    if let Some(email) = email.as_deref() {
+        sqlx::query(
+            "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+             VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(email)
+        .execute(pool)
+        .await?;
+    }
 
     // 绑定 OAuth 账户
     bind_oauth_account(pool, user_id, provider, user_info, token_response).await?;
@@ -782,9 +809,8 @@ async fn bind_oauth_account(
 /// 在生产环境中应设置 `APP_BASE_URL` 环境变量指向实际 Gateway 前端 URL。
 /// 前端 URL 必须能通过 `GET /auth/oauth/callback` 路径访问 SSO callback 页面。
 pub(crate) fn get_base_url() -> String {
-    std::env::var("APPCREATOR_FRONTEND_URL")
+    std::env::var("APP_BASE_URL")
         .ok()
-        .or_else(|| std::env::var("APP_BASE_URL").ok())
         .or_else(|| std::env::var("GATEWAY_FRONTEND_URL").ok())
         .unwrap_or_else(|| "http://localhost:13000".to_string())
 }

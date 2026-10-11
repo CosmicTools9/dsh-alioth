@@ -271,9 +271,11 @@ fn dmn_variable_usage(dmn: &Value) -> Vec<String> {
 }
 
 fn invalid_dmn_response(errors: Vec<String>) -> DmnAssistResponse {
+    // 结论/失败面单源（change consolidate-authoring-channel）：决策表校验错误属**整体性**问题。
+    let verdict = common::authoring::AuthoringVerdict::from_messages("dmn", errors);
     DmnAssistResponse {
-        valid: false,
-        errors,
+        valid: verdict.valid,
+        errors: verdict.messages(),
         dmn: None,
         rules_explanation: Vec::new(),
         summary: None,

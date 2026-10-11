@@ -1,7 +1,12 @@
 pub mod agent_dispatch;
-pub mod db_ai_contact;
+pub mod apply_protocol;
 pub mod db_llm_config;
 pub mod db_message;
 pub mod db_message_meta;
 pub mod db_session;
+#[cfg(feature = "sso")]
+pub mod org_policy_action;
+#[cfg(feature = "sso")]
+pub mod strategy_action;
+pub mod system_config_action;
 pub mod tool_bridge;

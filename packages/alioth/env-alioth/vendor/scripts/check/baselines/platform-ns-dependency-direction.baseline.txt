@@ -1,0 +1,2 @@
+# 基线（ratchet，只减不增）：每行一键，`#` 起始为注释
+# rule_reference: openspec/specs/workspace-dependency-governance/spec.md :: platform-ns-dependency-direction（ADR D-046 修订 2026-10-05）

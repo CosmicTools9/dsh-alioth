@@ -1,6 +1,6 @@
 name: alioth-module
 description: "Module 级高保真原型设计 — 能力发现 → Block 分发 → 组装构建 → 视觉验证"
-version: "2.3"
+version: "2.5"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
@@ -55,12 +55,14 @@ tracks:
           - output_glob: "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/module.json"
           - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/llm-tsx/module.tsx"
       - id: "1.4"
-        instruction: "Phase 2.5 Block 并行分发 — 必须为输入 module.json 的 blockAssembly 中【每一个 block id】创建 Pre-Proc/{ns}/Sources/Apps/Blocks/{blockId}/block.json + llm-tsx/block.tsx 骨架（block.tsx 内容为：export default function BlockXxx() 返回 null 的骨架函数，displayName = blockId）。block id 必须与 blockAssembly 完全一致，禁止自创其他 id。本步骤【禁止】写 module.json 或 module.tsx（那是步骤 1.3 的产物，已存在，不要再写）——本步骤唯一产出是每个 block 的 block.json + llm-tsx/block.tsx 骨架，【同时】必须为每个 block 创建原型骨架 Pre-Proc/{ns}/Prototypes/Blocks/{blockId}/llm-tsx/block.tsx（同内容骨架函数，路径与 Sources 版本不同，Prototypes 目录需要时由 write_file 自动创建）。三条路径：Pre-Proc/{ns}/Sources/Apps/Blocks/{blockId}/block.json、Pre-Proc/{ns}/Sources/Apps/Blocks/{blockId}/llm-tsx/block.tsx、Pre-Proc/{ns}/Prototypes/Blocks/{blockId}/llm-tsx/block.tsx。completed 必须为 true 且所有 block 骨架都已写入。"
+        instruction: "Phase 2.5 Block 并行分发 — 必须为输入 module.json 的 blockAssembly 中【每一个 block id】创建块声明 Pre-Proc/{ns}/Sources/Apps/Blocks/{blockId}/block.json（声明件：id/name/version/services 等）与设计腿骨架 Pre-Proc/{ns}/Prototypes/Blocks/{blockId}/llm-tsx/block.tsx（内容为：export default function BlockXxx() 返回 null 的骨架函数，displayName = blockId；Prototypes 目录需要时由 write_file 自动创建）。block id 必须与 blockAssembly 完全一致，禁止自创其他 id。本步骤【禁止】写 module.json 或 module.tsx（那是步骤 1.3 的产物，已存在，不要再写）——本步骤唯一产出是每个 block 的 block.json + 设计腿 llm-tsx/block.tsx 骨架。MUST NOT 另建 Pre-Proc/{ns}/Sources/Apps/Blocks/{blockId}/llm-tsx/block.tsx：Sources 腿无构建/运行时消费者，旧约定已废止（retire-module-block-skeleton-convention 2026-10-08），禁止双源人工复制。两条路径：Pre-Proc/{ns}/Sources/Apps/Blocks/{blockId}/block.json、Pre-Proc/{ns}/Prototypes/Blocks/{blockId}/llm-tsx/block.tsx。completed 必须为 true 且所有 block 骨架都已写入。"
         tools: [read_file, write_file]
         schema: {type: object, required: [blocks]}
         inputs:
           - "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/module.json"
         gates:
+          # 块设计腿存在性：blockAssembly.blocks[].id MUST 在 Pre-Proc/{ns}/Prototypes/Blocks/{id}/llm-tsx/block.tsx 有骨架
+          # （判定面 = Prototypes 面 = prototype-tool build 的输入；Sources 腿不再判定——retire-module-block-skeleton-convention 2026-10-08）
           - program: "bun"
             args: ["scripts/check/check-module-blocks.mjs", "Pre-Proc/{ns}/Sources/Apps/Modules/{module}/module.json"]
             timeout_sec: 30
@@ -95,4 +97,12 @@ tracks:
         gates:
           - output_glob: "Pre-Proc/{ns}/Prototypes/Modules/{module}/m-v*.html"
 source:
-  content_sha256: e6dc16ee60efe7f206be3b9f78200108d9f801f8c9baa88503f816d9d5802c14
+  content_sha256: 562df6b10b2f509079bb6f134157a9329f8bd67a4d54114f84c1f8a59b6fe3cc
+  # 2026-10-11 重记：SKILL.md 入口预检写实（preflight.md / preflight-track.sh 已退役 ⇒ 改指
+  #   ontology-mapping prototype-check / prototype-tool.js check ——change harden-skill-substrate；
+  #   按统一规则 version 2.4 → 2.5
+  # 2026-10-08 重记：SKILL.md 增「单源（MUST）」——App.tsx 的 blockAssembly MUST 取自派生件
+  # frontend/src/generated/block-assembly（禁内联副本）——single-source-module-block-assembly
+  # 2026-10-05 重记：SKILL.md 登记链改 ns 自持安装面（ns-frontend-workspace.ts sync --write → ns 仓根 install）——move-ns-frontend-assembly-to-ns
+  # 2026-10-05 重记：SKILL.md 「顶栏级导航」提供者去 `category`（无分类丸；切换在分类列内）——remove-topbar-category-pills
+  # 2026-10-02 重记：SKILL.md 增「App 归属与前端成员登记」注记（align-agent-surfaces-with-frontend-isolation）

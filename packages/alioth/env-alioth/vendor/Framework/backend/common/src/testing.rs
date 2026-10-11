@@ -35,38 +35,98 @@ fn assert_test_db_url(url: &str) {
     }
 }
 
+/// 测试身份推导：namespace 维度（库名 = `{ns_lower}_test`，唯一映射实现 =
+/// `scripts/db/lib/ns-db-name.sh::ns_name_to_db <ns> test`）。
+///
+/// 判据顺序：`ALIOTH_TEST_NS`（显式）→ **测试二进制名**前缀（`{ns}_service_*`，
+/// 覆盖 hub 检出与 ns 仓两种构建布局，无需调用方注入环境）。判不出 ⇒ `None`
+/// （调用方回落到平台测试库 `aliothstudio_test`，即平台 crate 的既有语义）。
+fn ns_lower_for_tests() -> Option<String> {
+    if let Ok(ns) = std::env::var("ALIOTH_TEST_NS") {
+        let s = ns.trim().to_lowercase().replace('-', "_");
+        if !s.is_empty() {
+            return Some(s);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let stem = exe.file_stem()?.to_str()?.to_lowercase();
+    for ns in ["avic_caasec", "cosmic_tools", "alioth", "se", "wz"] {
+        if stem.starts_with(&format!("{ns}_service_")) {
+            return Some(ns.to_string());
+        }
+    }
+    None
+}
+
 /// 测试数据库 URL：优先 `DATABASE_URL`（必须指向 `*_test` 库，否则 panic），
 /// fallback 到规范本地测试库 `postgres://<OS 用户>@localhost:5432/aliothstudio_test`
 /// （与 scripts/test-all.sh ③ 一致）。
 ///
+/// # per-ns 测试库隔离（enforce-ns-isolation-across-axes）
+///
+/// 单点解析顺序：
+/// 1. `TEST_DATABASE_URL`（显式覆盖，必须 `*_test`）
+/// 2. `DATABASE_URL`（存在且非空 → 必须 `*_test`，否则 panic；既有 fail-closed 语义不变）
+/// 3. `ALIOTH_TEST_DB`（显式库名覆盖，必须 `*_test`）
+/// 4. per-ns 派生 `{ns_lower}_test`（ns 身份见 [`ns_lower_for_tests`]）——ns 集成测试
+///    MUST 只连本 ns 测试库，不得共享其他 ns 或平台测试库的数据
+/// 5. 平台默认库 `aliothstudio_test`（平台 crate 测试 / 无法判定 ns）
+///
 /// 注：无用户的 `postgres://localhost/...` 会被 sqlx 解析为 `anonymous` 角色导致连接失败，
 /// 因此必须显式携带当前 OS 用户名（`whoami`）。
 pub fn test_database_url() -> String {
-    if let Ok(url) = std::env::var("DATABASE_URL") {
+    if let Ok(url) = std::env::var("TEST_DATABASE_URL") {
         if !url.is_empty() {
-            // sqlx 对无用户名的 URL（postgres://host/db）解析为 `anonymous` 角色，
-            // 且**不读取 PGUSER**（libpq/psql 才回退 PGUSER）——此处显式注入 OS 用户。
-            // 无 user 的 URL 不含 '@'；含 '@' 说明已有 user[:pass]，不触碰。
-            let url = if !url.contains('@') {
-                let user = std::env::var("USER")
-                    .or_else(|_| std::env::var("USERNAME"))
-                    .unwrap_or_else(|_| "postgres".to_string());
-                if let Some(stripped) = url.strip_prefix("postgres://") {
-                    format!("postgres://{}@{}", user, stripped)
-                } else {
-                    url
-                }
-            } else {
-                url
-            };
+            let url = with_os_user(url);
             assert_test_db_url(&url);
             return url;
         }
     }
-    let user = std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "postgres".to_string());
-    format!("postgres://{}@localhost:5432/aliothstudio_test", user)
+    if let Ok(url) = std::env::var("DATABASE_URL") {
+        if !url.is_empty() {
+            let url = with_os_user(url);
+            assert_test_db_url(&url);
+            return url;
+        }
+    }
+    let db = std::env::var("ALIOTH_TEST_DB")
+        .ok()
+        .filter(|d| !d.trim().is_empty())
+        .or_else(|| ns_lower_for_tests().map(|ns| format!("{ns}_test")))
+        .unwrap_or_else(|| "aliothstudio_test".to_string());
+    format!("postgres://{}@localhost:5432/{}", os_user(), db)
+}
+
+/// 注入 OS 用户（sqlx 不读 PGUSER；无 user 的 URL 会退化为 `anonymous` 角色）。
+/// 无 `@` 才注入；含 `@` 说明已有 user[:pass]，原样返回。
+fn with_os_user(url: String) -> String {
+    if url.contains('@') {
+        return url;
+    }
+    if let Some(stripped) = url.strip_prefix("postgres://") {
+        return format!("postgres://{}@{}", os_user(), stripped);
+    }
+    url
+}
+
+/// OS 用户（`USER` → `USERNAME` → `postgres`）。
+///
+/// 注意（2026-09-30 实测教训）：工具/CI 的非登录 shell 常**不设 `USER`**，此时会静默回退
+/// `postgres` —— 而 `postgres` 对 `isahl_auth` 各表无 DML 授权，测试会以
+/// `42501 … 权限不够` 形似「夹具缺陷」报错，掩盖真实原因。回退时打一行告警；
+/// 需要确定性时显式传 `TEST_DATABASE_URL="postgres://<user>@host/db"`（URL 内含 `@` 时
+/// [`with_os_user`] 不注入，见其实现）。
+fn os_user() -> String {
+    if let Ok(user) = std::env::var("USER").or_else(|_| std::env::var("USERNAME")) {
+        if !user.trim().is_empty() {
+            return user;
+        }
+    }
+    eprintln!(
+        "[testing] USER/USERNAME 未设置，测试库连接回退用户 `postgres`；若报 `42501 权限不够`，\
+         请显式设置 TEST_DATABASE_URL=\"postgres://<user>@localhost:5432/<db>_test\""
+    );
+    "postgres".to_string()
 }
 
 /// 连接测试数据库。

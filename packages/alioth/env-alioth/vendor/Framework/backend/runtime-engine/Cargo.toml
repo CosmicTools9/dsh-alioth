@@ -20,7 +20,6 @@ runtime-contract = { path = "../runtime-contract" }
 rhai = { version = "1", features = ["serde", "internals"] }
 
 [dev-dependencies]
-tokio = { workspace = true }
 criterion = { workspace = true }
 
 [[bench]]

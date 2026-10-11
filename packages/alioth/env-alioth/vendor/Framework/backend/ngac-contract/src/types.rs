@@ -14,24 +14,11 @@ pub struct PdpCheckRequest {
 pub struct PdpCheckResponse {
     pub permitted: bool,
     pub reason: String,
-}
-
-/// NGAC access decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Decision {
-    Permit,
-    Deny,
-    NotApplicable,
-}
-
-impl std::fmt::Display for Decision {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Decision::Permit => write!(f, "Permit"),
-            Decision::Deny => write!(f, "Deny"),
-            Decision::NotApplicable => write!(f, "NotApplicable"),
-        }
-    }
+    /// 本次判决触发的义务算子（NGAC_SPEC §2.6；wire-obligations-into-pep-audit）：
+    /// PDP 侧求值随判决下发——PEP 审计行落 `obligations_triggered`（与 SSO 决策审计
+    /// 同源对称）；旧 PDP 无此字段 ⇒ 反序列化为空（additive）。
+    #[serde(default)]
+    pub obligations: Vec<String>,
 }
 
 /// NGAC decision batch check request.

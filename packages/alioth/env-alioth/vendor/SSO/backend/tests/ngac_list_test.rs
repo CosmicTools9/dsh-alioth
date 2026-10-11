@@ -25,10 +25,9 @@ async fn seed_list_policies(
     rights: &[&str],
 ) {
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
     .bind(user_id)
-    .bind(format!("list-tester-{}-{}", ua_name, user_id))
     .bind(format!("list-test-{}", user_id))
     .execute(pool)
     .await

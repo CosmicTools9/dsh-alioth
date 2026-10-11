@@ -717,6 +717,18 @@ impl TriggerTemplate for LifecycleNgacSyncTemplate {
     }
 }
 
+/// NGAC 可读标识（`resource_identifier`）取值优先级：`notice → code → 回退 {resource_type}-{id}`
+/// （NGAC_SPEC §2.2.1；通用 CRUD 路径 `crud::handler::register_created_resource_ngac` 同式）。
+fn ngac_readable_identifier(
+    record: &HashMap<String, Value>,
+    resource_type: &str,
+    id: i64,
+) -> String {
+    get_field::<String>(record, "notice")
+        .or_else(|| get_field::<String>(record, "code"))
+        .unwrap_or_else(|| format!("{resource_type}-{id}"))
+}
+
 impl LifecycleNgacSyncTemplate {
     async fn handle_insert(
         &self,
@@ -726,50 +738,21 @@ impl LifecycleNgacSyncTemplate {
         let id: i64 = get_id_field(new, "id")
             .ok_or_else(|| TriggerError::ExecutionFailed("Missing id for NGAC sync".to_string()))?;
 
-        let notice: Option<String> = get_field(new, "notice");
         let resource_type = ctx.table_name.clone();
-        let o_name = notice
-            .clone()
-            .unwrap_or_else(|| format!("{}:{}", resource_type, id));
-        // NGAC 可读标识：notice → code → 回退 {resource_type}:{id}
-        // （NGAC_SPEC §2.2 resource_identifier 语义，见 add-ngac-oa-readable-identifier）
-        let readable = notice
-            .clone()
-            .or_else(|| get_field(new, "code"))
-            .unwrap_or_else(|| format!("{}:{}", resource_type, id));
+        // NGAC：行级 OA 注册走**授权写入单源**（`common::ngac_grants::ensure_resource_oa`，
+        // NGAC_SPEC §2.2.5）——本模板只产数据面变种 `SideEffect::EnsureResourceOa`：
+        // 幂等（`(resource_type, fk_resource)` 唯一 + `ON CONFLICT DO NOTHING`）、
+        // 软删占位行不复活、命名（`o_name` = `{resource_type}-{id}`）与可读标识
+        // （notice → code → 回退）均由单源决定，触发器不再自拼 OA SQL。
+        let resource_identifier = Some(ngac_readable_identifier(new, &resource_type, id));
 
-        let sql = r#"
-            INSERT INTO isahl_auth.ngac_object_attribute (
-                o_name, fk_policy_class, resource_type, fk_resource, resource_identifier, property, created_at, updated_at
-            )
-            SELECT
-                $1,
-                pc.id,
-                $2,
-                $3,
-                $4,
-                jsonb_build_object('notice', $5, 'source_table', $6),
-                NOW(),
-                NOW()
-            FROM isahl_auth.ngac_policy_class pc
-            WHERE pc.o_name = 'default'
-              AND NOT EXISTS (
-                  SELECT 1 FROM isahl_auth.ngac_object_attribute
-                  WHERE resource_type = $2 AND fk_resource = $3
-              )
-        "#.to_string();
-
-        let params = vec![
-            Value::String(o_name),
-            Value::String(resource_type.clone()),
-            Value::Number(id.into()),
-            Value::String(readable),
-            Value::String(notice.unwrap_or_default()),
-            Value::String(resource_type),
-        ];
-
-        Ok(TriggerResult::new()
-            .with_side_effect(crate::SideEffect::RawSqlWithParams { sql, params }))
+        Ok(
+            TriggerResult::new().with_side_effect(crate::SideEffect::EnsureResourceOa {
+                resource_type,
+                resource_id: id,
+                resource_identifier,
+            }),
+        )
     }
 
     async fn handle_update(
@@ -794,34 +777,27 @@ impl LifecycleNgacSyncTemplate {
             return self.handle_delete(ctx, old.unwrap_or(new)).await;
         }
 
-        let notice: Option<String> = get_field(new, "notice");
         let resource_type = ctx.table_name.clone();
-        let o_name = notice
-            .clone()
-            .unwrap_or_else(|| format!("{}:{}", resource_type, id));
-        // NGAC 可读标识：notice → code → 回退 {resource_type}:{id}
-        // （NGAC_SPEC §2.2 resource_identifier 语义，见 add-ngac-oa-readable-identifier）
-        let readable = notice
-            .clone()
-            .or_else(|| get_field(new, "code"))
-            .unwrap_or_else(|| format!("{}:{}", resource_type, id));
+        let readable = ngac_readable_identifier(new, &resource_type, id);
 
+        // 已存在行的标识同步保留为内联 SQL（**非授权写入**）：单源 `ngac_grants` 只提供
+        // OA 幂等注册（insert-only）与主体 right 授权，没有「改写已存在行 o_name / 标识」的
+        // 入口（NGAC_SPEC §2.2.5 的收口面 = 资源**创建路径**的行级授权写入）。
+        // 取值与 insert 路径同式（`o_name` = `{resource_type}-{id}`、标识 notice → code →
+        // 回退），使同一行经 insert / update 两条路径得到同一命名。
         let sql = r#"
             UPDATE isahl_auth.ngac_object_attribute
             SET o_name = $1,
                 resource_identifier = $2,
-                property = jsonb_build_object('notice', $3, 'source_table', $4),
                 updated_at = NOW()
-            WHERE resource_type = $5 AND fk_resource = $6
+            WHERE resource_type = $3 AND fk_resource = $4
         "#
         .to_string();
 
         let params = vec![
-            Value::String(o_name),
+            Value::String(format!("{resource_type}-{id}")),
             Value::String(readable),
-            Value::String(notice.unwrap_or_default()),
-            Value::String(resource_type.clone()),
-            Value::String(resource_type.clone()),
+            Value::String(resource_type),
             Value::Number(id.into()),
         ];
 
@@ -839,6 +815,9 @@ impl LifecycleNgacSyncTemplate {
 
         let resource_type = ctx.table_name.clone();
 
+        // 撤销保留为内联 SQL（**非授权写入**）：单源 `ngac_grants` 无 OA 撤销入口
+        // （NGAC_SPEC §2.2.5 的收口面 = 资源**创建路径**的行级授权写入），且本语句非 INSERT
+        // ⇒ 不在 `check-ngac-grant-single-source` 的语句级判据面内。
         let sql = r#"
             DELETE FROM isahl_auth.ngac_object_attribute
             WHERE resource_type = $1 AND fk_resource = $2
@@ -883,5 +862,61 @@ mod tests {
             .as_str()
             .unwrap();
         assert_eq!(projection.len(), 8); // CRC32 hex
+    }
+
+    /// 数据面单源：insert 只产 `SideEffect::EnsureResourceOa`（不再自拼 OA SQL）。
+    #[tokio::test]
+    async fn test_lifecycle_ngac_sync_insert_emits_ensure_resource_oa() {
+        let tpl = LifecycleNgacSyncTemplate;
+        let mut new = HashMap::new();
+        new.insert("id".to_string(), Value::Number(42i64.into()));
+        new.insert("notice".to_string(), Value::String("公告".to_string()));
+
+        let ctx = TriggerContext::new("zc_id_bill", TriggerOperation::Insert);
+        let result = tpl.execute(&ctx, None, Some(&new)).await.unwrap();
+
+        match result.side_effects.as_slice() {
+            [crate::SideEffect::EnsureResourceOa {
+                resource_type,
+                resource_id,
+                resource_identifier,
+            }] => {
+                assert_eq!(resource_type.as_str(), "zc_id_bill");
+                assert_eq!(*resource_id, 42);
+                assert_eq!(resource_identifier.as_deref(), Some("公告"));
+            }
+            other => panic!("期望单个 EnsureResourceOa，实得 {:?}", other),
+        }
+    }
+
+    /// 标识优先级：notice → code → 回退 `{resource_type}-{id}`（NGAC_SPEC §2.2.1）。
+    #[tokio::test]
+    async fn test_lifecycle_ngac_sync_identifier_priority() {
+        let tpl = LifecycleNgacSyncTemplate;
+        let ctx = TriggerContext::new("zc_id_bill", TriggerOperation::Insert);
+        let cases: [(&str, Option<&str>, Option<&str>, &str); 3] = [
+            ("notice 优先", Some("公告7"), Some("BILL-7"), "公告7"),
+            ("无 notice 取 code", None, Some("BILL-7"), "BILL-7"),
+            ("两者皆无回退编号", None, None, "zc_id_bill-7"),
+        ];
+        for (why, notice, code, expected) in cases {
+            let mut new = HashMap::new();
+            new.insert("id".to_string(), Value::Number(7i64.into()));
+            if let Some(n) = notice {
+                new.insert("notice".to_string(), Value::String(n.to_string()));
+            }
+            if let Some(c) = code {
+                new.insert("code".to_string(), Value::String(c.to_string()));
+            }
+            let result = tpl.execute(&ctx, None, Some(&new)).await.unwrap();
+            let ident = match result.side_effects.as_slice() {
+                [crate::SideEffect::EnsureResourceOa {
+                    resource_identifier,
+                    ..
+                }] => resource_identifier.clone(),
+                other => panic!("{why}: 期望单个 EnsureResourceOa，实得 {:?}", other),
+            };
+            assert_eq!(ident.as_deref(), Some(expected), "{why}");
+        }
     }
 }

@@ -613,66 +613,16 @@ var PROTOTYPE_BASE_CSS_CONTENT =
   readFileSync(join(ROOT, '.agents/skills/alioth-design/references/prototype-base.css'), 'utf-8') +
   '\n</style>';
 
-// _shared/lifecycle.ts 模板:scaffold 时写入每个 namespace 的 Prototypes/_shared/
-// 契约对齐 Framework/frontend/api/src/micro-app.tsx createMicroAppLifecycle,
-// 但去掉 react-query/jotai(原型轻量定位)。
+// _shared/lifecycle.ts 模板：scaffold 时写入每个 namespace 的 Prototypes/_shared/。
+// **实现单一源 = 平台共享面**（`.agents/skills/alioth-design/references/blocks/_kit/lifecycle.ts`）——
+// 本模板只写**声明式共享入口**（re-export），ns 面 MUST NOT 承载实现副本
+//（openspec/specs/ns-isolation :: shared-prototype-single-source；alioth-design SKILL R8）。
 var SHARED_LIFECYCLE_CONTENT = [
   '/**',
-  ' * lifecycle.ts — 原型轻量 single-spa 生命周期工厂(由 prototype-tool scaffold 生成)。',
-  ' * 契约对齐 Framework createMicroAppLifecycle,但去掉 react-query/jotai。',
+  ' * lifecycle.ts — 原型共享 kit 的**声明式共享入口**（实现单一源 = 平台共享面；prototype-tool scaffold 生成）。',
+  ' * 实现住在 .agents/skills/alioth-design/references/blocks/_kit/lifecycle.ts。',
   ' */',
-  "import { createElement } from 'react';",
-  "import { createRoot, type Root } from 'react-dom/client';",
-  '',
-  'export interface PrototypeProps {',
-  '  domElement: HTMLElement;',
-  '  domElementId: string;',
-  '  name: string;',
-  '  baseUrl?: string;',
-  '  apiBaseUrl?: string;',
-  '  embedded?: boolean;',
-  '  navigate?: (path: string) => void;',
-  '  [key: string]: unknown;',
-  '}',
-  'export interface PrototypeLifecycle {',
-  '  bootstrap: () => Promise<void>;',
-  '  mount: (props: PrototypeProps) => Promise<void>;',
-  '  unmount: (props: PrototypeProps) => Promise<void>;',
-  '}',
-  'export interface CreatePrototypeOptions {',
-  '  name: string;',
-  '  App: React.ComponentType<Record<string, unknown>>;',
-  '  renderApp?: (app: React.ReactElement, props: PrototypeProps) => React.ReactElement;',
-  '}',
-  '',
-  'export function createPrototypeLifecycle(opts: CreatePrototypeOptions): PrototypeLifecycle {',
-  '  const { name, App, renderApp } = opts;',
-  '  let root: Root | null = null;',
-  '  return {',
-  '    async bootstrap() { console.log(`[${name}:lifecycle] bootstrap`); },',
-  '    async mount(props: PrototypeProps) {',
-  '      if (typeof window !== "undefined") {',
-  '        (window as unknown as { __ALIOTH_APP_PROPS__?: PrototypeProps }).__ALIOTH_APP_PROPS__ = props;',
-  '      }',
-  '      console.log(`[${name}:lifecycle] mount`, props);',
-  '      const container = props.domElement;',
-  '      if (!container) throw new Error(`[${name}:lifecycle] No domElement provided`);',
-  '      container.classList.add(`mod-${name}`);',
-  '      if (!root) root = createRoot(container);',
-  '      const appElement = createElement(App);',
-  '      const wrapped = renderApp ? renderApp(appElement, props) : appElement;',
-  '      root.render(wrapped);',
-  '    },',
-  '    async unmount() {',
-  '      console.log(`[${name}:lifecycle] unmount`);',
-  '      if (root) {',
-  '        await new Promise<void>((resolve) => {',
-  '          setTimeout(() => { if (root) { root.unmount(); root = null; } resolve(); }, 0);',
-  '        });',
-  '      }',
-  '    },',
-  '  };',
-  '}',
+  "export * from '../../../../.agents/skills/alioth-design/references/blocks/_kit/lifecycle';",
   '',
 ].join('\n');
 
@@ -853,9 +803,34 @@ function walkAst(node, visitor) {
   }
 }
 
+/**
+ * 声明式共享入口解析：`export { default } from '<…>.agents/skills/alioth-design/references/blocks/<unit>/block'`
+ * ⇒ 返回被委托的实现文件绝对路径（找不到返回 null）。判定面 = 平台共享面限定路径，
+ * 避免把任意 re-export 误当共享入口。
+ */
+function resolveSharedBlockTarget(srcFile, content) {
+  var m = /export\s*\{\s*default\s*\}\s*from\s*['"]([^'"]+)['"]/.exec(content);
+  if (!m) return null;
+  if (m[1].indexOf('.agents/skills/alioth-design/references/blocks/') < 0) return null;
+  var base = resolve(dirname(srcFile), m[1]);
+  var candidates = [base + '.tsx', base + '.ts', base];
+  for (var i = 0; i < candidates.length; i++) {
+    if (existsSync(candidates[i])) return candidates[i];
+  }
+  return null;
+}
+
 function preCheckBlock(srcFile, blockId) {
   var content = readFileSync(srcFile, 'utf-8');
   var errors = [];
+  // 声明式共享入口（re-export 平台共享面实现：`.agents/skills/alioth-design/references/blocks/<unit>/`）
+  // ⇒ 契约检查落到**被委托的实现文件**上，而非入口文件。入口不承载实现（无 displayName 等），
+  // 直接检查入口会误判「缺 displayName」。单源不变量见 openspec/specs/ns-isolation。
+  var sharedTarget = resolveSharedBlockTarget(srcFile, content);
+  if (sharedTarget) {
+    srcFile = sharedTarget;
+    content = readFileSync(srcFile, 'utf-8');
+  }
   // 红线检测用 includes 字符串查找（参照 baseline-guard.ts），不使用正则
   if (content.includes('overflow-y-auto'))
     errors.push('Block root 含 overflow-y-auto（滚动视口应由 Module 提供）');
@@ -944,28 +919,35 @@ function preCheckModule(srcFile) {
         n.test.name === 'embedded'
       ) {
         var c = n.consequent;
-        embeddedBody = content.slice(c.start + 1, c.end - 1);
+        embeddedBody = content.slice(c.start, c.end);
       }
     });
   }
-  if (embeddedBody && embeddedBody.includes('<Footer'))
-    errors.push('embedded 分支含 Footer（契约禁止）');
   if (!content.includes('embedded')) errors.push('未定义 embedded 分支');
+  if (embeddedBody) {
+    // embedded 分支只允许页面直返（导航由 App 壳承载）
+    if (!embeddedBody.includes('return page'))
+      errors.push('embedded 分支 MUST 只返回页面内容（return page；导航由 App 壳承载）');
+    ['NavPills', 'IconRail', 'SecondaryNavColumn', '<Navigation', '<Footer'].forEach(function (sym) {
+      if (embeddedBody.includes(sym))
+        errors.push('embedded 分支含 ' + sym + '（契约禁止：导航/页脚归壳，Module 只出页面）');
+    });
+  }
   return errors;
 }
 
+// 契约（revise-app-prototype-nav-hosting，2026-10-05 用户裁决）：
+//   App 级原型的导航由 **App 自身的壳**承载（与生产同构：Gateway 壳渲染模块推送的导航槽）：
+//   App 持 navGroups/activeId/onSelect 交给 GatewayShell；MUST NOT 用 hideNavigation 关闭壳导航；
+//   被承载 Module 以 embedded 模式只渲染页面内容（导航组件归壳）。
 function preCheckApp(srcFile) {
   var content = readFileSync(srcFile, 'utf-8');
   var errors = [];
   // 红线检测用 includes 字符串查找（参照 baseline-guard.ts），不使用正则
-  if (content.includes('navGroups='))
-    errors.push('GatewayShell 调用传了 navGroups（契约要求 App 不代管导航）');
-  if (
-    !content.includes('hideNavigation') ||
-    !content.includes('hideFooter') ||
-    !content.includes('noContentScroll')
-  )
-    errors.push('缺少 TopBar-only 模式标志（hideNavigation/hideFooter/noContentScroll）');
+  if (!content.includes('navGroups='))
+    errors.push('App 未把 navGroups 交给 GatewayShell（契约要求由 App 壳承载导航，与生产同构）');
+  if (content.includes('hideNavigation'))
+    errors.push('App 传了 hideNavigation（契约要求壳渲染导航，MUST NOT 关闭壳导航）');
   if (!content.includes('embedded={true}') && !content.includes('embedded=true'))
     errors.push('ModuleLayout 未以 embedded 模式渲染');
   return errors;
@@ -1169,9 +1151,16 @@ async function buildBlock(blockDir, blockId, ns, ver) {
   try {
     var pvPath = join(blockDir, 'block.json');
     if (!existsSync(pvPath)) {
-      // Prototypes 目录无 block.json——回写 Sources 版本（block.json 唯一真相源在 Sources/Blocks/{id}/）
-      var srcPv = join(sourcesKindDir(ns, 'Blocks'), blockId, 'block.json');
-      if (existsSync(srcPv)) pvPath = srcPv;
+      // Prototypes 目录无 block.json——回写 Sources 侧（block.json 唯一真相源在 Sources/Blocks/{id}/）。
+      // 层级感知（布局契约 preproc-layout.mjs）：Gateway = Sources/Apps、OpenActivity = Sources/Open。
+      var isOpenTierB = blockDir.indexOf(join('Prototypes', 'Open')) >= 0;
+      var appsPvB = join(sourcesKindDir(ns, 'Blocks'), blockId, 'block.json');
+      var openPvB = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Open', 'Blocks', blockId, 'block.json');
+      var candidatesB = isOpenTierB ? [openPvB, appsPvB] : [appsPvB, openPvB];
+      var srcPv = candidatesB.find(function (p) {
+        return existsSync(p);
+      });
+      if (srcPv) pvPath = srcPv;
     }
     if (existsSync(pvPath)) {
       var pvJson = readJson(pvPath);
@@ -1262,9 +1251,17 @@ async function buildModule(moduleDir, moduleName, ns, sceneRefs) {
   try {
     var pvPath = join(moduleDir, 'module.json');
     if (!existsSync(pvPath)) {
-      // Prototypes 目录无 module.json——回写 Sources 版本（module.json 唯一真相源在 Sources/Modules/{id}/）
-      var srcPv = join(sourcesKindDir(ns, 'Modules'), moduleName, 'module.json');
-      if (existsSync(srcPv)) pvPath = srcPv;
+      // Prototypes 目录无 module.json——回写 Sources 侧（module.json 唯一真相源在 Sources/Modules/{id}/）。
+      // 层级感知（布局契约 preproc-layout.mjs）：Gateway = Sources/Apps、OpenActivity = Sources/Open；
+      // 按**原型自身所在层级**优先匹配，避免 Open 单元被写到 Apps 侧（或反之）。
+      var isOpenTier = moduleDir.indexOf(join('Prototypes', 'Open')) >= 0;
+      var appsPv = join(sourcesKindDir(ns, 'Modules'), moduleName, 'module.json');
+      var openPv = join(ROOT, 'Pre-Proc', ns, 'Sources', 'Open', 'Modules', moduleName, 'module.json');
+      var candidates = isOpenTier ? [openPv, appsPv] : [appsPv, openPv];
+      var srcPv = candidates.find(function (p) {
+        return existsSync(p);
+      });
+      if (srcPv) pvPath = srcPv;
     }
     if (existsSync(pvPath)) {
       var pvJson = readJson(pvPath);
@@ -1641,19 +1638,28 @@ async function cmdBuild(args) {
       var modVer = computeNextVersion(modDir, 'm');
       console.log('Build Module: ' + moduleName + ' (m-v' + modVer + ')');
       // Resolve sceneRefs from module.json so the HTML comment lists real blocks
-      var modJsonPath = join(sourcesKindDir(ns, 'Modules'), moduleName, 'module.json');
+      // module.json 定位：ns Sources 优先；**Open 门户模块**（`Prototypes/Open/Modules/{name}`）的契约
+      // 在 `Pre-Proc/{ns}/Open/Apps/{app}/Modules/{name}/module.json`（Sources 侧无镜像）——
+      // 缺失时 scenes 元数据解析为 `?`，Build Metadata 评分降级（2026-09-25 实证）。
+      var modJsonCandidates = [
+        join(sourcesKindDir(ns, 'Modules'), moduleName, 'module.json'),
+        ...globSync(join(ROOT, 'Pre-Proc', ns, 'Open', 'Apps', '*', 'Modules', moduleName, 'module.json')),
+      ];
       var modSceneRefs = '';
-      try {
-        var modJson = readJson(modJsonPath);
-        var modBlocks =
-          (modJson.blockAssembly && modJson.blockAssembly.blocks) || [];
-        modSceneRefs = modBlocks
-          .map(function (b) {
-            return b.id;
-          })
-          .join(',');
-      } catch (e) {
-        modSceneRefs = '';
+      for (const modJsonPath of modJsonCandidates) {
+        try {
+          var modJson = readJson(modJsonPath);
+          var modBlocks =
+            (modJson.blockAssembly && modJson.blockAssembly.blocks) || [];
+          modSceneRefs = modBlocks
+            .map(function (b) {
+              return b.id;
+            })
+            .join(',');
+          if (modSceneRefs) break;
+        } catch (e) {
+          // 候选不存在/不可解析 → 试下一个
+        }
       }
       await buildModule(modDir, moduleName, ns, modSceneRefs || '');
       var apps = findAppsByModule(ns, moduleName);
@@ -2410,6 +2416,9 @@ function cmdRefreshBaseCss(args) {
           newTrimmed.length +
           ' bytes)',
       );
+      // dry-run 亦须计数：末行汇总打印的正是 `stale`（与 overlay 刷新分支同款），
+      // 否则 `--dry-run` 恒报 `0 stale` 而逐行输出全为 STALE——判据自相矛盾。
+      changed++;
       continue;
     }
 
@@ -2733,6 +2742,24 @@ async function cmdRenderShell(args) {
   console.log('Rendered shell preview: ' + htmlPath);
 }
 
+/** design-tokens.css 的 `<link>` 标签删除（2026-07-07 并入 tailwind-utilities.css）。
+ *  标签边界用索引扫描定位——禁正则解析 HTML 标签（gate: no-regex-staged）。
+ *  返回 { html, removed }：未落在标签上下文（start/end 缺失）时保持原样，不误删。 */
+function stripDesignTokenLinks(html) {
+  var NEEDLE = 'href="design-tokens.css"';
+  var out = html;
+  var removed = 0;
+  var at;
+  while ((at = out.indexOf(NEEDLE)) !== -1) {
+    var start = out.lastIndexOf('<link', at);
+    var end = out.indexOf('>', at);
+    if (start === -1 || end === -1) break;
+    out = out.slice(0, start) + out.slice(end + 1);
+    removed++;
+  }
+  return { html: out, removed: removed };
+}
+
 function cmdMigrateVendorPaths(args) {
   var dryRun = args.indexOf('--dry') >= 0;
   var scanDir = args[0] && args[0] !== '--dry' ? join(ROOT, args[0]) : join(ROOT, 'Pre-Proc');
@@ -2743,7 +2770,6 @@ function cmdMigrateVendorPaths(args) {
   var oldSrcHref =
     /((?:\.\.\/)+)(Meta\/frontend\/public\/vendor\/|Framework\/frontend\/components\/src\/gate-layout\.css)/g;
   var oldComment = /Meta\/frontend\/public\/vendor\//g;
-  var oldDesignTokens = /<link[^>]*href="design-tokens\.css"[^>]*>/g;
   var needsMigration =
     /Meta\/frontend\/public\/vendor|Framework\/frontend\/components\/src\/gate-layout\.css|href="design-tokens\.css"/;
   var fileCount = 0,
@@ -2754,25 +2780,22 @@ function cmdMigrateVendorPaths(args) {
     if (!needsMigration.test(html)) continue;
     oldSrcHref.lastIndex = 0;
     oldComment.lastIndex = 0;
-    oldDesignTokens.lastIndex = 0;
     var prefix = relative(dirname(f), REFERENCES_DIR).split(sep).join('/') + '/';
     // design-tokens.css no longer exists (merged into tailwind-utilities.css 2026-07-07).
     // Migration: delete the <link> tag rather than rewrite its path.
-    var next = html
+    var stripped = stripDesignTokenLinks(html);
+    var next = stripped.html
       .replace(oldSrcHref, prefix + '$2')
-      .replace(oldComment, '.agents/skills/alioth-design/references/vendor/')
-      .replace(oldDesignTokens, '');
+      .replace(oldComment, '.agents/skills/alioth-design/references/vendor/');
     if (next !== html) {
       var diffs = 0;
       oldSrcHref.lastIndex = 0;
       oldComment.lastIndex = 0;
-      oldDesignTokens.lastIndex = 0;
       var m;
       while ((m = oldSrcHref.exec(html)) !== null) diffs++;
       oldComment.lastIndex = 0;
       while ((m = oldComment.exec(html)) !== null) diffs++;
-      oldDesignTokens.lastIndex = 0;
-      while ((m = oldDesignTokens.exec(html)) !== null) diffs++;
+      diffs += stripped.removed;
       fileCount++;
       matchCount += diffs;
       if (!dryRun) {

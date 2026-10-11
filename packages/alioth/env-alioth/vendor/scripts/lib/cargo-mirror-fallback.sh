@@ -34,6 +34,7 @@
 # 同名 + 同 URL 才被视为同一源，可被项目级正常覆盖。
 CARGO_MIRROR_CANDIDATES=(
     "mirror|sparse+http://mirror.isahl.com:6464/crates/|http://mirror.isahl.com:6464/crates/config.json"
+    "isahl-pub|sparse+http://isahl.com:6464/crates/|http://isahl.com:6464/crates/config.json"
     "aliyun-sparse|sparse+https://mirrors.aliyun.com/crates.io-index/|https://mirrors.aliyun.com/crates.io-index/config.json"
     "rsproxy-sparse|sparse+https://rsproxy.cn/index/|https://rsproxy.cn/index/config.json"
     "ustc-sparse|sparse+https://mirrors.ustc.edu.cn/crates.io-index/|https://mirrors.ustc.edu.cn/crates.io-index/config.json"

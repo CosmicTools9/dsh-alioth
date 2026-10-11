@@ -11,57 +11,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::{AssertSqlSafe, PgPool};
 
 use crate::auth::client_secret::hash_client_secret_async;
-use crate::auth::jwt::validate_access_token;
 use crate::auth::AuthState;
+// admin 判据单一实现：复用 SSO 管理面共享门（`crate::admin::handlers::require_admin`，
+// 内部走 `common::permissions::is_admin_user`）——本文件此前自持第 2 份副本
+// （consolidate-ngac-admin-predicate 收敛后删除）。
+use crate::admin::handlers::require_admin;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-async fn require_admin(
-    req: &HttpRequest,
-    pool: &PgPool,
-    auth_state: &AuthState,
-) -> Result<i64, HttpResponse> {
-    let claims = validate_access_token(req, &auth_state.verification_keys())
-        .await
-        .map_err(|e| {
-            log::error!("Admin auth: token validation failed: {}", e);
-            HttpResponse::Unauthorized()
-                .json(serde_json::json!({"error": "Invalid or missing authentication token"}))
-        })?;
-
-    let user_id: i64 = claims.sub.parse().map_err(|_| {
-        HttpResponse::Unauthorized()
-            .json(serde_json::json!({"error": "Invalid user ID in token claims"}))
-    })?;
-
-    let is_admin: bool = sqlx::query_scalar(
-        r#"
-        SELECT EXISTS(
-            SELECT 1
-            FROM isahl_auth.ngac_user_rr_attribute ur
-            JOIN isahl_auth.ngac_user_attribute ua ON ua.id = ur.fk_user_attribute
-            WHERE ur.fk_user = $1
-              AND ua.o_name = 'admin'
-              AND ur.deleted_at IS NULL
-        )
-        "#,
-    )
-    .bind(user_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| {
-        HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": format!("Database error: {}", e)
-        }))
-    })?;
-
-    if !is_admin {
-        return Err(HttpResponse::Forbidden()
-            .json(serde_json::json!({"error": "Admin privilege required"})));
-    }
-
-    Ok(user_id)
-}
 
 fn generate_client_secret() -> String {
     uuid::Uuid::new_v4().to_string()

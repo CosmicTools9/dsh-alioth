@@ -172,21 +172,19 @@ async fn sla_timeout_auto_rejects_registration_and_disables_user() {
         .await
         .expect("grant system user approval access");
 
-    // 注册用户（applicant）：status=pending_approval（用户名/email 随机后缀，
-    // 防跨运行残留撞 auth_users 唯一键——测试库不清库重跑需幂等）
+    // 注册用户（applicant）：status=pending_approval（用户名随机后缀，
+    // 防跨运行残留撞 username 唯一键——测试库不清库重跑需幂等）
     let suffix = test_code("sla");
     let applicant_name = format!("sla-applicant-{suffix}");
-    let applicant_email = format!("{applicant_name}@test.local");
     let applicant_id: i64 = sqlx::query_scalar(
         r#"INSERT INTO isahl_auth.auth_users
-           (id, name, username, email, user_type, status, is_active, created_at, updated_at,
+           (id, username, user_type, status, is_active, created_at, updated_at,
             failed_login_attempts, notification_preferences)
-           VALUES (isahl.gen_next_zuid(), $1, $1, $2, 'standard', 'pending_approval', TRUE,
+           VALUES (isahl.gen_next_zuid(), $1, 'standard', 'pending_approval', TRUE,
                    NOW(), NOW(), 0, '{}'::jsonb)
            RETURNING id"#,
     )
     .bind(&applicant_name)
-    .bind(&applicant_email)
     .fetch_one(&pool)
     .await
     .unwrap();
@@ -230,7 +228,7 @@ async fn sla_timeout_auto_rejects_registration_and_disables_user() {
     // 断言 1（remove-comments-json-embedding 降级）：applicant_id 不再从 comments
     // JSON 提取——注册用户状态保持 pending_approval（不再自动置 rejected）
     let status: String =
-        sqlx::query_scalar("SELECT status FROM isahl_auth.auth_users WHERE id = $1")
+        sqlx::query_scalar("SELECT status::text FROM isahl_auth.auth_users WHERE id = $1")
             .bind(applicant_id)
             .fetch_one(&pool)
             .await

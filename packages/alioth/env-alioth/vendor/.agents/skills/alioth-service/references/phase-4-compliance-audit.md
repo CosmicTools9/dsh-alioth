@@ -14,7 +14,7 @@ bun scripts/check/audit-service-spec.ts --ns "$NS"
 bun scripts/check/audit-service-spec.ts --ns "$NS" --factor "$SERVICE_ID"
 ```
 
-**服务发现**：`Pre-Proc/{ns}/Sources/Apps/Services` 优先、扁平 `Sources/Services` 回退（`scripts/lib/preproc-layout.mjs`）。**零发现不得空通过**：候选根下存在 `service.json` 却未发现可审计单元（缺 `backend/src`）→ 退出码 1 并列出候选根。
+**服务发现**：`Pre-Proc/{ns}/Sources/Apps/Services` 优先、扁平 `Sources/Apps/Services` 回退（`scripts/lib/preproc-layout.mjs`）。**零发现不得空通过**：候选根下存在 `service.json` 却未发现可审计单元（缺 `backend/src`）→ 退出码 1 并列出候选根。
 
 **退出码**：`0` = 全部通过（或该范围内确实无 Service 单元）；`1` = 存在违规或发现失败。
 
@@ -35,7 +35,7 @@ bun scripts/check/audit-service-spec.ts --ns "$NS" --factor "$SERVICE_ID"
 - DTO 命名（`XxxDetail`/`XxxSummary`，禁 `XxxResponse`）、语义分组 → Phase 2 DTO 设计；
 - `qk_*` 标量引用在 DTO 中使用结构化类型（`ScalarPriceValue` 等，非裸 `i64`）→ Phase 2（`DTO_DESIGN_SPEC` §6/§8）；
 - 标量解析使用 `resolve_many(&[...])` 批量查询 → Phase 0 批量标量检查 + Phase 2 实现（`DTO_DESIGN_SPEC` §8）；
-- `dtoDependencies` 同 namespace 一致性与依赖拓扑无环 → `scripts/check/check-service-dag.ts`（pre-commit 已接入）+ Phase 1-2.5 命名空间校验；
+- `dtoDependencies` 同 namespace 一致性与依赖拓扑无环 → `scripts/check/check-service-dag.ts`（push `repo-wide-gates` 逐 NS 已接入）+ Phase 1-2.5 命名空间校验；
 - Block 前端禁 DB 列名 → Phase 3 3-4。
 
 ### 4-2: 审计报告

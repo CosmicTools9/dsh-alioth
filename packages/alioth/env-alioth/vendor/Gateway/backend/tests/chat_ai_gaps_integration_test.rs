@@ -7,7 +7,7 @@
 //! - C8 动作审计落库：GatewayActionHandler（工具路径真实执行点）执行动作后
 //!   isahl_audit.audit_events 含 operation=chat_ai.action.execute 记录——
 //!   成功 Permit（metadata action_type/target_count/confirmed:false）、
-//!   失败 Deny（metadata.error）；user_email 自 auth_users 解析
+//!   失败 Deny（metadata.error）；user_email 自属主主邮箱（auth_user_emails）解析
 //!
 //! 使用 aliothstudio_test 库；审计 user_id 须为正（record_audit_event 校验），
 //! 自建正 ID 用户 + 负 ID 会话属主，用例自清。
@@ -40,20 +40,32 @@ async fn ensure_registry(pool: &sqlx::PgPool) {
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-/// 建正 ID 审计用户（auth_users.email 供 resolve_user_email 解析）
+/// 建正 ID 审计用户（主邮箱落 `auth_user_emails`，供 resolve_user_email 解析）
 async fn ensure_audit_user(pool: &sqlx::PgPool, uid: i64) {
     sqlx::query(
-        r#"INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, 'active', true, NOW(), NOW())
-           ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, is_active = true"#,
+        r#"INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+           VALUES ($1, $2, 'active', true, NOW(), NOW())
+           ON CONFLICT (id) DO UPDATE SET is_active = true"#,
     )
     .bind(uid)
-    .bind(format!("Audit User {}", uid))
     .bind(format!("audit_{}", uid))
-    .bind(format!("audit_{}@test.local", uid))
     .execute(pool)
     .await
     .expect("insert audit user");
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(uid)
+        .execute(pool)
+        .await
+        .expect("reset audit user email");
+    sqlx::query(
+        r#"INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary)
+           VALUES ($1, $2, TRUE)"#,
+    )
+    .bind(uid)
+    .bind(format!("audit_{}@test.local", uid))
+    .execute(pool)
+    .await
+    .expect("insert audit user email");
 }
 
 /// 清理：审计行 → 站内信 → 会话 → 用户（FK 顺序）
@@ -73,6 +85,11 @@ async fn cleanup(pool: &sqlx::PgPool, audit_uid: i64, owner: i64, session_ids: &
         .ok();
     sqlx::query(r#"DELETE FROM isahl."zc_id_thre-ai_session" WHERE id = ANY($1)"#)
         .bind(session_ids)
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(audit_uid)
         .execute(pool)
         .await
         .ok();
@@ -113,6 +130,7 @@ async fn handler_execute(
         db_pool: pool.clone(),
         allowed_schemas: vec![],
         action_handler: None,
+        form_contract: None,
     };
     handler.execute(action_type, &[], &params, &ctx).await
 }
@@ -246,7 +264,7 @@ async fn action_execution_audits_permit_with_metadata() {
     assert_eq!(
         email,
         format!("audit_{}@test.local", audit_uid),
-        "auth_users email 解析"
+        "主邮箱（auth_user_emails）解析"
     );
     assert_eq!(metadata["action_type"], "send_notification");
     assert_eq!(metadata["target_count"], 0);

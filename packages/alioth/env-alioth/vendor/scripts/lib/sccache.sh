@@ -19,7 +19,7 @@
 #   ④ 未安装                  → 报告未接线与启用方式，返回 0（fail-soft：缓存降级 ≠ 构建降级）
 #
 # 为什么 SCCACHE_BASEDIR = 仓库根：本仓编译发生在多个互不相同的绝对 cwd（`Gateway/backend`、
-# `Meta/backend`、`Deploy/{ns}`、`/tmp/alioth-*`）；sccache 默认把绝对路径纳入 hash ⇒ 同一份源码
+# `Meta/backend`、`Deploy/{ns}`、`<仓父目录>/.tmp/alioth-*`）；sccache 默认把绝对路径纳入 hash ⇒ 同一份源码
 # 在不同 target 目录下无法命中。设置 BASEDIR 后 base 内路径归一为相对路径，使**跨 target 目录 /
 # 跨 namespace / 跨 worktree** 的同一编译单元命中同一缓存项（这是本接线的核心收益）。
 #
@@ -68,7 +68,10 @@ sccache_enable_if_available() {
     root="$(cd "${BASH_SOURCE[0]%/*}/../.." 2>/dev/null && pwd)" || root=""
     export RUSTC_WRAPPER="sccache"
     [ -n "${root}" ] && export SCCACHE_BASEDIR="${SCCACHE_BASEDIR:-${root}}"
-    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-20G}"
+    # 缺省上限显式 2G（原 20G）：磁盘是硬约束（2026-10-01 盒实证 91%），sccache 无上限增长
+    # 是主要吞盘面之一。change enforce-deploy-surface-convergence :: deploy-artifact-recycling-and-disk-threshold。
+    # 覆写：SCCACHE_CACHE_SIZE=<n>（如 10G）。
+    export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-2G}"
     # 缓存面 IO 异常不得升级为构建失败（server 不可写/网络盘抖动时降级为直连编译）
     export SCCACHE_IGNORE_SERVER_IO_ERROR="${SCCACHE_IGNORE_SERVER_IO_ERROR:-1}"
     _sccache_reported=1

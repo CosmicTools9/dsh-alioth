@@ -409,7 +409,8 @@ pub struct LdapUserInfo {
     pub email: Option<String>,
     pub display_name: Option<String>,
     pub groups: Vec<String>,
-    pub is_ldap_user: bool,
+    /// LDAP 绑定（`{"dn": …}`，判据 `auth_users.ldap IS NOT NULL`；LDAP 登录响应恒非空）
+    pub ldap: Option<serde_json::Value>,
 }
 
 /// LDAP 配置响应 (隐藏敏感信息)
@@ -588,16 +589,18 @@ pub async fn ldap_login(
             email: ldap_user.email.clone(),
             display_name: ldap_user.display_name.clone(),
             groups: ldap_user.groups.clone(),
-            is_ldap_user: true,
+            ldap: Some(serde_json::json!({ "dn": ldap_user.dn.clone() })),
         },
     });
 
-    set_refresh_cookie(
+    let response = set_refresh_cookie(
         response,
         &refresh_token,
         state.jwt_refresh_expiry_secs,
         None,
-    )
+    );
+    // 会话自举同批签发 CSRF（scope 命名 = 请求头 x-auth-cookie-scope，与令牌同规则）
+    super::jwt::attach_csrf_cookie(response, common::csrf::cookie_scope(&req).as_deref())
 }
 
 /// 获取 LDAP 配置列表 (Admin only)
@@ -734,58 +737,66 @@ async fn load_ldap_configs_safe(pool: &PgPool) -> Result<Vec<LdapConfigResponse>
 async fn sync_ldap_user(pool: &PgPool, ldap_user: &LdapUser) -> Result<i64, sqlx::Error> {
     use sqlx::Row;
 
-    // 首先检查用户是否已存在
+    // 首先检查用户是否已存在（LDAP 绑定判据 = `ldap IS NOT NULL`）
     let existing_id: Option<i64> = sqlx::query_scalar(
         r#"
         SELECT id FROM isahl_auth.auth_users 
-        WHERE username = $1 AND is_ldap_user = true
+        WHERE username = $1 AND ldap IS NOT NULL
         "#,
     )
     .bind(&ldap_user.username)
     .fetch_optional(pool)
     .await?;
 
-    if let Some(id) = existing_id {
-        // 更新现有用户
+    let id = if let Some(id) = existing_id {
+        // 更新现有用户（LDAP 绑定 = 单列 jsonb `{"dn": …}`）
         sqlx::query(
             r#"
             UPDATE isahl_auth.auth_users 
-            SET email = $1, display_name = $2, ldap_dn = $3, updated_at = NOW()
-            WHERE id = $4
+            SET display_name = $1, ldap = jsonb_build_object('dn', $2), updated_at = NOW()
+            WHERE id = $3
             "#,
         )
-        .bind(&ldap_user.email)
         .bind(&ldap_user.display_name)
         .bind(&ldap_user.dn)
         .bind(id)
         .execute(pool)
         .await?;
 
-        Ok(id)
+        id
     } else {
-        // 创建新用户
+        // 创建新用户（username 为唯一幂等锚点；id 由表默认 gen_next_zuid 生成）
         let row = sqlx::query(
             r#"
             INSERT INTO isahl_auth.auth_users (
-                id, name, username, email, display_name, 
-                is_ldap_user, ldap_dn, created_at, updated_at
+                username, display_name, ldap, created_at, updated_at
             )
-            VALUES (
-                isahl.gen_next_zuid(), $1, $1, $2, $3, true, $4, NOW(), NOW()
-            )
+            VALUES ($1, $2, jsonb_build_object('dn', $3), NOW(), NOW())
             RETURNING id
             "#,
         )
         .bind(&ldap_user.username)
-        .bind(&ldap_user.email)
         .bind(&ldap_user.display_name)
         .bind(&ldap_user.dn)
         .fetch_one(pool)
         .await?;
 
-        let id: i64 = row.try_get(0)?;
-        Ok(id)
+        row.try_get(0)?
+    };
+
+    // LDAP 邮箱落 auth_user_emails（唯一存储；账号内 (fk_user, email) 幂等）
+    if let Some(email) = ldap_user.email.as_deref() {
+        sqlx::query(
+            "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+             VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .bind(email)
+        .execute(pool)
+        .await?;
     }
+
+    Ok(id)
 }
 
 /// 同步 LDAP 组到 NGAC 用户属性

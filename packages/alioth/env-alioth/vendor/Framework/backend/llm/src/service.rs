@@ -47,6 +47,24 @@ impl LlmService {
         })
     }
 
+    /// 可替身构造（公开 seam）：直接注入 primary / vision backend——跳过 provider/env 构建。
+    ///
+    /// 用途：外部 crate（Gateway chat_sessions、AppAgent、视觉链收敛面）在测试或嵌套装配中
+    /// 构造可替换实现——复用既有 [`LlmBackend`] 端口，不引入第二抽象；生产构造仍走
+    /// [`LlmService::new`]（本构造不读 env、不建网络客户端）。`vision_backend=None` 时
+    /// `inspect_image` 回落主 backend（既有语义）。
+    pub fn from_backends(
+        backend: Box<dyn LlmBackend>,
+        config: LlmServiceConfig,
+        vision_backend: Option<Box<dyn LlmBackend>>,
+    ) -> Self {
+        Self {
+            backend,
+            config,
+            vision_backend,
+        }
+    }
+
     /// 独立视觉后端：LLM_VISION_PROVIDER / LLM_VISION_API_KEY / LLM_VISION_BASE_URL /
     /// LLM_MODEL_VISION（缺省跟随主 provider / 主 key / provider 默认地址 / flash 档）。
     /// API key 全缺时返回 None（inspect_image 回退主 backend）。
@@ -959,11 +977,7 @@ mod tests {
             generation_params: crate::types::GenerationParams::default(),
             roles: std::collections::HashMap::new(),
         };
-        LlmService {
-            backend: Box::new(backend),
-            config,
-            vision_backend: None,
-        }
+        LlmService::from_backends(Box::new(backend), config, None)
     }
 
     fn tool_def() -> ToolDefinition {

@@ -75,20 +75,29 @@ async fn ensure_ngac(pool: &PgPool) {
 }
 
 async fn ensure_admin(pool: &PgPool) -> i64 {
+    // 唯一身份基点 = username；email 唯一存储 = auth_user_emails（name/email 冗余列已下线）
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'admin_cov', 'admin_cov', 'admin_cov@test.local', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'admin_cov', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(pool)
     .await
     .ok();
     let admin: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'admin_cov@test.local' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'admin_cov' LIMIT 1",
     )
     .fetch_one(pool)
     .await
     .expect("admin user");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'admin_cov@test.local', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(admin)
+    .execute(pool)
+    .await
+    .ok();
     // policy class id 动态查询（o_name='default'），不可硬编码 1
     let pc_id: i64 = sqlx::query_scalar(
         "SELECT id FROM isahl_auth.ngac_policy_class WHERE o_name = 'default' LIMIT 1",
@@ -152,11 +161,14 @@ async fn api_key_create_and_authenticate() {
     let create = test::TestRequest::post()
         .uri("/api/admin/api-clients")
         .insert_header(("Authorization", hdr.clone()))
-        .set_json(json!({"client_type": "apikey", "client_name": "ci-bot", "scopes": ["read"]}))
+        .set_json(
+            json!({"client_type": "apikey", "client_name": "ci-bot", "scopes": ["read:units"]}),
+        )
         .to_request();
     let resp = test::call_service(&app, create).await;
-    assert_eq!(resp.status().as_u16(), 201, "create api key");
+    let status = resp.status().as_u16();
     let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(status, 201, "create api key: {body:?}");
     let raw_key = body["secret"]
         .as_str()
         .expect("secret returned")
@@ -189,19 +201,37 @@ async fn api_key_create_and_authenticate() {
     let resp = test::call_service(&app, bad).await;
     assert_eq!(resp.status().as_u16(), 401, "invalid api key rejected");
 
-    // 清理
-    sqlx::query("DELETE FROM isahl_auth.api_keys WHERE id = $1")
+    // 清理：client 行（旧独立 API Key 表已随统一注册表退役——原 DELETE 指向退役表，
+    // 其 42P01 被 `.ok()` 吞掉）+ 其服务用户（摘掉外键后删除）
+    let svc_user: Option<i64> =
+        sqlx::query_scalar("SELECT fk_service_user FROM isahl_auth.api_clients WHERE id = $1")
+            .bind(key_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(None);
+    sqlx::query("DELETE FROM isahl_auth.api_clients WHERE id = $1")
         .bind(key_id)
         .execute(&pool)
         .await
         .ok();
+    if let Some(uid) = svc_user {
+        sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
+            .bind(uid)
+            .execute(&pool)
+            .await
+            .ok();
+    }
     // 清理：只删本测试创建的用户与其 UA 绑定（禁止全表 DELETE——会删掉 seed UA/关联）
     sqlx::query("DELETE FROM isahl_auth.ngac_user_rr_attribute WHERE fk_user = $1")
         .bind(admin)
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE email = 'admin_cov@test.local'")
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE email = 'admin_cov@test.local'")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM isahl_auth.auth_users WHERE username = 'admin_cov'")
         .execute(&pool)
         .await
         .ok();
@@ -217,25 +247,35 @@ async fn mfa_init_and_status() {
     let ast = test_auth_state();
 
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), 'mfa_user', 'mfa_user@alioth.test', 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), 'mfa_user', 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'mfa_user@alioth.test' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'mfa_user' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'mfa_user@alioth.test', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
 
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
-            .configure(gateway_sso::auth::mfa_management::configure_routes),
+            .service(
+                web::scope("/auth").configure(gateway_sso::auth::mfa_management::configure_routes),
+            ),
     )
     .await;
 
@@ -278,6 +318,12 @@ async fn mfa_init_and_status() {
     let body: serde_json::Value = test::read_body_json(resp).await;
     assert_eq!(body["has_secret"], json!(true), "has_secret after init");
 
+    // 子行（邮箱）先行——auth_user_emails 入边 FK 无 ON DELETE CASCADE
+    sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = $1")
         .bind(user_id)
         .execute(&pool)
@@ -332,19 +378,27 @@ async fn token_introspect_active_and_inactive() {
     let ast = test_auth_state();
 
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, username, email, status, is_active, created_at, updated_at) \
-         VALUES (isahl.gen_next_zuid(), 'introspect_user', 'introspect_user', 'introspect@test.local', 'active', true, NOW(), NOW()) \
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at) \
+         VALUES (isahl.gen_next_zuid(), 'introspect_user', 'active', true, NOW(), NOW()) \
+         ON CONFLICT (username) DO NOTHING",
     )
     .execute(&pool)
     .await
     .ok();
     let user_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.auth_users WHERE email = 'introspect@test.local' LIMIT 1",
+        "SELECT id FROM isahl_auth.auth_users WHERE username = 'introspect_user' LIMIT 1",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, 'introspect@test.local', TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .ok();
 
     let app = test::init_service(
         App::new()
@@ -419,4 +473,72 @@ async fn ldap_configs_list() {
         body.as_array().is_some() || body.get("configs").is_some() || !body.is_null(),
         "ldap configs response should be a list or object"
     );
+}
+
+/// 两个公开路由面（`/auth/*` 与 `/api/auth/*`）MUST 暴露**同一路由集**
+/// （change `unify-sso-auth-route-faces`；判据正本 = 能力 `sso-auth-route-face-parity`）。
+///
+/// 判据：对每个面内路径，两前缀各自的响应 MUST NOT 是 404（404 = 该面缺挂载），
+/// 且两前缀状态码 MUST 相同（同挂载 ⇒ 同 handler ⇒ 同鉴权面）。
+/// 历史分歧两例：webauthn 六路由（change `wire-sso-webauthn-passkey`）、
+/// `/introspect` + `/token`（zchat client_credentials）+ `/authenticate`（api key）（本 change）。
+/// 挂载形态与生产同构（`Gateway/host/src/main.rs` 也是「绝对面 + `/api/auth` 别名面」）。
+#[actix_web::test]
+async fn public_route_faces_expose_same_route_set() {
+    let pool = connect().await;
+    common::setup_schema(&pool).await.expect("schema");
+    let ast = test_auth_state();
+
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(ast.clone()))
+            .configure(gateway_sso::configure_public_routes)
+            .service(
+                web::scope("/api/auth")
+                    .configure(gateway_sso::configure_public_routes_without_scope),
+            ),
+    )
+    .await;
+
+    // (method, 面内相对路径)——含两个历史分歧族的成员
+    let cases: [(&str, &str); 7] = [
+        ("POST", "/introspect"),
+        ("POST", "/token"),
+        ("POST", "/authenticate"),
+        ("POST", "/webauthn/login/begin"),
+        ("POST", "/login"),
+        ("GET", "/me"),
+        ("GET", "/mode"),
+    ];
+
+    for (method, rel) in cases {
+        let mut st: Vec<(&str, u16)> = Vec::new();
+        for prefix in ["/auth", "/api/auth"] {
+            let uri = format!("{prefix}{rel}");
+            let req = if method == "GET" {
+                test::TestRequest::get().uri(&uri).to_request()
+            } else {
+                test::TestRequest::post().uri(&uri).to_request()
+            };
+            st.push((
+                prefix,
+                test::call_service(&app, req).await.status().as_u16(),
+            ));
+        }
+        let st_face = st[0].1;
+        let st_alias = st[1].1;
+        assert_ne!(
+            st_face, 404,
+            "{method} /auth{rel} 未路由（404 = 该面缺挂载）"
+        );
+        assert_ne!(
+            st_alias, 404,
+            "{method} /api/auth{rel} 未路由（404 = 别名面缺挂载；remote 形态只可达本前缀）"
+        );
+        assert_eq!(
+            st_face, st_alias,
+            "两面状态码分歧（{method} {rel}）：/auth={st_face} vs /api/auth={st_alias}"
+        );
+    }
 }

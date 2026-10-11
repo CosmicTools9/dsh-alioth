@@ -1,6 +1,6 @@
 name: alioth-block
 description: "Block Capability 原型设计与前端实现 — 提取 → 原型 → 实现"
-version: "2.3"
+version: "2.5"
 default_tools: [todo]
 reference_paths:
   - ".agents/skills/alioth-design/references/gateway-shell.tsx"
@@ -12,7 +12,7 @@ tracks:
   - name: Block 原型
     steps:
       - id: "1.1"
-        instruction: "Track 0 — Block 骨架确认：block.json 已由 BlockCreation 脚手架创建（Pre-Proc/{ns}/Sources/Apps/Blocks/{block}/block.json，含扁平顶层字段 id/namespace/name/version/services/prototypeVersion/sharing/block/coordinates，符合 BLOCK_SCHEMA 规范），门禁将按 check-config-json.mjs 校验（block required = id/namespace/name/version 字符串 + services 数组）。禁止把 block.json 重构为 schema/metadata 嵌套格式（实测 LLM 自造 {schema, metadata:{ns}} 结构导致 5 次门禁失败）；禁止整体重写 block.json 丢字段（实测 5 次重试不收敛）。仅当 read_file 确认顶层缺必填字段时补写——优先 patch_file 增量补字段（保留全部既有字段），全量重写仅作兜底。其余骨架文件无需创建。"
+        instruction: "Track 0 — Block 骨架确认：block.json 已由 BlockCreation 脚手架创建（Pre-Proc/{ns}/Sources/Apps/Blocks/{block}/block.json，含扁平顶层字段 id/namespace/name/version/services/prototypeVersion/sharing/block/coordinates，符合 BLOCK_SCHEMA 规范），门禁将按 check-config-json.mjs 校验（block required = id/namespace/name/version 字符串 + services 数组）。禁止把 block.json 重构为 schema/metadata 嵌套格式（实测 LLM 自造 {schema, metadata:{ns}} 结构导致 5 次门禁失败）；禁止整体重写 block.json 丢字段（实测 5 次重试不收敛）。仅当 read_file 确认顶层缺必填字段时补写——优先 patch_file 增量补字段（保留全部既有字段），全量重写仅作兜底。其余骨架文件无需创建。实现前 MUST 先判块粒度与视图轴（四条判据见 .agents/skills/alioth-block/SKILL.md §判断准则 + docs/specs/BLOCK_SCHEMA.md §7：块=业务域×操作闭环，MUST NOT 单页/单视图建块；视图轴 MUST 为筛选 pill（≤5）/filter-bar，MUST NOT 路由化；合并块 coordinates 原样继承主视图成员、services/flows 取并集；app.json#config.blocks 只声明独立块）。"
         tools: [read_file, write_file, search_files, code_intel, patch_file, file_diff]
         schema: {type: object, required: [module_id, block_ids]}
         gates:
@@ -53,5 +53,21 @@ tracks:
             args: ["scripts/check/check-prototype-render.ts", "--changed", "--fail"]
             timeout_sec: 300
 source:
-  content_sha256: e2a6f8b3357718171d72f5b01777225088d2f5d48a3bf2dec994dc930b1ffae5
+  content_sha256: 19a389d68e2e3736b423b795b305880d9ad16343d10ff8c620fd1759b25f5621
+  # 2026-10-11 重记：SKILL.md 入口预检写实（preflight.md / preflight-track.sh 已退役 ⇒ 改指
+  #   ontology-mapping prototype-check / prototype-tool.js check）+ §8.2 审计工具能力写实
+  #   ——change harden-skill-substrate；按统一规则 version 2.4 → 2.5
+  # ⚠️ 2026-10-11 统一规则（用户裁决）：**任何 SKILL.md 内容变更 MUST 递增 version（主.次）+ 重记
+  #   content_sha256**。本块下方旧注记里的「typed Track/Step/gate 内容未变 ⇒ version 不 bump」
+  #   属历史实践，已被该统一规则取代（判据正本 = 托管技能 design-removal-doc-sweep 步骤 6）。
+  # 2026-10-05 重记：SKILL.md 登记链改 ns 仓自持安装面（ns-frontend-workspace.ts sync --write + ns 仓根 install）——migrate-dev-selfheal-to-ns-store
+  # 2026-10-04 重记：SKILL.md 第 568 行「提取 i18n locale」命令的脚本路径重指 `scripts/i18n/`
+  #   （删 alioth-i18n 技能的迁移副产物）；typed Track/Step/gate 内容未变 ⇒ version 不 bump
+  # 2026-10-03 重记：SKILL.md 「app.json 声明面」条改为**归属同步面**口径（MUST 列全归属块，独立块 MAY）
+  #   并给「粒度先判」条补跨 ownerModule 的收敛判据（随 L2 change align-block-declaration-and-domain-merge；
+  #   typed Track/Step/gate 内容未变 ⇒ version 不 bump）
+  # 2026-10-02 重记：SKILL.md 增「App 归属与前端成员登记」段（align-agent-surfaces-with-frontend-isolation）；
+  #   typed Track/Step/gate 内容未变（散文不复制，指针化）
   # 2026-09-24 重记：SKILL.md 经 ee2bf5b72a 禁令文本指针化，typed Track/Step/gate 内容未变（join-loop 收尾核验）
+  # 2026-09-29 重记：SKILL.md 经 7f98869151 增「块粒度/视图轴/合并块继承/app.json 声明面」四条 MUST，
+  #   step 1.1 instruction 同步加指针（散文不复制），version 2.3 → 2.4

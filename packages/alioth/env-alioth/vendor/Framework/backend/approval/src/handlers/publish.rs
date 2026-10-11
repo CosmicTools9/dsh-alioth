@@ -682,7 +682,6 @@ pub(crate) async fn materialize_graph(
     .await
     .map_err(|e| ApiError::Database(format!("retire old loop formulas: {}", e)))?;
     // 3. 遍历图节点，创建 even-approve 行
-    // 3. 遍历图节点，创建 even-approve 行
     let mut graph_to_db: HashMap<String, i64> = HashMap::new();
     let mut node_map: Vec<Value> = Vec::with_capacity(nodes.len());
     // 版本图快照载体（D6）：挂本批首个 even-approve 节点（终端节点语义修正后
@@ -962,7 +961,7 @@ pub(crate) async fn materialize_graph(
                     let users: Vec<i64> = if kind != "role" {
                         sqlx::query_scalar(
                             r#"SELECT u.id FROM isahl_auth.auth_users u
-                               WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.name = $1)
+                               WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.display_name = $1)
                                LIMIT 50"#,
                         )
                         .bind(id)
@@ -1911,7 +1910,7 @@ pub(crate) async fn materialize_graph(
                         let users: Vec<i64> = if kind != "role" {
                             sqlx::query_scalar(
                                 r#"SELECT u.id FROM isahl_auth.auth_users u
-                                   WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.name = $1)
+                                   WHERE u.is_active = TRUE AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e WHERE e.deleted_at IS NULL AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1)) OR u.username = $1 OR u.display_name = $1)
                                    LIMIT 50"#,
                             )
                             .bind(id)
@@ -2085,7 +2084,7 @@ async fn resolve_approver_positions(
                      AND (u.id IN (SELECT e.fk_user FROM isahl."zc_id_subj-employee" e
                                    WHERE e.deleted_at IS NULL
                                      AND (e.id::text = $1 OR e.notice = $1 OR e.code = $1))
-                          OR u.username = $1 OR u.name = $1)
+                          OR u.username = $1 OR u.display_name = $1)
                )
                SELECT DISTINCT inc.pos_id FROM acc JOIN ("#,
             common::position_incumbent_accounts_sql!(),

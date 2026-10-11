@@ -246,79 +246,136 @@ pub async fn check_and_reject_with(
     .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
 
     for (id,) in &overdue {
-        let fk: Option<i64> = sqlx::query_scalar(
-            r#"SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe
+        // 实例级互斥（fix-approval-error-branch-integrity）：并发轮询者（多进程/
+        // 并发调用者）对同一 overdue 实例 MUST 串行——幂等此前只依赖「上一轮已写
+        // 终态桥」这一跨轮事实，并发窗口内各轮询者会各写一条驳回意见（实测 3 条
+        // vs 期望 1）。取不到锁 = 另一轮询者正在处理该实例 → 跳过；处理完（含失败）
+        // 必解锁。
+        let Some(mut guard) = try_lock_instance(pool, *id).await? else {
+            common::telemetry::info!("SLA scan: instance {} 正被另一轮询者处理——跳过", id);
+            continue;
+        };
+        let result = process_overdue_instance(pool, bus, messaging, *id).await;
+        if let Err(e) = unlock_instance(&mut guard, *id).await {
+            common::telemetry::warn!("SLA scan: advisory unlock failed (instance {}): {}", id, e);
+        }
+        result?;
+    }
+
+    Ok(())
+}
+
+/// 取该实例的轮询互斥锁（专用连接持有；取不到返回 None 并归还连接）
+async fn try_lock_instance(
+    pool: &PgPool,
+    instance_id: i64,
+) -> Result<
+    Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    let mut conn = pool.acquire().await?;
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1::bigint)")
+        .bind(instance_id)
+        .fetch_one(&mut *conn)
+        .await?;
+    if locked {
+        Ok(Some(conn))
+    } else {
+        Ok(None)
+    }
+}
+
+/// 释放轮询互斥锁（MUST 在同一连接上解锁——advisory lock 归会话所有）
+async fn unlock_instance(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
+    instance_id: i64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    sqlx::query("SELECT pg_advisory_unlock($1::bigint)")
+        .bind(instance_id)
+        .fetch_one(&mut **conn)
+        .await?;
+    Ok(())
+}
+
+/// 单个 overdue 实例的自动驳回处理（原循环体；调用方持该实例的轮询互斥锁）
+async fn process_overdue_instance(
+    pool: &PgPool,
+    bus: &Arc<dyn DomainEventBus>,
+    messaging: Option<&Arc<dyn common::messaging::MessagingService>>,
+    id: i64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let fk: Option<i64> = sqlx::query_scalar(
+        r#"SELECT oe.ref_right FROM isahl.zc_id_operation_rr_event oe
                WHERE oe.ref_left = $1 AND oe.deleted_at IS NULL
                ORDER BY oe.created_at LIMIT 1"#,
-        )
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
-        .flatten();
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?
+    .flatten();
 
-        // NGAC 授权：系统身份校验写权限（显式授权，未授权即拒绝）
-        if let Err(e) = require_resource_access(
+    // NGAC 授权：系统身份校验写权限（显式授权，未授权即拒绝）
+    if let Err(e) = require_resource_access(
+        pool,
+        SYSTEM_USER_ID,
+        "approval_actions",
+        fk.unwrap_or(0),
+        "create",
+    )
+    .await
+    {
+        common::telemetry::warn!("SLA auto-reject denied by NGAC for instance {}: {}", id, e);
+        let _ = record_audit_event(
             pool,
             SYSTEM_USER_ID,
-            "approval_actions",
-            fk.unwrap_or(0),
-            "create",
+            "system@aliothstudio.local",
+            &format!("approval_actions:{}", fk.unwrap_or(0)),
+            "sla.auto_reject",
+            &Decision::Deny,
         )
-        .await
-        {
-            common::telemetry::warn!("SLA auto-reject denied by NGAC for instance {}: {}", id, e);
-            let _ = record_audit_event(
-                pool,
-                SYSTEM_USER_ID,
-                "system@aliothstudio.local",
-                &format!("approval_actions:{}", fk.unwrap_or(0)),
-                "sla.auto_reject",
-                &Decision::Deny,
-            )
-            .await;
-            continue;
-        }
+        .await;
+        return Ok(());
+    }
 
-        // SLA 超时升级转交（2026-09-03 裁决）：升级岗位接管续审（首轮）；
-        // 未配置升级岗位/无活跃成员/已升级过一次 → 走下方自动驳回
-        if try_escalate_transfer(pool, messaging, *id, fk.unwrap_or(0)).await? {
-            continue;
-        }
+    // SLA 超时升级转交（2026-09-03 裁决）：升级岗位接管续审（首轮）；
+    // 未配置升级岗位/无活跃成员/已升级过一次 → 走下方自动驳回
+    if try_escalate_transfer(pool, messaging, id, fk.unwrap_or(0)).await? {
+        return Ok(());
+    }
 
-        // 时间锚（flow-process-continuity 规约）：SLA 驳回意见写当日标量；解析失败仅跳过该实例
-        let date_anchor = match crate::handlers::approve_reject::today_date_anchor(pool).await {
+    // 时间锚（flow-process-continuity 规约）：SLA 驳回意见写当日标量；解析失败仅跳过该实例
+    let date_anchor = match crate::handlers::approve_reject::today_date_anchor(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            common::telemetry::warn!(
+                "SLA auto-reject date anchor failed for instance {}: {}",
+                id,
+                e
+            );
+            return Ok(());
+        }
+    };
+
+    // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组；
+    // 解析失败降级 NULL（不阻断自动驳回，与既有告警面一致）
+    let (dk_scene, dk_factor, dk_function) =
+        match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JcFtaNc).await {
             Ok(v) => v,
             Err(e) => {
-                common::telemetry::warn!(
-                    "SLA auto-reject date anchor failed for instance {}: {}",
-                    id,
-                    e
-                );
-                continue;
+                common::telemetry::warn!("SLA 坐标解析失败（instance {}）: {}", id, e);
+                (None, None, None)
             }
         };
 
-        // 坐标静态绑定（§6.12；code→ZUID 解析，禁硬编码 ZUID）：意见叶行落 dk 三元组；
-        // 解析失败降级 NULL（不阻断自动驳回，与既有告警面一致）
-        let (dk_scene, dk_factor, dk_function) =
-            match crate::dk::resolve_ontology_coords_pool(pool, crate::dk::DkEntity::JcFtaNc).await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    common::telemetry::warn!("SLA 坐标解析失败（instance {}）: {}", id, e);
-                    (None, None, None)
-                }
-            };
-
-        match sqlx::query(
+    match sqlx::query(
             r#"INSERT INTO isahl."zc_id_deta-opinion"
                (id, notice, opinion, fk_list, fk_biller, qk_date, created_at, dk_scene, dk_factor, dk_function)
                VALUES (isahl.gen_next_zuid(), $1, $2, $3, $4, $5, NOW(), $6, $7, $8)"#,
         )
         .bind(REJECT_NOTICE)
         .bind(AUTO_REJECT_REASON)
-        .bind(*id)
+        .bind(id)
         .bind(SYSTEM_USER_ID)
         .bind(date_anchor)
         .bind(dk_scene)
@@ -341,7 +398,7 @@ pub async fn check_and_reject_with(
 
                 // D6：与 reject 一致链路——主状态桥接 rejected + 事件发布
                 if let Err(e) =
-                    update_lifecycle_status(pool, *id, "rejected", "已拒绝", SYSTEM_USER_ID).await
+                    update_lifecycle_status(pool, id, "rejected", "已拒绝", SYSTEM_USER_ID).await
                 {
                     common::telemetry::error!(
                         "SLA auto-reject status update failed for instance {}: {}",
@@ -350,10 +407,10 @@ pub async fn check_and_reject_with(
                     );
                 } else {
                     // ApprovalCompleted 事件（result=rejected / reason=SLA 超时）
-                    publish_approval_completed(bus, pool, *id, "rejected", Some("SLA 超时")).await;
+                    publish_approval_completed(bus, pool, id, "rejected", Some("SLA 超时")).await;
                     // 2026-09-02 A3：vote 实例 SLA 驳回同属终态动作 → 终局判定
                     if let Err(e) =
-                        crate::advance::vote_terminal_advance(pool, *id, SYSTEM_USER_ID, Some(bus))
+                        crate::advance::vote_terminal_advance(pool, id, SYSTEM_USER_ID, Some(bus))
                             .await
                     {
                         common::telemetry::warn!(
@@ -372,7 +429,6 @@ pub async fn check_and_reject_with(
                 );
             }
         }
-    }
 
     Ok(())
 }

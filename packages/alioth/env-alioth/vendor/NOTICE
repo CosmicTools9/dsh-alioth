@@ -6,7 +6,7 @@ consumed from the published model distribution (github:CosmicTools9/AppCreator,
 subsequently mirrored at github:CosmicTools9/Alioth), licensed Apache-2.0:
 
   backend/ddl/*isahl_meta*.sql           — isahl_meta registry baseline DDL + seed
-  skill-adapters/*.yaml                  — AppAgent track/step/gate definitions (v2.0–v2.2;
+  skill-adapters/*.yaml                  — AppAgent track/step/gate definitions (v1.0–v2.5;
                                            upstream `Meta/backend/app-agent/skill-adapters/`)
   scripts/prototype-tool.js              — prototype build chain (PROTOTYPE_TOOL_ROOT override added)
   scripts/capability-catalog.ts          — scope capability catalog (gate + CLI)

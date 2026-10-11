@@ -14,6 +14,22 @@ use gateway_sso::auth::jwt::{configure_token_validation, encode_access_token, Cl
 use gateway_sso::auth::AuthState;
 use serde_json::json;
 use sqlx::PgPool;
+use std::sync::LazyLock;
+use tokio::sync::{Mutex, MutexGuard};
+
+/// 文件级串行化。
+///
+/// 3 个测试共用 `default` 策略类 + 其 `admin` UA，且每个 `/api/ngac/binding-request`、
+/// `/api/admin/ngac/binding-requests/*` 处理器都会先跑 `ensure_ngac_extension_tables`
+///（对 `isahl_auth.auth_users` 施加 `ALTER TABLE ... DROP CONSTRAINT/COLUMN INDEX` 级 AccessExclusiveLock）。
+/// 并行执行时 DDL 与判定查询互相夹击 ⇒ `require_admin` 的 NGAC 判定间歇返回非 admin，
+/// 端点回 403（实测：`binding_request_reject_path` 459 / `position_binding_approve...` 380→384 行随机红；
+/// 单跑恒绿）。故串行而非改名。
+static SERIAL_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn lock_serial() -> MutexGuard<'static, ()> {
+    SERIAL_LOCK.lock().await
+}
 
 async fn connect() -> PgPool {
     ::common::testing::connect_test_db().await
@@ -47,41 +63,59 @@ struct Fixture {
 
 async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     ensure_table(pool).await;
-    // 用户 U + 管理员 A
+    // 用户 U + 管理员 A（username = 原显示名；邮箱唯一存储 = auth_user_emails）
     let email = format!("bind_user_{}@alioth.test", suffix);
+    let username = format!("bind_user_{}", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
     )
-    .bind(&email)
-    .bind(format!("bind_user_{}", suffix))
+    .bind(&username)
     .execute(pool)
     .await
     .expect("insert user");
     let user_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&username)
             .fetch_one(pool)
             .await
             .expect("fetch user");
-    let admin_email = format!("bind_admin_{}@alioth.test", suffix);
     sqlx::query(
-        "INSERT INTO isahl_auth.auth_users (id, name, email, status, is_active, created_at, updated_at)
-         VALUES (isahl.gen_next_zuid(), $2, $1, 'active', true, NOW(), NOW())
-         ON CONFLICT (name) DO NOTHING",
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
     )
-    .bind(&admin_email)
-    .bind(format!("bind_admin_{}", suffix))
+    .bind(user_id)
+    .bind(&email)
+    .execute(pool)
+    .await
+    .ok();
+    let admin_email = format!("bind_admin_{}@alioth.test", suffix);
+    let admin_username = format!("bind_admin_{}", suffix);
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_users (id, username, status, is_active, created_at, updated_at)
+         VALUES (isahl.gen_next_zuid(), $1, 'active', true, NOW(), NOW())
+         ON CONFLICT (username) DO NOTHING",
+    )
+    .bind(&admin_username)
     .execute(pool)
     .await
     .expect("insert admin");
     let admin_id: i64 =
-        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE email = $1 LIMIT 1")
-            .bind(&admin_email)
+        sqlx::query_scalar("SELECT id FROM isahl_auth.auth_users WHERE username = $1 LIMIT 1")
+            .bind(&admin_username)
             .fetch_one(pool)
             .await
             .expect("fetch admin");
+    sqlx::query(
+        "INSERT INTO isahl_auth.auth_user_emails (fk_user, email, is_primary, created_at, updated_at) \
+         VALUES ($1, $2, TRUE, NOW(), NOW()) ON CONFLICT DO NOTHING",
+    )
+    .bind(admin_id)
+    .bind(&admin_email)
+    .execute(pool)
+    .await
+    .ok();
     sqlx::query(
         "INSERT INTO isahl_auth.ngac_policy_class (o_name) VALUES ('default') ON CONFLICT DO NOTHING",
     )
@@ -104,8 +138,12 @@ async fn seed(pool: &PgPool, suffix: &str) -> Fixture {
     .await
     .ok();
     let admin_ua: i64 = sqlx::query_scalar(
-        "SELECT id FROM isahl_auth.ngac_user_attribute WHERE o_name='admin' AND deleted_at IS NULL LIMIT 1",
+        // 必须按策略类过滤：`o_name='admin'` 在每个策略类下各有一行；无过滤器时 LIMIT 1 可能取到
+        // 他测试残留的、他类 admin UA ⇒ 绑定到错类 UA 使 require_admin 的 NGAC 判定 Deny（非确定性 403）。
+        "SELECT id FROM isahl_auth.ngac_user_attribute \
+         WHERE o_name='admin' AND fk_policy_class = $1 AND deleted_at IS NULL LIMIT 1",
     )
+    .bind(pc)
     .fetch_one(pool)
     .await
     .expect("admin UA");
@@ -204,6 +242,10 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
         .bind(f.admin_id)
         .execute(pool)
         .await;
+    let _ = sqlx::query("DELETE FROM isahl_auth.auth_user_emails WHERE fk_user = ANY($1)")
+        .bind(vec![f.user_id, f.admin_id])
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM isahl_auth.auth_users WHERE id = ANY($1)")
         .bind(vec![f.user_id, f.admin_id])
         .execute(pool)
@@ -212,6 +254,7 @@ async fn cleanup(pool: &PgPool, f: &Fixture) {
 
 #[tokio::test]
 async fn entity_binding_request_full_loop() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed(&pool, "e1").await;
     let ast = common::test_auth_state();
@@ -220,7 +263,7 @@ async fn entity_binding_request_full_loop() {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
             .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes))
-            .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
+            .configure(gateway_sso::admin::configure),
     )
     .await;
     let user_token = mint_token(&ast, f.user_id, &f.email);
@@ -315,6 +358,7 @@ async fn entity_binding_request_full_loop() {
 
 #[tokio::test]
 async fn position_binding_approve_links_cognition_derivation() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed(&pool, "e2").await;
     let ast = common::test_auth_state();
@@ -323,7 +367,7 @@ async fn position_binding_approve_links_cognition_derivation() {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
             .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes))
-            .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
+            .configure(gateway_sso::admin::configure),
     )
     .await;
     let user_token = mint_token(&ast, f.user_id, &f.email);
@@ -396,6 +440,7 @@ async fn position_binding_approve_links_cognition_derivation() {
 
 #[tokio::test]
 async fn binding_request_reject_path() {
+    let _guard = lock_serial().await;
     let pool = connect().await;
     let f = seed(&pool, "e3").await;
     let ast = common::test_auth_state();
@@ -404,7 +449,7 @@ async fn binding_request_reject_path() {
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(ast.clone()))
             .service(web::scope("/api/ngac").configure(gateway_sso::ngac::pdp::configure_routes))
-            .service(web::scope("/api/admin").configure(gateway_sso::admin::configure)),
+            .configure(gateway_sso::admin::configure),
     )
     .await;
     let user_token = mint_token(&ast, f.user_id, &f.email);

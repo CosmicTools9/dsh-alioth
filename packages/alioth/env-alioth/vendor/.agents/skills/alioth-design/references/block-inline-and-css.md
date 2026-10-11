@@ -1,6 +1,6 @@
 # Block 内联规则与 CSS 健壮性（参考）
 
-> **2026-07 更新**：alioth-block 已统一使用 `Pre-Proc/Alioth/Prototypes/template.html` 作为 Scene 原型基线。模板自带完整 Gateway Shell，Scene 组件只实现内容，因此不再出现 `SCENE_STANDALONE`、`SceneApp`、`SceneShell` 等独立壳残留。本章的历史规则仍适用于从旧 Scene 原型迁移或理解为什么只提取内容。
+> **2026-10-11 更新**：Block 原型基线 = `skill://alioth-design/references/shells/block-shell.tsx`（壳模板）+ `skill://alioth-design/references/prototype-base.css`（设计令牌），由 `scripts/prototype-tool.js` 拼装为 `Prototypes/Blocks/<id>/b-v{N}.html`（旧的 `Prototypes/template.html` 已不存在）。模板自带完整 Gateway Shell，Block 组件只实现内容，因此不再出现 `SCENE_STANDALONE`、`SceneApp`、`SceneShell` 等独立壳残留。本章的历史规则仍适用于从旧 Scene 原型迁移或理解为什么只提取内容。
 
 #### 9.5.1 根因（2026-06-18 system-dev 重构案例）
 

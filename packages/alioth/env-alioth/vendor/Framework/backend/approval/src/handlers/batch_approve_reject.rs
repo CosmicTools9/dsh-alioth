@@ -62,7 +62,7 @@ async fn process_batch(
         if let Err(e) = require_row_or_collection_access(
             pool,
             user_id,
-            "approval-instances",
+            "approval_instances",
             instance_id,
             action,
         )

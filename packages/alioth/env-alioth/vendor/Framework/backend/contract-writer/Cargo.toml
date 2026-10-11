@@ -10,6 +10,8 @@ description = "合约写件与一式两份镜像（合约行对/合同方/MIR �
 sqlx = { workspace = true }
 common = { path = "../common" }
 trigger-registry = { path = "../trigger-registry" }
+# 表达式写侧统一校验（门禁 R3-write-site-unvalidated / ALIOTH_ONTOLOGY_SPEC：写入点 MUST fail-closed 校验）
+runtime-engine = { path = "../runtime-engine" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

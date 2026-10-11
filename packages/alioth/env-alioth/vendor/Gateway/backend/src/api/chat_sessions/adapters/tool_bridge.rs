@@ -1,7 +1,7 @@
 //! # M1-SEAM: depends on ai-agent M1 APIs (see design.md D2.1-D2.4)
 //!
-//! M1（ai-agent/llm）与 M2（Gateway）跨层契约的唯一接缝文件：所有消费 M1 新
-//! API 的代码集中在本文件（ActionHandler / ToolStreamEvent / with_allowed_tools /
+//! M1（ai-agent/llm）与 M2（Gateway）跨层契约的接缝文件：所有消费 M1 新
+//! API 的代码集中在本文件（ActionHandler / with_allowed_tools /
 //! with_event_sink / ToolRunResult.usage）。M1 已 merge（d34528ee7e），本文件
 //! 必须真实编译通过。导出面保持 Gateway 内部类型为主，M1 类型仅经 trait
 //! object / 工具端口适配使用。
@@ -14,6 +14,11 @@
 //! - `GatewayToolPort`：DbToolAdapter 包装——为 execute_action 工具注入
 //!   action_handler（M1 的 DbToolAdapter 面向纯 DB 工具，handler 为 None）
 //! - `tool_result_usage`：ToolRunResult.usage（D2.4）→ canonical JSON
+//!
+//! 动作清单与确认级 MUST NOT 在本文件手工枚举——唯一真相源 = ai-agent 的
+//! 动作目录（`ai_agent::tools::action_catalogue`，change `add-action-catalogue`）；
+//! 流式事件类型 MUST NOT 逐变体对拷——`TurnStreamEvent` 已是 M1
+//! `ToolStreamEvent` 的别名（change `retire-tool-passthrough`）。
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -22,38 +27,18 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ai_agent::agents::tool_orchestrator::{
-    ActionHandler, DbToolAdapter, ToolExecutionPort, ToolRunResult, ToolStreamEvent,
+    ActionHandler, DbToolAdapter, ToolExecutionPort, ToolRunResult,
 };
-use ai_agent::agents::ConfirmationLevel;
+use ai_agent::tools::action_catalogue::{ActionCatalogue, ActionDispatch};
+use ai_agent::tools::form_contract::FormContract;
 use ai_agent::tools::registry::ToolRegistry;
 use ai_agent::tools::{ToolCall, ToolContext, ToolResult};
 
 use common::messaging::MessagingService;
 use framework_workspace_approval::{ApprovalActor, ApprovalService};
 
-use crate::api::chat_sessions::orchestrator::TurnStreamEvent;
 use crate::api::chat_sessions::ports::MessageStorePort;
 use crate::notification::db_messaging::DbMessagingService;
-
-/// M1 ToolStreamEvent → Gateway TurnStreamEvent（D2.3/D2.10）：M1 事件语义与
-/// WS typed 帧一一对应；映射集中在接缝文件。
-pub fn map_tool_stream_event(ev: ToolStreamEvent) -> Option<TurnStreamEvent> {
-    match ev {
-        ToolStreamEvent::Chunk(text) => Some(TurnStreamEvent::Chunk(text)),
-        ToolStreamEvent::ToolStart { name, arguments } => {
-            Some(TurnStreamEvent::ToolStart { name, arguments })
-        }
-        ToolStreamEvent::ToolEnd {
-            name,
-            success,
-            output,
-        } => Some(TurnStreamEvent::ToolEnd {
-            name,
-            success,
-            output,
-        }),
-    }
-}
 
 /// 工具路径本轮 token 用量（D2.4）：ToolRunResult.usage 归一为
 /// ai-agent TokenUsage JSON（prompt/completion/total，与 orchestrator
@@ -118,14 +103,19 @@ fn cap_tool_result(mut result: ToolResult) -> ToolResult {
     result
 }
 
-/// C8/D2.4：审计 user_email 解析——会话属主 auth_users.email；缺省（测试/
-/// 历史用户等）回落 `user:{id}`（audit user_email NOT NULL 且非空校验——
-/// 保证审计行必可写、不因邮箱缺失静默丢行）。
+/// C8/D2.4：审计 user_email 解析——会话属主主邮箱（`isahl_auth.auth_user_emails`
+/// 主邮箱读径）；缺省（测试/历史用户、无邮箱等）回落 `user:{id}`
+/// （audit user_email NOT NULL 且非空校验——保证审计行必可写、不因邮箱缺失静默丢行）。
 pub(crate) async fn resolve_user_email(pool: &PgPool, user_id: i64) -> String {
-    match sqlx::query_scalar::<_, String>("SELECT email FROM isahl_auth.auth_users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
+    match sqlx::query_scalar::<_, String>(
+        "SELECT (SELECT e.email FROM isahl_auth.auth_user_emails e \
+          WHERE e.fk_user = u.id AND e.deleted_at IS NULL \
+          ORDER BY e.is_primary DESC, e.id LIMIT 1) \
+         FROM isahl_auth.auth_users u WHERE u.id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
     {
         Ok(Some(email)) if !email.is_empty() => email,
         _ => format!("user:{}", user_id),
@@ -153,6 +143,9 @@ impl GatewayActionHandler {
 
     /// HTTP 直接执行入口（orchestrator.execute_action 调用）：
     /// 与工具路径同实现，仅 ctx 由调用方构造（allowed_schemas 来自 agent 配置）。
+    ///
+    /// 派发 MUST 按 id 查**动作目录**（单一真相源）——未知 id 显式失败
+    /// （`UNKNOWN_ACTION_TYPE`），执行体各自保留。MUST NOT 手写字符串 match。
     pub async fn run_action(
         &self,
         action_type: &str,
@@ -160,13 +153,214 @@ impl GatewayActionHandler {
         params: &Value,
         ctx: &ToolContext,
     ) -> Result<Value, String> {
-        match action_type {
-            "batch_approve" => self.batch_approve(target_ids, params, ctx).await,
-            "send_notification" => self.send_notification(target_ids, params, ctx).await,
-            "status_transition" => self.status_transition(target_ids, params, ctx).await,
-            "generate_document" => self.generate_document(target_ids, params, ctx).await,
-            other => Err(format!("UNKNOWN_ACTION_TYPE: {}", other)),
+        let spec = ActionCatalogue::get(action_type)
+            .ok_or_else(|| format!("UNKNOWN_ACTION_TYPE: {}", action_type))?;
+        match spec.dispatch {
+            ActionDispatch::BatchApprove => self.batch_approve(target_ids, params, ctx).await,
+            ActionDispatch::SendNotification => {
+                self.send_notification(target_ids, params, ctx).await
+            }
+            ActionDispatch::StatusTransition => {
+                self.status_transition(target_ids, params, ctx).await
+            }
+            ActionDispatch::GenerateDocument => {
+                self.generate_document(target_ids, params, ctx).await
+            }
+            ActionDispatch::NgacOrgPolicyApply => self.ngac_org_policy_apply(params, ctx).await,
+            ActionDispatch::NgacStrategyApply => self.ngac_strategy_apply(params, ctx).await,
+            ActionDispatch::SystemConfigApply => self.system_config_apply(params, ctx).await,
         }
+    }
+
+    /// 系统设置动作（add-system-config-ai-action 2.3）：admin 门控 + 逐项执行在
+    /// `system_config_action` 模块（凭证加密与 `system_config.*` 审计口径等价复刻）。
+    /// 确认级沿用 fail-safe `Explicit`（orchestrator 已要求 confirmed）。
+    async fn system_config_apply(
+        &self,
+        params: &Value,
+        ctx: &ToolContext,
+    ) -> Result<Value, String> {
+        let user_id = ctx
+            .user_id
+            .ok_or_else(|| "UNAUTHENTICATED: 系统设置变更需要用户上下文".to_string())?;
+        super::system_config_action::apply(&self.pool, user_id, params).await
+    }
+
+    /// 权限规范动作（route-ngac-policy-authoring-through-ai-assist 2.2）：
+    /// admin 门控 + 逐项执行在 `org_policy_action` 模块（sso feature 面）。
+    /// 确认级沿用 fail-safe `Explicit`（orchestrator 已要求 confirmed）。
+    #[cfg(feature = "sso")]
+    async fn ngac_org_policy_apply(
+        &self,
+        params: &Value,
+        ctx: &ToolContext,
+    ) -> Result<Value, String> {
+        let user_id = ctx
+            .user_id
+            .ok_or_else(|| "UNAUTHENTICATED: 权限规范写入需要用户上下文".to_string())?;
+        super::org_policy_action::apply(&self.pool, user_id, params).await
+    }
+
+    /// 非 sso 宿主：无 NGAC 权限规范面。
+    #[cfg(not(feature = "sso"))]
+    async fn ngac_org_policy_apply(
+        &self,
+        _params: &Value,
+        _ctx: &ToolContext,
+    ) -> Result<Value, String> {
+        Err("NGAC_ORG_POLICY_UNAVAILABLE: 本部署未启用 sso feature".to_string())
+    }
+
+    /// NGAC 策略操作动作（wire-nl-assist-into-assistant）：
+    /// admin 门控 + 逐项执行经 SSO PIP/管理面服务层（association/prohibition/UA 指派）。
+    /// 确认级沿用 fail-safe `Explicit`（orchestrator 已要求 confirmed）。
+    #[cfg(feature = "sso")]
+    async fn ngac_strategy_apply(
+        &self,
+        params: &Value,
+        ctx: &ToolContext,
+    ) -> Result<Value, String> {
+        let user_id = ctx
+            .user_id
+            .ok_or_else(|| "UNAUTHENTICATED: 策略操作需要用户上下文".to_string())?;
+        super::strategy_action::apply(&self.pool, user_id, params).await
+    }
+
+    /// 非 sso 宿主：无 NGAC 策略面。
+    #[cfg(not(feature = "sso"))]
+    async fn ngac_strategy_apply(
+        &self,
+        _params: &Value,
+        _ctx: &ToolContext,
+    ) -> Result<Value, String> {
+        Err("NGAC_STRATEGY_UNAVAILABLE: 本部署未启用 sso feature".to_string())
+    }
+
+    /// NGAC 只读分析：候选补丁影响预演（dry-run；克隆图求值、零写库）。
+    ///
+    /// 承载 `POST /api/admin/ngac/analysis/dry-run` 的产品入口（change
+    /// `wire-org-policy-declaration-fields` tasks 3.3）：chat 提案前由模型按
+    /// `{patches, checks}` 预演前后判决。**只读** ⇒ 无确认级（目录 `None`）。
+    #[cfg(feature = "sso")]
+    async fn ngac_dry_run(&self, params: &Value) -> Result<Value, String> {
+        let req: gateway_sso::facade::ngac::analysis::DryRunRequest =
+            serde_json::from_value(json!({
+                "patches": params.get("patches").cloned().unwrap_or_else(|| json!([])),
+                "checks": params.get("checks").cloned().unwrap_or_else(|| json!([])),
+            }))
+            .map_err(|e| format!("DRY_RUN_INVALID_PARAMS: {e}"))?;
+        let resp = gateway_sso::facade::ngac::analysis::dry_run_impact(&self.pool, &req)
+            .await
+            .map_err(|e| match e {
+                gateway_sso::facade::ngac::analysis::DryRunError::BadRequest(m) => {
+                    format!("DRY_RUN_BAD_REQUEST: {m}")
+                }
+                gateway_sso::facade::ngac::analysis::DryRunError::Internal(m) => {
+                    format!("DRY_RUN_FAILED: {m}")
+                }
+            })?;
+        serde_json::to_value(resp).map_err(|e| format!("DRY_RUN_SERIALIZE: {e}"))
+    }
+
+    /// 非 sso 宿主：无 NGAC 分析面。
+    #[cfg(not(feature = "sso"))]
+    async fn ngac_dry_run(&self, _params: &Value) -> Result<Value, String> {
+        Err("NGAC_ANALYSIS_UNAVAILABLE: 本部署未启用 sso feature".to_string())
+    }
+
+    /// NGAC 只读分析：图路径证据（explain-paths；关系单源枚举、零写库）。
+    ///
+    /// 承载 `POST /api/admin/ngac/analysis/explain-paths` 的产品入口（tasks 3.3）：
+    /// 「为什么这个资源是这样授权的」由 `resource`（`{resource_type}:{id}`）+ `action`
+    /// 求得 UA→OA 边证据。**只读** ⇒ 无确认级。
+    #[cfg(feature = "sso")]
+    async fn ngac_explain_paths(&self, params: &Value) -> Result<Value, String> {
+        let req: gateway_sso::facade::ngac::analysis::ExplainPathsRequest =
+            serde_json::from_value(json!({
+                "resource": params.get("resource").cloned().unwrap_or(Value::Null),
+                "action": params.get("action").cloned().unwrap_or_else(|| json!("")),
+            }))
+            .map_err(|e| format!("EXPLAIN_PATHS_INVALID_PARAMS: {e}"))?;
+        match gateway_sso::facade::ngac::analysis::explain_paths_evidence(&self.pool, &req).await {
+            Ok(resp) => {
+                serde_json::to_value(resp).map_err(|e| format!("EXPLAIN_PATHS_SERIALIZE: {e}"))
+            }
+            Err(gateway_sso::facade::ngac::analysis::ExplainPathsError::BadRequest(m)) => {
+                Err(format!("EXPLAIN_PATHS_BAD_REQUEST: {m}"))
+            }
+            Err(gateway_sso::facade::ngac::analysis::ExplainPathsError::Internal(m)) => {
+                Err(format!("EXPLAIN_PATHS_FAILED: {m}"))
+            }
+        }
+    }
+
+    /// 非 sso 宿主：无 NGAC 分析面。
+    #[cfg(not(feature = "sso"))]
+    async fn ngac_explain_paths(&self, _params: &Value) -> Result<Value, String> {
+        Err("NGAC_ANALYSIS_UNAVAILABLE: 本部署未启用 sso feature".to_string())
+    }
+
+    /// NGAC 访问检查（只读、批量；`wire-ngac-zero-consumer-faces`）。
+    ///
+    /// 承载 `/api/ngac/pdp/check{,/batch}` 的**能力面**产品入口：判定唯一实现 =
+    /// `common::permissions::require_resource_access`（与 PEP / Framework 内层门同源，
+    /// 含 ceiling / bootstrap / prohibition / creator 翻转全链）；逐点返回 `permitted` + `reason`。
+    #[cfg(feature = "sso")]
+    async fn ngac_check_access(&self, params: &Value) -> Result<Value, String> {
+        let checks = params
+            .get("checks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if checks.is_empty() {
+            return Err("NGAC_CHECK_INVALID_PARAMS: checks 不能为空".to_string());
+        }
+        let mut results: Vec<Value> = Vec::with_capacity(checks.len());
+        for c in checks {
+            let user_id = c
+                .get("user_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| "NGAC_CHECK_INVALID_PARAMS: checks[].user_id 必填".to_string())?;
+            let resource_type = c
+                .get("resource_type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "NGAC_CHECK_INVALID_PARAMS: checks[].resource_type 必填".to_string()
+                })?
+                .to_string();
+            let fk_resource = c.get("fk_resource").and_then(Value::as_i64).unwrap_or(0);
+            let action = c
+                .get("action")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "NGAC_CHECK_INVALID_PARAMS: checks[].action 必填".to_string())?
+                .to_string();
+            let outcome = common::permissions::require_resource_access(
+                &self.pool,
+                user_id,
+                &resource_type,
+                fk_resource,
+                &action,
+            )
+            .await;
+            results.push(json!({
+                "user_id": user_id.to_string(),
+                "resource_type": resource_type,
+                "fk_resource": fk_resource.to_string(),
+                "action": action,
+                "permitted": outcome.is_ok(),
+                "reason": match &outcome {
+                    Ok(()) => Value::Null,
+                    Err(e) => Value::String(e.to_string()),
+                },
+            }));
+        }
+        Ok(json!({ "results": results }))
+    }
+
+    /// 非 sso 宿主：无 NGAC 分析面。
+    #[cfg(not(feature = "sso"))]
+    async fn ngac_check_access(&self, _params: &Value) -> Result<Value, String> {
+        Err("NGAC_ANALYSIS_UNAVAILABLE: 本部署未启用 sso feature".to_string())
     }
 
     /// C8/D2.4：工具路径动作审计——成功 Permit / 失败 Deny + error；
@@ -240,7 +434,7 @@ impl GatewayActionHandler {
                 return Err(format!(
                     "INVALID_PARAM: action must be approve|reject, got {}",
                     other
-                ))
+                ));
             }
         };
         let opinion = params
@@ -471,29 +665,33 @@ impl ActionHandler for GatewayActionHandler {
         outcome
     }
 
-    fn confirmation_level(&self, action_type: &str) -> ConfirmationLevel {
-        match action_type {
-            "send_notification" => ConfirmationLevel::Preview,
-            "generate_document" => ConfirmationLevel::None,
-            // batch_approve / status_transition（写操作）→ Explicit；未知动作
-            // fail-safe 归 Explicit（宁可多确认不裸执行）
-            _ => ConfirmationLevel::Explicit,
+    // 确认级不再在本文件手工 match——`ActionHandler` 的默认实现由动作目录
+    // 派生（`ActionCatalogue::confirmation_level`，未知 id fail-safe 归 Explicit）。
+
+    /// **只读分析**执行口（tasks 3.3）：按工具名分派（MUST NOT 与可执行动作共枚举；
+    /// 零副作用 ⇒ 无确认级、无审计行以外动作）。
+    async fn analyze(
+        &self,
+        tool: &str,
+        params: &Value,
+        _ctx: &ToolContext,
+    ) -> Result<Value, String> {
+        match tool {
+            "ngac_dry_run" => self.ngac_dry_run(params).await,
+            "ngac_explain_paths" => self.ngac_explain_paths(params).await,
+            "ngac_check_access" => self.ngac_check_access(params).await,
+            _ => Err(format!("UNKNOWN_ANALYSIS_TOOL: {tool}")),
         }
     }
-}
-
-/// 供 orchestrator/HTTP 层做门禁判定的同口径助手（ai-agent 的
-/// level_requires_confirmation 是 pub(crate)，Gateway 侧不能引用）。
-pub fn requires_confirmation(level: &ConfirmationLevel) -> bool {
-    matches!(
-        level,
-        ConfirmationLevel::Explicit | ConfirmationLevel::High | ConfirmationLevel::Critical
-    )
 }
 
 // ============================================
 // GatewayToolPort（execute_action 工具注入 handler）
 // ============================================
+
+/// 只读分析工具名（tasks 3.3 / `wire-ngac-zero-consumer-faces`）：经 `ActionHandler::analyze`
+/// 独立执行口可达（**不入动作目录** ⇒ 与 `execute_action` 的枚举/确认级面解耦，能力不外溢）。
+const ANALYSIS_TOOL_NAMES: &[&str] = &["ngac_dry_run", "ngac_explain_paths", "ngac_check_access"];
 
 /// DbToolAdapter 包装：DB 工具全委托（含 allowed_tools 过滤）；execute_action
 /// 单独以带 action_handler 的 ToolContext 经 ToolRegistry 执行（M1 DbToolAdapter
@@ -502,24 +700,47 @@ pub struct GatewayToolPort {
     inner: DbToolAdapter,
     handler: Arc<dyn ActionHandler>,
     pool: PgPool,
-    /// execute_action 是否在白名单（空 = 不过滤）
-    action_allowed: bool,
+    /// 本 agent 的工具白名单（空 = 不过滤）：`execute_action` 与只读分析工具据此门控。
+    allowed_names: Vec<String>,
+    /// 表单契约（change `add-form-contract-seam`，ADR D-053）：由本轮页面上下文解析所得；
+    /// 未登记 / 不可解析 ⇒ `None` ⇒ `validate_form` fail-closed（`CONTRACT_UNAVAILABLE`）。
+    form_contract: Option<FormContract>,
 }
 
 impl GatewayToolPort {
+    /// 工具是否在本 agent 白名单内（空白名单 = 不过滤）。
+    fn tool_allowed(&self, name: &str) -> bool {
+        self.allowed_names.is_empty() || self.allowed_names.iter().any(|n| n == name)
+    }
+
     pub fn new(
         inner: DbToolAdapter,
         handler: Arc<dyn ActionHandler>,
         pool: PgPool,
         allowed_names: &[String],
+        form_contract: Option<&Value>,
     ) -> Self {
-        let action_allowed =
-            allowed_names.is_empty() || allowed_names.iter().any(|n| n == "execute_action");
+        // 契约解析：**不可解析与未登记同语义**（均为「契约不可用」）⇒ 均落 None，
+        // 由工具层以 `CONTRACT_UNAVAILABLE` 统一 fail-closed（MUST NOT 静默放行）。
+        let parsed =
+            form_contract.and_then(
+                |v| match serde_json::from_value::<FormContract>(v.clone()) {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        common::telemetry::warn!(
+                    "form contract 不可解析（按不可用处理，validate_form 将 fail-closed）：{}",
+                    e
+                );
+                        None
+                    }
+                },
+            );
         Self {
-            inner,
+            inner: inner.with_form_contract(parsed.clone()),
             handler,
             pool,
-            action_allowed,
+            allowed_names: allowed_names.to_vec(),
+            form_contract: parsed,
         }
     }
 }
@@ -540,8 +761,10 @@ impl ToolExecutionPort for GatewayToolPort {
         // C3：所有出向 ToolResult（execute_action 与 DB 工具）统一经
         // cap_tool_result——output 序列化 >4000 字符截断 + 提示。exec Err
         //（<tool_error> 渲染路径）短小不进截断。
-        let outcome = if call.name == "execute_action" {
-            if !self.action_allowed {
+        let needs_handler =
+            call.name == "execute_action" || ANALYSIS_TOOL_NAMES.contains(&call.name.as_str());
+        let outcome = if needs_handler {
+            if !self.tool_allowed(&call.name) {
                 Ok(ToolResult {
                     tool_call_id: call.id.clone(),
                     name: call.name.clone(),
@@ -556,6 +779,7 @@ impl ToolExecutionPort for GatewayToolPort {
                     db_pool: self.pool.clone(),
                     allowed_schemas: allowed_schemas.to_vec(),
                     action_handler: Some(self.handler.clone()),
+                    form_contract: self.form_contract.clone(),
                 };
                 let registry = ToolRegistry::new();
                 registry.execute(call, &ctx).await
@@ -572,8 +796,11 @@ impl ToolExecutionPort for GatewayToolPort {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::chat_sessions::context_envelope::ChatContextEnvelope;
     use ai_agent::agents::tool_orchestrator::ExecutedToolCall;
+    use ai_agent::agents::ConfirmationLevel;
     use ai_agent::agents::TokenUsage;
+    use sqlx::PgPool;
 
     fn result_with(output: Value) -> ToolResult {
         ToolResult {
@@ -681,5 +908,185 @@ mod tests {
             }
             other => panic!("大结果必须替换为截断字符串，实际 {:?}", other),
         }
+    }
+
+    // ============================================
+    // 表单契约链端到端（change add-form-contract-seam，task 5.3）
+    //
+    // 覆盖「线上载荷 → 单一形状发现点 → 端口装配 → 工具执行」全链（**进程内**；
+    // HTTP/WS 传输层未改动故不重复覆盖）。契约 MUST 只在页面登记时可用；
+    // 未登记 ⇒ 工具 MUST fail-closed（`CONTRACT_UNAVAILABLE`），MUST NOT 放行。
+    // ============================================
+
+    fn chain_pool() -> PgPool {
+        // connect_lazy 不发起连接：本链只读契约/字段值，不需要 DB
+        PgPool::connect_lazy("postgres://u:p@localhost:5432/nodb").expect("lazy pool")
+    }
+
+    fn chain_port(contract: Option<&Value>, allowed: &[String]) -> GatewayToolPort {
+        let pool = chain_pool();
+        let db = DbToolAdapter::new(pool.clone()).with_allowed_tools(allowed.to_vec());
+        GatewayToolPort::new(
+            db,
+            Arc::new(GatewayActionHandler::new(pool.clone())),
+            pool,
+            allowed,
+            contract,
+        )
+    }
+
+    /// 与前端 `AIChatContext.pageContext.formContract` 同形的线上载荷
+    fn wire_with_contract() -> Value {
+        json!({
+            "module": "income-wz",
+            "page": "收款单",
+            "formContract": {
+                "fields": [
+                    { "name": "transNo", "type": "string", "required": true, "minLength": 1, "maxLength": 8 },
+                    { "name": "amount", "type": "string", "required": true, "nonPortable": true }
+                ]
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn contract_travels_wire_to_tool_and_validates() {
+        let wire = wire_with_contract();
+        // 单一形状发现点
+        let env = ChatContextEnvelope::from_raw(Some(&wire));
+        assert!(
+            env.form_contract.is_some(),
+            "信封 MUST 取到 pageContext.formContract"
+        );
+
+        let allowed = vec!["validate_form".to_string()];
+        let port = chain_port(env.form_contract.as_ref(), &allowed);
+
+        // 合法值：通过，且 amount 为 nonPortable ⇒ 未受覆盖 ⇒ appliable=false
+        let ok = ToolCall {
+            id: "c1".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({ "field_values": { "transNo": "T-1", "amount": "5" } }),
+        };
+        let r = port.execute(&ok, 1, Some(1), &[]).await.expect("execute");
+        assert!(r.success, "合法值应通过：{:?}", r);
+        assert_eq!(r.output["valid"], true);
+        assert_eq!(r.output["appliable"], false, "存在未覆盖字段 ⇒ 不可应用");
+        assert_eq!(r.output["uncovered"][0], "amount");
+
+        // 非法值：错误定位到字段（按**契约**判，非模型自备 schema）
+        let bad = ToolCall {
+            id: "c2".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({ "field_values": { "transNo": "", "amount": "5" } }),
+        };
+        let r2 = port.execute(&bad, 1, Some(1), &[]).await.expect("execute");
+        assert!(!r2.success);
+        assert_eq!(r2.output["errors"][0]["field"], "transNo");
+        assert_eq!(r2.output["errors"][0]["error"], "minLength");
+    }
+
+    #[tokio::test]
+    async fn unregistered_contract_fails_closed_through_the_whole_chain() {
+        // 页面未登记契约（无 formContract 键）
+        let wire = json!({ "module": "m", "page": "列表页" });
+        let env = ChatContextEnvelope::from_raw(Some(&wire));
+        assert!(env.form_contract.is_none());
+
+        let allowed = vec!["validate_form".to_string()];
+        let port = chain_port(env.form_contract.as_ref(), &allowed);
+
+        // 即便字段值完全合法，MUST NOT 放行（fail-closed）
+        let call = ToolCall {
+            id: "c3".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({ "field_values": { "transNo": "T-1" } }),
+        };
+        let r = port.execute(&call, 1, Some(1), &[]).await.expect("execute");
+        assert!(!r.success, "无契约 MUST NOT 放行");
+        assert_eq!(r.output["error"], "CONTRACT_UNAVAILABLE");
+        assert_eq!(r.output["appliable"], false);
+        assert!(r
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("CONTRACT_UNAVAILABLE"));
+    }
+
+    #[tokio::test]
+    async fn unparseable_contract_is_treated_as_unavailable() {
+        // 形状坏的契约：与「未登记」同语义（均为不可用），MUST NOT 静默放行
+        let wire = json!({
+            "module": "m", "page": "p",
+            "formContract": { "fields": "not-an-array" }
+        });
+        let env = ChatContextEnvelope::from_raw(Some(&wire));
+        let allowed = vec!["validate_form".to_string()];
+        let port = chain_port(env.form_contract.as_ref(), &allowed);
+        let call = ToolCall {
+            id: "c4".to_string(),
+            name: "validate_form".to_string(),
+            arguments: json!({ "field_values": { "transNo": "T-1" } }),
+        };
+        let r = port.execute(&call, 1, Some(1), &[]).await.expect("execute");
+        assert!(!r.success);
+        assert_eq!(r.output["error"], "CONTRACT_UNAVAILABLE");
+    }
+
+    // ============================================
+    // 动作目录单源（change add-action-catalogue）
+    //
+    // 派发按 id 查目录（未知 id 显式失败）；确认级由 `ActionHandler` 默认实现
+    // 从目录派生（无手写 match + 通配）。此处只验证 Gateway 侧接线。
+    // ============================================
+
+    #[tokio::test]
+    async fn run_action_rejects_unknown_action_type_via_catalogue() {
+        let pool = chain_pool();
+        let handler = GatewayActionHandler::new(pool.clone());
+        let ctx = ToolContext {
+            session_id: 1,
+            user_id: Some(1),
+            db_pool: pool,
+            allowed_schemas: vec!["isahl".to_string()],
+            action_handler: None,
+            form_contract: None,
+        };
+        let err = handler
+            .run_action("no_such_action", &[], &json!({}), &ctx)
+            .await
+            .expect_err("目录无该 id MUST 显式失败");
+        assert!(
+            err.starts_with("UNKNOWN_ACTION_TYPE:"),
+            "未知动作 MUST 返回 UNKNOWN_ACTION_TYPE，实际 {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn confirmation_level_derives_from_catalogue() {
+        let handler = GatewayActionHandler::new(chain_pool());
+        assert!(matches!(
+            handler.confirmation_level("send_notification"),
+            ConfirmationLevel::Preview
+        ));
+        assert!(matches!(
+            handler.confirmation_level("generate_document"),
+            ConfirmationLevel::None
+        ));
+        assert!(matches!(
+            handler.confirmation_level("batch_approve"),
+            ConfirmationLevel::Explicit
+        ));
+        assert!(matches!(
+            handler.confirmation_level("status_transition"),
+            ConfirmationLevel::Explicit
+        ));
+        assert!(
+            matches!(
+                handler.confirmation_level("totally_unknown"),
+                ConfirmationLevel::Explicit
+            ),
+            "未知动作 MUST fail-safe 归 Explicit"
+        );
     }
 }

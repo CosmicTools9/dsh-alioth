@@ -3,52 +3,20 @@
   "rule_reference": "docs/specs/SPEC_ENFORCEMENT_SUBSTRATE.md §基线卫生（R2）/§同源更新（R3）——基线只减不增、条目须有可核验 source+reason、判据与规约同源；条目语义（可枚举即静态化 / 运行期来源登记）见 openspec/specs/proc-align「运行时零 catalog 查询与静态 SQL」「动态表名门禁可执行且基线只减不增」。",
   "sites": [
     {
-      "file": "Framework/backend/common/src/dim_registry.rs",
-      "line": 189,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "与同字面量表位同源：维度注册表按配置 from 子句"
-    },
-    {
-      "file": "Framework/backend/common/src/dim_registry.rs",
-      "line": 200,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "与同字面量表位同源：维度注册表按配置 from 子句"
-    },
-    {
-      "file": "Framework/backend/common/src/dim_registry.rs",
-      "line": 159,
+      "file": "Framework/backend/common/src/scoped_search.rs",
+      "line": 158,
       "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "维度注册表按配置 from 子句"
+      "placeholder": "{table}",
+      "source": "generic-type",
+      "reason": "叶表作用域注册表为编译期常量集（ScopeTable 常量携带表名/列名字面量），执行器按注册表单态化拼装 SQL；表名无运行期来源，模式/关键词/limit 一律绑定参数"
     },
     {
-      "file": "Framework/backend/common/src/dim_registry.rs",
-      "line": 168,
+      "file": "Framework/backend/common/src/scoped_search.rs",
+      "line": 198,
       "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "维度注册表按配置 from 子句"
-    },
-    {
-      "file": "Framework/backend/common/src/dim_registry.rs",
-      "line": 189,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "维度注册表按配置 from 子句"
-    },
-    {
-      "file": "Framework/backend/common/src/dim_registry.rs",
-      "line": 200,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "维度注册表按配置 from 子句"
+      "placeholder": "{table}",
+      "source": "generic-type",
+      "reason": "叶表作用域注册表为编译期常量集（ScopeTable 常量携带表名/列名字面量），执行器按注册表单态化拼装 SQL；表名无运行期来源，模式/关键词/limit 一律绑定参数"
     },
     {
       "file": "Framework/backend/crud/src/activity.rs",
@@ -84,7 +52,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 299,
+      "line": 323,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -92,7 +60,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 390,
+      "line": 414,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -100,7 +68,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 620,
+      "line": 652,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -108,7 +76,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 672,
+      "line": 704,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -116,7 +84,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 299,
+      "line": 323,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -124,7 +92,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 328,
+      "line": 352,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -132,7 +100,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 390,
+      "line": 414,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -140,7 +108,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 443,
+      "line": 467,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -148,7 +116,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 451,
+      "line": 475,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -156,7 +124,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 526,
+      "line": 550,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -164,7 +132,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 534,
+      "line": 558,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -172,7 +140,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 620,
+      "line": 652,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -180,7 +148,7 @@
     },
     {
       "file": "Framework/backend/crud/src/query_builder.rs",
-      "line": 672,
+      "line": 704,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -468,39 +436,39 @@
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 485,
+      "line": 558,
       "kind": "column",
       "placeholder": "{cols}",
       "source": "api-param",
-      "reason": "与同字面量表位同源：字典端点：URL path 表名（前缀白名单族）"
+      "reason": "/dict/leaf/{table} 新增径列位 = 值域列 schema（value-domain-columns.tsv）editable 列集，逐列白名单∩schema 校验后拼接；开放集合 = 模型声明集（add-value-domain-office e1）"
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 560,
+      "line": 650,
       "kind": "column",
       "placeholder": "{set}",
       "source": "api-param",
-      "reason": "与同字面量表位同源：字典端点：URL path 表名（前缀白名单族）"
+      "reason": "/dict/leaf/{table}/{id} 更新径 SET 列位 = 同新增径（schema editable ∩ 白名单），开放集合 = 模型声明集"
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 485,
+      "line": 558,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
-      "reason": "字典端点：URL path 表名（前缀白名单族）"
+      "reason": "/dict/leaf/{table} 新增径表位：路径参数经 dict 白名单（cate/tags/unit/cons 前缀 + 3 基表）∩ 值域 schema 双重校验后引用；开放集合 = 模型声明集"
     },
     {
       "file": "Framework/backend/dict/src/handler.rs",
-      "line": 560,
+      "line": 650,
       "kind": "table",
       "placeholder": "{table}",
       "source": "api-param",
-      "reason": "字典端点：URL path 表名（前缀白名单族）"
+      "reason": "/dict/leaf/{table}/{id} 更新径表位：校验同新增径；开放集合 = 模型声明集"
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
-      "line": 318,
+      "line": 319,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -508,7 +476,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
-      "line": 498,
+      "line": 499,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -516,7 +484,7 @@
     },
     {
       "file": "Framework/backend/identity-org/src/handlers/contacts.rs",
-      "line": 515,
+      "line": 516,
       "kind": "table",
       "placeholder": "{}",
       "source": "generic-type",
@@ -541,22 +509,6 @@
     {
       "file": "Framework/backend/identity-org/src/repository/bill_check.rs",
       "line": 134,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
-    },
-    {
-      "file": "Framework/backend/identity-org/src/repository/consignment.rs",
-      "line": 170,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
-    },
-    {
-      "file": "Framework/backend/identity-org/src/repository/contract.rs",
-      "line": 104,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -731,334 +683,6 @@
       "reason": "组织写路：按调用方表名"
     },
     {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 91,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 112,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 152,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 200,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 241,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 278,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 327,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 384,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profile/engine.rs",
-      "line": 446,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 332,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 338,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 357,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 363,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 390,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 411,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 459,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 489,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 525,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 544,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 551,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 680,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 684,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/profiler.rs",
-      "line": 688,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/report/mod.rs",
-      "line": 267,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "与同字面量表位同源（质量规则配置驱动）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 1192,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "与同字面量表位同源：数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 328,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 396,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 418,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 500,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 663,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 704,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 790,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 846,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 883,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 911,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 939,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 968,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 997,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 1033,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 1091,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
-      "file": "Framework/backend/quality/src/rules/engine.rs",
-      "line": 1192,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "数据质量剖析：任意表/列（Meta 质量工具入参）"
-    },
-    {
       "file": "Framework/backend/status/src/repository.rs",
       "line": 133,
       "kind": "column",
@@ -1084,7 +708,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 105,
+      "line": 118,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -1092,7 +716,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 114,
+      "line": 127,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -1100,7 +724,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 162,
+      "line": 185,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -1108,7 +732,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 177,
+      "line": 200,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -1116,7 +740,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 105,
+      "line": 118,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1124,7 +748,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 114,
+      "line": 127,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1132,7 +756,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 125,
+      "line": 138,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1140,7 +764,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 162,
+      "line": 185,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1148,7 +772,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 177,
+      "line": 200,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1156,7 +780,7 @@
     },
     {
       "file": "Framework/backend/trigger-registry/src/executor.rs",
-      "line": 190,
+      "line": 213,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1196,7 +820,7 @@
     },
     {
       "file": "Gateway/backend/src/api/chat_sessions/adapters/tool_bridge.rs",
-      "line": 365,
+      "line": 559,
       "kind": "table",
       "placeholder": "{}",
       "source": "api-param",
@@ -1257,6 +881,22 @@
       "placeholder": "{}",
       "source": "api-param",
       "reason": "触发器 CRUD 端点：按入参表名"
+    },
+    {
+      "file": "Gateway/backend/tests/scoped_search_integration_test.rs",
+      "line": 70,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "test-fixture",
+      "reason": "集成测试夹具：表名来自本文件数组的编译期字面量（合法叶表集），仅用于播种/清理本文件创建的测试行"
+    },
+    {
+      "file": "Gateway/backend/tests/scoped_search_integration_test.rs",
+      "line": 78,
+      "kind": "table",
+      "placeholder": "{table}",
+      "source": "test-fixture",
+      "reason": "集成测试夹具：表名来自本文件数组的编译期字面量（合法叶表集），仅用于播种/清理本文件创建的测试行"
     },
     {
       "file": "Meta/backend/alioth-gen/src/docgen/markdown.rs",
@@ -1476,7 +1116,7 @@
     },
     {
       "file": "Meta/backend/alioth-gen/src/generator/repository/shared.rs",
-      "line": 236,
+      "line": 237,
       "kind": "table",
       "placeholder": "{entity_plural}",
       "source": "generator-template",
@@ -1484,7 +1124,7 @@
     },
     {
       "file": "Meta/backend/app-agent/src/tool_registry/mod.rs",
-      "line": 744,
+      "line": 863,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1556,7 +1196,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 370,
+      "line": 334,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1564,7 +1204,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 2370,
+      "line": 2250,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1572,7 +1212,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3291,
+      "line": 3171,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1580,7 +1220,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3301,
+      "line": 3181,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1588,7 +1228,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3320,
+      "line": 3200,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1596,7 +1236,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3362,
+      "line": 3242,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1604,7 +1244,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3378,
+      "line": 3258,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1612,7 +1252,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3573,
+      "line": 3453,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1620,7 +1260,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3606,
+      "line": 3486,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1628,7 +1268,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3624,
+      "line": 3504,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1636,7 +1276,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3750,
+      "line": 3630,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1644,7 +1284,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3759,
+      "line": 3639,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1652,7 +1292,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3977,
+      "line": 3857,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1660,7 +1300,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 3983,
+      "line": 3863,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1668,7 +1308,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 4033,
+      "line": 3913,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1676,7 +1316,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 4088,
+      "line": 3968,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1684,7 +1324,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 4093,
+      "line": 3973,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1692,7 +1332,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/mod.rs",
-      "line": 4251,
+      "line": 4131,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1700,7 +1340,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
-      "line": 270,
+      "line": 183,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1708,7 +1348,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
-      "line": 368,
+      "line": 281,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1716,7 +1356,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
-      "line": 608,
+      "line": 521,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1724,7 +1364,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/db_sync/uid.rs",
-      "line": 889,
+      "line": 802,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1732,7 +1372,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/inheritance.rs",
-      "line": 587,
+      "line": 595,
       "kind": "table",
       "placeholder": "{schema}",
       "source": "model-data",
@@ -1740,7 +1380,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/inheritance.rs",
-      "line": 599,
+      "line": 607,
       "kind": "table",
       "placeholder": "{schema}",
       "source": "model-data",
@@ -1748,7 +1388,7 @@
     },
     {
       "file": "Meta/backend/collection/src/repository/mod.rs",
-      "line": 671,
+      "line": 676,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -1756,7 +1396,7 @@
     },
     {
       "file": "Meta/backend/collection/tests/common/mod.rs",
-      "line": 93,
+      "line": 87,
       "kind": "table",
       "placeholder": "{}",
       "source": "test-fixture",
@@ -1764,7 +1404,7 @@
     },
     {
       "file": "Meta/backend/collection/tests/common/mod.rs",
-      "line": 102,
+      "line": 96,
       "kind": "table",
       "placeholder": "{}",
       "source": "test-fixture",
@@ -1772,7 +1412,7 @@
     },
     {
       "file": "Meta/backend/collection/tests/common/mod.rs",
-      "line": 157,
+      "line": 151,
       "kind": "table",
       "placeholder": "{}",
       "source": "test-fixture",
@@ -2124,7 +1764,7 @@
     },
     {
       "file": "Meta/backend/src/bin/schema_info.rs",
-      "line": 151,
+      "line": 152,
       "kind": "column",
       "placeholder": "{}",
       "source": "cli-arg",
@@ -2132,7 +1772,7 @@
     },
     {
       "file": "Meta/backend/src/bin/schema_info.rs",
-      "line": 910,
+      "line": 826,
       "kind": "table",
       "placeholder": "{}",
       "source": "cli-arg",
@@ -2140,7 +1780,7 @@
     },
     {
       "file": "Meta/backend/src/bin/schema_info.rs",
-      "line": 920,
+      "line": 836,
       "kind": "table",
       "placeholder": "{}",
       "source": "cli-arg",
@@ -2467,14 +2107,6 @@
       "reason": "devtools 对象管理端点：表名/对象名由请求参数给入，经 `validate_pg_ident` 校验后拼 DDL（索引 / 触发器 / 列 / 继承的建改删），集合开放不可编译期枚举。"
     },
     {
-      "file": "Meta/backend/src/evo_agent/tests.rs",
-      "line": 347,
-      "kind": "table",
-      "placeholder": "{}",
-      "source": "model-data",
-      "reason": "EvoAgent 链路探测任意表"
-    },
-    {
       "file": "Meta/backend/src/model_publish/seeds.rs",
       "line": 52,
       "kind": "table",
@@ -2492,15 +2124,31 @@
     },
     {
       "file": "Meta/backend/src/model_publish/seeds.rs",
-      "line": 1072,
+      "line": 1484,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
-      "reason": "发布链按集合表名回放种子"
+      "reason": "seeds diff 端点（add-value-domain-office b3）：参考库 vs 基线逐表 FROM ONLY 计数，表集 = isahl.gf_seed_tables() 声明集（同源 = gen-model-dict-seed --check 语义）"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/tests.rs",
+      "line": 1483,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "集成测试 seeds_diff：抽样表 FROM ONLY 计数，表名 = 声明集内固定样本（zc_id_cate-position）"
+    },
+    {
+      "file": "Meta/backend/src/model_publish/tests.rs",
+      "line": 1576,
+      "kind": "table",
+      "placeholder": "{}",
+      "source": "model-data",
+      "reason": "集成测试 seeds_regen：定向再生后行级校验 INSERT，表名 = 声明集内参数化样本"
     },
     {
       "file": "Meta/backend/src/model_publish/verify.rs",
-      "line": 515,
+      "line": 504,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2508,7 +2156,7 @@
     },
     {
       "file": "Meta/backend/src/model_publish/verify.rs",
-      "line": 520,
+      "line": 509,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2516,7 +2164,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 425,
+      "line": 428,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2524,7 +2172,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 482,
+      "line": 485,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2532,7 +2180,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 527,
+      "line": 530,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2540,7 +2188,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 585,
+      "line": 588,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2548,7 +2196,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 638,
+      "line": 641,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2556,7 +2204,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 714,
+      "line": 717,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2564,7 +2212,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 758,
+      "line": 761,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2572,7 +2220,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 824,
+      "line": 827,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2580,7 +2228,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 884,
+      "line": 887,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2588,7 +2236,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 982,
+      "line": 985,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2596,7 +2244,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 425,
+      "line": 428,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2604,7 +2252,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 456,
+      "line": 459,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2612,7 +2260,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 482,
+      "line": 485,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2620,7 +2268,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 527,
+      "line": 530,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2628,7 +2276,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 585,
+      "line": 588,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2636,7 +2284,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 631,
+      "line": 634,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2644,7 +2292,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 638,
+      "line": 641,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2652,7 +2300,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 714,
+      "line": 717,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2660,7 +2308,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 758,
+      "line": 761,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2668,7 +2316,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 824,
+      "line": 827,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2676,7 +2324,7 @@
     },
     {
       "file": "Meta/backend/src/quality_adapter.rs",
-      "line": 884,
+      "line": 887,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2684,7 +2332,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 641,
+      "line": 643,
       "kind": "column",
       "placeholder": "{ref_col}",
       "source": "model-data",
@@ -2692,7 +2340,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 673,
+      "line": 675,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2700,7 +2348,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 716,
+      "line": 718,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2708,7 +2356,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 601,
+      "line": 603,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2716,7 +2364,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 618,
+      "line": 620,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2724,7 +2372,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 641,
+      "line": 643,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2732,7 +2380,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 673,
+      "line": 675,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2740,7 +2388,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/bundles.rs",
-      "line": 716,
+      "line": 718,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2788,7 +2436,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 509,
+      "line": 510,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2796,7 +2444,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 589,
+      "line": 590,
       "kind": "column",
       "placeholder": "{}",
       "source": "model-data",
@@ -2804,7 +2452,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 205,
+      "line": 206,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2812,7 +2460,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 389,
+      "line": 390,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2820,7 +2468,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 396,
+      "line": 397,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2828,7 +2476,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 444,
+      "line": 445,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2836,7 +2484,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 509,
+      "line": 510,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2844,7 +2492,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 529,
+      "line": 530,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2852,7 +2500,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 589,
+      "line": 590,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2860,7 +2508,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 611,
+      "line": 612,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2868,7 +2516,7 @@
     },
     {
       "file": "Meta/backend/src/table_data/mod.rs",
-      "line": 635,
+      "line": 636,
       "kind": "table",
       "placeholder": "{}",
       "source": "model-data",
@@ -2940,19 +2588,19 @@
     },
     {
       "file": "Pre-Proc/WZ/Sources/Apps/Services/contract/backend/src/repositories/contract_query.rs",
-      "line": 1162,
+      "line": 1198,
       "kind": "column",
       "placeholder": "{where_sql}",
       "source": "api-param",
-      "reason": "请求条件驱动的运行期谓词拼装：`where_sql = conds.join(\" AND \")`，conds 由请求参数（search/status/nature/kind）push/format! 运行期构造，$n 序号随 binds 数派生 ⇒ 非编译期可枚举（同族先例 `Framework/backend/crud/src/trigger.rs`）"
+      "reason": "合同列表搜索谓词（COUNT 径）：conds 由固定过滤器映射拼装（状态子查询 / nature_tableoid_predicate / kind_form_predicate），列位来自固定谓词构建器 + 绑参占位；开放集合 = API 过滤参数"
     },
     {
       "file": "Pre-Proc/WZ/Sources/Apps/Services/contract/backend/src/repositories/contract_query.rs",
-      "line": 1174,
+      "line": 1210,
       "kind": "column",
       "placeholder": "{where_sql}",
       "source": "api-param",
-      "reason": "请求条件驱动的运行期谓词拼装：`where_sql = conds.join(\" AND \")`，conds 由请求参数（search/status/nature/kind）push/format! 运行期构造，$n 序号随 binds 数派生 ⇒ 非编译期可枚举（同族先例 `Framework/backend/crud/src/trigger.rs`）"
+      "reason": "合同列表搜索谓词（分页 ids 径）：与 COUNT 径同一 where_sql（固定谓词构建器 + 绑参）"
     },
     {
       "file": "SSO/backend/src/admin/handlers/providers.rs",
@@ -2963,16 +2611,8 @@
       "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
     },
     {
-      "file": "SSO/backend/src/admin/handlers/users.rs",
-      "line": 315,
-      "kind": "column",
-      "placeholder": "{}",
-      "source": "api-param",
-      "reason": "请求体驱动的部分更新/查询：`sets`/列清单由 DTO 字段存在性或查询参数决定，SQL 形状随请求变化"
-    },
-    {
       "file": "SSO/backend/src/admin/oidc_clients.rs",
-      "line": 279,
+      "line": 235,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",
@@ -2980,7 +2620,7 @@
     },
     {
       "file": "SSO/backend/src/auth/profile.rs",
-      "line": 75,
+      "line": 82,
       "kind": "column",
       "placeholder": "{}",
       "source": "api-param",

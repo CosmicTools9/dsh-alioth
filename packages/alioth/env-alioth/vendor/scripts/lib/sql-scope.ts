@@ -3,7 +3,7 @@
  *
  * 调用方（MUST NOT 各自复刻判定）：
  *   - 提交面门禁 `scripts/check/check-isahl-ddl-boundary.ts`
- *   - OMP 运行期守卫 `.omp/extensions/{db-pipeline-guard,safety-guard}.ts`
+ *   - OMP 运行期守卫 `.omp/extensions/safety-guard.ts`
  *
  * 正本：
  *   - `db-schema-boundary.isahl-schema-frozen`：isahl 拦集合 = `CREATE TABLE` 族 /
@@ -255,6 +255,27 @@ function loadParser(): Promise<PgParserCtor> {
 export const OVERSIZE_BYTES = 50_000;
 
 /**
+ * 解析器原始输出的归一判定（**fail closed**）。
+ *
+ * 为什么必须显式判：`pg-query-emscripten` 在内存压力下会返回**无 `parse_tree` 的畸形结果**
+ * （封装自身每次 parse 泄漏输入缓冲，见上）。若把「零语句」一律当「无违规」，isahl 冻结面门禁 /
+ * OMP safety-guard / exec-sql 判定会把 `ALTER TABLE isahl.X DROP COLUMN …` **静默放行**
+ * （2026-10-03 实测：`check-all` 并发下 `blocked()` 返回 false = 子进程 exit 0 = 放行）。
+ * 判据：输入含 SQL 实体（剥注释/空白后非空）却零语句 ⇒ 解析不可信 ⇒ `{ error }`（调用方 fail-closed）。
+ */
+export function interpretParseResult(
+  raw: { error?: { message?: string } | null; parse_tree?: { stmts?: StmtNode[] | null } | null },
+  text: string,
+): { stmts: StmtNode[] } | { error: string } {
+  if (raw.error) return { error: raw.error.message ?? JSON.stringify(raw.error) };
+  const stmts = raw.parse_tree?.stmts ?? [];
+  if (stmts.length === 0 && stripComments(text).trim().length > 0) {
+    return { error: '解析器未返回语句（输入含 SQL 实体，fail closed）' };
+  }
+  return { stmts };
+}
+
+/**
  * 解析 SQL 文本 → 语句节点（每次调用**新建 wasm 实例**：封装每次 parse 泄漏输入缓冲，
  * 复用实例累计 ~55KB 后堆损坏；单实例单 parse 无累计）。
  * 超限（`OVERSIZE_BYTES`）或异常 → `{ error }`（调用方 fail-closed）。
@@ -266,9 +287,7 @@ export async function parseStatements(text: string): Promise<{ stmts: StmtNode[]
   try {
     const Ctor = await loadParser();
     const pg = await (new Ctor() as PgParser | Promise<PgParser>);
-    const r = pg.parse(text);
-    if (r.error) return { error: r.error.message ?? JSON.stringify(r.error) };
-    return { stmts: r.parse_tree?.stmts ?? [] };
+    return interpretParseResult(pg.parse(text), text);
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
@@ -367,7 +386,7 @@ const ANCHOR_DML = /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM|TRUNCATE|COPY)\s+isahl
  *      语句切分后取不到结构动作头 → 按动态命令行文本做词法扫描）。
  */
 /** 剥离 SQL 注释（行 `--` 与块注释）：注释中的动作词不构成结构动作（见 `lexicalHits` 注释）。 */
-function stripComments(text: string): string {
+export function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ");
 }
 

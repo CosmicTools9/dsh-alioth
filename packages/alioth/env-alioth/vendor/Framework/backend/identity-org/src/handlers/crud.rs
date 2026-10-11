@@ -1,8 +1,6 @@
 //! 真实 CRUD 路由 — 替代 dev mock handlers
 //!
 //! 替换自 mock.rs 的端点映射:
-//!   /consignments        → Consignment CRUD
-//!   /waybills            → 自定义: 按 ck_category 过滤
 //!   /vehicles            → Vehicle CRUD
 //!   /environments        → Environment CRUD
 //!   /licenses            → License CRUD
@@ -17,32 +15,30 @@
 //!   /settlement-cashes   → SettlementCash CRUD
 //!   /settlement-channels → SettlementChannel CRUD
 use crate::models::{
-    BillCheck, Consignment, Contract, CreateBillCheckRequest, CreateConsignmentRequest,
-    CreateContractRequest, CreateDetaBillCheckRequest, CreateEnvironmentRequest,
+    BillCheck, CreateBillCheckRequest, CreateDetaBillCheckRequest, CreateEnvironmentRequest,
     CreateFenceRequest, CreateFreightProductRequest, CreateInventorySalesRequest,
     CreateInvoiceDetailRequest, CreateInvoiceRequest, CreateLicenseRequest, CreatePaymentRequest,
     CreatePricingAgreementRequest, CreateSealRequest, CreateSettlementBankRequest,
     CreateSettlementCashRequest, CreateSettlementChannelRequest, CreateTradeOrderRequest,
     CreateTrafficLineRequest, CreateTransitRouteRequest, CreateTransportTrackingRequest,
-    CreateVehicleRequest, CreateWaybillRequest, DetaBillCheck, Environment, Fence, FreightProduct,
-    InventorySales, Invoice, InvoiceDetail, License, Payment, PricingAgreement, Seal,
-    SettlementBank, SettlementCash, SettlementChannel, TradeOrder, TrafficLine, TransitRoute,
-    TransportTracking, UpdateBillCheckRequest, UpdateConsignmentRequest, UpdateContractRequest,
-    UpdateDetaBillCheckRequest, UpdateEnvironmentRequest, UpdateFenceRequest,
-    UpdateFreightProductRequest, UpdateInventorySalesRequest, UpdateInvoiceDetailRequest,
-    UpdateInvoiceRequest, UpdateLicenseRequest, UpdatePaymentRequest,
+    CreateVehicleRequest, DetaBillCheck, Environment, Fence, FreightProduct, InventorySales,
+    Invoice, InvoiceDetail, License, Payment, PricingAgreement, Seal, SettlementBank,
+    SettlementCash, SettlementChannel, TradeOrder, TrafficLine, TransitRoute, TransportTracking,
+    UpdateBillCheckRequest, UpdateDetaBillCheckRequest, UpdateEnvironmentRequest,
+    UpdateFenceRequest, UpdateFreightProductRequest, UpdateInventorySalesRequest,
+    UpdateInvoiceDetailRequest, UpdateInvoiceRequest, UpdateLicenseRequest, UpdatePaymentRequest,
     UpdatePricingAgreementRequest, UpdateSealRequest, UpdateSettlementBankRequest,
     UpdateSettlementCashRequest, UpdateSettlementChannelRequest, UpdateTradeOrderRequest,
     UpdateTrafficLineRequest, UpdateTransitRouteRequest, UpdateTransportTrackingRequest,
-    UpdateVehicleRequest, UpdateWaybillRequest, Vehicle, Waybill,
+    UpdateVehicleRequest, Vehicle,
 };
 use crate::repository::{
-    BillCheckRepository, ConsignmentRepository, ContractRepository, DetaBillCheckRepository,
-    EnvironmentRepository, FenceRepository, FreightProductRepository, InventorySalesRepository,
-    InvoiceDetailRepository, InvoiceRepository, LicenseRepository, NaturalPersonRepository,
-    PaymentRepository, PricingAgreementRepository, SealRepository, SettlementBankRepository,
-    SettlementCashRepository, SettlementChannelRepository, TradeOrderRepository,
-    TrafficLineRepository, TransitRouteRepository, TransportTrackingRepository, VehicleRepository,
+    BillCheckRepository, DetaBillCheckRepository, EnvironmentRepository, FenceRepository,
+    FreightProductRepository, InventorySalesRepository, InvoiceDetailRepository, InvoiceRepository,
+    LicenseRepository, NaturalPersonRepository, PaymentRepository, PricingAgreementRepository,
+    SealRepository, SettlementBankRepository, SettlementCashRepository,
+    SettlementChannelRepository, TradeOrderRepository, TrafficLineRepository,
+    TransitRouteRepository, TransportTrackingRepository, VehicleRepository,
 };
 use actix_web::web;
 
@@ -58,22 +54,10 @@ pub fn register_business_domain(cfg: &mut web::ServiceConfig) {
     // `traffic_line_stops::register`（shell 中先于 register_business_domain 注册）。
     cfg.configure(crate::handlers::vehicle_plates::register);
 
-    // Waybill CRUD (共享 zc_id_orde-land, type alias models.rs:341)
-    cfg.configure(crud_routes::<
-        Waybill,
-        CreateWaybillRequest,
-        UpdateWaybillRequest,
-        ConsignmentRepository,
-        ApiError,
-    >("/waybills"));
-    // 标准 CRUD: 用 .configure() 而非直接 FnOnce 调用
-    cfg.configure(crud_routes::<
-        Consignment,
-        CreateConsignmentRequest,
-        UpdateConsignmentRequest,
-        ConsignmentRepository,
-        ApiError,
-    >("/consignments"));
+    // 委托/运单/合约 域（zc_id_orde-land / zc_id_contract / zc_id_cont-proxy）写径单源 =
+    // consignment-writer / contract-writer（经 WZ transport-dispatch / contract 服务暴露）；
+    // identity-org MUST NOT 注册该域路由或保留内联写 SQL
+    // （change: remove-identity-org-duplicate-write-path）。
     cfg.configure(crud_routes::<
         Environment,
         CreateEnvironmentRequest,
@@ -218,13 +202,8 @@ pub fn register_business_domain(cfg: &mut web::ServiceConfig) {
         PricingAgreementRepository,
         ApiError,
     >("/pricing-agreements"));
-    cfg.configure(crud_routes::<
-        Contract,
-        CreateContractRequest,
-        UpdateContractRequest,
-        ContractRepository,
-        ApiError,
-    >("/contracts"));
+    // /contracts 已删除（change: remove-identity-org-duplicate-write-path）——合约写径单源 =
+    // contract-writer，经 WZ `/service/contracts` 服务暴露。
 }
 
 use crate::models::{CreateNaturalPersonRequest, NaturalPerson, UpdateNaturalPersonRequest};

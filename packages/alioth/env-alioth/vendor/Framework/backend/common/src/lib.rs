@@ -25,12 +25,16 @@ pub mod actor_identity;
 pub mod age;
 pub mod api_response;
 pub mod audit;
+pub mod authoring;
+// CSRF / 凭据来源单实现（change implement-csrf-protection）
 pub mod cluster;
+// 生效配置解析（`zc_id_prot-*_config` 族唯一实现，change fix-config-effective-resolution）
+pub mod config_resolution;
 pub mod context;
 pub mod cors;
+pub mod csrf;
 pub mod data;
 pub mod device;
-pub mod dim_registry;
 pub mod dk_context;
 pub mod email;
 pub mod error;
@@ -38,16 +42,20 @@ pub mod event_bus;
 pub mod knowledge_domains;
 pub mod messaging;
 pub mod middleware;
+pub mod ngac_grants;
 pub mod ngac_org;
 pub mod ngac_policy;
 pub mod ontology;
+pub mod openapi_scope;
 pub mod operator_org;
 pub mod permissions;
 pub mod plan_execution;
 pub mod plate;
 pub mod platform_config;
 pub mod progress;
+pub mod registration_approval;
 pub mod scalar;
+pub mod scoped_search;
 pub mod search;
 pub mod serde_zuid;
 pub mod server;
@@ -58,6 +66,7 @@ pub mod system_user;
 pub mod telemetry;
 pub mod testing;
 pub mod validation;
+pub mod wechat_miniapp;
 
 // 重新导出常用的类型和函数
 pub use context::{
@@ -71,3 +80,4 @@ pub use error::{AliothError, ErrorResponse, ErrorSource, Result};
 pub use middleware::{AuthContext, NgacPepMiddleware, PublicRouteMatcher, RateLimitMiddleware};
 pub use sms::{CloudSmsService, SmsService};
 pub use validation::{validate_pg_ident, validate_qualified_ident};
+pub use wechat_miniapp::{WechatLoginError, WechatMiniappLogin, WechatMiniappRegistry};

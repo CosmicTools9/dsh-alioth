@@ -50,6 +50,10 @@ fn extract_user_id(req: &HttpRequest, public_keys: &[&[u8]]) -> Result<i64, Http
             }))
         }
     };
+    // CSRF 自检（design.md §4「自检面」）：公开前缀下 cookie 鉴权端点，鉴权成功后校验
+    if let Some(resp) = crate::auth::csrf_self_check(req) {
+        return Err(resp);
+    }
     match claims.sub.parse::<i64>() {
         Ok(id) => Ok(id),
         Err(_) => Err(HttpResponse::Unauthorized().json(AuthError {

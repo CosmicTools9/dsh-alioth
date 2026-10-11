@@ -585,9 +585,10 @@ impl AppExtensionRegistry {
 
     /// 实体创建前执行所有扩展逻辑
     ///
-    /// 执行顺序：
-    /// 1. 约束验证（失败则返回错误，阻止创建）
-    /// 2. 业务规则（onCreate 触发，可能修改字段值）
+    /// 执行顺序（与下方 `// 1.`/`// 2.`/`// 3.` 分段一一对应）：
+    /// 1. 约束验证（`error` 级失败即返回、阻止创建；`warning` 级只记结果）
+    /// 2. 状态机验证（初始状态非法即返回、阻止创建）
+    /// 3. 业务规则（onCreate 触发，可能修改字段值）
     ///
     /// 返回的 `mutations` 应被应用到创建请求中。
     pub fn before_create(
@@ -1372,7 +1373,7 @@ impl ExtensionLoader {
     }
     /// 加载所有应用的扩展配置
     ///
-    /// 扫描 `Pre-Proc/{namespace}/Apps/` 和 `Samples/` 目录下的所有应用。
+    /// 扫描 `Pre-Proc/{namespace}/Apps/` 目录下的所有应用（Samples 通道已按 D-049 退役，2026-10-11）。
     pub fn load_all(apps_dir: impl AsRef<Path>) -> Result<Vec<AppLogicExtension>, String> {
         let mut results = Vec::new();
         let apps_dir = apps_dir.as_ref();

@@ -292,6 +292,15 @@ impl ErrorResponse {
             details: None,
         }
     }
+
+    /// 附加 `details` 结构化上下文（`API_DESIGN_SPEC §3.2` 的平铺契约扩展槽）。
+    ///
+    /// 用途：错误响应需要机器可读的定位字段（如限流档位/窗口计数/上限）时，
+    /// 一律走本槽——MUST NOT 新增顶层键（顶层恒为 `code` / `message` / `details`）。
+    pub fn with_details(mut self, details: serde_json::Value) -> Self {
+        self.details = Some(details);
+        self
+    }
 }
 
 #[cfg(test)]

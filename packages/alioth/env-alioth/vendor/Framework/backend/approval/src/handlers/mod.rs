@@ -12,7 +12,6 @@ pub mod context_fields;
 pub mod context_objects;
 pub mod delegation_rule;
 pub mod dmn_assist;
-pub mod employee_onboarding;
 pub mod enriched_instance;
 pub mod flow_lifecycle;
 pub mod flow_node;

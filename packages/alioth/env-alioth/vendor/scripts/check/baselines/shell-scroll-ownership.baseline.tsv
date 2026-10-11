@@ -1,0 +1,2 @@
+# shell-scroll-ownership 棘轮台账（relPath<TAB>rule；R1=页垂直滚动/视口魔法数，R2=noContentScroll 残留，R3=.page 类）
+# 语义：行外命中即阻断；被扫不到的条目告警提示收缩；重生成 bun scripts/check/check-shell-scroll-ownership.ts --init

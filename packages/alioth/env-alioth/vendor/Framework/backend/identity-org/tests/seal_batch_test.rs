@@ -232,6 +232,7 @@ async fn seal_waybill_lands_in_projection_not_comments() {
             filter_value: None,
             sort_field: None,
             sort_order: None,
+            search: None,
         })
         .await
         .expect("列表");
@@ -424,6 +425,7 @@ async fn seal_waybill_prefers_order_bridge_over_projection() {
             filter_value: None,
             sort_field: None,
             sort_order: None,
+            search: None,
         })
         .await
         .expect("列表");
