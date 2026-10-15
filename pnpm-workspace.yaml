@@ -38,8 +38,8 @@ overrides:
   qs: '^6.16.0'
   adm-zip: '^0.6.1'
   # The nested 11.7.0 copy carried four advisories fixed in 11.11; the
-  # workspace itself pins pnpm 12.6.0 via packageManager.
-  pnpm: '12.6.0'
+  # workspace itself pins pnpm 12.8.1 via packageManager.
+  pnpm: '12.8.1'
   sharp: '>=0.35.5'
   yaml: '>=2.8.3'
   # Security floors raised 2026-09-30 from `pnpm audit --audit-level=moderate`

@@ -422,7 +422,7 @@ describe('user center transport + failure branches (real services)', () => {
 
   it('answers requests without a body content-type and malformed JSON', async () => {
     const body = 'bill=whatever'
-    const noType = await rawRequest(ctx.webServer.port, '/api/billing/pay', {
+    const noType = await rawRequest(ctx.webServer.port!, '/api/billing/pay', {
       method: 'POST',
       headers: { cookie, 'content-length': String(Buffer.byteLength(body)) },
       body,
@@ -458,14 +458,14 @@ describe('user center transport + failure branches (real services)', () => {
 
   it('rejects cross-origin form posts and accepts same-origin ones', async () => {
     const origin = `http://127.0.0.1:${ctx.webServer.port}`
-    const crossOrigin = await rawRequest(ctx.webServer.port, '/api/billing/subscribe', {
+    const crossOrigin = await rawRequest(ctx.webServer.port!, '/api/billing/subscribe', {
       method: 'POST',
       headers: { cookie, origin: 'http://evil.example', 'content-type': 'application/x-www-form-urlencoded' },
     })
     expect(crossOrigin.status).toBe(403)
     expect(JSON.parse(crossOrigin.body)).toEqual({ error: 'origin mismatch' })
 
-    const sameOrigin = await rawRequest(ctx.webServer.port, '/api/billing/subscribe', {
+    const sameOrigin = await rawRequest(ctx.webServer.port!, '/api/billing/subscribe', {
       method: 'POST',
       headers: { cookie, origin, host: `127.0.0.1:${ctx.webServer.port}`, 'content-type': 'application/x-www-form-urlencoded' },
     })

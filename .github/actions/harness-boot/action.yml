@@ -75,7 +75,7 @@ runs:
         # `apps/cli` gained experimental members + dep bumps (execa ^10.0.1,
         # node-addon-require-builtin ^0.1.9, ws 8.21.3), so this repo's
         # lockfile was regenerated in the same commit as this pin.
-        ref: b84f323f8e2c231018c97e4125338983c35d8385
+        ref: 0866baefe8025b4b7ac962d96d10cee59f748c7d
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
@@ -84,7 +84,7 @@ runs:
     - name: enable pnpm
       if: inputs.build == 'true'
       shell: bash
-      run: corepack enable && corepack prepare pnpm@12.6.0 --activate
+      run: corepack enable && corepack prepare pnpm@12.8.1 --activate
     - name: harness install + host build
       if: inputs.build == 'true'
       shell: bash
