@@ -54,6 +54,31 @@
 - id: llm-deepseek
   disabled: true
 
+# Permission boundary: this is a shared online user space, so the permission
+# picker must never offer 完全控制 (danger-full-access). The server-side catalog
+# derives its options from this table, so dropping the entry also makes the
+# preset unselectable (`/permission`, `set`, `resolve` all reject it). Approval
+# and the sandbox fallback are pinned too: the base rows read
+# DSH_PERMISSION_MODE, and an inherited `danger-full-access` there would widen
+# the boundary without going through any preset.
+- id: permission
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+    defaultPreset: workspace-write
+- id: approval
+  config:
+    policy: ask
+- id: sandbox-policy
+  config:
+    mode: workspace-write
+    workspaceRoot: !!js process.cwd()
+
 # Right Sidebar: the harness Web terminal is NOT a product capability here.
 # Upstream runs it through the Session's subprocess provider with the execution
 # environment's system-user permissions — no Agent sandbox, no approval (Agent

@@ -14,7 +14,7 @@
 
 import path from 'node:path'
 import { ADAPTER_TOOL_TO_DSH, type Adapter, type Step } from '@dsh-alioth/skill-alioth'
-import { GUARD_RULE_IDS, guardDenyReason } from './rules.ts'
+import { GUARD_RULE_IDS, guardDenyReason, guardFeedback } from './rules.ts'
 
 /** 判定结果：`ok` 为真即放行；否则 `reason` 是带规则码前缀的单行拒绝文本。 */
 export type Adjudication =
@@ -73,6 +73,52 @@ export function writePathOf(tool: string, args: unknown): string | undefined {
   }
   const value = (args as Record<string, unknown>)[argName]
   return typeof value === 'string' ? value : undefined
+}
+
+/**
+ * Whether any object in the argument tree requests the unconfined mode under an
+ * escalation key. Scanning keys (not free text) keeps a command or file body
+ * that merely mentions the literal from being denied.
+ */
+function requestsFullAccess(value: unknown, depth = 0): boolean {
+  if (depth > 6 || typeof value !== 'object' || value === null) {
+    return false
+  }
+  if (Array.isArray(value)) {
+    return value.some(entry => requestsFullAccess(entry, depth + 1))
+  }
+  const record = value as Record<string, unknown>
+  if (record.sandbox_permissions === 'danger-full-access') {
+    return true
+  }
+  return Object.values(record).some(entry => requestsFullAccess(entry, depth + 1))
+}
+
+/**
+ * 完全控制执行面禁令。
+ *
+ * 共享在线空间里「完全控制」不是可选策略：preset 目录已不提供它，但 `bash` /
+ * `run_code` 仍会公布**单次调用**的 `sandbox_permissions` 升级字段，其中
+ * `danger-full-access` 有意绕过 `ctx.sandbox`、只由审批卡让用户点确认。在
+ * `tools/pre-execute` 按参数直接拒绝，审批卡根本不会渲染。参数树递归扫描升级键，
+ * 只认键名不认自由文本（命令/文件内容里出现该字面量不算请求）。
+ * @param tool - 被调用的工具名。
+ * @param args - 调用参数。
+ */
+export function fullAccessVerdict(tool: string, args: unknown): Adjudication {
+  if (!requestsFullAccess(args)) {
+    return { ok: true }
+  }
+  return {
+    ok: false,
+    reason: guardFeedback({
+      ruleId: GUARD_RULE_IDS.fullAccessEscalation,
+      repairClass: 'not-fixable',
+      message: `${tool} 请求了 danger-full-access（完全控制）——本部署是共享在线空间，该模式不可用`,
+      action: '不要请求升级；在工具工作区内完成任务，工作区外只做只读检索',
+      evidence: 'sandbox_permissions=danger-full-access',
+    }),
+  }
 }
 
 /**

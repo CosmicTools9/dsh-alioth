@@ -38,6 +38,7 @@ import { decideClosureNudge, type NudgeDecision } from './nudge.ts'
 import { GUARD_RULE_IDS, guardFeedback, type GuardRuleId } from './rules.ts'
 import { RunScopeResolver, WORKFLOW_SCOPE_TOOLS, type ActiveScope } from './scope.ts'
 import {
+  fullAccessVerdict,
   planWriteVerdict,
   sandboxVerdict,
   toolSurfaceVerdict,
@@ -380,6 +381,12 @@ export function apply(ctx: Context, config: Config): void {
 
   // ── 执行前：工具面 / 写沙箱 / plan 写面 ────────────────────────────────
   ctx.on('tools/pre-execute', async (exec: ToolExecution, next) => {
+    // 共享在线空间：完全控制的单次升级在参数层直接拒绝，审批卡不会渲染。
+    const escalation = fullAccessVerdict(exec.name, exec.arguments)
+    if (!escalation.ok) {
+      ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（完全控制升级）`)
+      return { kind: 'deny', reason: escalation.reason }
+    }
     const writePath = writePathOf(exec.name, exec.arguments)
     if (writePath === undefined && !enforceToolSurface) {
       return next()
@@ -539,6 +546,7 @@ export { GUARD_RULE_IDS, guardDenyReason, guardFeedback, type GuardRuleId } from
 export { RunScopeResolver, WORKFLOW_SCOPE_TOOLS, type ActiveScope, type ScopeKey } from './scope.ts'
 export {
   declaredToolSurface,
+  fullAccessVerdict,
   pathOrigin,
   planWriteVerdict,
   sandboxVerdict,

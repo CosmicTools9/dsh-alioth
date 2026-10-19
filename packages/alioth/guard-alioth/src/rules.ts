@@ -35,6 +35,8 @@ export const GUARD_RULE_IDS = {
   writeSandbox: 'write-outside-sandbox',
   /** plan 步写入本步 `output_glob` 之外的路径。 */
   planWriteScope: 'plan-write-outside-scope',
+  /** 单次调用请求 `danger-full-access`（完全控制）：共享在线空间不可用。 */
+  fullAccessEscalation: 'full-access-escalation',
   /** 修复墙：同一错误签名重复达到上限 / 同一调用签名连续重复。 */
   repairWall: 'repair-wall',
   /** 单 turn 墙钟或步数超限。 */

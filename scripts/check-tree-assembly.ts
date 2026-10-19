@@ -23,7 +23,7 @@
  * the dsh profile fallback resolves @dsh-alioth/* packages.
  * Usage: node --import tsx scripts/check-tree-assembly.ts
  */
-import { spawnSync } from 'node:child_process'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -49,6 +49,10 @@ interface Composition {
    * profile fallback, which `link-dsh-profiles.sh` owns.
    */
   readonly declaringManifest?: string
+  /** The deployment patch must not offer danger-full-access (完全控制).
+   * Only the two bundle compositions set this: the example overlays are the
+   * single-user dev shape (no auth, no shared space) and keep base defaults. */
+  readonly forbidFullAccess?: boolean
 }
 
 const ALIOTH_PLUGINS = [
@@ -69,6 +73,7 @@ const COMPOSITIONS: readonly Composition[] = [
     declaringManifest: 'packages/alioth/bundle-alioth/package.json',
     expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
+    forbidFullAccess: true,
   },
   {
     name: 'example overlay (headless dev)',
@@ -95,11 +100,22 @@ const COMPOSITIONS: readonly Composition[] = [
     declaringManifest: 'packages/alioth/bundle-alioth/package.json',
     expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
+    forbidFullAccess: true,
   },
 ]
 
-function run(cmd: string, args: readonly string[]): ReturnType<typeof spawnSync> {
+function run(cmd: string, args: readonly string[]): SpawnSyncReturns<string> {
   return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8' })
+}
+
+/** One entry section of the dumped config (`- id: X` up to the next row). */
+function rowOf(out: string, id: string): string | undefined {
+  const start = out.indexOf(`- id: ${id}\n`)
+  if (start === -1) {
+    return undefined
+  }
+  const next = out.indexOf('\n- id: ', start + 1)
+  return out.slice(start, next === -1 ? undefined : next)
 }
 
 function main(): void {
@@ -136,6 +152,23 @@ function main(): void {
     }
     if (!out.includes(comp.expectPersona)) {
       problems.push(`${label}: persona marker "${comp.expectPersona}" not found (system-prompt row not patched)`)
+    }
+    if (comp.forbidFullAccess === true) {
+      const permission = rowOf(out, 'permission')
+      if (permission === undefined) {
+        problems.push(`${label}: permission row missing from the assembled tree`)
+      } else {
+        if (permission.includes('danger-full-access')) {
+          problems.push(`${label}: permission row still offers danger-full-access (完全控制) — a shared online space must not expose it`)
+        }
+        if (!permission.includes('workspace-write')) {
+          problems.push(`${label}: permission row lost the workspace-write preset`)
+        }
+      }
+      const policy = rowOf(out, 'sandbox-policy')
+      if (policy === undefined || !/^\s+mode: workspace-write$/m.test(policy)) {
+        problems.push(`${label}: sandbox-policy.mode is not pinned to workspace-write (patch row dropped or env drift)`)
+      }
     }
     if (comp.declaringManifest !== undefined) {
       const manifest = JSON.parse(readFileSync(path.join(ROOT, comp.declaringManifest), 'utf8')) as {

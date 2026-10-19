@@ -203,6 +203,46 @@ afterAll(async () => {
   await rm(preProcRoot, { recursive: true, force: true })
 })
 
+describe('完全控制禁令', () => {
+  it('拒绝带 danger-full-access 的单次调用升级，普通调用不受影响', async () => {
+    const agent = fakeAgent('escalation-session')
+    const denied = denyMessage(await callTool('bash', {
+      command: 'id',
+      sandbox_permissions: 'danger-full-access',
+      justification: '需要工作区外的访问',
+    }, agent))
+    expect(ruleIdFromError(denied)).toBe(guard.GUARD_RULE_IDS.fullAccessEscalation)
+    expect(denied).toContain('not-fixable')
+    // 工作区内的普通 bash 不会被这条规则拦下（fixture 自身抛错，落到修复墙）。
+    const ordinary = await callTool('bash', { command: 'id' }, agent)
+    expect(ruleIdFromError(denyMessage(ordinary))).not.toBe(guard.GUARD_RULE_IDS.fullAccessEscalation)
+  })
+
+  it('无 agent 的调用同样拒绝（禁令先于范围解析）', async () => {
+    const denied = denyMessage(await callTool('bash', {
+      command: 'id',
+      sandbox_permissions: 'danger-full-access',
+      justification: 'x',
+    }))
+    expect(ruleIdFromError(denied)).toBe(guard.GUARD_RULE_IDS.fullAccessEscalation)
+  })
+
+  it('run_code 与嵌套位置的升级字段同样拒绝，自由文本不误伤', () => {
+    for (const args of [
+      { code: 'return 1', description: 'x', justification: 'x', sandbox_permissions: 'danger-full-access' },
+      { options: { sandbox_permissions: 'danger-full-access' } },
+    ]) {
+      const verdict = guard.fullAccessVerdict('run_code', args)
+      expect(verdict.ok).toBe(false)
+      if (!verdict.ok) {
+        expect(ruleIdFromError(verdict.reason)).toBe(guard.GUARD_RULE_IDS.fullAccessEscalation)
+      }
+    }
+    // 命令/文件内容里出现该字面量不是「请求升级」。
+    expect(guard.fullAccessVerdict('bash', { command: 'echo danger-full-access' }).ok).toBe(true)
+  })
+})
+
 describe('工具面强制', () => {
   it('拒绝面外调用并列出本步允许清单，放行声明面与元工具', async () => {
     const agent = fakeAgent('surface-session')
