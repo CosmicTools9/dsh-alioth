@@ -6,6 +6,16 @@ this file records user-visible changes per release.
 ## [Unreleased]
 
 ### Added
+- **落地页定位象限标注同行竞对**：依据 `AliothMeta/reports/深度研究-AI时代企业核心系统与Alioth价值分析.md`
+  的 §3.1 对标表、§3.3 厂商财务、§3.5 定价基准，标注 12 家：Palantir Foundry/AIP、金蝶 苍穹/星瀚、
+  用友 BIP、OutSystems、Mendix、Appian、明道云、简道云、Lovable、v0、Replit、秒悟/bolt.new。
+  统一按「轻量应用 ↔ 核心业务系统 × 平台云托管 ↔ 源码交付·私有化」定位，采用编号点 + 图例
+  （窄屏图例单列），避免直接写品牌名互相压盖。
+- **落地页本体面板补全**：左侧「Ontology coordinates」不再用「… 17 个业务域」省略——改为列出
+  模型规范的 **10 个场景域**（制造 / 批发零售 / 物流运输 / 租赁 / 技术·IT / 金融 / 商务服务 /
+  科研技术 / 公共管理 / 综合经营）、108 / 118 / 418 的编码规模，以及一条真实坐标示例
+  （仓储保全 · 交易订单 · 费项纪录 = `GH · FJA · ↓_CA`）；首屏统计的「17 个业务本体域」同步
+  改为可核对的「644 个本体坐标」，与右侧定位面板等高、消除空白。
 - **商务域落地与单一权益缝（架构评审 C1–C6 全链实施）**：billing-alioth 从「过渡内存实现」升级为**持久化商务域**（`dsh_alioth_billing`：orders/subscriptions/bills/invoices/usage_daily/audit_log 六张表，PG + 内存双适配器——重启丢订阅/账单/发票的缺陷就此关闭）。新增：**订单生命周期**（pending→paid→fulfilled/cancelled/refunded，支付履约）、**期末取消**（`cancel` 置 `canceling` 保持权益至 `renewsAt`，续期执行方每 15 分钟扫到期订阅翻 `canceled` 并生成次期账单；`subscribe` 可撤销取消）、**退款/作废**（admin-only，账单订单联动）、**权益判定单一缝** `entitlement(actor, capability)`（source-download / llm-budget）、**账户计量账本**（`usage_daily` 账户×日×模型；缺价桶令当月成本 `null`，绝不以 0 冒充）、**append-only 审计**（认证/计费/管理/审批统一入缝）、**通知 webhook**（`ALIOTH_NOTIFY_WEBHOOK`，fire-and-forget）。
 - **身份缝（C3）**：auth-alioth 新增 `authMode: 'oidc'` 适配器——零依赖自实现 OIDC RP（discovery / 授权 URL / 换码 / JWKS 缓存 + RS256/ES256 验签、一次性 state），对接 NS:Cosmic-Tools 的 embedded SSO 等真实 IdP，JIT 开户落到本地用户契约；本地口令适配器保持默认。MFA/密码重置/三方登录由 IdP 承载，本仓不再各自缺失。
 - **AccountContext（C5）**：`accountForSession(sessionId)` 把会话一次解析成 `{userId, username, namespace, role, plan, monthlyCostCents}`（60s memo），guard/billing/计量共读，不再各自推导身份。
@@ -14,6 +24,15 @@ this file records user-visible changes per release.
 - **支付通道缝与运营面（C4）**：`applyChannelPayment` + `POST /api/billing/channel/<channel>/callback`（HMAC-SHA256 + 5 分钟窗口，密钥未配置即 503 fail-closed）——对接形状 = 上游 `EXTERNAL_INTEGRATION_SPEC` 的 L-EXT/L-ADP/L-MAP，wechat-pay 等适配器住 NS:Cosmic-Tools 的 `Ext-adapter/` 面（契约文档 `docs/specs/billing-channel-ext-adapter.md`）；billing-web 新增 admin 页（对账/订单/审计/L2 开通/退款作废）与 `pnpm run admin:grant`（管理员唯一授予通道）；auth-web 补齐 CSRF Origin 校验、登录限流、Secure cookie（https 公网 origin 自动启用）。
 
 ### Changed
+- **产品面配色统一到 dsh 设计令牌**：landing / 登录注册 / 工作区 / 用户中心 / 批注页与批注浮层
+  由「深色底 + 终端绿/青」改为 DeepSeek Harness 的语义色板（品牌主色 = 中性 primary，
+  强调 = DeepSeek 蓝，success/warn/error = dsh 状态色），并按 `prefers-color-scheme`
+  提供明/暗两套（dsh 默认 `system`）；控制台内嵌的用户徽章与「应用状态 / 原型」侧栏
+  直接读 `--dsw-alias-*` 变量，跟随控制台自身的明暗切换。`theme-color` 改为明暗双 meta；
+  favicon 按 dsh 约定改为单色明暗双版本（`favicon.svg` 近黑 / `favicon-dark.svg` 近白，
+  透明底、`media="(prefers-color-scheme: …)"` 二选一），ICO 与 apple-touch-icon 以不透明
+  中性底重渲。状态色只用于边框/圆点/图标，小字状态文本回到 `--text`（浅色模式下
+  green-500/amber-500 作文字不达 AA）；旧背景网格随旧配色移除。
 - **复检注记按真实缺口闭环（2026-10-07 第二轮）**：①发票恢复**管理员开具队列**（申请落 pending，admin 页/`issueInvoice` 开具赋收据级票号；「无超管」不变）；②退款改为**按剩余服务期折算**——服务窗口记在订单上，退款额 = ⌊金额×剩余/总期⌋ 落 `bills.refund_amount_cents`，服务随退款终止（billing 域规则支持注入时钟，折算可确定性测试）；③OIDC 适配器补 **PKCE S256**（verifier 随一次性 state、challenge 进授权 URL、换码携带，假 IdP 断言强制）；④计量月度 memo 收紧为 30s 且**落账即失效**（预算判定不吃旧数）；⑤billing 状态变更端点加**动作限流**（`ActionRateLimiter`，30 次/5min，超限 429，GET 不计）。
 ### Changed
 - **运行在 harness `0.2.1-alpha.2` 合并底（`b84f323f8e`）上**：harness 全量 manifest 随上游 release 前进到
@@ -30,6 +49,27 @@ this file records user-visible changes per release.
   （undici / ip-address / fast-uri / brace-expansion），`pnpm audit --audit-level=moderate` 保持绿。
 
 ### Fixed
+- **共享在线空间禁止「完全控制」**：产品部署是多人 B/S 环境，权限选择不再提供
+  `danger-full-access`。服务端 preset 目录（`permission` 行）只保留 `read-only` 与
+  `workspace-write`，catalog / `/permission` / `set` / `resolve` 因此一致拒绝该值；
+  `approval` 策略与 `sandbox-policy.mode` 同时钉死为 `ask` / `workspace-write`，
+  避免继承的 `DSH_PERMISSION_MODE` 绕过 preset 放宽边界。执行面再加一道：
+  `guard-alioth` 的 `tools/pre-execute` 对任何携带
+  `sandbox_permissions: danger-full-access` 的调用直接拒绝（`[rule:full-access-escalation]`，
+  class not-fixable）——bash/run_code 的单次升级审批卡不会渲染。`check:tree-assembly`
+  新增部署组合断言：`permission` 行出现 `danger-full-access` 即红。
+- **浅色模式下分割线隐形与层塌陷**：①落地页定位矩阵的 L 型轴线与未点亮阶段的圆点此前用
+  10% 黑/白描边，浅色下完全不可见——新增 `--line-strong`（明 `rgba(0,0,0,.16)` / 暗
+  `rgba(255,255,255,.20)`，用于矩阵轴线）与 `--idle`（明 `#d4d4d4` / 暗 `#545557`，
+  用于未点亮圆点，取 dsh `state-idle-primary`）；②浅色 `--panel` 曾与 `--bg` 同为白底，
+  卡片/面板「白底白」、bot 气泡与所在面板同色——浅色 `--panel` 改为 dsh `bg-module-platform`
+  （bluish-60 `#f5f6f7`），`.bubble.bot` 改 `--bg`；登录/工作区/用户中心/批注页的浅色面板
+  一并分层，控制台右侧栏卡片改用 `bg-module-platform` 令牌；③落地页定位矩阵的轴标签——
+  x 轴标签此前无纵向定位而悬在顶边、y 轴标签负偏移压到卡片标题且底左角两个标签互相压字——
+  改为 y 轴标签竖排贴左轴、x 轴标签横排贴底轴两端，并给矩阵加留白使标签留在面板内；
+  同时把矩阵底图换成 **16×16 细网格**（每格 6.25%，取 dsh border-l3 的 `--grid` 色，
+  比轴线轻一档），并以 **3px 轴线色重绘四象限分割线**（横竖中心线，明显粗于 1px 细网格）与**轴方向箭头**
+  （x 轴向右指向核心业务系统、y 轴向上指向源码交付 · 私有化，取标签色）。
 - **右侧栏两个 tab 的互跳按钮点了没反应**：「原型」与「应用状态」互为入口的按钮从一个只注入了
   `sidebarRightTabs` 的 cordis scope 读 `sidebarRight` —— 未注入的服务属性读取会**直接抛**
   `cannot get property "sidebarRight" without inject`（不是 undefined），于是点击只留一条控制台报错、界面毫无反应；

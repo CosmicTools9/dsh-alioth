@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Alioth AppCreator">
+  <!-- Dark-theme twin of favicon.svg: same "A" contour, inverted for dark tab
+       bars (DeepSeek Harness favicon convention: fixed-color pair selected by
+       prefers-color-scheme, transparent tile). -->
+  <path fill-rule="evenodd" fill="#f9fafb"
+        d="M14.2 6.5 H17.8 L24.8 25.5 H21.4 L19.853 21.3 H12.147 L10.6 25.5 H7.2 Z
+           M16 10.839 L18.674 18.1 H13.326 Z"/>
+</svg>

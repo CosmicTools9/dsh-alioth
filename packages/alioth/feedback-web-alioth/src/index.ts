@@ -75,13 +75,19 @@ function feedbackPage(origin: string, allowed: readonly string[]): string {
   const bookmarklet = BOOKMARKLET.replace('%ORIGIN%', origin)
   return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>批注工具 — Alioth Feedback</title>
 <style>
-body{background:#0a0e14;color:#d7e0ea;font-family:system-ui,"PingFang SC",sans-serif;line-height:1.7;
-max-width:46rem;margin:0 auto;padding:2.5rem 1.5rem;
-background-image:linear-gradient(rgba(62,230,168,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(62,230,168,.05) 1px,transparent 1px);background-size:44px 44px}
-h1{font-size:1.5rem}code{font-family:ui-monospace,monospace;color:#3ee6a8;background:#101724;border:1px solid #1e2a3a;border-radius:6px;padding:.15rem .45rem}
-a{color:#4fc3f7}.bm{display:inline-block;padding:.6rem 1.2rem;background:#3ee6a8;color:#06251a;font-weight:700;border-radius:8px;text-decoration:none}
+/* Palette mirrors the DeepSeek Harness design tokens
+   (deepseek-harness packages/client/ui-theme/src/styles/design-platform.css). */
+:root{color-scheme:light dark;--bg:#fff;--panel:#f5f6f7;--input:#f9fafb;--line:rgba(0,0,0,.10);
+--text:#0f1115;--dim:#61666b;--accent:#0f1115;--accent-fg:#fff;--accent-2:#4176e6}
+@media(prefers-color-scheme:dark){:root{--bg:#151517;--panel:#232324;--input:#1b1b1c;
+--line:rgba(255,255,255,.12);--text:#f9fafb;--dim:#cfd3d6;--accent:#f9fafb;--accent-fg:#0f1115;
+--accent-2:#7aaaff}}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Helvetica,Arial,sans-serif;line-height:1.7;
+max-width:46rem;margin:0 auto;padding:2.5rem 1.5rem}
+h1{font-size:1.5rem}code{font-family:"SF Mono","JetBrains Mono","Fira Code",Consolas,Menlo,monospace;color:var(--text);background:var(--input);border:1px solid var(--line);border-radius:6px;padding:.15rem .45rem}
+a{color:var(--accent-2)}.bm{display:inline-block;padding:.6rem 1.2rem;background:var(--accent);color:var(--accent-fg);font-weight:700;border-radius:8px;text-decoration:none}
 ol{margin:1rem 0 1.5rem;padding-left:1.4rem}li{margin:.4rem 0}
-.allow{font-size:.85rem;color:#7d8ca0;margin-top:1.5rem}
+.allow{font-size:.85rem;color:var(--dim);margin-top:1.5rem}
 </style></head><body>
 <h1>页面批注工具</h1>
 <p>在任意开发页面上圈选元素、留言批注——agent 通过 <code>alioth_feedback_*</code> 工具消费并修复。</p>

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 2026-10-19 注：配色已在该日对齐 dsh 设计 token（见 CHANGELOG）；本计划中的调色板代码片段为 2026-08-20 初版历史记录。
+
 **Goal:** auth-alioth 服务器 `GET /` 改为深色科技感产品落地页（对话→应用演示流），登录表单平移至 `/login`。
 
 **Architecture:** 单文件静态 `public/landing.html`（内联 CSS/JS，零依赖零外联），node:http 启动时 `readFileSync` 读入缓存伺服；路由表三处调整；测试一迁移两新增。

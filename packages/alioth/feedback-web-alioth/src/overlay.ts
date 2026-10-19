@@ -13,15 +13,19 @@ export const OVERLAY_JS = `(function () {
 
   var style = document.createElement('style')
   style.textContent = [
-    '.afb-hint{position:fixed;left:12px;bottom:12px;z-index:2147483646;background:#101724;color:#d7e0ea;border:1px solid #1e2a3a;border-radius:8px;padding:8px 12px;font:12px system-ui;box-shadow:0 2px 10px rgba(0,0,0,.4)}',
-    '.afb-box{position:fixed;z-index:2147483647;background:#101724;color:#d7e0ea;border:1px solid #3ee6a8;border-radius:10px;padding:12px;font:13px system-ui;box-shadow:0 4px 20px rgba(0,0,0,.5);width:280px}',
-    '.afb-box h4{margin:0 0 8px;font-size:12px;color:#3ee6a8;font-family:ui-monospace,monospace}',
-    '.afb-box textarea{width:100%;height:64px;background:#070b11;color:#d7e0ea;border:1px solid #1e2a3a;border-radius:6px;padding:6px;font:12px system-ui;box-sizing:border-box}',
+    // Palette mirrors the DeepSeek Harness design tokens; the overlay floats
+    // over host pages, so it carries its own light/dark aliases.
+    '.afb-hint,.afb-box,.afb-pin,.afb-toast{--afb-bg:#fff;--afb-text:#0f1115;--afb-line:rgba(0,0,0,.10);--afb-input:#f9fafb;--afb-accent:#0f1115;--afb-accent-fg:#fff;--afb-ok:#22c55e}',
+    '@media(prefers-color-scheme:dark){.afb-hint,.afb-box,.afb-pin,.afb-toast{--afb-bg:#232324;--afb-text:#f9fafb;--afb-line:rgba(255,255,255,.12);--afb-input:#1b1b1c;--afb-accent:#f9fafb;--afb-accent-fg:#0f1115}}',
+    '.afb-hint{position:fixed;left:12px;bottom:12px;z-index:2147483646;background:var(--afb-bg);color:var(--afb-text);border:1px solid var(--afb-line);border-radius:8px;padding:8px 12px;font:12px system-ui;box-shadow:0 2px 10px rgba(0,0,0,.4)}',
+    '.afb-box{position:fixed;z-index:2147483647;background:var(--afb-bg);color:var(--afb-text);border:1px solid var(--afb-line);border-radius:10px;padding:12px;font:13px system-ui;box-shadow:0 4px 20px rgba(0,0,0,.5);width:280px}',
+    '.afb-box h4{margin:0 0 8px;font-size:12px;color:var(--afb-text);font-family:ui-monospace,monospace}',
+    '.afb-box textarea{width:100%;height:64px;background:var(--afb-input);color:var(--afb-text);border:1px solid var(--afb-line);border-radius:6px;padding:6px;font:12px system-ui;box-sizing:border-box}',
     '.afb-box .afb-row{margin-top:8px;text-align:right}',
-    '.afb-box button{background:#3ee6a8;border:none;border-radius:6px;color:#06251a;font-weight:600;padding:5px 14px;font-size:12px;cursor:pointer;margin-left:6px}',
-    '.afb-box button.ghost{background:none;border:1px solid #1e2a3a;color:#7d8ca0}',
-    '.afb-pin{position:absolute;z-index:2147483645;background:#3ee6a8;color:#06251a;border-radius:999px;width:20px;height:20px;font:bold 11px system-ui;display:flex;align-items:center;justify-content:center;cursor:help;box-shadow:0 1px 6px rgba(0,0,0,.5)}',
-    '.afb-toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#122019;color:#3ee6a8;border:1px solid #3ee6a8;border-radius:999px;padding:6px 16px;font:12px system-ui}'
+    '.afb-box button{background:var(--afb-accent);border:none;border-radius:6px;color:var(--afb-accent-fg);font-weight:600;padding:5px 14px;font-size:12px;cursor:pointer;margin-left:6px}',
+    '.afb-box button.ghost{background:none;border:1px solid var(--afb-line);color:var(--afb-text)}',
+    '.afb-pin{position:absolute;z-index:2147483645;background:var(--afb-accent);color:var(--afb-accent-fg);border-radius:999px;width:20px;height:20px;font:bold 11px system-ui;display:flex;align-items:center;justify-content:center;cursor:help;box-shadow:0 1px 6px rgba(0,0,0,.5)}',
+    '.afb-toast{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2147483647;background:var(--afb-bg);color:var(--afb-text);border:1px solid var(--afb-ok);border-radius:999px;padding:6px 16px;font:12px system-ui}'
   ].join('')
   document.head.appendChild(style)
 

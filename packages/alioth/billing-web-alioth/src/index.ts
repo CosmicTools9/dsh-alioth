@@ -182,61 +182,68 @@ function page(response: ServerResponse, status: number, title: string, body: str
   response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#0a0e14">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151517" media="(prefers-color-scheme: dark)">
 <title>${title} — 用户中心 · Alioth AppCreator</title>
 <style>
-:root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
---accent:#3ee6a8;--accent-2:#4fc3f7;--warn:#f2718a;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* Palette mirrors the DeepSeek Harness design tokens
+   (deepseek-harness packages/client/ui-theme/src/styles/design-platform.css). */
+:root{color-scheme:light dark;--bg:#fff;--panel:#f5f6f7;--input:#f9fafb;--line:rgba(0,0,0,.10);
+--text:#0f1115;--dim:#61666b;--accent:#0f1115;--accent-fg:#fff;--accent-2:#4176e6;
+--ok:#22c55e;--warn:#f59e0b;--error:#ec1313;
+--mono:"SF Mono","JetBrains Mono","Fira Code",Consolas,"Liberation Mono",Menlo,Courier,"PingFang SC","Microsoft YaHei",monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#151517;--panel:#232324;--input:#1b1b1c;
+--line:rgba(255,255,255,.12);--text:#f9fafb;--dim:#cfd3d6;--accent:#f9fafb;--accent-fg:#0f1115;
+--accent-2:#7aaaff;--error:#f25a5a}}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);min-height:100vh;
-font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;
-background-image:linear-gradient(rgba(62,230,168,.05) 1px,transparent 1px),
-linear-gradient(90deg,rgba(62,230,168,.05) 1px,transparent 1px);background-size:44px 44px}
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Helvetica,Arial,sans-serif;line-height:1.6}
 a{color:var(--accent-2);text-decoration:none}
 .wrap{max-width:960px;margin:0 auto;padding:0 1.5rem 3rem}
 nav{display:flex;justify-content:space-between;align-items:center;max-width:960px;margin:0 auto;padding:1.25rem 1.5rem}
 .wordmark{font-family:var(--mono);font-weight:700}
-.wordmark span{color:var(--accent)}
+.wordmark span{color:var(--accent-2)}
 h1{font-size:1.5rem;margin:1rem 0 .3rem}
 .sub{color:var(--dim);font-size:.9rem;margin-bottom:1.5rem}
 .tabs{display:flex;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
 .tabs a{padding:.4rem 1rem;border:1px solid var(--line);border-radius:999px;font-size:.88rem;color:var(--dim)}
-.tabs a.active{border-color:var(--accent);color:var(--accent)}
+.tabs a.active{border-color:var(--accent-2);color:var(--accent-2)}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.25rem;margin-bottom:1rem}
 .panel h2{font-size:1.05rem;margin-bottom:.8rem}
 .kv{display:grid;grid-template-columns:9rem 1fr;gap:.4rem;font-size:.9rem}
 .kv dt{color:var(--dim)}
-.kv dd{font-family:var(--mono);color:var(--accent)}
+.kv dd{font-family:var(--mono);color:var(--text)}
 table{width:100%;border-collapse:collapse;font-size:.88rem}
 th{text-align:left;color:var(--dim);font-weight:400;padding:.45rem .5rem;border-bottom:1px solid var(--line)}
 td{padding:.5rem;border-bottom:1px solid var(--line)}
 td.num,th.num{text-align:right;font-family:var(--mono)}
 .pill{display:inline-block;padding:.05rem .55rem;border-radius:999px;font-size:.76rem;border:1px solid var(--line);color:var(--dim)}
-.pill.ok{border-color:var(--accent);color:var(--accent)}
-.pill.warn{border-color:var(--warn);color:var(--warn)}
+.pill.ok{border-color:var(--ok);color:var(--text)}
+.pill.warn{border-color:var(--warn);color:var(--text)}
 .btn{display:inline-block;padding:.35rem .9rem;border-radius:6px;border:1px solid var(--accent);
-background:var(--accent);color:#06251a;font-weight:600;font-size:.85rem;cursor:pointer}
+background:var(--accent);color:var(--accent-fg);font-weight:600;font-size:.85rem;cursor:pointer}
 .btn.ghost{background:none;border-color:var(--line);color:var(--text)}
 form.inline{display:inline}
 form.grid{display:grid;gap:.8rem;max-width:26rem}
 label{display:grid;gap:.3rem;font-size:.85rem;color:var(--dim)}
-input,select{background:#070b11;border:1px solid var(--line);border-radius:6px;color:var(--text);
+input,select{background:var(--input);border:1px solid var(--line);border-radius:6px;color:var(--text);
 padding:.5rem .65rem;font-size:.92rem;outline:none}
-input:focus,select:focus{border-color:var(--accent)}
+input:focus,select:focus{border-color:var(--accent-2)}
 .banner{border-radius:6px;padding:.55rem .8rem;font-size:.86rem;margin-bottom:1rem}
-.banner.error{border:1px solid var(--warn);color:var(--warn);background:rgba(242,113,138,.08)}
-.banner.ok{border:1px solid var(--accent);color:var(--accent);background:rgba(62,230,168,.08)}
+.banner.error{border:1px solid var(--error);color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent)}
+.banner.ok{border:1px solid var(--ok);color:var(--text);background:color-mix(in srgb,var(--ok) 10%,transparent)}
 .note{color:var(--dim);font-size:.8rem;margin-top:.6rem}
 footer.icp{text-align:center;font-size:.8rem;color:var(--dim);padding:0 1.5rem 2.5rem}
 .tiers{display:grid;grid-template-columns:repeat(2,1fr);gap:1rem}
 @media (max-width:640px){.tiers{grid-template-columns:1fr}}
 .tier{border:1px solid var(--line);border-radius:10px;padding:1rem;background:var(--panel)}
-.tier.current{border-color:var(--accent)}
+.tier.current{border-color:var(--accent-2)}
 .tier h3{font-size:.95rem;margin-bottom:.3rem}
-.tier .price{font-family:var(--mono);color:var(--accent);margin:.4rem 0}
+.tier .price{font-family:var(--mono);color:var(--accent-2);margin:.4rem 0}
 .tier p{font-size:.82rem;color:var(--dim)}
 </style></head><body>
 <nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a><a href="/" style="font-size:.85rem;color:var(--dim)">← 返回首页</a></nav>

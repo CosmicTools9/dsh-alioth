@@ -33,16 +33,18 @@ window.__ModuleLoader__.load({
       chip: {
         position: 'fixed', bottom: 12, right: 12, zIndex: 99999,
         display: 'flex', alignItems: 'center', gap: 8,
-        background: '#101724', border: '1px solid #1e2a3a', borderRadius: 999,
-        padding: '4px 6px 4px 12px', font: '13px system-ui', color: '#d7e0ea',
+        background: 'var(--dsw-alias-bg-layer-1, #232324)',
+        border: '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.12))', borderRadius: 999,
+        padding: '4px 6px 4px 12px', font: '13px system-ui',
+        color: 'var(--dsw-alias-label-primary, #f9fafb)',
         boxShadow: '0 2px 10px rgba(0,0,0,.4)', pointerEvents: 'auto',
       },
-      name: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: '#3ee6a8' },
-      namespace: { color: '#7d8ca0', fontSize: 12 },
-      link: { color: '#4fc3f7', fontSize: 12, textDecoration: 'none', padding: '0 2px' },
+      name: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color: 'var(--dsw-alias-label-primary, #f9fafb)' },
+      namespace: { color: 'var(--dsw-alias-label-secondary, #cfd3d6)', fontSize: 12 },
+      link: { color: 'var(--dsw-alias-link, #7aaaff)', fontSize: 12, textDecoration: 'none', padding: '0 2px' },
       button: {
-        background: 'none', border: '1px solid #1e2a3a', borderRadius: 999,
-        color: '#7d8ca0', padding: '2px 10px', cursor: 'pointer', fontSize: 12,
+        background: 'none', border: '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.12))', borderRadius: 999,
+        color: 'var(--dsw-alias-label-secondary, #cfd3d6)', padding: '2px 10px', cursor: 'pointer', fontSize: 12,
       },
     }
 
@@ -118,28 +120,39 @@ window.__ModuleLoader__.load({
     const ALIOTH_TAB_ID = '@dsh-alioth/sidebar-alioth'
     const ALIOTH_TAB_KIND = 'alioth'
 
+    // Every colour is a DeepSeek Harness design token so the panel follows the
+    // console's own light/dark palette instead of pinning a second theme.
     const panel = {
-      root: { font: '13px/1.6 system-ui', color: '#d7e0ea', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 },
-      hint: { color: '#7d8ca0', padding: '10px 12px', font: '13px system-ui' },
-      card: { border: '1px solid #1e2a3a', borderRadius: 10, padding: '8px 10px', background: '#0d1420' },
-      cardTitle: { fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: '#7d8ca0', marginBottom: 6 },
+      root: { font: '13px/1.6 system-ui', color: 'var(--dsw-alias-label-primary, #f9fafb)', padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 10 },
+      hint: { color: 'var(--dsw-alias-label-secondary, #cfd3d6)', padding: '10px 12px', font: '13px system-ui' },
+      card: {
+        border: '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.12))', borderRadius: 10,
+        padding: '8px 10px', background: 'var(--dsw-alias-bg-module-platform, #f5f6f7)',
+      },
+      cardTitle: {
+        fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase',
+        color: 'var(--dsw-alias-label-tertiary, #adb2b8)', marginBottom: 6,
+      },
       row: { display: 'flex', justifyContent: 'space-between', gap: 10 },
-      label: { color: '#7d8ca0', flex: '0 0 auto' },
+      label: { color: 'var(--dsw-alias-label-secondary, #cfd3d6)', flex: '0 0 auto' },
       value: { textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
       mono: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
       actions: { display: 'flex', gap: 6 },
-      button: { background: 'none', border: '1px solid #1e2a3a', borderRadius: 999, color: '#7d8ca0', padding: '2px 10px', cursor: 'pointer', fontSize: 12 },
-      ok: { color: '#3ee6a8' },
-      warn: { color: '#e6b450' },
-      bad: { color: '#ff7b72' },
-      detail: { color: '#7d8ca0', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
-      path: { color: '#5d6b7f', fontSize: 11, wordBreak: 'break-all' },
-      fileLink: { color: '#4fc3f7', textDecoration: 'none', wordBreak: 'break-all' },
-      assetLink: { color: '#7d8ca0', textDecoration: 'none', wordBreak: 'break-all' },
-      dim: { color: '#5d6b7f', fontSize: 11, flex: '0 0 auto' },
-      warnDetail: { color: '#e6b450', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
-      okDetail: { color: '#3ee6a8', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
-      badDetail: { color: '#ff7b72', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      button: {
+        background: 'none', border: '1px solid var(--dsw-alias-border-l2, rgba(255,255,255,.12))', borderRadius: 999,
+        color: 'var(--dsw-alias-label-secondary, #cfd3d6)', padding: '2px 10px', cursor: 'pointer', fontSize: 12,
+      },
+      ok: { color: 'var(--dsw-alias-state-success-primary, #22c55e)' },
+      warn: { color: 'var(--dsw-alias-state-warn-primary, #f59e0b)' },
+      bad: { color: 'var(--dsw-alias-state-error-primary, #f25a5a)' },
+      detail: { color: 'var(--dsw-alias-label-secondary, #cfd3d6)', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      path: { color: 'var(--dsw-alias-label-caption, #adb2b8)', fontSize: 11, wordBreak: 'break-all' },
+      fileLink: { color: 'var(--dsw-alias-link, #7aaaff)', textDecoration: 'none', wordBreak: 'break-all' },
+      assetLink: { color: 'var(--dsw-alias-label-secondary, #cfd3d6)', textDecoration: 'none', wordBreak: 'break-all' },
+      dim: { color: 'var(--dsw-alias-label-caption, #adb2b8)', fontSize: 11, flex: '0 0 auto' },
+      warnDetail: { color: 'var(--dsw-alias-state-warn-primary, #f59e0b)', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      okDetail: { color: 'var(--dsw-alias-state-success-primary, #22c55e)', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
+      badDetail: { color: 'var(--dsw-alias-state-error-primary, #f25a5a)', fontSize: 12, marginTop: 4, wordBreak: 'break-word' },
     }
 
     /** One label/value line; `tone` colours the value when the state is notable. */
@@ -450,7 +463,7 @@ window.__ModuleLoader__.load({
     /** The tab type's guide glyph (the guide capsule renders `icon` at its size). */
     function AliothTabGlyph(props) {
       const size = props && props.size ? props.size : 16
-      return e('span', { style: { fontSize: size + 'px', lineHeight: 1, color: '#3ee6a8' } }, '◈')
+      return e('span', { style: { fontSize: size + 'px', lineHeight: 1, color: 'var(--dsw-alias-link, #7aaaff)' } }, '◈')
     }
 
     /**

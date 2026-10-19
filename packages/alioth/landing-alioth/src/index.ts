@@ -84,6 +84,7 @@ interface WebServerLike {
  */
 const BRAND_ASSETS: ReadonlyArray<{ path: string; file: string; type: string }> = [
   { path: '/favicon.svg', file: 'favicon.svg', type: 'image/svg+xml' },
+  { path: '/favicon-dark.svg', file: 'favicon-dark.svg', type: 'image/svg+xml' },
   { path: '/favicon.ico', file: 'favicon.ico', type: 'image/x-icon' },
   { path: '/apple-touch-icon.png', file: 'apple-touch-icon.png', type: 'image/png' },
 ]

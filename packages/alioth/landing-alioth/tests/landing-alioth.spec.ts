@@ -81,11 +81,12 @@ describe('landing-alioth (webServer mounted)', () => {
     await plugin.dispose()
 
     expect(Object.keys(served).sort()).toEqual([
-      '/apple-touch-icon.png', '/favicon.ico', '/favicon.svg', '/landing',
+      '/apple-touch-icon.png', '/favicon-dark.svg', '/favicon.ico', '/favicon.svg', '/landing',
       '/manifest.webmanifest', '/site.webmanifest',
     ])
     expect(served['/landing']).toMatchObject({ status: 200, type: 'text/html; charset=utf-8' })
     expect(served['/favicon.svg']).toMatchObject({ status: 200, type: 'image/svg+xml' })
+    expect(served['/favicon-dark.svg']).toMatchObject({ status: 200, type: 'image/svg+xml' })
     expect(served['/favicon.ico']!.type).toBe('image/x-icon')
     expect(served['/apple-touch-icon.png']!.type).toBe('image/png')
     // The mark is a real vector document, not a placeholder.

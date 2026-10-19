@@ -359,49 +359,56 @@ function sendAuthPage(response: ServerResponse, status: number, title: string, b
   response.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache', ...headers })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#0a0e14">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151517" media="(prefers-color-scheme: dark)">
 <title>${title} — Alioth AppCreator</title>
 <style>
-:root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
---accent:#3ee6a8;--accent-2:#4fc3f7;--error:#f2718a;
---mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* Palette mirrors the DeepSeek Harness design tokens
+   (deepseek-harness packages/client/ui-theme/src/styles/design-platform.css):
+   light/dark semantic aliases, brand = neutral primary, accent = DeepSeek blue. */
+:root{color-scheme:light dark;--bg:#fff;--panel:#f5f6f7;--input:#f9fafb;--line:rgba(0,0,0,.10);
+--text:#0f1115;--dim:#61666b;--accent:#0f1115;--accent-fg:#fff;--accent-2:#4176e6;
+--ok:#22c55e;--warn:#f59e0b;--error:#ec1313;
+--mono:"SF Mono","JetBrains Mono","Fira Code",Consolas,"Liberation Mono",Menlo,Courier,"PingFang SC","Microsoft YaHei",monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#151517;--panel:#232324;--input:#1b1b1c;
+--line:rgba(255,255,255,.12);--text:#f9fafb;--dim:#cfd3d6;--accent:#f9fafb;--accent-fg:#0f1115;
+--accent-2:#7aaaff;--error:#f25a5a}}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;
-font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;
-background-image:linear-gradient(rgba(62,230,168,.05) 1px,transparent 1px),
-linear-gradient(90deg,rgba(62,230,168,.05) 1px,transparent 1px);background-size:44px 44px}
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Helvetica,Arial,sans-serif;line-height:1.6}
 a{color:var(--accent-2);text-decoration:none}
 nav{display:flex;justify-content:space-between;align-items:center;
 max-width:1080px;width:100%;margin:0 auto;padding:1.25rem 1.5rem}
 .wordmark{font-family:var(--mono);font-weight:700;letter-spacing:.04em}
-.wordmark span{color:var(--accent)}
+.wordmark span{color:var(--accent-2)}
 main{flex:1;display:flex;align-items:center;justify-content:center;padding:2rem 1.5rem}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
 padding:2rem;width:100%;max-width:24rem}
 .card h1{font-size:1.4rem;margin-bottom:1.25rem}
 form{display:grid;gap:.9rem}
 label{display:grid;gap:.35rem;font-size:.88rem;color:var(--dim)}
-input{background:#070b11;border:1px solid var(--line);border-radius:6px;color:var(--text);
+input{background:var(--input);border:1px solid var(--line);border-radius:6px;color:var(--text);
 padding:.55rem .7rem;font-size:.95rem;outline:none;transition:border-color .2s}
-input:focus{border-color:var(--accent)}
+input:focus{border-color:var(--accent-2)}
 button{margin-top:.4rem;background:var(--accent);border:1px solid var(--accent);border-radius:6px;
-color:#06251a;font-weight:600;font-size:.95rem;padding:.6rem;cursor:pointer}
-button:hover{filter:brightness(1.1)}
+color:var(--accent-fg);font-weight:600;font-size:.95rem;padding:.6rem;cursor:pointer}
+button:hover{filter:brightness(.94)}
 .banner{border-radius:6px;padding:.55rem .8rem;font-size:.88rem;margin-bottom:1rem}
-.banner.error{border:1px solid var(--error);color:var(--error);background:rgba(242,113,138,.08)}
-.banner.ok{border:1px solid var(--accent);color:var(--accent);background:rgba(62,230,168,.08)}
+.banner.error{border:1px solid var(--error);color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent)}
+.banner.ok{border:1px solid var(--ok);color:var(--text);background:color-mix(in srgb,var(--ok) 10%,transparent)}
 .alt{margin-top:1.1rem;font-size:.85rem;color:var(--dim)}
 footer.icp{text-align:center;font-size:.8rem;color:var(--dim);padding:1.5rem 0 2rem}
 .pv-h{font-size:.85rem;color:var(--dim);margin:1rem 0 .4rem;text-transform:uppercase;letter-spacing:.06em}
 .pv{list-style:none;padding:0;display:grid;gap:.35rem}
 .pv a{font-family:var(--mono);font-size:.85rem}
 .hint{font-size:.85rem;color:var(--dim);margin:.9rem 0 .4rem}
-.token{font-family:var(--mono);font-size:.8rem;word-break:break-all;background:#070b11;
-border:1px solid var(--line);border-radius:6px;padding:.7rem;color:var(--accent);user-select:all}
-code{font-family:var(--mono);color:var(--accent)}
+.token{font-family:var(--mono);font-size:.8rem;word-break:break-all;background:var(--input);
+border:1px solid var(--line);border-radius:6px;padding:.7rem;color:var(--accent-2);user-select:all}
+code{font-family:var(--mono);color:var(--accent-2)}
 </style></head><body>
 <nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a></nav>
 <main><div class="card"><h1>${title}</h1>${body}</div></main>
@@ -641,33 +648,40 @@ ${error === '' ? '' : `<p class="banner error">${esc(error)}</p>`}
   response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' })
   response.end(`<!doctype html><html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.ico" sizes="16x16 32x32">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="theme-color" content="#0a0e14">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#151517" media="(prefers-color-scheme: dark)">
 <title>${title} — Alioth AppCreator</title>
 <style>
-:root{--bg:#0a0e14;--panel:#101724;--line:#1e2a3a;--text:#d7e0ea;--dim:#7d8ca0;
---accent:#3ee6a8;--accent-2:#4fc3f7;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+/* Palette mirrors the DeepSeek Harness design tokens
+   (deepseek-harness packages/client/ui-theme/src/styles/design-platform.css). */
+:root{color-scheme:light dark;--bg:#fff;--panel:#f5f6f7;--input:#f9fafb;--line:rgba(0,0,0,.10);
+--text:#0f1115;--dim:#61666b;--accent:#0f1115;--accent-fg:#fff;--accent-2:#4176e6;
+--ok:#22c55e;--warn:#f59e0b;--error:#ec1313;
+--mono:"SF Mono","JetBrains Mono","Fira Code",Consolas,"Liberation Mono",Menlo,Courier,"PingFang SC","Microsoft YaHei",monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#151517;--panel:#232324;--input:#1b1b1c;
+--line:rgba(255,255,255,.12);--text:#f9fafb;--dim:#cfd3d6;--accent:#f9fafb;--accent-fg:#0f1115;
+--accent-2:#7aaaff;--error:#f25a5a}}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);min-height:100vh;display:flex;flex-direction:column;
-font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;
-background-image:linear-gradient(rgba(62,230,168,.05) 1px,transparent 1px),
-linear-gradient(90deg,rgba(62,230,168,.05) 1px,transparent 1px);background-size:44px 44px}
+font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Helvetica Neue",Helvetica,Arial,sans-serif;line-height:1.6}
 a{color:var(--accent-2);text-decoration:none}
 nav{display:flex;justify-content:space-between;align-items:center;
 max-width:1080px;width:100%;margin:0 auto;padding:1.25rem 1.5rem}
 .wordmark{font-family:var(--mono);font-weight:700;letter-spacing:.04em}
-.wordmark span{color:var(--accent)}
+.wordmark span{color:var(--accent-2)}
 .chat{font-size:.9rem;border:1px solid var(--line);border-radius:999px;
-padding:.35rem .9rem;color:var(--accent)}
-.chat:hover{border-color:var(--accent);background:rgba(62,230,168,.06)}
+padding:.35rem .9rem;color:var(--accent-2)}
+.chat:hover{border-color:var(--accent-2);background:color-mix(in srgb,var(--accent-2) 8%,transparent)}
 main{flex:1;width:100%;max-width:1080px;margin:0 auto;padding:0 1.5rem 3rem}
 h1{font-size:1.4rem;margin:1rem 0 1.25rem}
 .ws{background:var(--panel);border:1px solid var(--line);border-radius:10px;
 padding:1.1rem 1.25rem;margin-bottom:1rem}
 .ws header{display:flex;justify-content:space-between;align-items:baseline;gap:1rem}
-.ws h2{font-family:var(--mono);font-size:1.05rem;color:var(--accent)}
+.ws h2{font-family:var(--mono);font-size:1.05rem;color:var(--accent-2)}
 .count{font-size:.8rem;color:var(--dim)}
 .paths{font-size:.82rem;color:var(--dim);margin-top:.35rem}
 .paths code{color:var(--accent-2)}
@@ -676,11 +690,11 @@ padding:1.1rem 1.25rem;margin-bottom:1rem}
 .apps li{font-size:.92rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
 .apps .code{font-family:var(--mono);color:var(--text)}
 .apps .appname{font-size:.85rem;color:var(--dim)}
-.apps .warn{font-family:var(--mono);font-size:.78rem;color:var(--accent-2);border:1px solid var(--line);border-radius:999px;padding:.05rem .5rem}
+.apps .warn{font-family:var(--mono);font-size:.78rem;color:var(--text);border:1px solid var(--warn);border-radius:999px;padding:.05rem .5rem}
 .rename{display:flex;align-items:center;gap:.4rem;margin-left:auto}
-.rename input{background:#070b11;border:1px solid var(--line);border-radius:6px;
+.rename input{background:var(--input);border:1px solid var(--line);border-radius:6px;
 color:var(--text);padding:.28rem .5rem;font-size:.85rem;font-family:var(--mono);width:11rem}
-.rename input:focus{border-color:var(--accent);outline:none}
+.rename input:focus{border-color:var(--accent-2);outline:none}
 .rename button{background:transparent;border:1px solid var(--line);border-radius:6px;
 color:var(--accent-2);padding:.28rem .7rem;font-size:.82rem;cursor:pointer}
 .rename button:hover{border-color:var(--accent-2)}
@@ -688,12 +702,12 @@ color:var(--accent-2);padding:.28rem .7rem;font-size:.82rem;cursor:pointer}
 .create{background:var(--panel);border:1px solid var(--line);border-radius:10px;
 padding:1rem 1.25rem;margin-bottom:1rem;display:grid;gap:.7rem;max-width:30rem}
 .create label{display:grid;gap:.35rem;font-size:.85rem;color:var(--dim)}
-.create input{background:#070b11;border:1px solid var(--line);border-radius:6px;
+.create input{background:var(--input);border:1px solid var(--line);border-radius:6px;
 color:var(--text);padding:.5rem .7rem;font-size:.95rem;outline:none;font-family:var(--mono)}
-.create input:focus{border-color:var(--accent)}
+.create input:focus{border-color:var(--accent-2)}
 .create button{background:var(--accent);border:1px solid var(--accent);border-radius:6px;
-color:#06251a;font-weight:600;padding:.5rem 1.2rem;cursor:pointer;justify-self:start}
-.banner.error{border:1px solid var(--error, #f2718a);color:#f2718a;background:rgba(242,113,138,.08);
+color:var(--accent-fg);font-weight:600;padding:.5rem 1.2rem;cursor:pointer;justify-self:start}
+.banner.error{border:1px solid var(--error);color:var(--error);background:color-mix(in srgb,var(--error) 8%,transparent);
 border-radius:6px;padding:.5rem .8rem;font-size:.85rem}
 </style></head><body>
 <nav><a class="wordmark" href="/">Alioth<span>·</span>AppCreator</a>
