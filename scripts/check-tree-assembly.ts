@@ -95,6 +95,11 @@ const COMPOSITIONS: readonly Composition[] = [
     // Base-layer rows the shared-online closure disables in every profile
     // (web-only rows are unmatched skips here and are asserted on web only).
     expectDisabled: ['plugin-manager', 'tool-plugin-manager', 'web-deepseek-api'],
+    expectRowText: {
+      // The generic-file upload cap is pinned (bytes), not left to the
+      // upstream default, so a silent default flip cannot reopen disk fill.
+      'attachment-local': ['maxFileBytes: 67108864'],
+    },
   },
   {
     name: 'example overlay (headless dev)',
@@ -135,6 +140,10 @@ const COMPOSITIONS: readonly Composition[] = [
       // Full-text session search spans every session on the host — it must
       // stay opt-in-off (cross-tenant content search would defeat isolation).
       'session-query-sqlite': ['openAt: never'],
+      // The two host-wide session verbs stay off (desktop open / default-model
+      // write); see the 2026-10-23 residual-risk closure in the bundle patch.
+      'session-controller': ['openWorkspacePath: false', 'initializeDefaultModel: false'],
+      'attachment-local': ['maxFileBytes: 67108864'],
     },
   },
 ]

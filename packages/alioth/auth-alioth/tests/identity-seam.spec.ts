@@ -13,6 +13,8 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { connectionAccountStorage } from '@deepseek-ai/dsh-client-connection'
+import RemoteAccessService from '@deepseek-ai/dsh-api-remote-access'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as envAlioth from '@dsh-alioth/env-alioth'
@@ -144,6 +146,11 @@ beforeAll(async () => {
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
   await ctx.aliothEnv.ready()
+  // The account-scope policy registers at auth apply only when the harness
+  // access service is already mounted; mounting it first mirrors the web
+  // composition (gateway before host plugins' lazy registration retry).
+  const remoteAccess = await ctx.plugin(RemoteAccessService, {})
+  disposers.push(() => remoteAccess.dispose())
   await mountPlugin({
     authMode: 'oidc',
     oidcIssuer: idpBase,
@@ -257,6 +264,40 @@ describe('identity seam via the service (oidc adapter active)', () => {
     await expect(ctx.aliothAuth.oidcExchange('good-code', 'state-abc')).rejects.toThrow(/state/)
     // 未知 state 也拒。
     await expect(ctx.aliothAuth.oidcExchange('good-code', 'never-issued')).rejects.toThrow(/state/)
+  })
+})
+
+// ── 账户策略（owner-peer 会话隔离，harness registerAccountPolicy 缝） ───────
+
+describe('account-scope policy (session/workspace isolation)', () => {
+  it('mirrors bindings into synchronous session answers', async () => {
+    const login = await ctx.aliothAuth.register('poluser', 'password123')
+    await ctx.aliothAuth.bind(login.token, 'pol-session-1')
+    expect(await ctx.aliothAuth.accountForSession('pol-session-1')).toMatchObject({ namespace: 'U-poluser' })
+
+    const remoteAccess = ctx.get('remoteAccess') as {
+      admitsSession(sessionId: string): boolean
+      admitsWorkspacePath(workspacePath: string): boolean
+    }
+    const asAccount = <T>(account: string, fn: () => T): T => connectionAccountStorage.run({ account }, fn)
+
+    expect(asAccount('U-poluser', () => remoteAccess.admitsSession('pol-session-1'))).toBe(true)
+    expect(asAccount('U-someone-else', () => remoteAccess.admitsSession('pol-session-1'))).toBe(false)
+    // Unknown session（无镜像记录）→ fail-closed。
+    expect(asAccount('U-poluser', () => remoteAccess.admitsSession('pol-session-unknown'))).toBe(false)
+  })
+
+  it('confines workspace registration to the account namespace under the Pre-Proc root', () => {
+    const remoteAccess = ctx.get('remoteAccess') as {
+      admitsWorkspacePath(workspacePath: string): boolean
+    }
+    const asAccount = <T>(account: string, fn: () => T): T => connectionAccountStorage.run({ account }, fn)
+
+    expect(asAccount('U-poluser', () => remoteAccess.admitsWorkspacePath(path.join(preProcRoot, 'U-poluser', 'Apps', 'x')))).toBe(true)
+    expect(asAccount('U-poluser', () => remoteAccess.admitsWorkspacePath(path.join(preProcRoot, 'U-other', 'Apps', 'x')))).toBe(false)
+    // 根目录本身与其他盘面（Documents、/etc）一律不可注册。
+    expect(asAccount('U-poluser', () => remoteAccess.admitsWorkspacePath(preProcRoot))).toBe(false)
+    expect(asAccount('U-poluser', () => remoteAccess.admitsWorkspacePath('/etc'))).toBe(false)
   })
 })
 

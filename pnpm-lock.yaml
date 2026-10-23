@@ -15672,6 +15672,10 @@ importers:
       '@dsh-alioth/env-alioth':
         specifier: workspace:*
         version: link:../env-alioth
+    devDependencies:
+      '@deepseek-ai/dsh-api-remote-access':
+        specifier: ^0.2.1-alpha.1
+        version: link:../../../../deepseek-harness/packages/api/remote-access
 
   packages/alioth/auth-web-alioth:
     dependencies:

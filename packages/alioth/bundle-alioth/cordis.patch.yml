@@ -200,6 +200,20 @@
 - id: web-deepseek-api
   disabled: true
 
+# ── 残余风险的底座侧关闭（2026-10-23 评估的后续工程）────────────────────────
+# harness 0.2.1 账户策略缝落地后的配套钉子：
+# * session-controller 的两个宿主面方法（在宿主桌面打开任意路径 / 写宿主级
+#   默认模型）没有逐调用鉴权且全局生效，在线部署一律关闭；
+# * attachment-local 的通用文件字节上限显式钉在 64 MiB（上传按流拒绝、
+#   不落盘），封磁盘填充面。
+- id: session-controller
+  config:
+    openWorkspacePath: false
+    initializeDefaultModel: false
+- id: attachment-local
+  config:
+    maxFileBytes: 67108864
+
 # 死面与宿主解析器：
 # * office-to-pdf —— LibreOffice 引擎转换宿主任意 office 文件的 Remote，唯一
 #   消费方（documentpreview tab）已禁用，留着只是一个文档解析攻击面；

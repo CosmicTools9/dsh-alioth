@@ -151,6 +151,15 @@ export async function userForBoundSession(ctx: Context, sessionId: string): Prom
   return result.rows[0]?.user_id ?? null
 }
 
+/** Every live session binding as (session_id, namespace) — the account-scope mirror's preload. */
+export async function loadSessionBindings(ctx: Context): Promise<{ session_id: string; namespace: string }[]> {
+  const result = await ctx.aliothEnv.sql<{ session_id: string; namespace: string }>(
+    `SELECT b.session_id, u.namespace FROM ${AUTH_SCHEMA}.session_bindings b
+     JOIN ${AUTH_SCHEMA}.users u ON u.id = b.user_id`,
+  )
+  return result.rows
+}
+
 export async function deleteExpiredSessions(ctx: Context): Promise<void> {
   await ctx.aliothEnv.sql(`DELETE FROM ${AUTH_SCHEMA}.sessions WHERE expires_at < now()`)
 }

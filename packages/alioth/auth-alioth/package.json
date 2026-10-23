@@ -27,5 +27,8 @@
     "@deepseek-ai/dsh-client-connection": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-api-remote-access": "^0.2.1-alpha.1"
   }
 }

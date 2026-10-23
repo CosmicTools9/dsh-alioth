@@ -55,7 +55,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool, type ToolExecution, type ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { hashPassword, verifyPassword } from './password.ts'
 import {
-  AUTH_SCHEMA, bindSession, bindSessionToUser, deleteExpiredSessions, deleteSession, ensureAuthSchema,
+  AUTH_SCHEMA, bindSession, bindSessionToUser, deleteExpiredSessions, deleteSession, ensureAuthSchema, loadSessionBindings,
   setUserApiKeyEnc, userApiKeyEncByAccount, userForBoundSession,
   insertSession, insertUser, sessionByTokenHash, userById, userByNamespace, userByUsername,
 } from './store.ts'
@@ -698,6 +698,9 @@ export function apply(ctx: Context, config: Config): void {
             plan,
             monthlyCostCents,
           }
+          // Feed the account-scope mirror: workspace-path-derived identities
+          // (the fallback lane above) reach the policy through this memo too.
+          rememberSessionAccount(sessionId, row.namespace)
         }
       }
       accountMemo.set(sessionId, { value, at: Date.now() })
@@ -986,6 +989,7 @@ export function apply(ctx: Context, config: Config): void {
         return false
       }
       await bindSessionToUser(ctx, sessionId, user.id)
+      rememberSessionAccount(sessionId, user.namespace)
       return true
     } catch (error) {
       ctx.logger.warn(`auth-alioth: could not bind session ${sessionId} to its connection account: ${error instanceof Error ? error.message : String(error)}`)
@@ -998,7 +1002,65 @@ export function apply(ctx: Context, config: Config): void {
   // so a lost binding silently degraded to path-derived identity (observed on m2:
   // a session landed in another account's namespace). This listener is the
   // transport-independent carrier; the client script stays as a redundant path.
+
+  // ── account-scope policy (session isolation for owner-peer browsers) ────
+  // Every connected browser is an owner Peer with no finer principal, so the
+  // harness scopes its session/workspace calls through a synchronous account
+  // policy keyed by the dispatch's login account (the namespace, per the
+  // auth-web resolver). The answers come from an in-memory mirror of the
+  // session→namespace bindings: the contract is synchronous by design (an
+  // await here would reorder the microtasks a Remote answer depends on), and
+  // the mirror is fed from the same places the binding is written.
+  const sessionAccountMirror = new Map<string, string>()
+  let sessionBindingsLoaded = false
+  const loadSessionAccountMirror = async (): Promise<void> => {
+    if (sessionBindingsLoaded) return
+    sessionBindingsLoaded = true
+    try {
+      for (const row of await loadSessionBindings(ctx)) {
+        sessionAccountMirror.set(row.session_id, row.namespace)
+      }
+    } catch (error) {
+      // A cold database must not break registration: per-session writes below
+      // keep feeding the mirror, and unknown sessions stay denied (fail-closed).
+      ctx.logger.warn(`auth-alioth: could not preload the session account mirror: ${error instanceof Error ? error.message : String(error)}`)
+      sessionBindingsLoaded = false
+    }
+  }
+  const rememberSessionAccount = (sessionId: string, namespace: string): void => {
+    sessionAccountMirror.set(sessionId, namespace)
+  }
+
+  let accountPolicyRegistered = false
+  const registerAccountPolicyOnce = (): void => {
+    if (accountPolicyRegistered) return
+    const remoteAccess = ctx.get('remoteAccess') as {
+      registerAccountPolicy(policy: {
+        sessionAccessible(account: string, sessionId: string): boolean
+        workspaceAdmissible(account: string, path: string): boolean
+      }): () => void
+    } | undefined
+    // Mirrors the @deepseek-ai/dsh-api-remote-access contract structurally, so
+    // this package carries no dependency on the browser-only service.
+    if (remoteAccess === undefined) return
+    remoteAccess.registerAccountPolicy({
+      sessionAccessible: (account, sessionId) => sessionAccountMirror.get(sessionId) === account,
+      workspaceAdmissible: (account, workspacePath) => {
+        // A workspace is admissible when it lives inside the account's own
+        // namespace directory under the deployment's Pre-Proc root; anything
+        // else (other namespaces, the host's Documents, temp paths) is refused.
+        const normalized = path.resolve(workspacePath)
+        if (!normalized.startsWith(preProcRoot + path.sep)) return false
+        return normalized.slice(preProcRoot.length + 1).split(path.sep)[0] === account
+      },
+    })
+    accountPolicyRegistered = true
+    void loadSessionAccountMirror()
+  }
+  registerAccountPolicyOnce()
+
   ctx.on('session/created', (session) => {
+    registerAccountPolicyOnce()
     void bindSessionFromConnection(String(session.id))
   })
 
