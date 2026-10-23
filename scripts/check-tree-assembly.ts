@@ -8,6 +8,9 @@
  *      so a missing row means a broken patch)
  *   - the system-prompt persona was replaced (top-level patch rows REPLACE
  *     existing rows — a stale id silently no-ops)
+ *   - the shared-online closure held: harness rows disabled by the bundle
+ *     patch are still disabled, and pinned row values did not drift
+ *     (expectDisabled / expectRowText)
  *   - no warning lines anywhere in the output
  *
  * Compositions:
@@ -53,6 +56,21 @@ interface Composition {
    * Only the two bundle compositions set this: the example overlays are the
    * single-user dev shape (no auth, no shared space) and keep base defaults. */
   readonly forbidFullAccess?: boolean
+  /**
+   * Harness rows that must stay DISABLED in the assembled tree — the shared
+   * online-surface closure from the 2026-10-23 security assessment. Patch
+   * disables are matched by id, so an upstream rename or row drop turns the
+   * disable into a silent no-op and the capability silently returns; this is
+   * the tripwire. Only rows the composition's own tree contains may be listed
+   * (web-only rows are unmatched skips on headless).
+   */
+  readonly expectDisabled?: readonly string[]
+  /**
+   * Row id → text that must appear inside that row's assembled section
+   * (fail-closed pins against upstream default flips, e.g. session full-text
+   * search staying `openAt: never`).
+   */
+  readonly expectRowText?: Readonly<Record<string, readonly string[]>>
 }
 
 const ALIOTH_PLUGINS = [
@@ -74,6 +92,9 @@ const COMPOSITIONS: readonly Composition[] = [
     expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
     forbidFullAccess: true,
+    // Base-layer rows the shared-online closure disables in every profile
+    // (web-only rows are unmatched skips here and are asserted on web only).
+    expectDisabled: ['plugin-manager', 'tool-plugin-manager', 'web-deepseek-api'],
   },
   {
     name: 'example overlay (headless dev)',
@@ -101,6 +122,20 @@ const COMPOSITIONS: readonly Composition[] = [
     expectPlugins: ['landing-alioth', 'auth-alioth', 'auth-web-alioth', 'billing-alioth', 'billing-web-alioth', 'page-feedback', 'feedback-web-alioth', 'tool-feedback-alioth', ...ALIOTH_PLUGINS],
     expectPersona: 'You are the Alioth app agent',
     forbidFullAccess: true,
+    // The 2026-10-23 shared-online closure (see the bundle patch comments for
+    // the per-row rationale). plugin-manager/tool-plugin-manager/web-deepseek-
+    // api are base rows and are already asserted on headless.
+    expectDisabled: [
+      'settings-controller', 'ui-settings-web-search', 'ui-settings-account',
+      'account-controller', 'session-log-download', 'schedule', 'ui-schedule',
+      'office-to-pdf', 'workspace-changes', 'harness-dev-context',
+      'preset-cordis', 'preset-minimal', 'ui-plugin-manager',
+    ],
+    expectRowText: {
+      // Full-text session search spans every session on the host — it must
+      // stay opt-in-off (cross-tenant content search would defeat isolation).
+      'session-query-sqlite': ['openAt: never'],
+    },
   },
 ]
 
@@ -168,6 +203,26 @@ function main(): void {
       const policy = rowOf(out, 'sandbox-policy')
       if (policy === undefined || !/^\s+mode: workspace-write$/m.test(policy)) {
         problems.push(`${label}: sandbox-policy.mode is not pinned to workspace-write (patch row dropped or env drift)`)
+      }
+    }
+    for (const id of comp.expectDisabled ?? []) {
+      const row = rowOf(out, id)
+      if (row === undefined) {
+        problems.push(`${label}: expected-disabled row \`${id}\` not found in the assembled tree (upstream renamed or dropped the row — re-run the shared-online security assessment before trusting this closure)`)
+      } else if (!/^ {2}disabled: true$/m.test(row)) {
+        problems.push(`${label}: row \`${id}\` is no longer disabled in the assembled tree — the shared-online closure regressed (upstream default flip or lost patch row)`)
+      }
+    }
+    for (const [id, needles] of Object.entries(comp.expectRowText ?? {})) {
+      const row = rowOf(out, id)
+      if (row === undefined) {
+        problems.push(`${label}: row \`${id}\` missing from the assembled tree (expected it to carry ${needles.map(n => `\`${n}\``).join(' / ')})`)
+        continue
+      }
+      for (const needle of needles) {
+        if (!row.includes(needle)) {
+          problems.push(`${label}: row \`${id}\` lost \`${needle}\` in the assembled tree`)
+        }
       }
     }
     if (comp.declaringManifest !== undefined) {

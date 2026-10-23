@@ -131,6 +131,89 @@
 - id: ui-open-in-app
   disabled: true
 
+# ── 共享在线空间安全评估（2026-10-23，底座 0.2.1-rc.2 全量复核）────────────────
+#
+# 触发：底座更新后对 web profile 的宿主面逐行复核。关键事实（harness 源码取证）：
+# 浏览器调用者过 cookie/token 闸后即 owner peer（packages/client/connection/src/
+# rpc-host.ts:96），Gateway 的资源/策略检查只对非 owner 生效——此前对设置面板/
+# 插件面板做的「非 loopback 客户端遮蔽」只是视觉关闭，RPC 本身对每个登录租户
+# 开放。宿主进程只绑 loopback、租户流量经 nginx 也来自 loopback，服务端无法按
+# authority 区分，所以维护面一律升级为行级关闭（设置/插件面板在 loopback 上
+# 随之失效；部署配置的唯一入口 = 环境变量 + 本文件）。
+#
+# 插件管理面 = 远程代码执行：`plugin-manager` 服务按 registry 名跑 pnpm 装包、
+# 改 profile 的 package.json/patch 并热重载插件树（packages/boot/plugin-manager/
+# src/index.ts），任何租户可借它安装任意包或停用 guard-alioth/env-alioth。
+# 面板早已遮蔽，这里关掉服务本体与两条 preset 再挂路径。
+- id: plugin-manager
+  disabled: true
+- id: tool-plugin-manager
+  disabled: true
+- id: ui-plugin-manager
+  disabled: true
+# `session.create` 接受 Agent preset 参数——cordis preset 带 tool-plugin-manager/
+# tool-plugin-market/tool-cordis（插件管理 + 宿主检查），minimal preset 带原生
+# PTY 持久 shell 工具；两者都不是本产品该给租户的 agent 组合，行级禁用
+# （默认 preset 仍是 standard）。standard/ptc 保持。
+- id: preset-cordis
+  disabled: true
+- id: preset-minimal
+  disabled: true
+
+# 设置/凭据写入面：settings-controller 对每个「含 volatile 字段的插件」开放
+# 读（脱敏）/写（含 role('secret') 的 API key 原文），落盘到 profile 的
+# cordis.patch.yml——宿主级共享配置，一个租户写入全体生效；openSettingsDocument
+# 还会在宿主上打开本地编辑器。console 的 Settings 页面（模型密钥、web 搜索、
+# 账号）全部经它写入，一并关闭；凭据经环境变量与打补丁交付。
+- id: settings-controller
+  disabled: true
+- id: ui-settings-web-search
+  disabled: true
+- id: ui-settings-account
+  disabled: true
+# DeepSeek Platform 账号面：startSignIn 在宿主机上开浏览器、signOut 撤销的是
+# 全机共享的 Platform grant、余额/通知读的是同一账号——单用户本地特性。
+- id: account-controller
+  disabled: true
+
+# 会话导出：`GET /api/session.export?sessionId=…` 接受任意调用方给的 id，无
+# 归属校验（packages/session-query/session-log-export）——整包 ZIP（含子代理
+# 日志、图片、附件）可被任何登录租户拉走。控制台不提供导出功能。
+- id: session-log-download
+  disabled: true
+
+# 定时任务：Schedule 服务把到期事项作为 follow-up 注回原会话，无人值守运行
+# 完整 agent 回合（无需审批应答者），支持 recurring/every/cron 且无数量配额、
+# 可自我续链（会话内可再建提醒）、跨重启持久于 ~/.dsh/storages。多租户在线
+# 服务上这是无配额的自治计算通道（无 BYOK 时烧平台密钥），整体关闭；preset
+# 里的 schedule_* 工具面保留但调用即报服务不可用（fail-loud）。
+- id: schedule
+  disabled: true
+- id: ui-schedule
+  disabled: true
+
+# web-deepseek-api（0.2.1-rc.2 新增）：以平台 DEEPSEEK_API_KEY 计费的 DeepSeek
+# 搜索/抓取 API provider 对，且 Settings 的 web 搜索开关（任意租户可切）会把
+# web_search/web_fetch 整体切到它。平台密钥为租户触发的辅助请求无计量地买单，
+# 不适合在线提供；BYOK 只覆盖聊天路由，覆盖不到这里。默认 provider
+# （deepseek-official 搜索 + http 抓取）不动。
+- id: web-deepseek-api
+  disabled: true
+
+# 死面与宿主解析器：
+# * office-to-pdf —— LibreOffice 引擎转换宿主任意 office 文件的 Remote，唯一
+#   消费方（documentpreview tab）已禁用，留着只是一个文档解析攻击面；
+# * workspace-changes —— 每 turn 对会话工作目录跑 git 快照，唯一消费方
+#   （ui-deliverables 变更文件卡）已禁用；
+# * harness-dev-context —— 向模型上下文注入 harness checkout 路径与 GUI URL，
+#   面向「检查/扩展 harness 本体的开发代理」，不是产品语境。
+- id: office-to-pdf
+  disabled: true
+- id: workspace-changes
+  disabled: true
+- id: harness-dev-context
+  disabled: true
+
 - insert:
     - id: directory-picker-app
       name: '@dsh-alioth/app-picker'
