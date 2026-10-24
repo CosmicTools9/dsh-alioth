@@ -103,20 +103,31 @@ export interface CreateArgs {
   readonly coreConstraints?: FlowPlan['coreConstraints']
 }
 
-/** Execute one registered tool through the registry (model-equivalent path). */
+/**
+ * Execute one registered tool through the registry (model-equivalent path).
+ * The harness tools API is batch-shaped (`calls: ToolCallBlock[]`, arguments
+ * as the raw JSON string) since 0.2.1-rc.3; the pipeline always sends one.
+ */
 async function runTool(
   ctx: Context,
   exec: ToolRunContext,
   toolName: string,
   args: unknown,
 ): Promise<Record<string, unknown>> {
-  const result = await ctx.tools.execute({
+  const batch = await ctx.tools.execute({
+    calls: [{
+      type: 'tool-call',
+      id: `${toolName}-pipeline` as ToolCallId,
+      name: toolName,
+      arguments: JSON.stringify(args ?? {}),
+    }],
     signal: exec.signal,
-    callId: `${toolName}-pipeline` as ToolCallId,
-    name: toolName,
-    arguments: args,
     ...(exec.agent === undefined ? {} : { agent: exec.agent }),
   })
+  const result = batch.results[0]?.result
+  if (result === undefined) {
+    throw new Error(`pipeline stage ${toolName} failed: no result returned`)
+  }
   if (result.isError) {
     throw new Error(`pipeline stage ${toolName} failed: ${result.error.message}`)
   }

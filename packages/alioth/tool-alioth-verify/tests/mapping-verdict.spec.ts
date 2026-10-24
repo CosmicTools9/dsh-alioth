@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -41,19 +42,20 @@ async function makeContext(options: { readonly collections?: readonly string[]; 
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const plugin = await ctx.plugin(verifyTools, { preProcRoot: root })
   disposers.push(() => plugin.dispose())
   return ctx
 }
 
-function call(ctx: Context, args: Record<string, unknown>) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`verdict-${++counter}`),
-    name: 'alioth_mapping_verdict',
-    arguments: args,
+async function call(ctx: Context, args: Record<string, unknown>) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`verdict-${++counter}`), name: 'alioth_mapping_verdict', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 afterAll(async () => {

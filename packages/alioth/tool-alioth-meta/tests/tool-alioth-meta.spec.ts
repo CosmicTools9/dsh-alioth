@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
+import type { ToolExecutionInput } from '@deepseek-ai/dsh-tools'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,7 +8,6 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import { physicalTableParents } from '@dsh-alioth/skill-alioth'
 import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
@@ -70,13 +71,13 @@ let ctx: Context
 const disposers: Array<() => Promise<void>> = []
 let counter = 0
 
-function callSchemaInfo(args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`call-${++counter}`),
-    name: 'alioth_schema_info',
-    arguments: args,
+async function callSchemaInfo(args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`call-${++counter}`), name: 'alioth_schema_info', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 let testDb: TestDatabase
@@ -103,6 +104,7 @@ beforeAll(async () => {
   const systemFiber = await ctx.plugin(SystemPrompt)
   disposers.push(() => systemFiber.dispose())
   const toolsFiber = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => toolsFiber.dispose())
   const envFiber = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => envFiber.dispose())
@@ -122,6 +124,12 @@ function expectSuccess(result: Awaited<ReturnType<typeof callSchemaInfo>>): Reco
     throw new Error(`expected alioth_schema_info success, got: ${result.error.message}`)
   }
   return result.value as Record<string, unknown>
+}
+
+/** Approval batches need an agent with a real session carrying an open turn. */
+function approvalAgent(): unknown {
+  const session = { append: () => {}, header: { id: 'approval-session' } }
+  return { session }
 }
 
 describe('alioth_schema_info', () => {
@@ -227,14 +235,14 @@ describe('alioth_schema_info', () => {
 
 let entityCounter = 0
 
-function callEntityWrite(args: unknown, over: { agent?: unknown } = {}) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`entity-${++entityCounter}`),
-    name: 'alioth_entity_write',
-    arguments: args,
+async function callEntityWrite(args: unknown, over: { agent?: NonNullable<ToolExecutionInput['agent']> } = {}) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`entity-${++entityCounter}`), name: 'alioth_entity_write', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
     ...(over.agent === undefined ? {} : { agent: over.agent }),
-  } as never)
+  })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 describe('dsh-alioth alioth_entity_write (bypass)', () => {
@@ -319,6 +327,7 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
     const system = await ctx.plugin(SystemPrompt)
     disposers.push(() => system.dispose())
     const tools = await ctx.plugin(ToolRuntime)
+await ctx.plugin(NativeToolExecutor)
     disposers.push(() => tools.dispose())
     ctx.provide('approval')
     ctx.set('approval', { request: async () => answer } as never)
@@ -360,26 +369,26 @@ describe('dsh-alioth alioth_entity_write (approvalMode=required)', () => {
 
   it('writes when approval grants allowed-once', async () => {
     const approvalCtx = await bootWithApproval('allowed-once')
-    const result = await approvalCtx.tools.execute({
-      signal,
-      callId: ToolCallId('entity-grant'),
-      name: 'alioth_entity_write',
-      arguments: { table: 'zc_id_scene', name: '操作', inherits: ['zc_id_object'], fields: [] },
-      agent: { id: SessionId('parent-2'), session: Session.create(SessionId('parent-2')) } as never,
+    const batch = await approvalCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('entity-grant'), name: 'alioth_entity_write', arguments: JSON.stringify({ table: 'zc_id_scene', name: '操作', inherits: ['zc_id_object'], fields: [] }) }],
+      signal: signal,
+      agent: approvalAgent() as never,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected alioth_entity_write success: ${result.error.message}`)
     expect(result.value).toMatchObject({ table: 'zc_id_scene' })
   }, 120_000)
 
   it('denies the write when approval rejects', async () => {
     const approvalCtx = await bootWithApproval('rejected')
-    const result = await approvalCtx.tools.execute({
-      signal,
-      callId: ToolCallId('entity-deny'),
-      name: 'alioth_entity_write',
-      arguments: { table: 'zc_id_stus-employ', name: '雇员状态', inherits: ['zc_id_object'], fields: [] },
-      agent: { id: SessionId('parent-2'), session: Session.create(SessionId('parent-2')) } as never,
+    const batch = await approvalCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('entity-deny'), name: 'alioth_entity_write', arguments: JSON.stringify({ table: 'zc_id_stus-employ', name: '雇员状态', inherits: ['zc_id_object'], fields: [] }) }],
+      signal: signal,
+      agent: approvalAgent() as never,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (!result.isError) throw new Error('expected alioth_entity_write failure')
     expect(result.error.message).toContain('denied by approval')
   }, 120_000)
@@ -404,6 +413,7 @@ describe('tool-alioth-meta (DDL-only deployment)', () => {
     const systemFiber = await dctx.plugin(SystemPrompt)
     ddisposers.push(() => systemFiber.dispose())
     const toolsFiber = await dctx.plugin(ToolRuntime)
+await dctx.plugin(NativeToolExecutor)
     ddisposers.push(() => toolsFiber.dispose())
     const envFiber = await dctx.plugin(envAlioth, { modelSource: dmodel, dataRoot: ddata, databaseUrl: ddb.url })
     ddisposers.push(() => envFiber.dispose())
@@ -420,13 +430,13 @@ describe('tool-alioth-meta (DDL-only deployment)', () => {
     await ddb.dispose()
   })
 
-  function callDdl(args: unknown) {
-    return dctx.tools.execute({
-      signal,
-      callId: ToolCallId(`ddl-${++dcounter}`),
-      name: 'alioth_schema_info',
-      arguments: args,
+  async function callDdl(args: unknown) {
+    const batch = await dctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`ddl-${++dcounter}`), name: 'alioth_schema_info', arguments: JSON.stringify(args ?? {}) }],
+      signal: signal,
     })
+    if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+    return batch.results[0].result
   }
 
   it('boots without the registry and serves the DDL inventory, flagged as degraded', async () => {

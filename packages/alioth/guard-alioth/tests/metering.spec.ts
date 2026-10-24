@@ -98,7 +98,7 @@ describe('guard wiring (turn-end flush + monthly budget)', () => {
   const preStep = async (sessionId: string, turn: number) =>
     ctx.waterfall(
       'agent/pre-step',
-      { agent: makeAgent(sessionId), messages: [], turn, step: 1, signal: new AbortController().signal },
+      { agent: makeAgent(sessionId), messages: [], turn, step: 1, signal: new AbortController().signal, modelSelection: { provider: 'p', model: 'm' } },
       async () => ({ kind: 'enter' as const, messages: [] }),
     )
 

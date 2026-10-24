@@ -24,6 +24,7 @@
   "devDependencies": {
     "@dsh-alioth/tool-alioth": "workspace:*",
     "@dsh-alioth/tool-alioth-meta": "workspace:*",
-    "@dsh-alioth/tool-alioth-workflow": "workspace:*"
+    "@dsh-alioth/tool-alioth-workflow": "workspace:*",
+    "@deepseek-ai/dsh-tool-executor-native": "^0.2.1-alpha.1"
   }
 }

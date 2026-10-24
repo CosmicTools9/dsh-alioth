@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -38,22 +39,22 @@ let root: string
 let ctx: Context
 let counter = 0
 
-function callInspect(args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`call-${++counter}`),
-    name: 'alioth_app_inspect',
-    arguments: args,
+async function callInspect(args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`call-${++counter}`), name: 'alioth_app_inspect', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
-function callList(args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`list-${++counter}`),
-    name: 'alioth_app_list',
-    arguments: args,
+async function callList(args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`list-${++counter}`), name: 'alioth_app_list', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 async function writeApp(namespace: string, app: string, content: unknown): Promise<void> {
@@ -72,6 +73,7 @@ beforeAll(async () => {
   ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(tool, { preProcRoot: root })
 })
 
@@ -196,23 +198,25 @@ describe('dsh-alioth tool-alioth', () => {
   })
 })
 
-/** A parent Agent backed by a real Session — the approval seam needs `agent.session`. */
+/** A parent Agent backed by a real Session — the approval seam needs `agent.session`
+ * with an open turn (rc.3 admission reads the turn position from the session log). */
 function fakeAgent(): Agent & { session: Session } {
   const session = Session.create(SessionId('parent-1'))
-  return { id: SessionId('parent-1'), session } as unknown as Agent & { session: Session }
+  session.append('turn/start', { turn: 1 })
+  return { session } as unknown as Agent & { session: Session }
 }
 
 // ── alioth_app_write ─────────────────────────────────────────────────────
 
 let writeCounter = 0
 
-function callWrite(args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`write-${++writeCounter}`),
-    name: 'alioth_app_write',
-    arguments: args,
+async function callWrite(args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`write-${++writeCounter}`), name: 'alioth_app_write', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 describe('dsh-alioth alioth_app_write (bypass)', () => {
@@ -276,6 +280,7 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
     const system = await ctx.plugin(SystemPrompt)
     disposers.push(() => system.dispose())
     const tools = await ctx.plugin(ToolRuntime)
+await ctx.plugin(NativeToolExecutor)
     disposers.push(() => tools.dispose())
     ctx.provide('approval')
     ctx.set('approval', {
@@ -301,14 +306,16 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
     const bare = new Context()
     const system = await bare.plugin(SystemPrompt)
     const tools = await bare.plugin(ToolRuntime)
+await bare.plugin(NativeToolExecutor)
     try {
       const fiber = await bare.plugin(tool, { preProcRoot: approvalRoot, approvalMode: 'required' })
-      const result = await bare.tools.execute({
-        signal,
-        callId: ToolCallId('approval-missing'),
-        name: 'alioth_app_write',
-        arguments: { namespace: 'Alioth', code: 'no-approval', name: 'X', modules: [] },
+      const batch = await bare.tools.execute({
+        calls: [{ type: 'tool-call', id: ToolCallId('approval-missing'), name: 'alioth_app_write', arguments: JSON.stringify({ namespace: 'Alioth', code: 'no-approval', name: 'X', modules: [] }) }],
+        signal: signal,
+        agent: fakeAgent() as never,
       })
+      const result = batch.results[0]?.result
+      if (result === undefined) throw new Error('tool batch returned no result')
       if (!result.isError) throw new Error('expected alioth_app_write failure')
       expect(result.error.message).toContain('no ApprovalService')
       await fiber.dispose()
@@ -320,30 +327,24 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
 
   it('writes when approval grants allowed-once', async () => {
     approvalCtx = await bootWithApproval('allowed-once')
-    const result = await approvalCtx.tools.execute({
-      signal,
-      callId: ToolCallId('approval-grant'),
-      name: 'alioth_app_write',
-      arguments: { namespace: 'Alioth', code: 'granted-app', name: 'Granted', modules: [{ id: 'm1', name: 'M1' }] },
-      agent: fakeAgent() as never,
+    const batch = await approvalCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('approval-grant'), name: 'alioth_app_write', arguments: JSON.stringify({ namespace: 'Alioth', code: 'granted-app', name: 'Granted', modules: [{ id: 'm1', name: 'M1' }] }) }],
+            agent: fakeAgent() as never,
+            signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected alioth_app_write success: ${result.error.message}`)
     expect(result.value).toMatchObject({ code: 'granted-app' })
   })
 
   it('writes brand/goal/non_scope through app_write parameters', async () => {
-    const result = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('write-branded'),
-      name: 'alioth_app_write',
-      arguments: {
-        namespace: 'Alioth', code: 'branded-app', name: 'Branded',
-        modules: [{ id: 'm1', name: 'M1' }],
-        brand: { primary: '#1677ff', logo: '/assets/logo.png' },
-        goal: 'manage inventory',
-        nonScope: ['no accounting'],
-      },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('write-branded'), name: 'alioth_app_write', arguments: JSON.stringify({ namespace: 'Alioth', code: 'branded-app', name: 'Branded', modules: [{ id: 'm1', name: 'M1' }], brand: { primary: '#1677ff', logo: '/assets/logo.png' }, goal: 'manage inventory', nonScope: ['no accounting'], }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected app_write success: ${result.error.message}`)
     const appJson = JSON.parse(await readFile(path.join(root, 'Alioth', 'Apps', 'branded-app', 'app.json'), 'utf8'))
     expect(appJson.brand).toEqual({ primary: '#1677ff', logo: '/assets/logo.png' })
@@ -352,17 +353,12 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
   })
 
   it('alioth_app_configure merges enrichment fields into an existing app', async () => {
-    const result = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('configure-app'),
-      name: 'alioth_app_configure',
-      arguments: {
-        namespace: 'Alioth', app: 'ai-i-need-a',
-        brand: { primary: '#1677ff' },
-        goal: 'business app',
-        navigation: [{ group: '库存', icon: 'Inbox', modules: ['inventory'] }],
-      },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('configure-app'), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'ai-i-need-a', brand: { primary: '#1677ff' }, goal: 'business app', navigation: [{ group: '库存', icon: 'Inbox', modules: ['inventory'] }], }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected configure success: ${result.error.message}`)
     expect(result.value).toMatchObject({ updated: expect.arrayContaining(['brand.primary', 'goal', 'navigation']) })
     const appJson = JSON.parse(await readFile(path.join(root, 'Alioth', 'Apps', 'ai-i-need-a', 'app.json'), 'utf8'))
@@ -374,41 +370,44 @@ describe('dsh-alioth alioth_app_write (approvalMode=required)', () => {
   })
 
   it('alioth_app_configure is idempotent and refuses unknown config', async () => {
-    const noop = await ctx.tools.execute({
-      signal, callId: ToolCallId('configure-noop'),
-      name: 'alioth_app_configure',
-      arguments: { namespace: 'Alioth', app: 'ai-i-need-a' },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`batch-${Date.now()}`), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'ai-i-need-a' }) }],
+      signal: signal,
     })
+    const noop = batch.results[0]?.result
+    if (noop === undefined) throw new Error('tool batch returned no result')
     if (noop.isError) throw new Error(`expected noop success: ${noop.error.message}`)
     expect(noop.value).toMatchObject({ updated: [] })
 
-    const invalid = await ctx.tools.execute({
-      signal, callId: ToolCallId('configure-invalid'),
-      name: 'alioth_app_configure',
-      arguments: { namespace: 'Alioth', app: 'ai-i-need-a', defaultRoles: 'admin' },
+    const batch2 = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`batch-${Date.now()}`), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'ai-i-need-a', defaultRoles: 'admin' }) }],
+      signal: signal,
     })
+    const invalid = batch2.results[0]?.result
+    if (invalid === undefined) throw new Error('tool batch returned no result')
     if (!invalid.isError) throw new Error('expected configure failure on bad types')
   })
 
   it('alioth_app_configure fails loud when the app does not exist', async () => {
-    const result = await ctx.tools.execute({
-      signal, callId: ToolCallId('configure-missing'),
-      name: 'alioth_app_configure',
-      arguments: { namespace: 'Alioth', app: 'no-such-app', goal: 'x' },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`batch-${Date.now()}`), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'no-such-app', goal: 'x' }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (!result.isError) throw new Error('expected configure failure')
     expect(result.error.message).toContain('no app.json')
   })
 
   it('denies the write when approval rejects', async () => {
     approvalCtx = await bootWithApproval('rejected')
-    const result = await approvalCtx.tools.execute({
-      signal,
-      callId: ToolCallId('approval-deny'),
-      name: 'alioth_app_write',
-      arguments: { namespace: 'Alioth', code: 'denied-app', name: 'Denied', modules: [{ id: 'm1', name: 'M1' }] },
-      agent: fakeAgent() as never,
+    const batch = await approvalCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('approval-deny'), name: 'alioth_app_write', arguments: JSON.stringify({ namespace: 'Alioth', code: 'denied-app', name: 'Denied', modules: [{ id: 'm1', name: 'M1' }] }) }],
+            agent: fakeAgent() as never,
+            signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (!result.isError) throw new Error('expected alioth_app_write failure')
     expect(result.error.message).toContain('denied by approval')
   })
@@ -431,16 +430,12 @@ describe('dsh-alioth app growth + discovery', () => {
     })
     if (created.isError) throw new Error(`expected app_write success: ${created.error.message}`)
 
-    const result = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('configure-grow'),
-      name: 'alioth_app_configure',
-      arguments: {
-        namespace: 'Alioth', app: 'grow-app',
-        modules: [{ id: 'beta', name: 'B', description: 'b-desc' }, { id: 'alpha', name: 'A2' }],
-        blocks: ['block-new'],
-      },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('configure-grow'), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'grow-app', modules: [{ id: 'beta', name: 'B', description: 'b-desc' }, { id: 'alpha', name: 'A2' }], blocks: ['block-new'], }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected configure success: ${result.error.message}`)
     const updated = (result.value as { updated: string[] }).updated
     expect(updated).toEqual(expect.arrayContaining(['modules.beta', 'navigation', 'config.blocks']))
@@ -464,29 +459,23 @@ describe('dsh-alioth app growth + discovery', () => {
   })
 
   it('alioth_app_configure module growth is idempotent', async () => {
-    const again = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('configure-grow-again'),
-      name: 'alioth_app_configure',
-      arguments: {
-        namespace: 'Alioth', app: 'grow-app',
-        modules: [{ id: 'beta', name: 'B' }],
-      },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('configure-grow-again'), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'grow-app', modules: [{ id: 'beta', name: 'B' }], }) }],
+      signal: signal,
     })
+    const again = batch.results[0]?.result
+    if (again === undefined) throw new Error('tool batch returned no result')
     if (again.isError) throw new Error(`expected configure success: ${again.error.message}`)
     expect((again.value as { updated: string[] }).updated).toEqual([])
   })
 
   it('alioth_app_configure rejects invalid module ids before writing', async () => {
-    const result = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('configure-bad-module'),
-      name: 'alioth_app_configure',
-      arguments: {
-        namespace: 'Alioth', app: 'grow-app',
-        modules: [{ id: '../evil', name: 'E' }],
-      },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('configure-bad-module'), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'grow-app', modules: [{ id: '../evil', name: 'E' }], }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (!result.isError) throw new Error('expected configure failure')
     expect(result.error.message).toContain('invalid module id')
   })
@@ -500,12 +489,12 @@ describe('dsh-alioth app growth + discovery', () => {
   })
 
   it('alioth_app_configure sets lifecycle status', async () => {
-    const result = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('configure-status'),
-      name: 'alioth_app_configure',
-      arguments: { namespace: 'Alioth', app: 'grow-app', status: 'archived' },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('configure-status'), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'grow-app', status: 'archived' }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected configure success: ${result.error.message}`)
     expect((result.value as { updated: string[] }).updated).toEqual(['status'])
     const appJson = JSON.parse(await readFile(path.join(root, 'Alioth', 'Apps', 'grow-app', 'app.json'), 'utf8'))
@@ -521,12 +510,12 @@ describe('dsh-alioth app growth + discovery', () => {
       nonScope: ['no side quests'],
     })
     if (created.isError) throw new Error(`expected app_write success: ${created.error.message}`)
-    const configured = await ctx.tools.execute({
-      signal,
-      callId: ToolCallId('roundtrip-status'),
-      name: 'alioth_app_configure',
-      arguments: { namespace: 'Alioth', app: 'roundtrip', status: 'developing' },
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('roundtrip-status'), name: 'alioth_app_configure', arguments: JSON.stringify({ namespace: 'Alioth', app: 'roundtrip', status: 'developing' }) }],
+      signal: signal,
     })
+    const configured = batch.results[0]?.result
+    if (configured === undefined) throw new Error('tool batch returned no result')
     if (configured.isError) throw new Error(`expected configure success: ${configured.error.message}`)
 
     const inspected = await callInspect({ namespace: 'Alioth', app: 'roundtrip' })
@@ -546,13 +535,13 @@ describe('dsh-alioth app growth + discovery', () => {
 describe('dsh-alioth alioth_app_delete', () => {
   let deleteCounter = 0
 
-  function callDelete(args: unknown) {
-    return ctx.tools.execute({
-      signal,
-      callId: ToolCallId(`delete-${++deleteCounter}`),
-      name: 'alioth_app_delete',
-      arguments: args,
+  async function callDelete(args: unknown) {
+    const batch = await ctx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`delete-${++deleteCounter}`), name: 'alioth_app_delete', arguments: JSON.stringify(args ?? {}) }],
+      signal: signal,
     })
+    if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+    return batch.results[0].result
   }
 
   it('refuses without confirm and keeps the tree intact', async () => {
@@ -607,6 +596,7 @@ describe('dsh-alioth alioth_app_delete', () => {
       const system = await approvalCtx.plugin(SystemPrompt)
       disposers.push(() => system.dispose())
       const tools = await approvalCtx.plugin(ToolRuntime)
+await approvalCtx.plugin(NativeToolExecutor)
       disposers.push(() => tools.dispose())
       approvalCtx.provide('approval')
       approvalCtx.set('approval', {
@@ -623,13 +613,13 @@ describe('dsh-alioth alioth_app_delete', () => {
       })
       if (created.isError) throw new Error(`expected app_write success: ${created.error.message}`)
       const approvalCtx = await bootDeleteApproval('rejected')
-      const result = await approvalCtx.tools.execute({
-        signal,
-        callId: ToolCallId('delete-approval-deny'),
-        name: 'alioth_app_delete',
-        arguments: { namespace: 'Alioth', app: 'delete-approval', confirm: true },
+      const batch = await approvalCtx.tools.execute({
+        calls: [{ type: 'tool-call', id: ToolCallId('delete-approval-deny'), name: 'alioth_app_delete', arguments: JSON.stringify({ namespace: 'Alioth', app: 'delete-approval', confirm: true }) }],
+        signal: signal,
         agent: fakeAgent() as never,
       })
+      const result = batch.results[0]?.result
+      if (result === undefined) throw new Error('tool batch returned no result')
       if (!result.isError) throw new Error('expected alioth_app_delete failure')
       expect(result.error.message).toContain('denied by approval')
       await expect(readFile(path.join(root, 'Alioth', 'Apps', 'delete-approval', 'app.json'), 'utf8')).resolves.toContain('"code": "delete-approval"')
@@ -637,13 +627,13 @@ describe('dsh-alioth alioth_app_delete', () => {
 
     it('deletes when approval grants allowed-once', async () => {
       const approvalCtx = await bootDeleteApproval('allowed-once')
-      const result = await approvalCtx.tools.execute({
-        signal,
-        callId: ToolCallId('delete-approval-grant'),
-        name: 'alioth_app_delete',
-        arguments: { namespace: 'Alioth', app: 'delete-approval', confirm: true },
+      const batch = await approvalCtx.tools.execute({
+        calls: [{ type: 'tool-call', id: ToolCallId('delete-approval-grant'), name: 'alioth_app_delete', arguments: JSON.stringify({ namespace: 'Alioth', app: 'delete-approval', confirm: true }) }],
+        signal: signal,
         agent: fakeAgent() as never,
       })
+      const result = batch.results[0]?.result
+      if (result === undefined) throw new Error('tool batch returned no result')
       if (result.isError) throw new Error(`expected alioth_app_delete success: ${result.error.message}`)
       expect(result.value).toMatchObject({ app: 'delete-approval' })
       const stat = await import('node:fs/promises').then(fs => fs.stat(path.join(root, 'Alioth', 'Apps', 'delete-approval')))
@@ -670,13 +660,13 @@ describe('dsh-alioth model-version dependency', () => {
   let depCtx: Context
   let depCalls = 0
 
-  function call(name: string, args: unknown) {
-    return depCtx.tools.execute({
-      signal,
-      callId: ToolCallId(`dep-${++depCalls}`),
-      name,
-      arguments: args,
+  async function call(name: string, args: unknown) {
+    const batch = await depCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`dep-${++depCalls}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+      signal: signal,
     })
+    if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+    return batch.results[0].result
   }
 
   beforeAll(async () => {
@@ -684,6 +674,7 @@ describe('dsh-alioth model-version dependency', () => {
     depCtx = new Context()
     await depCtx.plugin(SystemPrompt)
     await depCtx.plugin(ToolRuntime)
+await depCtx.plugin(NativeToolExecutor)
     await depCtx.plugin(tool, { preProcRoot: depRoot })
     // `provide` is untyped for services this package does not declare (env-alioth owns
     // 'aliothEnv'), so the reflection layer is reached through one named handle.

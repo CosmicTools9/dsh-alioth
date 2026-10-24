@@ -73,6 +73,7 @@
     "oxlint": "1.76.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "@deepseek-ai/dsh-tool-executor-native": "^0.2.1-alpha.1"
   }
 }

@@ -11,6 +11,7 @@
  */
 
 import { createHash } from 'node:crypto'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -85,16 +86,16 @@ function appDir(): string {
   return path.join(preProcRoot, 'Alioth', 'Apps', 'demo-app')
 }
 
-function callTool(target: Context, toolName: string, args: unknown, sessionId?: string) {
-  return target.tools.execute({
-    signal,
-    callId: ToolCallId(`verify-${++counter}`),
-    name: toolName,
-    arguments: args,
+async function callTool(target: Context, toolName: string, args: unknown, sessionId?: string) {
+  const batch = await target.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`verify-${++counter}`), name: toolName, arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
     ...(sessionId === undefined
       ? {}
       : { agent: { id: sessionId } as unknown as NonNullable<ToolExecutionInput['agent']> }),
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 function expectOk(result: ToolExecutionResult): Record<string, unknown> {
@@ -150,6 +151,7 @@ async function makeContext(options: { readonly guard: boolean; readonly root: st
   const system = await context.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await context.plugin(ToolRuntime)
+  await context.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   if (options.guard) {
     context.provide('aliothGuard', guardStub as never)

@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -48,14 +49,14 @@ let preProcRoot: string
 let deployRoot: string
 let counter = 0
 
-function callTool(name: string, args: unknown, agent?: Agent) {
-  return ctx.tools.execute({
+async function callTool(name: string, args: unknown, agent?: Agent) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`auth-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
     signal: new AbortController().signal,
-    callId: ToolCallId(`auth-${++counter}`),
-    name,
-    arguments: args,
     ...(agent === undefined ? {} : { agent }),
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 /** Fake agent carrying a session id (the identity carrier the guard reads). */
@@ -88,6 +89,7 @@ beforeAll(async () => {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
@@ -223,8 +225,7 @@ describe('namespace authorization guard', () => {
       messages: [],
       turn: 1,
       step: 1,
-      signal: new AbortController().signal,
-    }, async () => ({ kind: 'enter' as const, messages: [] }))
+      signal: new AbortController().signal, modelSelection: { provider: 'p', model: 'm' } }, async () => ({ kind: 'enter' as const, messages: [] }))
     expect(rejected.kind).toBe('reject')
 
     const { token } = await ctx.aliothAuth.register('dave', 'password-123')
@@ -234,8 +235,7 @@ describe('namespace authorization guard', () => {
       messages: [],
       turn: 1,
       step: 1,
-      signal: new AbortController().signal,
-    }, async () => ({ kind: 'enter' as const, messages: [] }))
+      signal: new AbortController().signal, modelSelection: { provider: 'p', model: 'm' } }, async () => ({ kind: 'enter' as const, messages: [] }))
     expect(passed.kind).toBe('enter')
   })
 })

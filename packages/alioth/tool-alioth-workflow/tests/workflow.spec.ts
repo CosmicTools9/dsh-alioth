@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -49,13 +50,13 @@ let preProcRoot: string
 let contentRoot: string
 let counter = 0
 
-function callTool(name: string, args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`wf-${++counter}`),
-    name,
-    arguments: args,
+async function callTool(name: string, args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`wf-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 let testDb: TestDatabase
@@ -85,6 +86,7 @@ beforeAll(async () => {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
@@ -265,13 +267,13 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
   let coverContent: string
   let coverCounter = 0
 
-  function callCover(name: string, args: unknown) {
-    return coverCtx.tools.execute({
-      signal,
-      callId: ToolCallId(`cover-${++coverCounter}`),
-      name,
-      arguments: args,
+  async function callCover(name: string, args: unknown) {
+    const batch = await coverCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`cover-${++coverCounter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+      signal: signal,
     })
+    if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+    return batch.results[0].result
   }
 
   let coverDb: TestDatabase
@@ -294,6 +296,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     const system = await coverCtx.plugin(SystemPrompt)
     coverDisposers.push(() => system.dispose())
     const tools = await coverCtx.plugin(ToolRuntime)
+  await coverCtx.plugin(NativeToolExecutor)
     coverDisposers.push(() => tools.dispose())
     const env = await coverCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: coverDb.url })
     coverDisposers.push(() => env.dispose())
@@ -398,6 +401,7 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     const defaultsCtx = new Context()
     const system = await defaultsCtx.plugin(SystemPrompt)
     const tools = await defaultsCtx.plugin(ToolRuntime)
+  await defaultsCtx.plugin(NativeToolExecutor)
     const defaultsDb = await createTestDatabase('wfdefaults')
     const env = await defaultsCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: defaultsDb.url })
     // No Loader: no schema defaults for adapter/contentRoot.
@@ -414,24 +418,14 @@ describe('tool-alioth-workflow: gates, step inputs and config defaults', () => {
     }))
 
     try {
-      const info = expectOk(await defaultsCtx.tools.execute({
-        signal,
-        callId: ToolCallId('defaults-info'),
-        name: 'alioth_workflow_info',
-        arguments: {},
-      }))
+      const info = expectOk((await defaultsCtx.tools.execute({ calls: [{ type: 'tool-call', id: ToolCallId('defaults-info'), name: 'alioth_workflow_info', arguments: JSON.stringify({}) }], signal })).results[0]!.result)
       expect(info.adapter).toBe('alioth-app.yaml')
       expect(info.runtime).toEqual({ allowedPrograms: [...GATE_PROGRAM_WHITELIST] })
 
       const appDir = path.join(preProc, 'Alioth', 'Apps', 'defaults-app')
       await mkdir(appDir, { recursive: true })
       await writeFile(path.join(appDir, 'app.json'), '{}\n')
-      const completed = expectOk(await defaultsCtx.tools.execute({
-        signal,
-        callId: ToolCallId('defaults-complete'),
-        name: 'alioth_workflow_complete',
-        arguments: { namespace: 'Alioth', app: 'defaults-app' },
-      }))
+      const completed = expectOk((await defaultsCtx.tools.execute({ calls: [{ type: 'tool-call', id: ToolCallId('defaults-complete'), name: 'alioth_workflow_complete', arguments: JSON.stringify({ namespace: 'Alioth', app: 'defaults-app' }) }], signal })).results[0]!.result)
       expect(completed).toMatchObject({ finished: false, completedStep: '1.1', nextStep: '2.1' })
 
       // The content root defaulted to the parent of preProcRoot: provisioning
@@ -501,6 +495,7 @@ describe('step input precheck', () => {
     const system = await ctx2.plugin(SystemPrompt)
     closers.push(() => system.dispose())
     const tools = await ctx2.plugin(ToolRuntime)
+await ctx2.plugin(NativeToolExecutor)
     closers.push(() => tools.dispose())
     const env = await ctx2.plugin(envAlioth, {
       modelSource: modelDir,
@@ -523,13 +518,13 @@ describe('step input precheck', () => {
     await rm(preRoot, { recursive: true, force: true })
   })
 
-  function call(name: string, args: unknown) {
-    return ctx2.tools.execute({
-      signal,
-      callId: ToolCallId(`wf-inputs-${++counter}`),
-      name,
-      arguments: args,
+  async function call(name: string, args: unknown) {
+    const batch = await ctx2.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`wf-inputs-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+      signal: signal,
     })
+    if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+    return batch.results[0].result
   }
 
   it('refuses the step and reports the missing upstream input (no payload handed out)', async () => {

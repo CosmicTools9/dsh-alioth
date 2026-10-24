@@ -7,6 +7,7 @@
  * and asserts what the tool does with it.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -49,13 +50,13 @@ async function seedApp(namespace: string, app: string, appJson: unknown): Promis
   await writeFile(path.join(dir, 'app.json'), typeof appJson === 'string' ? appJson : JSON.stringify(appJson))
 }
 
-function call(name: string, args: unknown): Promise<ToolExecutionResult> {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`${name}-${++counter}`),
-    name,
-    arguments: args,
+async function call(name: string, args: unknown): Promise<ToolExecutionResult> {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`${name}-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 /** The failure message of a call that must fail. */
@@ -96,6 +97,7 @@ beforeAll(async () => {
   ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   await ctx.plugin(tool, { preProcRoot: root })
 })
 
@@ -222,14 +224,15 @@ describe('dsh-alioth alioth_app_write approval seam branch behaviour', () => {
     const bare = new Context()
     const system = await bare.plugin(SystemPrompt)
     const tools = await bare.plugin(ToolRuntime)
+await bare.plugin(NativeToolExecutor)
     try {
       tool.apply(bare, { preProcRoot: bareRoot })
-      const result = await bare.tools.execute({
-        signal,
-        callId: ToolCallId('apply-default-bypass'),
-        name: 'alioth_app_write',
-        arguments: { namespace: 'Alioth', code: 'apply-app', name: 'Apply', modules: [{ id: 'm1', name: 'M1' }] },
+      const batch = await bare.tools.execute({
+        calls: [{ type: 'tool-call', id: ToolCallId('apply-default-bypass'), name: 'alioth_app_write', arguments: JSON.stringify({ namespace: 'Alioth', code: 'apply-app', name: 'Apply', modules: [{ id: 'm1', name: 'M1' }] }) }],
+        signal: signal,
       })
+      const result = batch.results[0]?.result
+      if (result === undefined) throw new Error('tool batch returned no result')
       expect(result.isError).toBe(false)
       expect(existsSync(path.join(bareRoot, 'Alioth', 'Apps', 'apply-app', 'app.json'))).toBe(true)
     } finally {
@@ -243,16 +246,17 @@ describe('dsh-alioth alioth_app_write approval seam branch behaviour', () => {
     const approvalCtx = new Context()
     const system = await approvalCtx.plugin(SystemPrompt)
     const tools = await approvalCtx.plugin(ToolRuntime)
+await approvalCtx.plugin(NativeToolExecutor)
     approvalCtx.provide('approval')
     approvalCtx.set('approval', { request: async () => 'allowed-once' } as never)
     const fiber = await approvalCtx.plugin(tool, { preProcRoot: root, approvalMode: 'required' })
     try {
-      const result = await approvalCtx.tools.execute({
-        signal,
-        callId: ToolCallId('write-without-agent'),
-        name: 'alioth_app_write',
-        arguments: { namespace: 'Alioth', code: 'agentless', name: 'Agentless', modules: [{ id: 'm1', name: 'M1' }] },
+      const batch = await approvalCtx.tools.execute({
+        calls: [{ type: 'tool-call', id: ToolCallId('write-without-agent'), name: 'alioth_app_write', arguments: JSON.stringify({ namespace: 'Alioth', code: 'agentless', name: 'Agentless', modules: [{ id: 'm1', name: 'M1' }] }) }],
+        signal: signal,
       })
+      const result = batch.results[0]?.result
+      if (result === undefined) throw new Error('tool batch returned no result')
       expect(errorOf(result)).toContain('no agent to route approval')
       expect(existsSync(path.join(root, 'Alioth', 'Apps', 'agentless'))).toBe(false)
     } finally {
@@ -457,6 +461,7 @@ describe('dsh-alioth Pre-Proc containment guard', () => {
     const system = await fsRootCtx.plugin(SystemPrompt)
     disposers.push(() => system.dispose())
     const tools = await fsRootCtx.plugin(ToolRuntime)
+await fsRootCtx.plugin(NativeToolExecutor)
     disposers.push(() => tools.dispose())
     const fiber = await fsRootCtx.plugin(tool, { preProcRoot: '/', approvalMode: 'bypass' })
     disposers.push(() => fiber.dispose())
@@ -466,13 +471,13 @@ describe('dsh-alioth Pre-Proc containment guard', () => {
     for (const dispose of disposers.reverse()) await dispose().catch(() => {})
   })
 
-  function fsCall(name: string, args: unknown): Promise<ToolExecutionResult> {
-    return fsRootCtx.tools.execute({
-      signal,
-      callId: ToolCallId(`fs-root-${name}-${++counter}`),
-      name,
-      arguments: args,
+  async function fsCall(name: string, args: unknown): Promise<ToolExecutionResult> {
+    const batch = await fsRootCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId(`fs-root-${name}-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+      signal: signal,
     })
+    if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+    return batch.results[0].result
   }
 
   it('refuses to inspect a path resolved outside the Pre-Proc root', async () => {

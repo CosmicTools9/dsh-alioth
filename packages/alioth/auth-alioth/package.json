@@ -29,6 +29,7 @@
     }
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-api-remote-access": "^0.2.1-alpha.1"
+    "@deepseek-ai/dsh-api-remote-access": "^0.2.1-alpha.1",
+    "@deepseek-ai/dsh-tool-executor-native": "^0.2.1-alpha.1"
   }
 }

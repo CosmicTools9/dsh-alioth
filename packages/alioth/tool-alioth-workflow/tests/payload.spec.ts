@@ -4,6 +4,7 @@
  * （plan 步 + 内容谓词门）驱动，避免污染既有夹具的步骤序列。
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -54,13 +55,13 @@ let preProcRoot: string
 let contentRoot: string
 let counter = 0
 
-function callTool(name: string, args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`pp-${++counter}`),
-    name,
-    arguments: args,
+async function callTool(name: string, args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`pp-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 function expectOk(result: Awaited<ReturnType<typeof callTool>>): Record<string, unknown> {
@@ -92,6 +93,7 @@ beforeAll(async () => {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())

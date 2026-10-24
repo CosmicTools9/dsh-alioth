@@ -30,5 +30,8 @@
     "@deepseek-ai/dsh-session": "^0.2.1-alpha.1",
     "@deepseek-ai/dsh-tools": "^0.2.1-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.5-alpha.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tool-executor-native": "^0.2.1-alpha.1"
   }
 }

@@ -5,6 +5,7 @@
  * 独立结束审计），因此夹具同时是「生产链」的行为测试。
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -149,6 +150,7 @@ beforeAll(async () => {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot })
   disposers.push(() => env.dispose())

@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@types/pg": "8.15.5",
-    "pg": "8.23.0"
+    "pg": "8.23.0",
+    "@deepseek-ai/dsh-tool-executor-native": "^0.2.1-alpha.1"
   }
 }

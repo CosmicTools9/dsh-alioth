@@ -10,6 +10,7 @@
  * Exit 0 = group works end to end.
  */
 import { mkdtemp, readdir } from 'node:fs/promises'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { assembleModelSource, FIXTURE_REGISTRY_SEED } from './lib/model-source-fixture.ts'
@@ -71,6 +72,7 @@ try {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, {
     modelSource,
@@ -128,12 +130,12 @@ try {
   log(`env ready: ${info.modelDir.replace(tmpdir(), '…')} @ model ${info.modelVersion}, ${adapters.length} adapters`)
 
   // 3. Real tool call round-trip
-  const result = await ctx.tools.execute({
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId('smoke-schema-info'), name: 'alioth_schema_info', arguments: JSON.stringify({ action: 'entities', limit: 5 }) }],
     signal: new AbortController().signal,
-    callId: ToolCallId('smoke-schema-info'),
-    name: 'alioth_schema_info',
-    arguments: { action: 'entities', limit: 5 },
   })
+  const result = batch.results[0]?.result
+  if (result === undefined) throw new Error('tool batch returned no result')
   if (result.isError) {
     throw new Error(`schema_info round-trip failed: ${result.error.message}`)
   }

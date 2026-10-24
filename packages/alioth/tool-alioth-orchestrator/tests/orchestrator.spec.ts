@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -73,13 +74,13 @@ const disposers: Array<() => Promise<void>> = []
 let preProcRoot: string
 let counter = 0
 
-function callCreate(args: unknown) {
-  return ctx.tools.execute({
-    signal,
-    callId: ToolCallId(`create-${++counter}`),
-    name: 'alioth_app_create',
-    arguments: args,
+async function callCreate(args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`create-${++counter}`), name: 'alioth_app_create', arguments: JSON.stringify(args ?? {}) }],
+    signal: signal,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 let testDb: TestDatabase
@@ -105,6 +106,7 @@ beforeAll(async () => {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const env = await ctx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: testDb.url })
   disposers.push(() => env.dispose())
@@ -275,6 +277,7 @@ tracks:
     const system = await workflowCtx.plugin(SystemPrompt)
     workflowDisposers.push(() => system.dispose())
     const tools = await workflowCtx.plugin(ToolRuntime)
+await workflowCtx.plugin(NativeToolExecutor)
     workflowDisposers.push(() => tools.dispose())
     const env = await workflowCtx.plugin(envAlioth, { modelSource: modelDir, dataRoot, databaseUrl: workflowDb.url })
     workflowDisposers.push(() => env.dispose())
@@ -288,12 +291,12 @@ tracks:
     workflowDisposers.push(() => orchestration.dispose())
 
     await seedNamespaceArtifacts(workflowPreProc, 'Demo', 'wf-app', { blocks: ['wf-board'] })
-    const result = await workflowCtx.tools.execute({
-      signal,
-      callId: ToolCallId('create-wf'),
-      name: 'alioth_app_create',
-      arguments: { namespace: 'Demo', code: 'wf-app', name: 'WF 应用', modules: [{ id: 'm1', name: 'M1' }] },
+    const batch = await workflowCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('create-wf'), name: 'alioth_app_create', arguments: JSON.stringify({ namespace: 'Demo', code: 'wf-app', name: 'WF 应用', modules: [{ id: 'm1', name: 'M1' }] }) }],
+      signal: signal,
     })
+    const result = batch.results[0]?.result
+    if (result === undefined) throw new Error('tool batch returned no result')
     if (result.isError) throw new Error(`expected alioth_app_create success: ${result.error.message}`)
     expect(result.value).toMatchObject({ verified: true, workflowGate: 'step 1.1 passed' })
   }, 120_000)
@@ -316,12 +319,12 @@ tracks:
     expect(created.evidence).toContain('Demo/wf-finished')
 
     // Drive the single-step track to its end: its only gate is app.json.
-    const completed = await workflowCtx.tools.execute({
-      signal,
-      callId: ToolCallId('wf-finished-step'),
-      name: 'alioth_workflow_complete',
-      arguments: { namespace: 'Demo', app: 'wf-finished' },
+    const batch = await workflowCtx.tools.execute({
+      calls: [{ type: 'tool-call', id: ToolCallId('wf-finished-step'), name: 'alioth_workflow_complete', arguments: JSON.stringify({ namespace: 'Demo', app: 'wf-finished' }) }],
+      signal: signal,
     })
+    const completed = batch.results[0]?.result
+    if (completed === undefined) throw new Error('tool batch returned no result')
     if (completed.isError) throw new Error(`expected the workflow gate to pass: ${completed.error.message}`)
     expect(completed.value).toMatchObject({ finished: true })
 
@@ -506,6 +509,7 @@ describe('buildPrimitives stage guards', () => {
     const bareCtx = new Context()
     const system = await bareCtx.plugin(SystemPrompt)
     const tools = await bareCtx.plugin(ToolRuntime)
+await bareCtx.plugin(NativeToolExecutor)
     try {
       const primitives = buildPrimitives(
         bareCtx,

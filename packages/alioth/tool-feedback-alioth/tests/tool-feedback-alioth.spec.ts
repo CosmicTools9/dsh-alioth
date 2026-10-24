@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -13,13 +14,13 @@ let ctx: Context
 const disposers: Array<() => Promise<void>> = []
 let counter = 0
 
-function callTool(name: string, args: unknown) {
-  return ctx.tools.execute({
+async function callTool(name: string, args: unknown) {
+  const batch = await ctx.tools.execute({
+    calls: [{ type: 'tool-call', id: ToolCallId(`fb-${++counter}`), name: name, arguments: JSON.stringify(args ?? {}) }],
     signal: new AbortController().signal,
-    callId: ToolCallId(`fb-${++counter}`),
-    name,
-    arguments: args,
   })
+  if (batch.results[0] === undefined) throw new Error('tool batch returned no result')
+  return batch.results[0].result
 }
 
 beforeAll(async () => {
@@ -28,6 +29,7 @@ beforeAll(async () => {
   const system = await ctx.plugin(SystemPrompt)
   disposers.push(() => system.dispose())
   const tools = await ctx.plugin(ToolRuntime)
+  await ctx.plugin(NativeToolExecutor)
   disposers.push(() => tools.dispose())
   const store = await ctx.plugin(pageFeedback, { dbPath: path.join(dir, 'f.db') })
   disposers.push(() => store.dispose())
