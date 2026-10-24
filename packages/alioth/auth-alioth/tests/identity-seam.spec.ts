@@ -287,6 +287,27 @@ describe('account-scope policy (session/workspace isolation)', () => {
     expect(asAccount('U-poluser', () => remoteAccess.admitsSession('pol-session-unknown'))).toBe(false)
   })
 
+  it('derives ownership from the workspace hint for sessions the mirror lacks', () => {
+    const remoteAccess = ctx.get('remoteAccess') as {
+      admitsSession(sessionId: string, hints?: { workspacePath?: string }): boolean
+    }
+    const asAccount = <T>(account: string, fn: () => T): T => connectionAccountStorage.run({ account }, fn)
+
+    // 生产布局里 preProcRoot 以 Pre-Proc 结尾，归属推导按该段定位 namespace。
+    expect(asAccount('U-poluser', () => remoteAccess.admitsSession('pre-restart-1', {
+      workspacePath: path.join(preProcRoot, 'Pre-Proc', 'U-poluser', 'Apps', 'legacy'),
+    }))).toBe(true)
+    expect(asAccount('U-someone-else', () => remoteAccess.admitsSession('pre-restart-1', {
+      workspacePath: path.join(preProcRoot, 'Pre-Proc', 'U-poluser', 'Apps', 'legacy'),
+    }))).toBe(false)
+    // 无 hints 且不在镜像 → fail-closed 不变。
+    expect(asAccount('U-poluser', () => remoteAccess.admitsSession('pre-restart-1'))).toBe(false)
+    // 工作区在别人 namespace 下 → 不因 hints 放行。
+    expect(asAccount('U-poluser', () => remoteAccess.admitsSession('pre-restart-2', {
+      workspacePath: path.join(preProcRoot, 'Pre-Proc', 'U-someone-else', 'Apps', 'theirs'),
+    }))).toBe(false)
+  })
+
   it('confines workspace registration to the account namespace under the Pre-Proc root', () => {
     const remoteAccess = ctx.get('remoteAccess') as {
       admitsWorkspacePath(workspacePath: string): boolean

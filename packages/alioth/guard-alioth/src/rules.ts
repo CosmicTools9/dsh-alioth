@@ -49,6 +49,8 @@ export const GUARD_RULE_IDS = {
   closureNudge: 'closure-evidence-nudge',
   /** 无 ns 可解析：显式降级而非猜测。 */
   unknownScope: 'unknown-scope',
+  /** 读路径越出命名空间根与模型源目录（读围栏）。 */
+  readFence: 'read-outside-allowed-roots',
 } as const
 
 export type GuardRuleId = (typeof GUARD_RULE_IDS)[keyof typeof GUARD_RULE_IDS]

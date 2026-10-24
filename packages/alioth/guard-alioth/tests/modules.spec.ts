@@ -18,6 +18,8 @@ import {
   declaredToolSurface,
   pathOrigin,
   planWriteVerdict,
+  readPathsOf,
+  readVerdict,
   sandboxVerdict,
   toolSurfaceVerdict,
   writePathOf,
@@ -117,6 +119,41 @@ describe('surface: 写沙箱', () => {
     expect(origin).toEqual({ ok: true, relative: 'Pre-Proc/Alioth/Apps/demo/app.json', segments: ['Apps', 'demo', 'app.json'] })
     const shallow = pathOrigin('Pre-Proc/Alioth/x.ts', 'Alioth', root)
     expect(shallow.ok && shallow.segments).toEqual(['x.ts'])
+  })
+})
+
+describe('surface: 读围栏', () => {
+  const root = '/srv/alioth/Pre-Proc'
+  const modelDir = '/srv/alioth/models/abc123'
+
+  it('读类工具 → 路径参数（write/bash 不在围栏面）', () => {
+    expect(readPathsOf('read', { file_path: 'a.ts' })).toEqual(['a.ts'])
+    expect(readPathsOf('read_image', { file_path: 'a.png' })).toEqual(['a.png'])
+    expect(readPathsOf('lsp', { file_path: 'a.ts', operation: 'hover' })).toEqual(['a.ts'])
+    expect(readPathsOf('glob', { pattern: '**/*.ts' })).toEqual([])
+    expect(readPathsOf('grep', { pattern: 'x', path: '/srv/other' })).toEqual(['/srv/other'])
+    expect(readPathsOf('write', { file_path: 'a.ts' })).toBeUndefined()
+    expect(readPathsOf('bash', { command: 'cat /etc/passwd' })).toBeUndefined()
+  })
+
+  it('放行 namespace 根与模型源目录内的绝对路径', () => {
+    expect(readVerdict([`${root}/Alioth/Apps/demo/app.json`], 'Alioth', root, modelDir).ok).toBe(true)
+    expect(readVerdict([`${modelDir}/docs/specs/BLOCK_SCHEMA.md`], 'Alioth', root, modelDir).ok).toBe(true)
+    expect(readVerdict([], 'Alioth', root, modelDir).ok).toBe(true)
+  })
+
+  it('拒绝逃逸 namespace 根与模型源的绝对路径（DSN 环境文件等）', () => {
+    const denied = denial(readVerdict(['/srv/alioth/.dsh-alioth.env'], 'Alioth', root, modelDir))
+    expect(ruleIdFromError(denied)).toBe(GUARD_RULE_IDS.readFence)
+    expect(denied).toContain('读面限于 Pre-Proc/Alioth/ 与模型源目录')
+    expect(denial(readVerdict([`${root}/Other/Apps/x.json`], 'Alioth', root, modelDir))).toContain('读面限于')
+    // 前缀字符串撞车不算界内：/srv/alioth/Pre-Proc/Alioth-evil 不在 Alioth 根内
+    expect(denial(readVerdict([`${root}/Alioth-evil/x.ts`], 'Alioth', root, modelDir))).toContain('读面限于')
+  })
+
+  it('相对路径按 namespace 根解析，.. 逃逸即拒', () => {
+    expect(readVerdict(['Apps/demo/app.json'], 'Alioth', root, modelDir).ok).toBe(true)
+    expect(denial(readVerdict(['../../../etc/passwd'], 'Alioth', root, modelDir))).toContain('读面限于')
   })
 })
 

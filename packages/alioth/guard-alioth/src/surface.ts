@@ -66,6 +66,58 @@ export function declaredToolSurface(adapter: Adapter, step: Step | undefined): r
 }
 
 /** 写类调用的路径参数（非写类工具或参数缺失 → `undefined`）。 */
+/**
+ * 读类工具与其路径参数名（读围栏的判定对象）。`read`/`read_image`/`lsp` 取
+ * `file_path`，`glob`/`grep` 取可选的 `path`（缺席 = 会话工作区，天然界内）。
+ */
+export const READ_TOOL_PATH_ARGS: Readonly<Record<string, readonly string[]>> = {
+  read: ['file_path'],
+  read_image: ['file_path'],
+  lsp: ['file_path'],
+  glob: ['path'],
+  grep: ['path'],
+}
+
+/** 读类调用的路径参数列表；非读类工具返回 `undefined`（不在围栏面）。 */
+export function readPathsOf(tool: string, args: unknown): readonly string[] | undefined {
+  const argNames = READ_TOOL_PATH_ARGS[tool]
+  if (argNames === undefined || typeof args !== 'object' || args === null) {
+    return undefined
+  }
+  const record = args as Record<string, unknown>
+  return argNames
+    .map(argName => record[argName])
+    .filter((value): value is string => typeof value === 'string' && value !== '')
+}
+
+/**
+ * 读围栏判定：绝对路径必须落在 `Pre-Proc/{namespace}/` 或模型源目录之内；
+ * 相对路径按 namespace 根解析，解析结果逃出两个根（含 `..` 穿越）即拒。
+ * 模型源目录在白名单内是因为 workflow 步骤的 reference_paths 全部指向它
+ * （vendored 框架文档与基线），且该目录是公开模型发行物的一部分。
+ */
+export function readVerdict(
+  rawPaths: readonly string[],
+  namespace: string,
+  preProcRoot: string,
+  modelDir: string,
+): Adjudication {
+  const deny = (detail: string): Adjudication => ({
+    ok: false,
+    reason: guardDenyReason('tool-denied', 'read', GUARD_RULE_IDS.readFence, detail),
+  })
+  const namespaceRoot = path.join(preProcRoot, namespace)
+  for (const raw of rawPaths) {
+    const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(namespaceRoot, raw)
+    const inNamespace = resolved === namespaceRoot || resolved.startsWith(namespaceRoot + path.sep)
+    const inModel = resolved === modelDir || resolved.startsWith(modelDir + path.sep)
+    if (!inNamespace && !inModel) {
+      return deny(`读面限于 Pre-Proc/${namespace}/ 与模型源目录：${raw}`)
+    }
+  }
+  return { ok: true }
+}
+
 export function writePathOf(tool: string, args: unknown): string | undefined {
   const argName = WRITE_TOOL_PATH_ARG[tool]
   if (argName === undefined || typeof args !== 'object' || args === null) {

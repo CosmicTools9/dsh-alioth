@@ -1036,7 +1036,7 @@ export function apply(ctx: Context, config: Config): void {
     if (accountPolicyRegistered) return
     const remoteAccess = ctx.get('remoteAccess') as {
       registerAccountPolicy(policy: {
-        sessionAccessible(account: string, sessionId: string): boolean
+        sessionAccessible(account: string, sessionId: string, hints?: { readonly workspacePath?: string }): boolean
         workspaceAdmissible(account: string, path: string): boolean
       }): () => void
     } | undefined
@@ -1044,7 +1044,17 @@ export function apply(ctx: Context, config: Config): void {
     // this package carries no dependency on the browser-only service.
     if (remoteAccess === undefined) return
     remoteAccess.registerAccountPolicy({
-      sessionAccessible: (account, sessionId) => sessionAccountMirror.get(sessionId) === account,
+      sessionAccessible: (account, sessionId, hints) => {
+        const mirrored = sessionAccountMirror.get(sessionId)
+        console.error('[PROBE-POLICY]', JSON.stringify({ account, sessionId, hints, mirrored }))
+        if (mirrored !== undefined) return mirrored === account
+        // 镜像未覆盖的会话（如重启前的旧绑定缺失）：从调用方给出的工作区路径
+        // 推导归属——会话落在调用者自己的 namespace 目录下即属其所有。
+        const workspacePath = hints?.workspacePath
+        if (workspacePath === undefined) return false
+        const derived = namespaceFromWorkspacePath(path.resolve(workspacePath))
+        return derived !== null && derived === account
+      },
       workspaceAdmissible: (account, workspacePath) => {
         // A workspace is admissible when it lives inside the account's own
         // namespace directory under the deployment's Pre-Proc root; anything

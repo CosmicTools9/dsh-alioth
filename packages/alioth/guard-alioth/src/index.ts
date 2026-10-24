@@ -40,6 +40,8 @@ import { RunScopeResolver, WORKFLOW_SCOPE_TOOLS, type ActiveScope } from './scop
 import {
   fullAccessVerdict,
   planWriteVerdict,
+  readPathsOf,
+  readVerdict,
   sandboxVerdict,
   toolSurfaceVerdict,
   writePathOf,
@@ -86,6 +88,8 @@ export interface Config {
   readonly adapter?: string
   /** 工具面强制开关；默认 true。 */
   readonly enforceToolSurface?: boolean
+  /** 读围栏开关（读类工具的路径须落在命名空间根或模型源目录内）；默认 true。 */
+  readonly readFence?: boolean
   /** 闭环证据追问开关；默认 true。 */
   readonly nudge?: boolean
   /** 同一调用签名连续重复上限（死循环判定）；默认由 skill-alioth 给出。 */
@@ -107,6 +111,7 @@ export const Config: z<Config> = z.object({
   dataRoot: z.string().required(),
   adapter: z.string().default(DEFAULT_ADAPTER),
   enforceToolSurface: z.boolean().default(true),
+  readFence: z.boolean().default(true),
   nudge: z.boolean().default(true),
   maxRepeatCall: z.number(),
   maxRepeatError: z.number(),
@@ -198,6 +203,7 @@ export function apply(ctx: Context, config: Config): void {
   const preProcRoot = path.resolve(config.preProcRoot)
   const adapter = config.adapter ?? DEFAULT_ADAPTER
   const enforceToolSurface = config.enforceToolSurface ?? true
+  const readFence = config.readFence ?? true
   const nudgeEnabled = config.nudge ?? true
   const degradations: Degradation[] = []
   const degradedKeys = new Set<string>()
@@ -405,6 +411,27 @@ export function apply(ctx: Context, config: Config): void {
       // workflow 元工具本身就是范围建立调用（参数带 {ns,app}）：它们无需被判定，
       // 缓存尚未登记也不构成降级证据。
       if (!WORKFLOW_SCOPE_TOOLS.includes(exec.name)) {
+        // 读围栏的 namespace 后备通道：workflow 范围缺席时用会话绑定的账户
+        // namespace（auth 缝）；两者都无（headless / 未绑定）→ 显式降级放行。
+        const readPaths = readFence ? readPathsOf(exec.name, exec.arguments) : undefined
+        if (readPaths !== undefined) {
+          const namespace = (await resolveAccountContext(sessionId))?.namespace ?? null
+          if (namespace !== null) {
+            const modelDir = (await ctx.aliothEnv.ready()).modelDir
+            const fence = readVerdict(readPaths, namespace, preProcRoot, path.resolve(modelDir))
+            if (!fence.ok) {
+              ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（读围栏）`)
+              return { kind: 'deny', reason: fence.reason }
+            }
+            return next()
+          }
+          noteDegradation(
+            sessionId,
+            GUARD_RULE_IDS.unknownScope,
+            `${exec.name}: 无法解析会话命名空间（无 workflow 范围与账户绑定）——读围栏按未知范围放行`,
+          )
+          return next()
+        }
         noteDegradation(
           sessionId,
           GUARD_RULE_IDS.unknownScope,
@@ -412,6 +439,17 @@ export function apply(ctx: Context, config: Config): void {
         )
       }
       return next()
+    }
+    if (readFence) {
+      const readPaths = readPathsOf(exec.name, exec.arguments)
+      if (readPaths !== undefined) {
+        const modelDir = path.resolve((await ctx.aliothEnv.ready()).modelDir)
+        const fence = readVerdict(readPaths, scope.namespace, preProcRoot, modelDir)
+        if (!fence.ok) {
+          ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（读围栏）`)
+          return { kind: 'deny', reason: fence.reason }
+        }
+      }
     }
     if (enforceToolSurface && scope.stepId !== null) {
       const verdict = toolSurfaceVerdict(exec.name, scope.allowedTools)
@@ -549,6 +587,8 @@ export {
   fullAccessVerdict,
   pathOrigin,
   planWriteVerdict,
+  readPathsOf,
+  readVerdict,
   sandboxVerdict,
   toolSurfaceVerdict,
   writePathOf,
