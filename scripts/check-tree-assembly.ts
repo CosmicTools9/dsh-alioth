@@ -71,6 +71,13 @@ interface Composition {
    * search staying `openAt: never`).
    */
   readonly expectRowText?: Readonly<Record<string, readonly string[]>>
+  /**
+   * EXACT allowlist of enabled (not-disabled) row ids — the shared-online
+   * closure as a whitelist, not a denylist: an upstream row that mounts a new
+   * capability goes red here until it is consciously assessed and listed.
+   * Both bundle compositions pin their full enabled set.
+   */
+  readonly expectEnabledRows?: readonly string[]
 }
 
 const ALIOTH_PLUGINS = [
@@ -95,6 +102,46 @@ const COMPOSITIONS: readonly Composition[] = [
     // Base-layer rows the shared-online closure disables in every profile
     // (web-only rows are unmatched skips here and are asserted on web only).
     expectDisabled: ['plugin-manager', 'tool-plugin-manager', 'web-deepseek-api'],
+    // Full enabled-row allowlist: any newly mounted harness row goes red here
+    // until the shared-online security assessment consciously lists it.
+    expectEnabledRows: [
+      'agent', 'agent-default-model', 'agent-instructions',
+      'agent-loop', 'approval', 'attachment-local',
+      'auth-alioth', 'auth-web-alioth', 'bash-sandbox',
+      'billing-alioth', 'billing-web-alioth', 'command-compact',
+      'command-feedback', 'command-goal', 'commands',
+      'compaction-basic', 'config-editor', 'deepseek-llm-api-extensions',
+      'directory-picker-app', 'env-alioth', 'feedback-web-alioth',
+      'fs-observation-policy', 'fs-sandbox', 'goal',
+      'goal-round-driver', 'guard-alioth', 'headless-runner',
+      'headless-startup', 'image-offload', 'jobs',
+      'landing-alioth', 'llm', 'llm-alioth',
+      'llm-deepseek-account', 'llm-pi-ai', 'llm-retry',
+      'mcp-resources', 'otel', 'page-feedback',
+      'permission', 'plan-mode', 'plugin-package-inventory-deepseek',
+      'ptc-runtime', 'pwsh-sandbox', 'remote-access',
+      'repeat-tool-reminder', 'sandbox', 'sandbox-policy',
+      'session', 'session-checkpoint-policy', 'session-log-deepseek',
+      'session-persistence-jsonl', 'session-projection', 'session-projection-cache',
+      'session-query-sqlite', 'session-telemetry-otel', 'session-title',
+      'session-title-llm', 'settings', 'shell-env',
+      'skill', 'skill-filesystem', 'spill-local',
+      'spill-policy', 'storage', 'storage-domain',
+      'storage-json', 'subagent', 'subagent-fork-in-process',
+      'subagent-spawn-in-process', 'subprocess', 'system-prompt',
+      'timeout-policy', 'timer', 'token-meter',
+      'tool-alioth', 'tool-alioth-meta', 'tool-alioth-orchestrator',
+      'tool-alioth-verify', 'tool-alioth-workflow', 'tool-bash',
+      'tool-feedback-alioth', 'tool-fs', 'tool-fs-search',
+      'tool-goal', 'tool-jobs', 'tool-pwsh',
+      'tool-result-pruner', 'tool-skill', 'tool-subagent',
+      'tool-subagent-control', 'tool-subagent-fork', 'tool-subagent-list-agents',
+      'tool-todo', 'tool-web', 'tool-workflow',
+      'tool-working-directory', 'tools', 'typert',
+      'typert-gateway', 'typert-loader', 'user-questions',
+      'web', 'web-fetch-http', 'web-search-deepseek',
+      'workflow-ptc', 'working-directory',
+    ],
     expectRowText: {
       // The generic-file upload cap is pinned (bytes), not left to the
       // upstream default, so a silent default flip cannot reopen disk fill.
@@ -140,13 +187,91 @@ const COMPOSITIONS: readonly Composition[] = [
       // Full-text session search spans every session on the host — it must
       // stay opt-in-off (cross-tenant content search would defeat isolation).
       'session-query-sqlite': ['openAt: never'],
+      // The browser tab stays profile-gated off on web: the disable must
+      // still be the profile gate (upstream flipping it on, or removing the
+      // row, both go red).
+      'ui-sidebar-browser': ['disabled:', 'profileContext'],
       // The two host-wide session verbs stay off (desktop open / default-model
       // write); see the 2026-10-23 residual-risk closure in the bundle patch.
       'session-controller': ['openWorkspacePath: false', 'initializeDefaultModel: false'],
       'attachment-local': ['maxFileBytes: 67108864'],
     },
+    // Full enabled-row allowlist (see the headless entry for the rationale).
+    expectEnabledRows: [
+      'agent', 'agent-default-model', 'agent-loop',
+      'agent-preset-registry', 'api-remotes', 'approval',
+      'attachment-local', 'auth-alioth', 'auth-web-alioth',
+      'authorization', 'bash-sandbox', 'billing-alioth',
+      'billing-web-alioth', 'client-hmr', 'command-feedback',
+      'commands', 'config-editor', 'connection',
+      'cordis-client-runner', 'cordis-host-runner', 'cordis-inspect-providers',
+      'credentials', 'deepseek-account', 'deepseek-llm-api-extensions',
+      'desktop-product-telemetry', 'directory-picker-app', 'env-alioth',
+      'feedback-web-alioth', 'file-reference-local', 'file-upload',
+      'fs-observation-policy', 'fs-sandbox', 'goal',
+      'goal-round-driver', 'guard-alioth', 'hmr',
+      'image-offload', 'job-controller', 'jobs',
+      'landing-alioth', 'llm', 'llm-alioth',
+      'llm-deepseek-account', 'llm-pi-ai', 'llm-retry',
+      'locale', 'mcp-resources', 'message-feedback',
+      'modules', 'otel', 'page-feedback',
+      'permission', 'plugin-inventory', 'plugin-package-inventory-deepseek',
+      'preset-ptc', 'preset-standard', 'product-analytics',
+      'ptc-runtime', 'pwsh-sandbox', 'remote-access',
+      'repeat-tool-reminder', 'resources', 'sandbox',
+      'sandbox-policy', 'session', 'session-checkpoint-policy',
+      'session-controller', 'session-log-deepseek', 'session-persistence-jsonl',
+      'session-projection', 'session-projection-cache', 'session-query-sqlite',
+      'session-reference', 'session-stats', 'session-telemetry-otel',
+      'session-title', 'session-title-llm', 'session-turn-outline',
+      'settings', 'shell-env', 'shortcuts',
+      'skill', 'spill-local', 'spill-policy',
+      'storage', 'storage-domain', 'storage-json',
+      'subagent', 'subagent-fork-in-process', 'subagent-model-selection-settings',
+      'subagent-spawn-in-process', 'subprocess', 'system-prompt',
+      'timeout-policy', 'timer', 'token-meter',
+      'tool-alioth', 'tool-alioth-meta', 'tool-alioth-orchestrator',
+      'tool-alioth-verify', 'tool-alioth-workflow', 'tool-feedback-alioth',
+      'tool-working-directory', 'tools', 'typert',
+      'typert-gateway', 'typert-loader', 'ui-agent-preset',
+      'ui-approval', 'ui-attachment', 'ui-brand-official',
+      'ui-chat', 'ui-commands', 'ui-conversation',
+      'ui-cordis', 'ui-deepseek-model-label-1017', 'ui-goal',
+      'ui-input-trigger', 'ui-jobs', 'ui-layout',
+      'ui-message-feedback', 'ui-model-selection', 'ui-permission',
+      'ui-plan', 'ui-reference', 'ui-renderer',
+      'ui-secret-mask', 'ui-session', 'ui-settings',
+      'ui-settings-agent-loop', 'ui-settings-general', 'ui-settings-models',
+      'ui-settings-plugin-inventory', 'ui-settings-plugins', 'ui-settings-session-log',
+      'ui-settings-shell', 'ui-settings-subagent', 'ui-shortcuts',
+      'ui-sidebar', 'ui-sidebar-browser', 'ui-sidebar-right',
+      'ui-skill', 'ui-subagent', 'ui-theme',
+      'ui-tool', 'ui-trajectory', 'ui-user-questions',
+      'ui-workflow-run', 'ui-workspace', 'user-questions',
+      'web', 'web-fetch-http', 'web-runtime',
+      'web-search-deepseek', 'web-startup', 'webserver',
+      'working-directory', 'workspace', 'workspace-controller',
+    ],
   },
 ]
+
+/**
+ * Every row id in the assembled tree that is not literally `disabled: true`.
+ * Rows whose disable is a `!!js` expression count as enabled — the expression
+ * evaluates at boot, and a dump cannot prove it false, so the allowlist
+ * treats "not proven disabled" as mounted. That is the conservative side.
+ */
+function enabledRowsOf(out: string): string[] {
+  const sections = out.split('\n- id: ')
+  const enabled: string[] = []
+  for (let index = 1; index < sections.length; index++) {
+    const section = sections[index]
+    if (section === undefined) continue
+    const id = section.split('\n', 1)[0]?.trim()
+    if (id !== undefined && id !== '' && !/^ {2}disabled: true$/m.test(section)) enabled.push(id)
+  }
+  return enabled.sort()
+}
 
 function run(cmd: string, args: readonly string[]): SpawnSyncReturns<string> {
   return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8' })
@@ -220,6 +345,18 @@ function main(): void {
         problems.push(`${label}: expected-disabled row \`${id}\` not found in the assembled tree (upstream renamed or dropped the row — re-run the shared-online security assessment before trusting this closure)`)
       } else if (!/^ {2}disabled: true$/m.test(row)) {
         problems.push(`${label}: row \`${id}\` is no longer disabled in the assembled tree — the shared-online closure regressed (upstream default flip or lost patch row)`)
+      }
+    }
+    if (comp.expectEnabledRows !== undefined) {
+      const enabled = enabledRowsOf(out)
+      const pinned = [...comp.expectEnabledRows].sort()
+      const unexpected = enabled.filter(id => !pinned.includes(id))
+      const missing = pinned.filter(id => !enabled.includes(id))
+      if (unexpected.length > 0) {
+        problems.push(`${label}: enabled rows outside the pinned allowlist (assess before listing): ${unexpected.join(', ')}`)
+      }
+      if (missing.length > 0) {
+        problems.push(`${label}: allowlisted rows not enabled in the tree: ${missing.join(', ')}`)
       }
     }
     for (const [id, needles] of Object.entries(comp.expectRowText ?? {})) {
