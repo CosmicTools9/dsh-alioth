@@ -42,6 +42,9 @@ overrides:
   pnpm: '12.8.1'
   sharp: '>=0.35.5'
   yaml: '>=2.8.3'
+  # DOMPurify SAFE_FOR_TEMPLATES bypass (critical, 2026-10-25): reached
+  # through the harness documentpreview chain; 3.4.x line is API-stable.
+  dompurify: '>=3.4.17'
   # Security floors raised 2026-09-30 from `pnpm audit --audit-level=moderate`
   # (11 high / 18 moderate after the harness moved to the 0.2.0-rc.2 line).
   # Every offending path is reached through the harness sibling checkout —
@@ -90,7 +93,7 @@ overrides:
   #     so the rename stays inside katex. `renderToString` with the two option sets the
   #     renderer uses (`throwOnError: true`, then `strict: 'ignore'` + `throwOnError:
   #     false`) behaves the same, and the client bundle builds with it.
-  'dompurify@^3': '^3.4.16'
+  'dompurify@^3': '^3.4.17'
   katex: '^0.19.0'
   # fflate: `@deepseek-ai/libreoffice-kit` pins 0.8.2 exactly; the 2026-09-30 note claimed
   # the floor forced an unreachable tarball re-materialization, which no longer holds —
