@@ -340,6 +340,19 @@ function main(): void {
       if (policy === undefined || !/^\s+mode: workspace-write$/m.test(policy)) {
         problems.push(`${label}: sandbox-policy.mode is not pinned to workspace-write (patch row dropped or env drift)`)
       }
+      if (policy !== undefined) {
+        // The sandbox boundary (2026-10-25 user ruling): namespace-wide access
+        // + runtime read isolation. ancestor walking is what widens the write
+        // face to Pre-Proc/{ns}; readOnlyRoots is what switches confined
+        // runners into read allow-lists. Losing either silently reverts the
+        // boundary.
+        if (!/workspaceAncestorLevels: 2/.test(policy)) {
+          problems.push(`${label}: sandbox-policy lost workspaceAncestorLevels: 2 — the write boundary is no longer the caller's namespace (upstream default flip or patch drift)`)
+        }
+        if (!/readOnlyRoots:/.test(policy)) {
+          problems.push(`${label}: sandbox-policy lost readOnlyRoots — confined bash falls back to whole-root read (runtime isolation off)`)
+        }
+      }
     }
     for (const id of comp.expectDisabled ?? []) {
       const row = rowOf(out, id)
