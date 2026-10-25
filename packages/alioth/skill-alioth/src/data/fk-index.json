@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/fk-index.json",
  "description": "Physical FK reference index [table, field, target, local_key] from the release isahl_meta-registry.sql sidecar (derived data, delivered outside Git).",
- "source": "Alioth repo v10.0.40 (2026-10-11T13:03:19.541533+00:00)",
+ "source": "Alioth repo v10.0.47 (2026-10-23T04:12:51.378452+00:00)",
  "refs": [
   [
    "zc_id_deta-plan",
@@ -568,6 +568,12 @@
    "fk_previous"
   ],
   [
+   "zc_id_prod-file",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
    "zc_id_prod-prj_vcs_file-purchase",
    "provider",
    "zc_id_subjects",
@@ -704,12 +710,6 @@
    "r-type",
    "zc_id_cons-r-type-cate",
    "ck_vehicle-form"
-  ],
-  [
-   "zc_id_file-srm",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_file-srm",
@@ -854,12 +854,6 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_file-wbm",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_file-wbm",
@@ -2788,34 +2782,16 @@
    "fk_place"
   ],
   [
-   "zc_id_file-avatar",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
    "zc_id_file-document",
    "size",
    "zc_id_scal-data",
    "qk_size"
   ],
   [
-   "zc_id_file-image",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
    "zc_id_file-package",
    "size",
    "zc_id_scal-data",
    "qk_size"
-  ],
-  [
-   "zc_id_file-ver_ctrl",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_prod-certificate",
@@ -2896,22 +2872,10 @@
    "qk_size"
   ],
   [
-   "zc_id_file-document",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
    "zc_id_file-image",
    "size",
    "zc_id_scal-data",
    "qk_size"
-  ],
-  [
-   "zc_id_file-package",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_file-ver_ctrl",
@@ -2962,28 +2926,10 @@
    "lk_health"
   ],
   [
-   "zc_id_prod-prj_vcs_file-made",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
-   "zc_id_prod-prj_vcs_file-purchase",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
    "zc_id_prod-prj_vcs_file-request",
    "size",
    "zc_id_scal-data",
    "qk_size"
-  ],
-  [
-   "zc_id_prod-prj_vcs_file-sales",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_entity_rr_contacts",
@@ -3038,12 +2984,6 @@
    "size",
    "zc_id_scal-data",
    "qk_size"
-  ],
-  [
-   "zc_id_prod-prj_vcs_file-request",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_plan-recruitment",
@@ -3140,12 +3080,6 @@
    "thread",
    "zc_id_threads",
    "fk_thread"
-  ],
-  [
-   "zc_id_production_rr_storage",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_production_rr_storage",
@@ -5884,6 +5818,12 @@
    "fk_address"
   ],
   [
+   "zc_id_standard",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
    "zc_id_prod-prj_vcs_file-request",
    "previous",
    "zc_id_version",
@@ -5924,12 +5864,6 @@
    "price",
    "zc_id_scal-price",
    "qk_price"
-  ],
-  [
-   "zc_id_standard",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_prod-freight_rail-made",
@@ -6580,22 +6514,10 @@
    "ck_category"
   ],
   [
-   "zc_id_prod-file",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
    "zc_id_oper-audit_prj",
    "effort",
    "zc_id_scal-duration",
    "qk_effort"
-  ],
-  [
-   "zc_id_file_rr_url",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_file_rr_url",
@@ -6848,12 +6770,6 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_file-manual",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
   ],
   [
    "zc_id_file_rr_url",
@@ -7642,6 +7558,12 @@
    "qk_period"
   ],
   [
+   "zc_id_oper-fo_booking",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
    "zc_id_prod-freight_ocean-purchase",
    "period",
    "zc_id_segm-date",
@@ -7856,12 +7778,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_oper-fo_booking",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
   ],
   [
    "zc_id_oper-orient",
@@ -8164,6 +8080,12 @@
    "sk_unit"
   ],
   [
+   "zc_id_prod-type_cert-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
    "zc_id_prod-tsp_land-license-sales",
    "price",
    "zc_id_scal-price",
@@ -8228,12 +8150,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-type_cert-sales",
-   "provider",
-   "zc_id_subjects",
-   "fk_subj-provider"
   ],
   [
    "zc_id_prod-type_cert-sales",
@@ -9280,6 +9196,12 @@
    "tk_batch_no"
   ],
   [
+   "zc_id_stor-plc-airport",
+   "fence",
+   "zc_id_geog-polygon",
+   "qk_fence"
+  ],
+  [
    "zc_id_law-intl-custom",
    "previous",
    "zc_id_version",
@@ -9401,12 +9323,6 @@
   ],
   [
    "zc_id_stor-plc-garage",
-   "fence",
-   "zc_id_geog-polygon",
-   "qk_fence"
-  ],
-  [
-   "zc_id_stor-plc-airport",
    "fence",
    "zc_id_geog-polygon",
    "qk_fence"
@@ -10090,6 +10006,12 @@
    "tk_version"
   ],
   [
+   "zc_id_plan-project",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
    "zc_id_stan-air-faa-article",
    "batch_no",
    "zc_id_tags-batch",
@@ -10288,6 +10210,12 @@
    "fk_biller"
   ],
   [
+   "zc_id_even-modify",
+   "date",
+   "zc_id_scal-date",
+   "qk_date"
+  ],
+  [
    "zc_id_stan-air-caac-article",
    "version",
    "zc_id_tags-version",
@@ -10454,18 +10382,6 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
-  ],
-  [
-   "zc_id_plan-project",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_even-modify",
-   "date",
-   "zc_id_scal-date",
-   "qk_date"
   ],
   [
    "zc_id_stan-air-caac-article",
@@ -12304,6 +12220,12 @@
    "ck_branch"
   ],
   [
+   "zc_id_project",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
    "zc_id_prod-customs_cle_fo-purchase",
    "provider",
    "zc_id_subjects",
@@ -12935,12 +12857,6 @@
   ],
   [
    "zc_id_project",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_project",
    "progress",
    "zc_id_rati-progress",
    "qk_progress"
@@ -13138,6 +13054,12 @@
    "tk_batch_no"
   ],
   [
+   "zc_id_oper-sales_order",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
    "zc_id_prod-stor_sorting-sales",
    "period",
    "zc_id_segm-date",
@@ -13234,12 +13156,6 @@
    "ck_cate-wh"
   ],
   [
-   "zc_id_oper-sales_order",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
    "zc_id_oper-check_bill",
    "cate-wh",
    "zc_id_cate-wh-title",
@@ -13306,6 +13222,12 @@
    "ck_cate-wh"
   ],
   [
+   "zc_id_prod-storage",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
    "zc_id_law",
    "branch",
    "zc_id_cate-ver_branch",
@@ -13348,10 +13270,22 @@
    "tk_version"
   ],
   [
+   "zc_id_prod-pxy-fo_ltl-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
    "zc_id_task",
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
+  ],
+  [
+   "zc_id_even-issue",
+   "category",
+   "zc_id_cate-issue",
+   "ck_category"
   ],
   [
    "zc_id_prod-pub_affairs",
@@ -13376,12 +13310,6 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-purchase",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_prod-financial",
@@ -14044,6 +13972,12 @@
    "ck_branch"
   ],
   [
+   "zc_id_proc-approve",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
    "zc_id_prod-freight_road-sales",
    "batch_no",
    "zc_id_tags-batch",
@@ -14500,12 +14434,6 @@
    "tk_version"
   ],
   [
-   "zc_id_proc-approve",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_oper-merchandise_on",
    "branch",
    "zc_id_cate-ver_branch",
@@ -14720,12 +14648,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_prod-storage",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
   ],
   [
    "zc_id_prod-pxy-components-made",
@@ -15118,6 +15040,12 @@
    "tk_version"
   ],
   [
+   "zc_id_law",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
    "zc_id_stat-task_rr_sto-voucher",
    "verify-qty",
    "zc_id_scale",
@@ -15194,6 +15122,12 @@
    "timezone",
    "zc_id_cons-timezone-cate",
    "ck_timezone"
+  ],
+  [
+   "zc_id_deta-trade_order",
+   "delivery",
+   "zc_id_prod-made",
+   "fk_delivery"
   ],
   [
    "zc_id_stor-plc-platform",
@@ -16150,12 +16084,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_law",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_prod-rdc_express-purchase",
    "previous",
    "zc_id_version",
@@ -16256,12 +16184,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_deta-trade_order",
-   "delivery",
-   "zc_id_prod-made",
-   "fk_delivery"
   ],
   [
    "zc_id_oper-put_in_stock",
@@ -16562,12 +16484,6 @@
    "s_capacity",
    "zc_id_scale",
    "qk_s_capacity"
-  ],
-  [
-   "zc_id_prod-payload_rr_stor-container",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-pxy-fo_fcl-request",
@@ -18178,12 +18094,6 @@
    "qk_price"
   ],
   [
-   "zc_id_prod-made_rr_stor-place",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-openapi-request",
    "provider",
    "zc_id_subjects",
@@ -18256,12 +18166,6 @@
    "qk_date"
   ],
   [
-   "zc_id_project_r_milestone-tags",
-   "arrived_at",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
    "zc_id_orde-traffic_rr_ticket",
    "period",
    "zc_id_segm-date",
@@ -18302,18 +18206,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_project_r_milestone-tags",
-   "plan-segm",
-   "zc_id_segm-date",
-   "qk_plan-segm"
-  ],
-  [
-   "zc_id_stat-weight",
-   "qty",
-   "zc_id_scal-weight",
-   "qk_qty"
   ],
   [
    "zc_id_oper-sign",
@@ -19708,19 +19600,7 @@
    "qk_period"
   ],
   [
-   "zc_id_prod-loading_r_goods-tag",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_agreement_r_term",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_prod-goods_r_hscode",
    "period",
    "zc_id_segm-date",
    "qk_period"
@@ -19919,12 +19799,6 @@
   ],
   [
    "zc_id_production_r_period",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_project_r_milestone-tags",
    "period",
    "zc_id_segm-date",
    "qk_period"
@@ -20164,274 +20038,280 @@
    "lk_risk"
   ],
   [
-   "zc_id_project_r_milestone-tags",
-   "review-segm",
+   "zc_id_stat-trade_order",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_stat-trade_order",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-payment",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-payment",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-payment",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_prod-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-airlift",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-airlift",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-airlift",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-rbl",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-rbl",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-rbl",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-railway",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-railway",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-railway",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-lbl",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-lbl",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-lbl",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-multimodal",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-multimodal",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-multimodal",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-ahbl",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-ahbl",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-ahbl",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-shipping",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-shipping",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-shipping",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-retail",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-retail",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-retail",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_order-after_sales",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_order-after_sales",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_order-after_sales",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-land",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-land",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-land",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-consult",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-consult",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-consult",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-storage",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-storage",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-storage",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_orde-hbl",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_orde-hbl",
+   "progress",
+   "zc_id_rati-progress",
+   "qk_progress"
+  ],
+  [
+   "zc_id_orde-hbl",
+   "risk",
+   "zc_id_leve-risk",
+   "lk_risk"
+  ],
+  [
+   "zc_id_prod-retail_r_hscode",
+   "period",
    "zc_id_segm-date",
-   "qk_review-segm"
-  ],
-  [
-   "zc_id_stat-trade_order",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_stat-trade_order",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-payment",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-payment",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-payment",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-airlift",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-airlift",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-airlift",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-rbl",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-rbl",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-rbl",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-railway",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-railway",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-railway",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-lbl",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-lbl",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-lbl",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-multimodal",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-multimodal",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-multimodal",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-ahbl",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-ahbl",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-ahbl",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-shipping",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-shipping",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-shipping",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-retail",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-retail",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-retail",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_order-after_sales",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_order-after_sales",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_order-after_sales",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-land",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-land",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-land",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-consult",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-consult",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-consult",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-storage",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-storage",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-storage",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
-  ],
-  [
-   "zc_id_orde-hbl",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_orde-hbl",
-   "progress",
-   "zc_id_rati-progress",
-   "qk_progress"
-  ],
-  [
-   "zc_id_orde-hbl",
-   "risk",
-   "zc_id_leve-risk",
-   "lk_risk"
+   "qk_period"
   ],
   [
    "zc_id_subjects_rr_storage",
@@ -20486,6 +20366,132 @@
    "risk",
    "zc_id_leve-risk",
    "lk_risk"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-goods_pick",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_stat-sto-voucher_rr_order",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-tsp_package",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
   ],
   [
    "zc_id_plan-perform_rr_tsk-make",
@@ -20558,12 +20564,6 @@
    "verify",
    "zc_id_scale",
    "qk_verify"
-  ],
-  [
-   "zc_id_prod-sales_rr_stor-place",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-sales_rr_stor-place",
@@ -20800,10 +20800,100 @@
    "qk_period"
   ],
   [
+   "zc_id_prod-loading_r_description",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
    "zc_id_orga-department_rr_project",
    "period",
    "zc_id_segm-date",
    "qk_period"
+  ],
+  [
+   "zc_id_prod-retail_r_barcode",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "r-type",
+   "zc_id_cons-r-type-cate",
+   "ck_r-type"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "receptacle",
+   "zc_id_stor-container",
+   "fk_receptacle"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
    "zc_id_project_rr_dependency",
@@ -20836,6 +20926,120 @@
    "qk_write-off"
   ],
   [
+   "zc_id_oper-put_to_store",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-retail_r_description",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
    "zc_id_prod-certificate",
    "unit",
    "zc_id_unit",
@@ -20843,12 +21047,6 @@
   ],
   [
    "zc_id_prod-certificate",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
-   "zc_id_prod-certificate",
    "cate-cert",
    "zc_id_cate-certification",
    "ck_cate-cert"
@@ -20884,40 +21082,64 @@
    "ck_cate-cert"
   ],
   [
-   "zc_id_prod-marriage_cert-sales",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
+   "zc_id_oper-tsp_package",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
   ],
   [
-   "zc_id_prod-type_cert-sales",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
+   "zc_id_oper-tsp_package",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
-   "zc_id_prod-diploma-sales",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
-   "zc_id_prod-digital_cert-sales",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
-  ],
-  [
-   "zc_id_prod-air_cert-sales",
-   "category",
-   "zc_id_cate-file",
-   "ck_category"
+   "zc_id_audi-functional",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
   ],
   [
    "zc_id_cont-transport-sales",
    "amount",
    "zc_id_scal-amount",
    "qk_amount"
+  ],
+  [
+   "zc_id_audi-cost",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
+   "zc_id_audi-purchase",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
+   "zc_id_prod-retail-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-pxy-components-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-electric-eng-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
   ],
   [
    "zc_id_contract",
@@ -20966,6 +21188,12 @@
    "valid-segm",
    "zc_id_segm-date",
    "qk_valid-segm"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
   ],
   [
    "zc_id_cont-partnership",
@@ -21076,6 +21304,36 @@
    "qk_valid-segm"
   ],
   [
+   "zc_id_prod-apparel-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-openapi-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
    "zc_id_cont-marriage",
    "amount",
    "zc_id_scal-amount",
@@ -21094,6 +21352,24 @@
    "qk_valid-segm"
   ],
   [
+   "zc_id_prod-apparel-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
    "zc_id_cont-insurance",
    "amount",
    "zc_id_scal-amount",
@@ -21110,6 +21386,30 @@
    "valid-segm",
    "zc_id_segm-date",
    "qk_valid-segm"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-pxy-auto_mfg-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
   ],
   [
    "zc_id_cont-proxy",
@@ -21233,6 +21533,2112 @@
   ],
   [
    "zc_id_prod-biz-license-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-freight_road-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-prj_data-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-freight_inland-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-freight_rail-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-dev-tools-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-legal_tender-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-project-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_stat-sto-voucher_rr_deta-counting",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-apparel_r_fabric",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-transform_r_composition",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "season",
+   "zc_id_cons-season-cate",
+   "ck_season"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "series",
+   "zc_id_cate-series",
+   "ck_series"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "color",
+   "zc_id_cons-color-cate",
+   "ck_color"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "color",
+   "zc_id_cons-color-cate",
+   "ck_color"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "season",
+   "zc_id_cons-season-cate",
+   "ck_season"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "series",
+   "zc_id_cate-series",
+   "ck_series"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "size",
+   "zc_id_cons-size-cate",
+   "ck_size"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "color",
+   "zc_id_cons-color-cate",
+   "ck_color"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "season",
+   "zc_id_cons-season-cate",
+   "ck_season"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "series",
+   "zc_id_cate-series",
+   "ck_series"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "size",
+   "zc_id_cons-size-cate",
+   "ck_size"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "size",
+   "zc_id_cons-size-cate",
+   "ck_size"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "color",
+   "zc_id_cons-color-cate",
+   "ck_color"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "season",
+   "zc_id_cons-season-cate",
+   "ck_season"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "series",
+   "zc_id_cate-series",
+   "ck_series"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "size",
+   "zc_id_cons-size-cate",
+   "ck_size"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "color",
+   "zc_id_cons-color-cate",
+   "ck_color"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "season",
+   "zc_id_cons-season-cate",
+   "ck_season"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "series",
+   "zc_id_cate-series",
+   "ck_series"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "size",
+   "zc_id_cons-size-cate",
+   "ck_size"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_project_r_milestone",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-apparel_r_style",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_stor-acc-points",
+   "c_capacity",
+   "zc_id_scal-amount",
+   "qk_c_capacity"
+  ],
+  [
+   "zc_id_stor-acc-points",
+   "capacity",
+   "zc_id_scale",
+   "qk_capacity"
+  ],
+  [
+   "zc_id_stor-acc-points",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_stor-acc-points",
+   "v_capacity",
+   "zc_id_scal-volume",
+   "qk_v_capacity"
+  ],
+  [
+   "zc_id_stor-acc-points",
+   "w_capacity",
+   "zc_id_scal-weight",
+   "qk_w_capacity"
+  ],
+  [
+   "zc_id_even-damage",
+   "date",
+   "zc_id_scal-date",
+   "qk_date"
+  ],
+  [
+   "zc_id_even-damage",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_even-damage",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_even-damage",
+   "subject",
+   "zc_id_subjects",
+   "fk_subject"
+  ],
+  [
+   "zc_id_even-damage",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_cons-r-type-cate",
+   "w_capacity",
+   "zc_id_scal-weight",
+   "qk_w_capacity"
+  ],
+  [
+   "zc_id_cons-r-type-cate",
+   "v_capacity",
+   "zc_id_scal-volume",
+   "qk_v_capacity"
+  ],
+  [
+   "zc_id_stat-weight",
+   "gross-weight",
+   "zc_id_scal-weight",
+   "qk_gross-weight"
+  ],
+  [
+   "zc_id_stat-weight",
+   "net-weight",
+   "zc_id_scal-weight",
+   "qk_net-weight"
+  ],
+  [
+   "zc_id_deta-inspection",
+   "list",
+   "zc_id_stat-inspection",
+   "fk_list"
+  ],
+  [
+   "zc_id_deta-damage",
+   "biller",
+   "zc_id_subjects",
+   "fk_biller"
+  ],
+  [
+   "zc_id_prod-customs_declaration",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_sorting-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-tsp_land-license-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_inland-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-license",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-loading-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-project-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_production",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-auto_mfg-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-insurance",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-project-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pub_affairs",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fo_insurance-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_data-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-document",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-project-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fo_insurance-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_deta-damage",
+   "list",
+   "zc_id_even-damage",
+   "fk_list"
+  ],
+  [
+   "zc_id_prod-freight_rail-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-data",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-digital_cert-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-insurance-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-dev-tools-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-openapi-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_data-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-retail-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-marriage_cert-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_ocean-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-ports-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-license-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-storage",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_road-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-sovereign_currency-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-transform",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-rdc_express-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_sorting-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-srm",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-customs-clearance",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-manual",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-air_cert-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-openapi-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-customs_dec_fo-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_rail-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-type_cert-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-customs_dec_fo-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-ver_ctrl",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-certificate",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-payload",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-rdc_express-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_data-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-loading-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-biz-license-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-openapi-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-rdc_express-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-electric-eng-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-insurance-license-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_inland-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-components-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-proxy",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-passenger",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-traffic",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-retail-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-loading",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-consulting",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_data-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-diploma-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-combine",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_ocean-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-channel_cost-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_rail-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-loading-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_air-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_rail-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-conclusion",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-insurance-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_road-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-material-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-avatar",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-legal_tender-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-customs_cle_fo-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-retail-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_inland-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fo_insurance-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_road-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-project-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-legal_tender",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-customs_cle_fo-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-loading-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-financial",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-image",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-file",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_inland-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_sorting-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-retail-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_plan-material_rr_material",
+   "qty",
+   "zc_id_scale",
+   "qk_qty"
+  ],
+  [
+   "zc_id_prod-freight_ocean-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-ports-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-license-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-package",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-ports-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-freight_road-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_file-wbm",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-lease",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-openapi-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "address",
+   "zc_id_contact_infos",
+   "fk_address"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "c_capacity",
+   "zc_id_scal-amount",
+   "qk_c_capacity"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "capacity",
+   "zc_id_scale",
+   "qk_capacity"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "fence",
+   "zc_id_geog-polygon",
+   "qk_fence"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "parent",
+   "zc_id_place",
+   "fk_parent"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "timezone",
+   "zc_id_cons-timezone-cate",
+   "ck_timezone"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "v_capacity",
+   "zc_id_scal-volume",
+   "qk_v_capacity"
+  ],
+  [
+   "zc_id_stor-plc-shop",
+   "w_capacity",
+   "zc_id_scal-weight",
+   "qk_w_capacity"
+  ],
+  [
+   "zc_id_task-sample",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-sample",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-sample",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-sample",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-sample",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_production_rr_storage",
+   "unit-pricing",
+   "zc_id_unit-pricing",
+   "sk_unit-pricing"
+  ],
+  [
+   "zc_id_prod-made_rr_stor-place",
+   "unit-pricing",
+   "zc_id_unit-pricing",
+   "sk_unit-pricing"
+  ],
+  [
+   "zc_id_prod-payload_rr_stor-container",
+   "unit-pricing",
+   "zc_id_unit-pricing",
+   "sk_unit-pricing"
+  ],
+  [
+   "zc_id_file_rr_url",
+   "unit-pricing",
+   "zc_id_unit-pricing",
+   "sk_unit-pricing"
+  ],
+  [
+   "zc_id_prod-sales_rr_stor-place",
+   "unit-pricing",
+   "zc_id_unit-pricing",
+   "sk_unit-pricing"
+  ],
+  [
+   "zc_id_prod-data",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-config",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-config",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-config",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-config",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-config",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-config",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-config",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-config",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-config",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-config",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-config",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_audi-project",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
+   "zc_id_audi-expense",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
+   "zc_id_audi-physical",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-config",
+   "cate-config",
+   "zc_id_cate-config",
+   "ck_config"
+  ],
+  [
+   "zc_id_prod-consulting",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-type_cert-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-type_cert-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-marriage_cert-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-marriage_cert-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-avatar",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-avatar",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-certificate",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-certificate",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-document",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-document",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-openapi-request",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_data-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-insurance-license-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-insurance-license-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-prj_data-made",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-request",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-request",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-made",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-made",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-biz-license-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-biz-license-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-digital_cert-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-digital_cert-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-openapi-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-air_cert-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-air_cert-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-purchase",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-purchase",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-file",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_data-purchase",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-diploma-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-diploma-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-wbm",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-wbm",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-srm",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-srm",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-image",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-image",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-package",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-package",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-prj_vcs_file-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-conclusion",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-ver_ctrl",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-manual",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_file-manual",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-prj_data-request",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-openapi-purchase",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-tsp_land-license-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-tsp_land-license-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_file-ver_ctrl",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-openapi-made",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_even-issue",
+   "severity",
+   "zc_id_leve-severity",
+   "lk_severity"
+  ],
+  [
+   "zc_id_even-modify_rr_matter",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_deta-damage_r_scrap",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_audi-contract",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
+   "zc_id_event_rr_ind-matter",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-outbound",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-outbound",
    "version",
    "zc_id_tags-version",
    "tk_version"

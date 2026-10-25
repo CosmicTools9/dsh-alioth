@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractFkIndex } from '../scripts/generate-semantic-dicts.ts'
+import { extractCodes, extractFkIndex } from '../scripts/generate-semantic-dicts.ts'
 
 /**
  * `meta_fields`' column order as the vendored structure baseline creates it — the order a
@@ -49,6 +49,37 @@ function positionalRow(config: string, name = 'demand', title = '需求'): strin
   ]
   return `INSERT INTO isahl_meta.meta_fields VALUES (${values.map(literal).join(', ')}) ON CONFLICT DO NOTHING;`
 }
+
+describe('extractCodes', () => {
+  it('reads legacy no-column-list INSERT rows at the historical 10th position', () => {
+    const seed = [
+      `INSERT INTO isahl.zc_id_scene VALUES ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'SA', 'x');`,
+      `INSERT INTO isahl.zc_id_scene VALUES ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'SB', 'x');`,
+    ].join('\n')
+    expect(extractCodes(seed, 'zc_id_scene')).toEqual(['SA', 'SB'])
+  })
+
+  it('locates the code column BY NAME in named-column INSERT rows (v10.0.47+ dumps)', () => {
+    const seed = [
+      `INSERT INTO isahl.zc_id_scene (created_at, code, notice) VALUES ('t', 'FF', 'n');`,
+      `INSERT INTO isahl.zc_id_scene (notice, created_at, code) VALUES ('n', 't', 'FG');`,
+    ].join('\n')
+    expect(extractCodes(seed, 'zc_id_scene')).toEqual(['FF', 'FG'])
+  })
+
+  it('skips rows whose column list names no code column', () => {
+    const seed = `INSERT INTO isahl.zc_id_scene (created_at, notice) VALUES ('t', 'n');`
+    expect(extractCodes(seed, 'zc_id_scene')).toEqual([])
+  })
+
+  it('follows INSERT statements whose row values span physical lines (newlines inside comments)', () => {
+    const seed = [
+      `INSERT INTO isahl.zc_id_scene (created_at, code, comments) VALUES ('t', 'ZC', 'two`,
+      `line comment') ON CONFLICT DO NOTHING;`,
+    ].join('\n')
+    expect(extractCodes(seed, 'zc_id_scene')).toEqual(['ZC'])
+  })
+})
 
 describe('extractFkIndex', () => {
   it('reads a positional INSERT row through the baseline column order', () => {

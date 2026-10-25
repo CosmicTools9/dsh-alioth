@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/physical-tables.json",
  "description": "isahl physical table index [table, parent] + root-family common columns, generated offline from the Alioth model repo.",
- "source": "Alioth repo v10.0.40 (2026-10-11T13:03:19.541533+00:00)",
+ "source": "Alioth repo v10.0.47 (2026-10-23T04:12:51.378452+00:00)",
  "root_columns": [
   "created_at",
   "created_by_id",
@@ -9,6 +9,7 @@
   "deleted_by_id",
   "id",
   "notice",
+  "operated_by_id",
   "t_color_",
   "updated_at",
   "updated_by_id"
@@ -245,6 +246,34 @@
   [
    "zc_id_audit",
    "zc_id_lifecycle"
+  ],
+  [
+   "zc_id_audi-contract",
+   "zc_id_audit"
+  ],
+  [
+   "zc_id_audi-cost",
+   "zc_id_audit"
+  ],
+  [
+   "zc_id_audi-expense",
+   "zc_id_audit"
+  ],
+  [
+   "zc_id_audi-functional",
+   "zc_id_audit"
+  ],
+  [
+   "zc_id_audi-physical",
+   "zc_id_audit"
+  ],
+  [
+   "zc_id_audi-project",
+   "zc_id_audit"
+  ],
+  [
+   "zc_id_audi-purchase",
+   "zc_id_audit"
   ],
   [
    "zc_id_audit_rr_auditee",
@@ -487,6 +516,10 @@
    "zc_id_category"
   ],
   [
+   "zc_id_cate-config",
+   "zc_id_category"
+  ],
+  [
    "zc_id_cate-contact_role",
    "zc_id_category"
   ],
@@ -505,6 +538,10 @@
   [
    "zc_id_cate-department",
    "zc_id_cate-subject"
+  ],
+  [
+   "zc_id_cate-document",
+   "zc_id_category"
   ],
   [
    "zc_id_cate-employment",
@@ -548,6 +585,10 @@
   ],
   [
    "zc_id_cate-inve-trasnfer",
+   "zc_id_category"
+  ],
+  [
+   "zc_id_cate-issue",
    "zc_id_category"
   ],
   [
@@ -611,6 +652,10 @@
    "zc_id_category"
   ],
   [
+   "zc_id_cate-series",
+   "zc_id_category"
+  ],
+  [
    "zc_id_cate-society",
    "zc_id_cate-subject"
   ],
@@ -655,6 +700,10 @@
    "zc_id_cate-tsp-title"
   ],
   [
+   "zc_id_cate-variant",
+   "zc_id_category"
+  ],
+  [
    "zc_id_cate-ver_branch",
    "zc_id_category"
   ],
@@ -664,6 +713,10 @@
   ],
   [
    "zc_id_cate-wh-title",
+   "zc_id_category"
+  ],
+  [
+   "zc_id_cons-color-cate",
    "zc_id_category"
   ],
   [
@@ -695,10 +748,6 @@
    "zc_id_consensus"
   ],
   [
-   "zc_id_cons-goods-tags",
-   "zc_id_consensus"
-  ],
-  [
    "zc_id_cons-industry-cate",
    "zc_id_category"
   ],
@@ -717,6 +766,14 @@
   [
    "zc_id_cons-r-type-cate",
    "zc_id_consensus"
+  ],
+  [
+   "zc_id_cons-season-cate",
+   "zc_id_category"
+  ],
+  [
+   "zc_id_cons-size-cate",
+   "zc_id_category"
   ],
   [
    "zc_id_cons-timezone-cate",
@@ -883,6 +940,18 @@
    "zc_id_detail"
   ],
   [
+   "zc_id_deta-damage",
+   "zc_id_detail"
+  ],
+  [
+   "zc_id_lifecycle_r_tags",
+   "zc_ad_tensor_r_scalar"
+  ],
+  [
+   "zc_id_deta-damage_r_scrap",
+   "zc_id_lifecycle_r_tags"
+  ],
+  [
    "zc_id_deta-inspection",
    "zc_id_detail"
   ],
@@ -1031,6 +1100,10 @@
    "zc_id_event"
   ],
   [
+   "zc_id_even-damage",
+   "zc_id_event"
+  ],
+  [
    "zc_id_even-issue",
    "zc_id_event"
   ],
@@ -1041,6 +1114,14 @@
   [
    "zc_id_even-modify",
    "zc_id_event"
+  ],
+  [
+   "zc_id_event_rr_matter",
+   "zc_id_master_rr_slave"
+  ],
+  [
+   "zc_id_even-modify_rr_matter",
+   "zc_id_event_rr_matter"
   ],
   [
    "zc_id_even-report",
@@ -1063,8 +1144,8 @@
    "zc_id_master_rr_slave"
   ],
   [
-   "zc_id_event_rr_matter",
-   "zc_id_master_rr_slave"
+   "zc_id_event_rr_ind-matter",
+   "zc_id_event_rr_matter"
   ],
   [
    "zc_id_event_rr_reason",
@@ -1399,6 +1480,10 @@
    "zc_id_level"
   ],
   [
+   "zc_id_leve-loyalty",
+   "zc_id_level"
+  ],
+  [
    "zc_id_leve-org",
    "zc_id_leve-structure"
   ],
@@ -1455,6 +1540,10 @@
    "zc_id_level"
   ],
   [
+   "zc_id_lifecycle_r_appraval-status",
+   "zc_id_lifecycle_r_status"
+  ],
+  [
    "zc_id_lifecycle_r_category",
    "zc_ad_tensor_r_scalar"
   ],
@@ -1465,10 +1554,6 @@
   [
    "zc_id_lifecycle_r_primary-status",
    "zc_id_lifecycle_r_status"
-  ],
-  [
-   "zc_id_lifecycle_r_tags",
-   "zc_ad_tensor_r_scalar"
   ],
   [
    "zc_id_lifecycle_rr_form",
@@ -1583,6 +1668,14 @@
    "zc_id_operation"
   ],
   [
+   "zc_id_oper-goods_pick",
+   "zc_id_operation"
+  ],
+  [
+   "zc_id_oper-inbound",
+   "zc_id_operation"
+  ],
+  [
    "zc_id_oper-lading",
    "zc_id_operation"
   ],
@@ -1603,7 +1696,19 @@
    "zc_id_operation"
   ],
   [
+   "zc_id_oper-outbound",
+   "zc_id_operation"
+  ],
+  [
+   "zc_id_oper-payload_sort",
+   "zc_id_operation"
+  ],
+  [
    "zc_id_oper-payment",
+   "zc_id_operation"
+  ],
+  [
+   "zc_id_oper-pick_to_bin",
    "zc_id_operation"
   ],
   [
@@ -1612,6 +1717,10 @@
   ],
   [
    "zc_id_oper-put_in_stock",
+   "zc_id_operation"
+  ],
+  [
+   "zc_id_oper-put_to_store",
    "zc_id_operation"
   ],
   [
@@ -1660,6 +1769,10 @@
   ],
   [
    "zc_id_oper-transport_tracking",
+   "zc_id_operation"
+  ],
+  [
+   "zc_id_oper-tsp_package",
    "zc_id_operation"
   ],
   [
@@ -2011,6 +2124,50 @@
    "zc_id_prod-sales"
   ],
   [
+   "zc_id_prod-transform",
+   "zc_id_production"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "zc_id_prod-combine"
+  ],
+  [
+   "zc_id_prod-made",
+   "zc_id_production"
+  ],
+  [
+   "zc_id_prod-payload",
+   "zc_id_production"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "zc_id_prod-apparel"
+  ],
+  [
+   "zc_id_prod-request",
+   "zc_id_production"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "zc_id_prod-apparel"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "zc_id_prod-apparel"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "zc_id_prod-payload"
+  ],
+  [
+   "zc_id_prod-apparel_r_fabric",
+   "zc_id_lifecycle_r_tags"
+  ],
+  [
+   "zc_id_prod-apparel_r_style",
+   "zc_id_lifecycle_r_tags"
+  ],
+  [
    "zc_id_prod-lease",
    "zc_id_production"
   ],
@@ -2029,6 +2186,10 @@
   [
    "zc_id_prod-conclusion",
    "zc_id_prod-combine"
+  ],
+  [
+   "zc_id_prod-config",
+   "zc_id_prod-made"
   ],
   [
    "zc_id_prod-consulting",
@@ -2067,10 +2228,6 @@
    "zc_id_prod-sales"
   ],
   [
-   "zc_id_prod-made",
-   "zc_id_production"
-  ],
-  [
    "zc_id_prod-dev-tools-made",
    "zc_id_prod-made"
   ],
@@ -2097,10 +2254,6 @@
   [
    "zc_id_prod-fo_insurance-purchase",
    "zc_id_prod-purchase"
-  ],
-  [
-   "zc_id_prod-request",
-   "zc_id_production"
   ],
   [
    "zc_id_prod-fo_insurance-request",
@@ -2179,10 +2332,6 @@
    "zc_id_prod-sales"
   ],
   [
-   "zc_id_prod-goods_r_hscode",
-   "zc_id_lifecycle_r_tags"
-  ],
-  [
    "zc_id_prod-insurance-license-sales",
    "zc_id_prod-certificate"
   ],
@@ -2207,6 +2356,10 @@
    "zc_id_prod-combine"
   ],
   [
+   "zc_id_prod-loading-made",
+   "zc_id_prod-loading"
+  ],
+  [
    "zc_id_prod-loading-purchase",
    "zc_id_prod-purchase"
   ],
@@ -2219,7 +2372,7 @@
    "zc_id_prod-loading"
   ],
   [
-   "zc_id_prod-loading_r_goods-tag",
+   "zc_id_prod-loading_r_description",
    "zc_id_lifecycle_r_tags"
   ],
   [
@@ -2243,10 +2396,6 @@
    "zc_id_prod-sales"
   ],
   [
-   "zc_id_prod-transform",
-   "zc_id_production"
-  ],
-  [
    "zc_id_prod-material-made",
    "zc_id_prod-made"
   ],
@@ -2265,10 +2414,6 @@
   [
    "zc_id_prod-openapi-sales",
    "zc_id_prod-data"
-  ],
-  [
-   "zc_id_prod-payload",
-   "zc_id_production"
   ],
   [
    "zc_id_prod-passenger",
@@ -2475,6 +2620,18 @@
    "zc_id_prod-sales"
   ],
   [
+   "zc_id_prod-retail_r_barcode",
+   "zc_id_lifecycle_r_tags"
+  ],
+  [
+   "zc_id_prod-retail_r_description",
+   "zc_id_lifecycle_r_tags"
+  ],
+  [
+   "zc_id_prod-retail_r_hscode",
+   "zc_id_lifecycle_r_tags"
+  ],
+  [
    "zc_id_prod-sales_rr_prod-made",
    "zc_id_demand_rr_supply"
   ],
@@ -2525,6 +2682,10 @@
   [
    "zc_id_prod-transfer_p2p-sales",
    "zc_id_prod-sales"
+  ],
+  [
+   "zc_id_prod-transform_r_composition",
+   "zc_id_lifecycle_r_tags"
   ],
   [
    "zc_id_prod-transport_rr_stop",
@@ -2579,7 +2740,7 @@
    "zc_id_master_rr_slave"
   ],
   [
-   "zc_id_project_r_milestone-tags",
+   "zc_id_project_r_milestone",
    "zc_id_lifecycle_r_tags"
   ],
   [
@@ -3055,6 +3216,14 @@
    "zc_id_stat-smt-voucher"
   ],
   [
+   "zc_id_stat-sto-voucher_rr_deta-counting",
+   "zc_id_statement_rr_reason"
+  ],
+  [
+   "zc_id_stat-sto-voucher_rr_order",
+   "zc_id_statement_rr_reason"
+  ],
+  [
    "zc_id_stat-task",
    "zc_id_statement"
   ],
@@ -3140,6 +3309,10 @@
   ],
   [
    "zc_id_stor-acc-insurance",
+   "zc_id_stor-account"
+  ],
+  [
+   "zc_id_stor-acc-points",
    "zc_id_stor-account"
   ],
   [
@@ -3248,6 +3421,10 @@
   ],
   [
    "zc_id_stor-plc-shipping_port",
+   "zc_id_stor-place"
+  ],
+  [
+   "zc_id_stor-plc-shop",
    "zc_id_stor-place"
   ],
   [
@@ -3719,11 +3896,19 @@
    "zc_id_tags"
   ],
   [
+   "zc_id_tags-composition",
+   "zc_id_tags"
+  ],
+  [
    "zc_id_tags-contacts",
    "zc_id_tags"
   ],
   [
    "zc_id_tags-event",
+   "zc_id_tags"
+  ],
+  [
+   "zc_id_tags-fabric",
    "zc_id_tags"
   ],
   [
@@ -3767,7 +3952,23 @@
    "zc_id_tags"
   ],
   [
+   "zc_id_tags-retail-barcode",
+   "zc_id_tags"
+  ],
+  [
+   "zc_id_tags-retail-description",
+   "zc_id_tags"
+  ],
+  [
+   "zc_id_tags-scrap",
+   "zc_id_tags"
+  ],
+  [
    "zc_id_tags-skill",
+   "zc_id_tags"
+  ],
+  [
+   "zc_id_tags-style",
    "zc_id_tags"
   ],
   [
@@ -3804,6 +4005,10 @@
   ],
   [
    "zc_id_task-pay",
+   "zc_id_task"
+  ],
+  [
+   "zc_id_task-sample",
    "zc_id_task"
   ],
   [

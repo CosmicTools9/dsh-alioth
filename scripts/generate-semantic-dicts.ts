@@ -65,18 +65,41 @@ function topLevelName(value: string): string {
   return unquote(value).split('.').at(-1) ?? ''
 }
 
-/** Parse coordinate codes from the dimension seed: code is the 10th column of each INSERT row. */
-function extractCodes(source: string, table: string): string[] {
+/**
+ * Parse coordinate codes from the dimension seed. Two INSERT shapes across
+ * model releases: the pre-10.0.47 dumps wrote `INSERT INTO … VALUES (…)`
+ * with no column list (code is the 10th column), while 10.0.47+ names every
+ * column — `INSERT INTO … (created_at, …, code, …) VALUES (…)`. The code
+ * column is located BY NAME when the list is present and falls back to the
+ * historical 10th position otherwise, so a column reorder can never silently
+ * redirect the dictionary at another field.
+ */
+export function extractCodes(source: string, table: string): string[] {
   const codes: string[] = []
-  const pattern = new RegExp(`INSERT INTO isahl\\.${table}\\s+VALUES\\s*\\(`)
-  for (const line of source.split('\n')) {
+  const pattern = new RegExp(`INSERT INTO isahl\\.${table}(?:\\s*\\(([^)]*)\\))?\\s+VALUES\\s*\\(`)
+  const lines = source.split('\n')
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (line === undefined) continue
     const match = pattern.exec(line)
     if (match === null) continue
-    const rest = line.slice(match[0].length)
+    const columns = match[1] === undefined ? undefined : match[1].split(',').map(name => name.trim())
+    const codeIndex = columns === undefined ? 9 : columns.findIndex(name => name.toLowerCase() === 'code')
+    if (codeIndex === -1) continue
+    let rest = line.slice(match[0].length)
+    // A row value can itself contain newlines (long comments), so one INSERT
+    // may span physical lines; the row's own `)` then sits on a later line.
+    // Accumulate continuation lines until the statement closes — bounded so a
+    // pathological unterminated row cannot swallow the file.
+    for (let continuation = 0; rest.lastIndexOf(')') === -1 && continuation < 20; continuation++) {
+      const next = lines[index + 1 + continuation]
+      if (next === undefined) break
+      rest += `\n${next}`
+    }
     const closing = rest.lastIndexOf(')')
     if (closing === -1) continue
     const fields = splitTopLevel(rest.slice(0, closing))
-    const code = unquote(fields[9] ?? '')
+    const code = unquote(fields[codeIndex] ?? '')
     if (code.length > 0) codes.push(code)
   }
   return [...new Set(codes)].sort()
