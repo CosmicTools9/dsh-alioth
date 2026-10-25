@@ -52,7 +52,7 @@ RUN pnpm install --no-frozen-lockfile --ignore-scripts
 # outright when a workspace lock disagrees with its manifests.
 RUN node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -b tsconfig.host.json \
  && ./node_modules/.bin/tsdown --env.DSH_BUILD_FACE host \
- && node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -b tsconfig.client.json \
+ && node --max-old-space-size=6144 ./node_modules/typescript/bin/tsc -b tsconfig.client.json \
  && ./node_modules/.bin/tsdown --env.DSH_BUILD_FACE client
 # The console serves BUILT client artifacts (`apps/web/dist` + the client build record). The
 # library builds above do not produce them: a lib-only image ships the console with stale or
