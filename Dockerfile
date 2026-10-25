@@ -50,7 +50,11 @@ RUN pnpm install --no-frozen-lockfile --ignore-scripts
 # (rc.2 introduced this; the CI image build died on it), and the container never runs
 # the desktop app, so that artifact is not needed here; (2) `pnpm run` also refuses
 # outright when a workspace lock disagrees with its manifests.
-RUN node --max-old-space-size=6144 ./node_modules/typescript/bin/tsc -b tsconfig.host.json \
+# generate-typert runs first: the expanded sequence below skips build:lib:*'s
+# pipeline (desktop bundle needs git), and rc.3 made the typert artifacts
+# (/remote entries, ClientRemote members) a prerequisite of BOTH compiler faces.
+RUN node --import tsx/esm scripts/generate-typert.ts \
+ && node --max-old-space-size=6144 ./node_modules/typescript/bin/tsc -b tsconfig.host.json \
  && ./node_modules/.bin/tsdown --env.DSH_BUILD_FACE host \
  && node --max-old-space-size=6144 ./node_modules/typescript/bin/tsc -b tsconfig.client.json \
  && ./node_modules/.bin/tsdown --env.DSH_BUILD_FACE client
