@@ -32,9 +32,9 @@ overrides:
   # Security floors raised 2026-09-13 from `pnpm audit --audit-level=moderate`
   # (12 high / 6 moderate). Each stays within the range's own major line so
   # consumers keep their expected API.
-  fast-uri: '^3.1.8'
+  fast-uri: '>=3.1.9'
   js-yaml: '^4.3.2'
-  hono: '^4.13.5'
+  hono: '>=4.13.11'
   qs: '^6.16.0'
   adm-zip: '^0.6.1'
   # The nested 11.7.0 copy carried four advisories fixed in 11.11; the
@@ -45,6 +45,20 @@ overrides:
   # DOMPurify SAFE_FOR_TEMPLATES bypass (critical, 2026-10-25): reached
   # through the harness documentpreview chain; 3.4.x line is API-stable.
   dompurify: '>=3.4.17'
+  # 2026-10-25 audit floors, all same-major fix lines:
+  follow-redirects: '>=1.16.1'
+  vite: '>=6.4.4'
+  '@vitest/mocker': '>=5.0.3'
+  happy-dom: '>=21.0.4'
+  '@modelcontextprotocol/server': '>=2.3.0'
+  zod: '>=4.6.6'
+  body-parser: '>=2.4.0'
+  ip-address: '>=10.7.4'
+  electron: '>=44.9.1'
+  # undici 两线并存（desktop 7.x / 其余 8.x）——按线分别钉补丁版
+  'undici@7': '>=7.30.1'
+  'undici@8': '>=8.12.2'
+
   # Security floors raised 2026-09-30 from `pnpm audit --audit-level=moderate`
   # (11 high / 18 moderate after the harness moved to the 0.2.0-rc.2 line).
   # Every offending path is reached through the harness sibling checkout —
@@ -57,7 +71,7 @@ overrides:
   # different major. Each value is the lowest release that clears its advisories.
   'undici@^8': '^8.10.2'
   'undici@^7': '^7.29.1'
-  'ip-address@^10': '^10.7.1'
+  'ip-address@^10': '^10.7.4'
   'brace-expansion@^1': '^1.1.21'
   'brace-expansion@^2': '^2.1.7'
   'brace-expansion@^5': '^5.0.12'
