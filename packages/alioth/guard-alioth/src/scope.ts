@@ -75,9 +75,20 @@ function resolveTemplate(template: string, variables: Record<string, string>): s
   return template.replace(/\{(\w+)\}/g, (match, key: string) => variables[key] ?? match)
 }
 
-/** 会话范围解析器：会话键缓存 + 每次判定现读 run state。 */
+/**
+ * 会话范围解析器：会话键缓存 + 步骤快照缓存。
+ *
+ * 【2026-10-25 迁移】判定面从 `tools/pre-execute` waterfall 迁到
+ * `ctx.tools.guard()`（同步、全局层）——前者在 web profile 的 per-agent
+ * preset realm 里派发，宿主面插件的监听收不到（实测 m2：写沙箱静默失效，
+ * 写面由 harness 自带 fs-sandbox 兜底掩盖）。同步判定不能现读磁盘，故：
+ * 观察面（workflow 元工具调用、每步 pre-step）异步刷新快照，判定面同步读
+ * 快照；无快照但键已知 → 保守范围（`stepId: null`：跳过工具面与 plan 判定，
+ * 沙箱仍生效——与原先读盘失败时的降级同形）。
+ */
 export class RunScopeResolver {
   private readonly keys = new Map<string, ScopeKey>()
+  private readonly snapshots = new Map<string, ActiveScope>()
   private readonly deps: ScopeDeps
 
   constructor(deps: ScopeDeps) {
@@ -104,6 +115,26 @@ export class RunScopeResolver {
   /** 缓存的会话范围键（无 workflow 调用记录 → `null`）。 */
   sessionScope(sessionId: string): ScopeKey | null {
     return this.keys.get(sessionId) ?? null
+  }
+
+  /** 同步判定用的当前快照：键未知 → `null`；键已知无快照 → 保守范围。 */
+  cachedScope(sessionId: string): ActiveScope | null {
+    const key = this.keys.get(sessionId)
+    if (key === undefined) return null
+    return this.snapshots.get(sessionId) ?? {
+      namespace: key.namespace,
+      app: key.app,
+      phase: 'apply',
+      allowedTools: [],
+      planWriteGlobs: [],
+      stepId: null,
+    }
+  }
+
+  /** 异步刷新快照（观察面调用；读盘失败由 activeScope 自行留痕并返回保守范围）。 */
+  async refresh(sessionId: string): Promise<void> {
+    const scope = await this.activeScope(sessionId)
+    if (scope !== null) this.snapshots.set(sessionId, scope)
   }
 
   /**

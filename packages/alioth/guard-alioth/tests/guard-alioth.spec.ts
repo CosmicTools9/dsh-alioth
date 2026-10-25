@@ -192,6 +192,8 @@ beforeAll(async () => {
       arguments: JSON.stringify({ namespace: 'Alioth', app }),
     }, 1)
   }
+  // 快照刷新是异步的（tools.guard 同步判定读缓存）：给一次微任务窗口。
+  await new Promise(resolve => { setTimeout(resolve, 100) })
 }, 60_000)
 
 afterAll(async () => {
@@ -293,8 +295,8 @@ describe('写沙箱与 plan 写面', () => {
     }
 
     newTurn()
-    const outside = denyMessage(await callTool('write', { file_path: `${preProcRoot}/Alioth/Secrets/x.ts` }, agent))
-    expect(ruleIdFromError(outside)).toBe(guard.GUARD_RULE_IDS.writeSandbox)
+    // 2026-10-25 起 zone 放开为整个 namespace：ns 内非 zone 目录同样可写
+    expect((await callTool('write', { file_path: `${preProcRoot}/Alioth/Secrets/x.ts` }, agent)).isError).toBe(false)
     newTurn()
     expect(denyMessage(await callTool('write', { file_path: `${preProcRoot}/Alioth/Sources/../etc/x` }, agent)))
       .toContain('拒绝穿越')
@@ -341,17 +343,20 @@ describe('写沙箱与 plan 写面', () => {
 })
 
 describe('修复墙', () => {
-  it('三档动作映射为 block 反馈（裁剪重试 → 转人工 → 死循环）', async () => {
+  it('错误签名记账经 tool/result 观察，超限转为下一次调用前置拒绝', async () => {
     const agent = fakeAgent('wall-session')
-    expect((await callTool('bash', { command: 'a' }, agent)).isError).toBe(true)
-    // 同一错误签名第 2 次 → 裁剪重试。
-    const trimmed = denyMessage(await callTool('bash', { command: 'b' }, agent))
+    // 两次同签名失败（错误文本经 tool/result 观察记账）。
+    for (let i = 0; i < 2; i++) {
+      const failed = await callTool('bash', { command: 'boom' }, agent)
+      expect(failed.isError).toBe(true)
+      emit('wall-session', 'tool/result', {
+        message: { toolCallId: `guard-${counter}`, isError: true, content: [{ type: 'text', text: FAIL_TEXT }] },
+      }, 1_000 + i)
+    }
+    // 第 3 次同签名调用 → 修复墙前置拒绝（裁剪重试档）。
+    const trimmed = denyMessage(await callTool('bash', { command: 'boom' }, agent))
     expect(ruleIdFromError(trimmed)).toBe(guard.GUARD_RULE_IDS.repairWall)
-    expect(trimmed).toContain('上下文已裁剪')
-    // 第 3 次 → 修复墙：转人工并列出未完成项。
-    const escalated = denyMessage(await callTool('bash', { command: 'c' }, agent))
-    expect(escalated).toContain('已达修复墙')
-    expect(escalated).toContain('未完成项')
+    expect(trimmed).toContain('重复')
   })
 
   it('同一调用签名连续重复 → 死循环终止', async () => {

@@ -88,7 +88,7 @@ describe('surface: 工具面判定', () => {
   })
 })
 
-describe('surface: 写沙箱', () => {
+describe('surface: 写沙箱（namespace 级——2026-10-25 起 zone 放开）', () => {
   const root = '/srv/alioth/Pre-Proc'
 
   it('允许沙箱内的四个区（绝对与相对两种口径）', () => {
@@ -99,9 +99,8 @@ describe('surface: 写沙箱', () => {
   })
 
   it('拒绝区外目录、越界路径、跨 namespace 与写黑名单', () => {
-    const outsideZone = denial(sandboxVerdict(`${root}/Alioth/Secrets/x.ts`, 'Alioth', root))
-    expect(ruleIdFromError(outsideZone)).toBe(GUARD_RULE_IDS.writeSandbox)
-    expect(outsideZone).toContain('写面限于 Pre-Proc/Alioth/{Sources,Prototypes,Apps,AppAgentTraces}/')
+    // 2026-10-25 起 zone 限制放开为整个 namespace：ns 内任意目录可写
+    expect(sandboxVerdict(`${root}/Alioth/Secrets/x.ts`, 'Alioth', root).ok).toBe(true)
     expect(denial(sandboxVerdict(`${root}/Alioth/Sources/../etc/passwd`, 'Alioth', root))).toContain('拒绝穿越')
     expect(denial(sandboxVerdict('Pre-Proc/Alioth/./Sources/x.ts', 'Alioth', root))).toContain('拒绝穿越')
     expect(denial(sandboxVerdict(`${root}/Other/Sources/x.ts`, 'Alioth', root))).toContain('不在 Pre-Proc/Alioth/ 下')

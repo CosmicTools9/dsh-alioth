@@ -3,13 +3,17 @@
  *
  * 把上游 AppAgent 在**工具注册层**做的执行约束落到 harness 的三条缝上：
  *
- * 1. `tools/pre-execute`：
+ * 1. `ctx.tools.guard()`（同步全局层；2026-10-25 起——`tools/pre-execute`
+ *    waterfall 在 web profile 的 per-agent preset realm 里派发，宿主面监听
+ *    收不到，实测写沙箱静默失效）：
  *    - 工具面强制——调用名必须在当前步骤声明的 harness 工具面内（`enforceToolSurface`）；
  *    - namespace 写沙箱——写类调用的路径必须落在 `Pre-Proc/{ns}/{Sources,Prototypes,Apps,AppAgentTraces}/`；
- *    - plan 写面收窄——plan 步的写入必须命中该步 `output_glob`。
+ *    - plan 写面收窄——plan 步的写入必须命中该步 `output_glob`；
+ *    - 读围栏——读类调用的路径必须落在 `Pre-Proc/{ns}/` 或模型源目录内（`readFence`）。
  *    无 ns 可解析（headless / 未选工作区）时**不猜**：放行并留一条显式降级证据。
- * 2. `tools/post-execute`：修复墙——`RetryBudget` 记调用/错误签名，三档动作
- *    （trim-retry / escalate / terminate）都收敛为 `block` + 带规则码前缀的纠正反馈。
+ * 2. 修复墙：`RetryBudget` 记调用/错误签名（调用签名在裁决内、错误签名在
+ *    `session/event` 的 tool/result 观察面），三档动作（trim-retry / escalate /
+ *    terminate）收敛为「下一次调用前置拒绝」+ 带规则码前缀的纠正反馈。
  * 3. `agent/pre-step`：闭环证据追问（上限 1 次/turn，与澄清提问/终态汇报互斥）与
  *    turn 预算超限后的下一步阻断（`reject`，原因带规则码前缀）。
  *
@@ -238,13 +242,16 @@ export function apply(ctx: Context, config: Config): void {
       return undefined
     }
   }
-  const billingMeter = serviceOf<BillingMeterLike>('aliothBilling', value =>
+  // 结构化查找是惰性的：本插件在 bundle 行序上先于 billing/auth 挂载，启动期
+  // 捕获会把「尚未 provide」误固化为「永不存在」（m2 实测 authAccount=false 导致
+  // 读围栏的 namespace 后备通道失效）——每次使用时现查。
+  const billingMeterOf = (): BillingMeterLike | undefined => serviceOf<BillingMeterLike>('aliothBilling', value =>
     typeof (value as BillingMeterLike).recordUsage === 'function' && typeof (value as BillingMeterLike).usageMonthly === 'function')
-  const authAccount = serviceOf<AuthAccountLike>('aliothAuth', value =>
+  const authAccountOf = (): AuthAccountLike | undefined => serviceOf<AuthAccountLike>('aliothAuth', value =>
     typeof (value as AuthAccountLike).accountForSession === 'function')
   const meter = new AccountMeter({
     ...prices === undefined ? {} : { prices },
-    ...billingMeter === undefined ? {} : { sink: billingMeter as MeteringSink },
+    ...billingMeterOf() === undefined ? {} : { sink: billingMeterOf() as MeteringSink },
   })
 
   /**
@@ -304,6 +311,15 @@ export function apply(ctx: Context, config: Config): void {
       noteDegradation(sessionId, GUARD_RULE_IDS.unknownScope, `${key.namespace}/${key.app}: ${reason}`),
   })
 
+  // 同步判定的三个依赖面（tools.guard() 不支持 await）：
+  // 模型源目录在挂载时预载（首个工具调用远晚于 boot 完成）；
+  // 会话命名空间由 agent/pre-step（异步、每步必经）填充——工具调用必然晚于本步 pre-step；
+  // callId→工具名映射供观察面记录错误签名。
+  let modelDirCache: string | null = null
+  void ctx.aliothEnv.ready().then(env => { modelDirCache = env.modelDir }, () => {})
+  const sessionNamespace = new Map<string, string>()
+  const callToolNames = new Map<string, string>()
+
   function budgetFor(sessionId: string): RetryBudget {
     const existing = budgets.get(sessionId)
     if (existing !== undefined) {
@@ -317,22 +333,12 @@ export function apply(ctx: Context, config: Config): void {
     return created
   }
 
-  /** 修复墙的证据面：本会话当前未完成的范围与步骤（读不出则如实说明）。 */
-  async function wallTarget(sessionId: string): Promise<string> {
-    const scope = await resolver.activeScope(sessionId)
-    if (scope === null) {
-      return '未完成项：本会话尚无 alioth_workflow_* 调用记录，无法解析运行范围'
-    }
-    return scope.stepId === null
-      ? `未完成项：${scope.namespace}/${scope.app} 的运行已结束（无当前步骤）`
-      : `未完成项：${scope.namespace}/${scope.app} 的当前步骤 ${scope.stepId} 仍未通过`
-  }
-
   /** 账户上下文解析（auth 缺席/解析失败 ⇒ null——不猜身份）。 */
   async function resolveAccountContext(sessionId: string): Promise<{
     userId: string; username: string; namespace: string; role: 'admin' | 'user'
     plan: 'L0' | 'L1'; monthlyCostCents: number | null
   } | null> {
+    const authAccount = authAccountOf()
     if (authAccount === undefined) return null
     try {
       return await authAccount.accountForSession(sessionId)
@@ -368,6 +374,20 @@ export function apply(ctx: Context, config: Config): void {
     ledger.observe(sessionId, event)
     if (event.type === 'tool/call') {
       resolver.observeCall(sessionId, event.data.name, parseArguments(event.data.arguments))
+      if (event.data.callId !== undefined) callToolNames.set(String(event.data.callId), event.data.name)
+      if (WORKFLOW_SCOPE_TOOLS.includes(event.data.name)) {
+        void resolver.refresh(sessionId)
+      }
+    }
+    if (event.type === 'tool/result') {
+      // 修复墙的错误签名记账（观察面）：判定面在 tools.guard() 里同步 decide。
+      const message = (event.data as { message?: { toolCallId?: string; isError?: boolean; content?: unknown } }).message
+      if (message?.isError === true) {
+        const tool = message.toolCallId !== undefined ? callToolNames.get(String(message.toolCallId)) : undefined
+        if (tool !== undefined) {
+          budgetFor(sessionId).recordError(tool, errorTextOf(message.content))
+        }
+      }
     }
     if (event.type === 'turn/start') {
       budgets.delete(sessionId)
@@ -385,17 +405,34 @@ export function apply(ctx: Context, config: Config): void {
     }
   })
 
-  // ── 执行前：工具面 / 写沙箱 / plan 写面 ────────────────────────────────
-  ctx.on('tools/pre-execute', async (exec: ToolExecution, next) => {
+  // ── 执行面：同步裁决（tools.guard() 全局层，preset realm 内同样生效） ────
+  // 【2026-10-25 迁移】原先挂在 tools/pre-execute / tools/post-execute waterfall
+  // 上——这两个事件经 scopeTarget(agent) 在 per-agent preset realm 里派发，
+  // 宿主面插件的监听在 web profile 收不到（m2 实测：写沙箱静默失效，靠 harness
+  // 自带 fs-sandbox 兜底掩盖；headless 无 realm 故一直有效、测试全绿）。
+  // ctx.tools.guard() 是 harness 的官方宿主级单调守卫缝：global 层先于 scope
+  // 链判定、同步、返回拒绝理由即拒——把全部判定同步化后注册于此。
+  // 修复墙同步化：调用签名在裁决内记账；错误签名由 session/event 的
+  // tool/result 观察记账；超限动作转为「下一次调用前置拒绝」（反馈文本同源）。
+
+  /** 修复墙证据（同步口径：缓存快照，读不出则如实说明）。 */
+  function wallTarget(sessionId: string): string {
+    const scope = resolver.cachedScope(sessionId)
+    if (scope === null) {
+      return '未完成项：本会话尚无 alioth_workflow_* 调用记录，无法解析运行范围'
+    }
+    return scope.stepId === null
+      ? `未完成项：${scope.namespace}/${scope.app} 的运行已结束（无当前步骤）`
+      : `未完成项：${scope.namespace}/${scope.app} 的当前步骤 ${scope.stepId} 仍未通过`
+  }
+
+  /** 同步裁决一次工具调用；返回拒绝理由（单行规则信封）或 undefined 放行。 */
+  function adjudicate(exec: ToolExecution): string | undefined {
     // 共享在线空间：完全控制的单次升级在参数层直接拒绝，审批卡不会渲染。
     const escalation = fullAccessVerdict(exec.name, exec.arguments)
     if (!escalation.ok) {
       ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（完全控制升级）`)
-      return { kind: 'deny', reason: escalation.reason }
-    }
-    const writePath = writePathOf(exec.name, exec.arguments)
-    if (writePath === undefined && !enforceToolSurface) {
-      return next()
+      return escalation.reason
     }
     const sessionId = exec.agent === undefined ? null : String(exec.agent.id)
     if (sessionId === null) {
@@ -404,33 +441,46 @@ export function apply(ctx: Context, config: Config): void {
         GUARD_RULE_IDS.unknownScope,
         `${exec.name}: 调用没有 agent（headless），无法解析 {ns,app}——按未知范围放行`,
       )
-      return next()
+      return undefined
     }
-    const scope = await resolver.activeScope(sessionId)
+    // 修复墙记账与判定（同步面）。
+    const budget = budgetFor(sessionId)
+    budget.recordCall(exec.name, exec.arguments)
+    const decision = budget.decide()
+    if (decision !== 'allow') {
+      const evidence = `${wallTarget(sessionId)}；触发：同一调用签名连续重复或同一错误签名达到上限`
+      ctx.logger.warn(`guard-alioth: 修复墙 ${decision}（${exec.name}）`)
+      return wallFeedback(decision, exec.name, evidence)
+    }
+    const writePath = writePathOf(exec.name, exec.arguments)
+    if (writePath === undefined && !enforceToolSurface) {
+      return undefined
+    }
+    const scope = resolver.cachedScope(sessionId)
     if (scope === null) {
-      // workflow 元工具本身就是范围建立调用（参数带 {ns,app}）：它们无需被判定，
-      // 缓存尚未登记也不构成降级证据。
+      // workflow 元工具是范围建立调用，自身免判定；其余读面在下方读围栏判定。
       if (!WORKFLOW_SCOPE_TOOLS.includes(exec.name)) {
-        // 读围栏的 namespace 后备通道：workflow 范围缺席时用会话绑定的账户
-        // namespace（auth 缝）；两者都无（headless / 未绑定）→ 显式降级放行。
-        const readPaths = readFence ? readPathsOf(exec.name, exec.arguments) : undefined
-        if (readPaths !== undefined) {
-          const namespace = (await resolveAccountContext(sessionId))?.namespace ?? null
-          if (namespace !== null) {
-            const modelDir = (await ctx.aliothEnv.ready()).modelDir
-            const fence = readVerdict(readPaths, namespace, preProcRoot, path.resolve(modelDir))
-            if (!fence.ok) {
-              ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（读围栏）`)
-              return { kind: 'deny', reason: fence.reason }
+        if (readFence) {
+          const readPaths = readPathsOf(exec.name, exec.arguments)
+          if (readPaths !== undefined && readPaths.length > 0) {
+            // 读围栏的 namespace 后备通道：workflow 范围缺席时用会话绑定账户的
+            // namespace（agent/pre-step 已填充缓存）；无缓存（headless/未绑定）→
+            // 显式降级放行，与写沙箱同一姿态。
+            const namespace = sessionNamespace.get(sessionId) ?? null
+            if (namespace !== null && modelDirCache !== null) {
+              const fence = readVerdict(readPaths, namespace, preProcRoot, path.resolve(modelDirCache))
+              if (!fence.ok) {
+                ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（读围栏）`)
+                return fence.reason
+              }
+              return undefined
             }
-            return next()
+            noteDegradation(
+              sessionId,
+              GUARD_RULE_IDS.unknownScope,
+              `${exec.name}: 无法解析会话命名空间（无 workflow 范围与账户绑定）——读围栏按未知范围放行`,
+            )
           }
-          noteDegradation(
-            sessionId,
-            GUARD_RULE_IDS.unknownScope,
-            `${exec.name}: 无法解析会话命名空间（无 workflow 范围与账户绑定）——读围栏按未知范围放行`,
-          )
-          return next()
         }
         noteDegradation(
           sessionId,
@@ -438,16 +488,15 @@ export function apply(ctx: Context, config: Config): void {
           `${exec.name}: 本会话没有 alioth_workflow_* 调用记录，无法解析 {ns,app}——按未知范围放行（不猜 ns）`,
         )
       }
-      return next()
+      return undefined
     }
     if (readFence) {
       const readPaths = readPathsOf(exec.name, exec.arguments)
-      if (readPaths !== undefined) {
-        const modelDir = path.resolve((await ctx.aliothEnv.ready()).modelDir)
-        const fence = readVerdict(readPaths, scope.namespace, preProcRoot, modelDir)
+      if (readPaths !== undefined && readPaths.length > 0 && modelDirCache !== null) {
+        const fence = readVerdict(readPaths, scope.namespace, preProcRoot, path.resolve(modelDirCache))
         if (!fence.ok) {
           ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（读围栏）`)
-          return { kind: 'deny', reason: fence.reason }
+          return fence.reason
         }
       }
     }
@@ -455,57 +504,36 @@ export function apply(ctx: Context, config: Config): void {
       const verdict = toolSurfaceVerdict(exec.name, scope.allowedTools)
       if (!verdict.ok) {
         ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（工具面）`)
-        return { kind: 'deny', reason: verdict.reason }
+        return verdict.reason
       }
     }
     if (writePath !== undefined) {
       const sandbox = sandboxVerdict(writePath, scope.namespace, preProcRoot)
       if (!sandbox.ok) {
         ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（写沙箱）`)
-        return { kind: 'deny', reason: sandbox.reason }
+        return sandbox.reason
       }
       if (scope.stepId !== null && scope.phase === 'plan') {
         const plan = planWriteVerdict(writePath, scope.namespace, preProcRoot, scope.planWriteGlobs)
         if (!plan.ok) {
           ctx.logger.warn(`guard-alioth: 拒绝 ${exec.name}（plan 写面）`)
-          return { kind: 'deny', reason: plan.reason }
+          return plan.reason
         }
       }
     }
-    return next()
-  })
+    return undefined
+  }
 
-  // ── 执行后：修复墙 ────────────────────────────────────────────────────
-  ctx.on('tools/post-execute', async (exec, result, next) => {
-    if (exec.agent === undefined) {
-      return next()
-    }
-    const sessionId = String(exec.agent.id)
-    const budget = budgetFor(sessionId)
-    budget.recordCall(exec.name, exec.arguments)
-    if (result.isError) {
-      budget.recordError(exec.name, result.error.message)
-    }
-    const decision = budget.decide()
-    if (decision === 'allow') {
-      return next()
-    }
-    // 错误签名墙只在失败结果上生效：修复墙不该拦下同一 turn 里成功的调用。
-    if (!result.isError && decision !== 'terminate') {
-      return next()
-    }
-    const target = await wallTarget(sessionId)
-    const evidence = result.isError
-      ? `${target}；原失败：${result.error.message}`
-      : `${target}；触发：同一调用签名连续重复`
-    const text = wallFeedback(decision, exec.name, evidence)
-    ctx.logger.warn(`guard-alioth: 修复墙 ${decision}（${exec.name}）`)
-    return { kind: 'block', feedback: [{ type: 'text', text }] }
-  })
+  ctx.tools.guard(exec => adjudicate(exec))
 
   // ── 执行前（步骤级）：账户绑定/月度预算、turn 预算阻断、闭环证据追问 ─────
   ctx.on('agent/pre-step', async ({ agent, turn }, next) => {
     const sessionId = String(agent.id)
+    // 步进缝刷新两份同步判定的缓存：范围快照（步进/推进后立即新）与
+    // 会话命名空间（读围栏的后备通道）。
+    void resolver.refresh(sessionId)
+    const boundAccount = await resolveAccountContext(sessionId)
+    if (boundAccount !== null) sessionNamespace.set(sessionId, boundAccount.namespace)
     const violation: TurnViolation | null = ledger.takeViolation(sessionId)
     if (violation !== null) {
       ctx.logger.warn(`guard-alioth: 阻断下一步（turn 预算）${violation.reason}`)
@@ -566,6 +594,17 @@ export function apply(ctx: Context, config: Config): void {
   })
 
   ctx.provide('aliothGuard', aliothGuard)
+}
+
+/** 从 tool/result 的 content 块提取错误文本（修复墙的错误签名口径）。 */
+function errorTextOf(content: unknown): string {
+  if (typeof content !== 'object' || content === null || !Array.isArray(content)) return 'tool error'
+  return content
+    .filter((block): block is { type: string; text?: string } =>
+      typeof block === 'object' && block !== null && (block as { type?: string }).type === 'text')
+    .map(block => block.text ?? '')
+    .join('\n')
+    .slice(0, 400) || 'tool error'
 }
 
 /** 会话事件里的工具参数是模型原始 JSON 字符串（未解析）；坏输入按「无参数」处理。 */
