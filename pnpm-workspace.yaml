@@ -47,7 +47,7 @@ overrides:
   dompurify: '>=3.4.17'
   # 2026-10-25 audit floors, all same-major fix lines:
   follow-redirects: '>=1.16.1'
-  vite: '>=6.4.4'
+  vite: '^6.4.4'  # 6.x only: an open floor resolved vite 8 and shifted rollup/vite plugin types
   '@vitest/mocker': '>=5.0.3'
   happy-dom: '>=21.0.4'
   '@modelcontextprotocol/server': '>=2.3.0'

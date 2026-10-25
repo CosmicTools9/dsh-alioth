@@ -74,10 +74,22 @@
 - id: approval
   config:
     policy: ask
+# 沙箱（2026-10-25 用户裁决：在线服务必须完备安全边界——自有 namespace 内
+# 完全访问，与运行时环境完全隔离）：
+# - 会话 cwd 是 Pre-Proc/{ns}/Apps/{app}，上溯 2 级 = Pre-Proc/{ns}：整个
+#   namespace 是 workspace-write 根（bash 与 fs 工具的写面同边界）；
+# - readOnlyRoots 非空即开启读隔离（readRoots allow-list）：受限 bash 除
+#   系统工具链/配置前缀与本清单外**不可读任何宿主路径**——其他租户的
+#   Pre-Proc、~/.dsh 会话日志、运行时凭据全部隔离；清单内容 = 模型源
+#   （workflow reference_paths 的白名单根）+ 可写根（自动并入）；
+# - 未配 ALIOTH_MODEL_SOURCE 时清单仅含可写根（模型源不可读，工作流
+#   引用步骤将显式失败而非静默放行）。
 - id: sandbox-policy
   config:
     mode: workspace-write
     workspaceRoot: !!js process.cwd()
+    workspaceAncestorLevels: 2
+    readOnlyRoots: !!js "process.env.ALIOTH_MODEL_SOURCE ? [process.env.ALIOTH_MODEL_SOURCE] : ['/dev/null']"
 
 # Right Sidebar: the harness Web terminal is NOT a product capability here.
 # Upstream runs it through the Session's subprocess provider with the execution

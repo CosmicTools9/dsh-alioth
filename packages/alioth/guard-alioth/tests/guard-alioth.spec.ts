@@ -298,8 +298,8 @@ describe('写沙箱与 plan 写面', () => {
     }
 
     newTurn()
-    const outside = denyMessage(await callTool('write', { file_path: `${preProcRoot}/Alioth/Secrets/x.ts` }, agent))
-    expect(ruleIdFromError(outside)).toBe(guard.GUARD_RULE_IDS.writeSandbox)
+    // 2026-10-25 起 zone 放开为整个 namespace：ns 内非 zone 目录同样可写
+    expect((await callTool('write', { file_path: `${preProcRoot}/Alioth/Secrets/x.ts` }, agent)).isError).toBe(false)
     newTurn()
     expect(denyMessage(await callTool('write', { file_path: `${preProcRoot}/Alioth/Sources/../etc/x` }, agent)))
       .toContain('拒绝穿越')

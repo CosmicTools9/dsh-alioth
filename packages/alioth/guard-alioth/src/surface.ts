@@ -247,10 +247,9 @@ export function sandboxVerdict(target: string, namespace: string, preProcRoot: s
   if (!origin.ok) {
     return deny(origin.reason)
   }
-  const zone = origin.segments[0]
-  if (zone === undefined || SANDBOX_ZONES[zone] === undefined) {
-    return deny(`写面限于 Pre-Proc/${namespace}/{Sources,Prototypes,Apps,AppAgentTraces}/：${target}`)
-  }
+  // 2026-10-25 用户裁决：自有 namespace 内持有完全访问权——写面从四个 zone
+  // 放宽为整个 Pre-Proc/{ns}/（与 OS 沙箱的 workspace-write 根同边界）；
+  // namespace 边界、穿越拒绝与 autonomy 黑名单不变。
   const base = origin.segments[origin.segments.length - 1]
   if (base !== undefined && SANDBOX_WRITE_BLACKLIST[base] === true) {
     return deny(`${base} 是写黑名单文件（授权声明只由人工维护）：${target}`)
