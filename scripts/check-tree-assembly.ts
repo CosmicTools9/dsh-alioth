@@ -78,6 +78,18 @@ interface Composition {
    * Both bundle compositions pin their full enabled set.
    */
   readonly expectEnabledRows?: readonly string[]
+  /**
+   * A preset row the bundle patch replaces with a verbatim upstream copy plus
+   * consciously-chosen deltas (see the bundle patch's preset block). The copy
+   * shadows upstream wholesale, so silent drift is invisible in the dump —
+   * this pin re-derives the row's plugin id sequence from the upstream preset
+   * file in the sibling harness checkout and requires ours to match: an
+   * upstream preset evolution goes red until the copy is re-derived.
+   */
+  readonly expectPresetCopy?: {
+    readonly rowId: string
+    readonly upstreamPresetFile: string
+  }
 }
 
 const ALIOTH_PLUGINS = [
@@ -195,6 +207,18 @@ const COMPOSITIONS: readonly Composition[] = [
       // write); see the 2026-10-23 residual-risk closure in the bundle patch.
       'session-controller': ['openWorkspacePath: false', 'initializeDefaultModel: false'],
       'attachment-local': ['maxFileBytes: 67108864'],
+      // The stock `standard` preset is replaced wholesale (rc.3's fail-closed
+      // preset audit would reject the profile-gated tool-plugin-manager row
+      // against our disabled host plugin-manager). The replacement's one
+      // behavioral delta must stay: the plugin-manager tools row disabled.
+      'preset-standard': ["name: '@deepseek-ai/dsh-plugin-manager/tools'\n        disabled: true"],
+    },
+    // The preset-standard replacement is a copy of the upstream preset — pin
+    // the copy's plugin-row sequence against the sibling harness checkout so
+    // upstream preset evolution forces a conscious re-derivation.
+    expectPresetCopy: {
+      rowId: 'preset-standard',
+      upstreamPresetFile: 'packages/bundle/web-app/presets/standard.patch.yml',
     },
     // Full enabled-row allowlist (see the headless entry for the rationale).
     expectEnabledRows: [
@@ -277,6 +301,29 @@ function enabledRowsOf(out: string): string[] {
 
 function run(cmd: string, args: readonly string[]): SpawnSyncReturns<string> {
   return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8' })
+}
+
+/**
+ * Ordered plugin-row ids of one preset declaration block (`- id: <rowId>` up
+ * to the next row at the same or shallower indentation). Line-level
+ * extraction over a fixed row format — the sanctioned exception for seed/DDL
+ * style files; nesting depth is preserved so group children stay in order.
+ */
+function presetRowIds(text: string, rowId: string): { ids: string[], rowIndent: string } | undefined {
+  const lines = text.split('\n')
+  const start = lines.findIndex(line => line.trimStart().startsWith(`- id: ${rowId}`))
+  if (start === -1) return undefined
+  const rowIndent = lines[start]!.slice(0, lines[start]!.indexOf('-'))
+  const ids: string[] = [rowId]
+  for (let index = start + 1; index < lines.length; index++) {
+    const line = lines[index]!
+    if (!line.trimStart().startsWith('- id: ')) continue
+    const indent = line.slice(0, line.indexOf('-'))
+    if (indent.length <= rowIndent.length) break
+    const id = line.trimStart().slice('- id: '.length).trim()
+    if (id !== '') ids.push(id)
+  }
+  return { ids, rowIndent }
 }
 
 /** One entry section of the dumped config (`- id: X` up to the next row). */
@@ -383,6 +430,32 @@ function main(): void {
       for (const needle of needles) {
         if (!row.includes(needle)) {
           problems.push(`${label}: row \`${id}\` lost \`${needle}\` in the assembled tree`)
+        }
+      }
+    }
+    if (comp.expectPresetCopy !== undefined) {
+      const { rowId, upstreamPresetFile } = comp.expectPresetCopy
+      const upstreamPath = path.resolve(ROOT, '..', 'deepseek-harness', upstreamPresetFile)
+      let upstreamText: string
+      try {
+        upstreamText = readFileSync(upstreamPath, 'utf8')
+      } catch {
+        problems.push(`${label}: upstream preset file missing (${upstreamPath}) — the sibling harness checkout is required to pin the preset copy`)
+        upstreamText = ''
+      }
+      const ours = presetRowIds(readFileSync(path.join(ROOT, comp.patch), 'utf8'), rowId)
+      const theirs = upstreamText === '' ? undefined : presetRowIds(upstreamText, rowId)
+      if (ours === undefined) {
+        problems.push(`${label}: preset copy row \`${rowId}\` not found in ${comp.patch}`)
+      } else if (theirs === undefined) {
+        problems.push(`${label}: row \`${rowId}\` not found in the upstream preset file — upstream moved it; update the copy pin`)
+      } else {
+        const diff = ours.ids.filter(id => !theirs.ids.includes(id))
+        const missing = theirs.ids.filter(id => !ours.ids.includes(id))
+        if (diff.length > 0 || missing.length > 0) {
+          const extra = diff.length > 0 ? `extra rows: ${diff.join(', ')}` : ''
+          const gone = missing.length > 0 ? `missing rows: ${missing.join(', ')}` : ''
+          problems.push(`${label}: preset copy \`${rowId}\` drifted from the upstream preset (${[extra, gone].filter(Boolean).join(' · ')}) — re-derive the copy in ${comp.patch} (conscious deltas only)`)
         }
       }
     }
