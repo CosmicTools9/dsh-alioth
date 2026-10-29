@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/fk-index.json",
  "description": "Physical FK reference index [table, field, target, local_key] from the release isahl_meta-registry.sql sidecar (derived data, delivered outside Git).",
- "source": "Alioth repo v10.0.48 (2026-10-26T03:42:29.227360+00:00)",
+ "source": "Alioth repo v10.0.50 (2026-10-29T10:33:01.172104+00:00)",
  "refs": [
   [
    "zc_id_deta-plan",
@@ -24017,6 +24017,42 @@
   ],
   [
    "zc_id_prod-mal-carrier-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_rati-tax",
+   "threshold",
+   "zc_id_segm-amount",
+   "qk_threshold"
+  ],
+  [
+   "zc_id_stan-clause",
+   "threshold",
+   "zc_id_segment",
+   "qk_threshold"
+  ],
+  [
+   "zc_id_stan-clause",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_stan-clause",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_stan-clause",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_stan-clause",
    "version",
    "zc_id_tags-version",
    "tk_version"
