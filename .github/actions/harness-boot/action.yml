@@ -75,7 +75,7 @@ runs:
         # `apps/cli` gained experimental members + dep bumps (execa ^10.0.1,
         # node-addon-require-builtin ^0.1.9, ws 8.21.3), so this repo's
         # lockfile was regenerated in the same commit as this pin.
-        ref: eaee4324dedabe624dab23574c0a68073a380d04
+        ref: 2836978e53
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'

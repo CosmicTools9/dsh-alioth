@@ -262,7 +262,7 @@ const COMPOSITIONS: readonly Composition[] = [
       'ui-chat', 'ui-commands', 'ui-conversation', 'ui-file-drag',
       'deliverable-file-references', 'entry-customization', 'message-quotes',
       'tool-executor-native',
-      'ui-cordis', 'ui-deepseek-model-label-1017', 'ui-goal',
+      'ui-cordis', 'ui-goal',
       'ui-input-trigger', 'ui-jobs', 'ui-layout',
       'ui-message-feedback', 'ui-model-selection', 'ui-permission',
       'ui-plan', 'ui-reference', 'ui-renderer',
