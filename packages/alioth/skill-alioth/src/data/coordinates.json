@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/coordinates-dict.json",
  "description": "Alioth coordinate dictionaries, generated offline from the Alioth model repo (semantic-mapping library shipped with the plugin).",
- "source": "Alioth repo v10.0.47 (2026-10-23T04:12:51.378452+00:00)",
+ "source": "Alioth repo v10.0.48 (2026-10-26T03:42:29.227360+00:00)",
  "scene": [
   "CA",
   "CB",

@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/fk-index.json",
  "description": "Physical FK reference index [table, field, target, local_key] from the release isahl_meta-registry.sql sidecar (derived data, delivered outside Git).",
- "source": "Alioth repo v10.0.47 (2026-10-23T04:12:51.378452+00:00)",
+ "source": "Alioth repo v10.0.48 (2026-10-26T03:42:29.227360+00:00)",
  "refs": [
   [
    "zc_id_deta-plan",
@@ -1336,6 +1336,12 @@
    "qk_period"
   ],
   [
+   "zc_id_oper-planing",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
    "zc_id_lifecycle_rr_foreign",
    "period",
    "zc_id_segm-date",
@@ -1358,12 +1364,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_oper-planing",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
   ],
   [
    "zc_id_stor-plc-division",
@@ -4582,6 +4582,12 @@
    "fk_previous"
   ],
   [
+   "zc_id_prod-legal_tender-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
    "zc_id_stan-air-caac-article",
    "branch",
    "zc_id_cate-ver_branch",
@@ -4712,12 +4718,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-legal_tender-made",
-   "price",
-   "zc_id_scal-price",
-   "qk_price"
   ],
   [
    "zc_id_stor-plc-terminal",
@@ -7018,6 +7018,12 @@
    "ck_branch"
   ],
   [
+   "zc_id_deta-bill-check",
+   "tax_ratio",
+   "zc_id_rati-tax",
+   "qk_tax_ratio"
+  ],
+  [
    "zc_id_oper-transport_tracking",
    "batch_no",
    "zc_id_tags-batch",
@@ -7169,12 +7175,6 @@
   ],
   [
    "zc_id_deta-bill-check",
-   "tax_ratio",
-   "zc_id_rati-tax",
-   "qk_tax_ratio"
-  ],
-  [
-   "zc_id_deta-bill-check",
    "tax_amount",
    "zc_id_scal-amount",
    "qk_tax_amount"
@@ -7322,6 +7322,12 @@
    "counterparty",
    "zc_id_subjects",
    "fk_counterparty"
+  ],
+  [
+   "zc_id_law-mixed",
+   "parent",
+   "zc_id_law-mixed",
+   "fk_parent"
   ],
   [
    "zc_id_law-civil",
@@ -7654,6 +7660,12 @@
    "qk_sla"
   ],
   [
+   "zc_id_oper-resp_inquiry",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
    "zc_id_prod-rdc_pickup-purchase",
    "period",
    "zc_id_segm-date",
@@ -7844,12 +7856,6 @@
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_oper-resp_inquiry",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
   ],
   [
    "zc_id_prod-rdc_pickup-request",
@@ -8504,6 +8510,12 @@
    "unit",
    "zc_id_unit",
    "sk_unit"
+  ],
+  [
+   "zc_id_law-common",
+   "parent",
+   "zc_id_law-common",
+   "fk_parent"
   ],
   [
    "zc_id_bom-outbound",
@@ -9418,18 +9430,6 @@
    "fk_parent"
   ],
   [
-   "zc_id_law-mixed",
-   "parent",
-   "zc_id_law-mixed",
-   "fk_parent"
-  ],
-  [
-   "zc_id_law-common",
-   "parent",
-   "zc_id_law-common",
-   "fk_parent"
-  ],
-  [
    "zc_id_prod-pxy-fo_lcl-sales",
    "currency",
    "zc_id_unit-currency",
@@ -10264,6 +10264,12 @@
    "fk_previous"
   ],
   [
+   "zc_id_prod-retail-purchase",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
    "zc_id_even-modify",
    "health",
    "zc_id_leve-health",
@@ -10538,6 +10544,12 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
+  ],
+  [
+   "zc_id_prod-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
   ],
   [
    "zc_id_stan-fin-gaap-article",
@@ -12184,12 +12196,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_prod-retail-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-pxy-fo_express-sales",
    "demand",
    "zc_id_subjects",
@@ -12494,12 +12500,6 @@
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_prod-sales",
-   "demand",
-   "zc_id_subjects",
-   "fk_subj-demand"
   ],
   [
    "zc_id_prod-pxy-auto_mfg-made",
@@ -13216,6 +13216,12 @@
    "ck_cate-wh"
   ],
   [
+   "zc_id_operation",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
    "zc_id_oper-confirm_bill",
    "cate-wh",
    "zc_id_cate-wh-title",
@@ -13493,6 +13499,12 @@
   ],
   [
    "zc_id_prod-ports-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_bom-loading",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -13862,6 +13874,12 @@
    "previous",
    "zc_id_version",
    "fk_previous"
+  ],
+  [
+   "zc_id_oper-test",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
   ],
   [
    "zc_id_prod-transfer_p2p-request",
@@ -14980,12 +14998,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_operation",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_oper-fo_booking",
    "previous",
    "zc_id_version",
@@ -15958,12 +15970,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_bom-loading",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_task-commission",
    "previous",
    "zc_id_version",
@@ -16204,12 +16210,6 @@
    "ck_cate-wh"
   ],
   [
-   "zc_id_oper-test",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
    "zc_id_prod-payload_rr_stor-container",
    "amount",
    "zc_id_scal-amount",
@@ -16304,6 +16304,12 @@
    "previous",
    "zc_id_version",
    "fk_previous"
+  ],
+  [
+   "zc_id_prod-freight_road-sales",
+   "r-type",
+   "zc_id_cons-r-type-cate",
+   "ck_vehicle-form"
   ],
   [
    "zc_id_prod-project-request",
@@ -16534,6 +16540,12 @@
    "qk_ws_capacity"
   ],
   [
+   "zc_id_orga-legal",
+   "representative",
+   "zc_id_empl-natural",
+   "fk_representative"
+  ],
+  [
    "zc_id_oper-transport_tracking",
    "branch",
    "zc_id_cate-ver_branch",
@@ -16754,18 +16766,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_prod-freight_road-sales",
-   "r-type",
-   "zc_id_cons-r-type-cate",
-   "ck_vehicle-form"
-  ],
-  [
-   "zc_id_orga-legal",
-   "representative",
-   "zc_id_empl-natural",
-   "fk_representative"
   ],
   [
    "zc_id_orga-non-banking-legal",
@@ -18472,616 +18472,616 @@
    "qk_p_lading"
   ],
   [
-   "zc_id_prod-freight_inland-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_inland-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-purchase",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-purchase",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-purchase",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-made",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-made",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-purchase",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-purchase",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-purchase",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-purchase",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-purchase",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-purchase",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_ocean-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_ocean-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_ocean-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-made",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_inland-made",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-made",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-made",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-purchase",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-purchase",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-transfer_p2p-purchase",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_road-made",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_road-made",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_rail-purchase",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_rail-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_rail-purchase",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_rail-purchase",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-rdc_express-purchase",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-rdc_express-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-rdc_express-purchase",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-rdc_express-purchase",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-rdc_express-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-rdc_express-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-rdc_express-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_rail-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_rail-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_rail-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_rail-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_lcl-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_air-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_air-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_air-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_air-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-made",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-made",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_inland-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_inland-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-made",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-made",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-made",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-made",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-freight_ocean-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_ocean-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-freight_ocean-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-freight_ocean-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-rdc_express-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-sales",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-sales",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-sales",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-sales",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-request",
-   "cron-cate",
-   "zc_id_cons-cron-cate",
-   "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-request",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-request",
-   "v_lading",
-   "zc_id_scal-volume",
-   "qk_v_lading"
-  ],
-  [
-   "zc_id_prod-pxy-fo_fcl-request",
-   "w_lading",
-   "zc_id_scal-weight",
-   "qk_w_lading"
-  ],
-  [
    "zc_id_deta-commit",
    "modification",
    "zc_id_version",
    "fk_modify"
+  ],
+  [
+   "zc_id_prod-freight_inland-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_inland-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-purchase",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-purchase",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-purchase",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-made",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-made",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-purchase",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-purchase",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-purchase",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-purchase",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-purchase",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-purchase",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_ocean-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_ocean-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_ocean-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-made",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_inland-made",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-made",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-made",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-purchase",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-purchase",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-transfer_p2p-purchase",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_road-made",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_road-made",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_rail-purchase",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_rail-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_rail-purchase",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_rail-purchase",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-rdc_express-purchase",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-rdc_express-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-rdc_express-purchase",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-rdc_express-purchase",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-rdc_express-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-rdc_express-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-rdc_express-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_rail-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_rail-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_rail-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_rail-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_lcl-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_air-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_air-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_air-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_air-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-made",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_express-made",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_inland-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_inland-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-made",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-made",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-made",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-made",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-freight_ocean-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-freight_ocean-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-freight_ocean-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-freight_ocean-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-rdc_pickup-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-rdc_express-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-sales",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-sales",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-sales",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_ltl-sales",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-request",
+   "cron-cate",
+   "zc_id_cons-cron-cate",
+   "ck_cron-cate"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-request",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-request",
+   "v_lading",
+   "zc_id_scal-volume",
+   "qk_v_lading"
+  ],
+  [
+   "zc_id_prod-pxy-fo_fcl-request",
+   "w_lading",
+   "zc_id_scal-weight",
+   "qk_w_lading"
   ],
   [
    "zc_id_deta-invoice",
@@ -20369,6 +20369,12 @@
   ],
   [
    "zc_id_oper-goods_pick",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-goods_pick",
    "arrived",
    "zc_id_scal-date",
    "qk_arrived"
@@ -20390,12 +20396,6 @@
    "cate-proc_op",
    "zc_id_cate-proc_op",
    "ck_cate-proc_op"
-  ],
-  [
-   "zc_id_oper-goods_pick",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
   ],
   [
    "zc_id_oper-goods_pick",
@@ -21142,6 +21142,12 @@
    "lk_health"
   ],
   [
+   "zc_id_cont-transport-sales",
+   "date",
+   "zc_id_scal-date",
+   "qk_date"
+  ],
+  [
    "zc_id_contract",
    "date",
    "zc_id_scal-date",
@@ -21158,12 +21164,6 @@
    "amount",
    "zc_id_scal-amount",
    "qk_amount"
-  ],
-  [
-   "zc_id_cont-transport-sales",
-   "date",
-   "zc_id_scal-date",
-   "qk_date"
   ],
   [
    "zc_id_cont-transport-sales",
@@ -21194,6 +21194,12 @@
    "health",
    "zc_id_leve-health",
    "lk_health"
+  ],
+  [
+   "zc_id_prod-manual",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
   ],
   [
    "zc_id_cont-partnership",
@@ -21550,6 +21556,30 @@
    "lk_health"
   ],
   [
+   "zc_id_prod-manual",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-manual",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-manual",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-manual",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
    "zc_id_prod-pxy-fo_express-made",
    "health",
    "zc_id_leve-health",
@@ -21560,6 +21590,36 @@
    "health",
    "zc_id_leve-health",
    "lk_health"
+  ],
+  [
+   "zc_id_prod-manual",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-manual",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-manual",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-manual",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-manual",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
    "zc_id_prod-freight_rail-made",
@@ -22534,6 +22594,12 @@
    "ck_variant"
   ],
   [
+   "zc_id_prod-mal-carrier-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
    "zc_id_prod-transfer_p2p-sales",
    "variant",
    "zc_id_cate-variant",
@@ -22876,6 +22942,30 @@
    "qk_w_capacity"
   ],
   [
+   "zc_id_prod-mal-carrier-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
    "zc_id_task-sample",
    "batch_no",
    "zc_id_tags-batch",
@@ -22906,6 +22996,24 @@
    "tk_version"
   ],
   [
+   "zc_id_prod-mal-carrier-made",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
    "zc_id_production_rr_storage",
    "unit-pricing",
    "zc_id_unit-pricing",
@@ -22934,6 +23042,30 @@
    "unit-pricing",
    "zc_id_unit-pricing",
    "sk_unit-pricing"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-mal-carrier-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
    "zc_id_prod-data",
@@ -23566,6 +23698,60 @@
    "qk_period"
   ],
   [
+   "zc_id_stor-plc-area",
+   "address",
+   "zc_id_contact_infos",
+   "fk_address"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "c_capacity",
+   "zc_id_scal-amount",
+   "qk_c_capacity"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "capacity",
+   "zc_id_scale",
+   "qk_capacity"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "fence",
+   "zc_id_geog-polygon",
+   "qk_fence"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "parent",
+   "zc_id_place",
+   "fk_parent"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "timezone",
+   "zc_id_cons-timezone-cate",
+   "ck_timezone"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "v_capacity",
+   "zc_id_scal-volume",
+   "qk_v_capacity"
+  ],
+  [
+   "zc_id_stor-plc-area",
+   "w_capacity",
+   "zc_id_scal-weight",
+   "qk_w_capacity"
+  ],
+  [
    "zc_id_audi-contract",
    "launcher",
    "zc_id_subjects",
@@ -23639,6 +23825,198 @@
   ],
   [
    "zc_id_oper-outbound",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-mal-carrier-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-mal-carrier-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-mal-carrier-sales",
    "version",
    "zc_id_tags-version",
    "tk_version"
