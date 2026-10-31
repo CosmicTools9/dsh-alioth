@@ -46,7 +46,7 @@ overrides:
   # through the harness documentpreview chain; 3.4.x line is API-stable.
   dompurify: '>=3.4.17'
   # 2026-10-25 audit floors, all same-major fix lines:
-  follow-redirects: '>=1.16.1'
+  follow-redirects: '>=1.16.2'  # 2026-10-31: 1.16.1 本身进了新公告区间（cross-realm sensitiveHeaders），地板随修复线上移
   vite: '^6.4.4'  # 6.x only: an open floor resolved vite 8 and shifted rollup/vite plugin types
   '@vitest/mocker': '>=5.0.3'
   happy-dom: '>=21.0.4'
@@ -98,6 +98,8 @@ overrides:
   qs@^6: '^6.16.1'                            # GHSA-6pq8-jhm2-2vcw: stringify comma 崩溃
   'postcss-selector-parser@^7': '^7.1.6'
   'smol-toml@^1': '^1.9.0'
+  # 2026-10-31（harness 37f24666fc 线，React 19 + 新 client 包带入的新传递图）：
+  'node-forge@^1': '^1.4.1'  # 11 条公告（4 high / 3 moderate / 4 low）同大版本一次清零；下方 GHSA-86w9-cpqp-85rv 忽略随之退役（1.4.1 已发布修复）
   # The two remaining LOW advisories, below the gate's moderate floor. Both are
   # floored here after measuring what the jump actually changes:
   #   dompurify 3.4.15 → ≥3.4.16 sits inside the declaring range (`^3.4.11` in the
@@ -385,10 +387,17 @@ auditConfig:
     # 与 extract-zip 同处置：显式忽略留痕，上游发布修复版后撤除。
     - GHSA-hp3w-g68c-fv3c
     # node-forge <=1.4.0（high，RSA PKCS#1 v1.5 签名验证接受多余嵌套
-    # DigestAlgorithm 元素）公告里 patched 范围为空——修复版尚未发布，任何
-    # floor 都无从谈起。唯一消费路径在 harness 侧：
-    # packages/host/webserver → selfsigned → node-forge，而 selfsigned 只用
-    # forge 生成自签证书，从不验证不受信输入的签名，暴露面是开发/内网
-    # webserver 的证书签发。随 dsh-v0.2.1-alpha.2 合并底（b84f323f8e）进入
-    # 本仓锁。显式忽略留痕，node-forge 发布修复版后撤除并改 floor。
-    - GHSA-86w9-cpqp-85rv
+    # DigestAlgorithm 元素）：GHSA-86w9-cpqp-85rv 曾因修复版未发布而在此
+    # 忽略留痕——2026-10-31 起 1.4.1 已发布（连带 11 条新 forge 公告），
+    # 撤除忽略改走 overrides 地板 `'node-forge@^1': '^1.4.1'`。
+    # minimatch <11.0.1（moderate，globparts 放大 DoS）：修复只发布在 11.x，
+    # 树内消费方（harness experimental/subagent-oar 的 pi-coding-agent、
+    # mcp-client 的 server-filesystem）声明 3/5/9/10 档——跨大版本无同线
+    # 修复，抬地板等于强喂消费者没要的大版本，照 fflate/uuid 体例显式
+    # 忽略留痕；消费路径全部是 harness 侧开发/实验工具链，非本仓运行时。
+    - GHSA-g3hv-75wg-m249
+    # glob >=9.0.0 <=14.0.1（moderate，AbortSignal 取消绕过使超时后仍可
+    # 触文件系统）：修复只在 14.0.2，树内消费方 mcp-client →
+    # server-filesystem 声明 13.x——同上跨大版本处置（7.2.3 档不在公告
+    # 范围内）。显式忽略留痕，上游回移修复或消费方升线后撤除。
+    - GHSA-3g3m-2fjr-6pw4
