@@ -259,7 +259,15 @@ const COMPOSITIONS: readonly Composition[] = [
       'tool-working-directory', 'tools', 'typert',
       'typert-gateway', 'typert-loader', 'ui-agent-preset',
       'ui-approval', 'ui-attachment', 'ui-brand-official',
-      'ui-chat', 'ui-commands', 'ui-conversation', 'ui-file-drag',
+      // 2026-10-31 harness update (37f24666fc) mounted both client rows in the
+      // upstream web-app bundle. Assessed: ui-context-menu is presentation
+      // plumbing only — ui-sidebar-right (kept) injects its service, so
+      // disabling it would crash the right sidebar in the browser;
+      // ui-file-actions' one privileged data path is remote.workspaceFiles,
+      // whose host row we already disable (fails closed), and its attachment
+      // save goes through file-upload (kept product face).
+      'ui-chat', 'ui-commands', 'ui-conversation', 'ui-context-menu',
+      'ui-file-actions', 'ui-file-drag',
       'deliverable-file-references', 'entry-customization', 'message-quotes',
       'tool-executor-native',
       'ui-cordis', 'ui-goal',
