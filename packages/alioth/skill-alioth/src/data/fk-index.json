@@ -1,7 +1,7 @@
 {
  "$schema": "https://dsh-alioth.local/schemas/fk-index.json",
  "description": "Physical FK reference index [table, field, target, local_key] from the release isahl_meta-registry.sql sidecar (derived data, delivered outside Git).",
- "source": "Alioth repo v10.0.50 (2026-10-29T10:33:01.172104+00:00)",
+ "source": "Alioth repo v10.0.67 (2026-11-05T16:29:13.537074+00:00)",
  "refs": [
   [
    "zc_id_deta-plan",
@@ -220,16 +220,10 @@
    "lk_urgent"
   ],
   [
-   "zc_id_even-counting",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
-   "zc_id_even-counting",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
+   "zc_id_deta-counting",
+   "cnt-task",
+   "zc_id_task-counting",
+   "fk_list"
   ],
   [
    "zc_id_even-alert",
@@ -338,12 +332,6 @@
    "address",
    "zc_id_info-postal",
    "fk_address"
-  ],
-  [
-   "zc_id_file-document",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-prj_data-request",
@@ -508,12 +496,6 @@
    "fk_subj-provider"
   ],
   [
-   "zc_id_prod-stor_sorting-request",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_deta-bill-check",
    "amount",
    "zc_id_scal-amount",
@@ -620,6 +602,18 @@
    "verify",
    "zc_id_scal-amount",
    "qk_verify"
+  ],
+  [
+   "zc_id_deta-counting",
+   "voucher",
+   "zc_id_stat-sto-voucher",
+   "fk_voucher"
+  ],
+  [
+   "zc_id_file-srm",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
   ],
   [
    "zc_id_prod-freight_inland-request",
@@ -755,12 +749,6 @@
   ],
   [
    "zc_id_file-srm",
-   "price",
-   "zc_id_scal-price",
-   "qk_price"
-  ],
-  [
-   "zc_id_file-srm",
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
@@ -788,6 +776,12 @@
    "biller",
    "zc_id_subjects",
    "fk_biller"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "origin",
+   "zc_id_invo-tax-list",
+   "fk_origin"
   ],
   [
    "zc_id_task-storage",
@@ -824,12 +818,6 @@
    "verify",
    "zc_id_scale",
    "qk_verify"
-  ],
-  [
-   "zc_id_file-srm",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_file-srm",
@@ -899,21 +887,9 @@
   ],
   [
    "zc_id_file-wbm",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_file-wbm",
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_even-counting",
-   "fk_place",
-   "zc_id_storage",
-   "fk_place"
   ],
   [
    "zc_id_storage_rr_stock-in",
@@ -922,10 +898,10 @@
    "qk_period"
   ],
   [
-   "zc_id_even-counting",
-   "storage",
-   "zc_id_storage",
-   "fk_storage"
+   "zc_id_prod-customs_cle_fo-purchase",
+   "cds-ref",
+   "zc_id_bill-customs_declaration",
+   "fk_cds"
   ],
   [
    "zc_id_stat-bok-voucher",
@@ -1139,12 +1115,6 @@
   ],
   [
    "zc_id_prod-pxy-fo_express-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-pxy-fo_express-made",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -1280,12 +1250,6 @@
    "date",
    "zc_id_scal-date",
    "qk_date"
-  ],
-  [
-   "zc_id_subj-employee_rr_client",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
   ],
   [
    "zc_id_operation_rr_dependency",
@@ -1426,12 +1390,6 @@
    "qk_date"
   ],
   [
-   "zc_id_even-counting",
-   "date",
-   "zc_id_scal-date",
-   "qk_date"
-  ],
-  [
    "zc_id_appr-user_verify",
    "date",
    "zc_id_scal-date",
@@ -1496,12 +1454,6 @@
    "price",
    "zc_id_scal-price",
    "qk_price"
-  ],
-  [
-   "zc_id_prod-prj_data-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_appr-bid-evaluation",
@@ -1600,12 +1552,6 @@
    "fk_previous"
   ],
   [
-   "zc_id_even-counting",
-   "qk_date",
-   "zc_id_scal-date",
-   "qk_date"
-  ],
-  [
    "zc_id_file-package",
    "price",
    "zc_id_scal-price",
@@ -1616,12 +1562,6 @@
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_file-package",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-prj_vcs_file-sales",
@@ -1852,12 +1792,6 @@
    "fk_subject"
   ],
   [
-   "zc_id_prod-prj_vcs_file-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_stat-sto-voucher",
    "qk_qty",
    "zc_id_scal-common",
@@ -1990,13 +1924,19 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_oper-transport_tracking",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
+   "zc_id_task-scrap",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
   ],
   [
-   "zc_id_oper-decide",
+   "zc_id_task-scrap",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-transport_tracking",
    "urgent",
    "zc_id_leve-urgent",
    "lk_urgent"
@@ -2080,12 +2020,6 @@
    "lk_urgent"
   ],
   [
-   "zc_id_oper-orient",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
-  ],
-  [
    "zc_id_prod-dev-tools-made",
    "currency",
    "zc_id_unit-currency",
@@ -2099,12 +2033,6 @@
   ],
   [
    "zc_id_oper-register",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
-  ],
-  [
-   "zc_id_oper-delivery",
    "urgent",
    "zc_id_leve-urgent",
    "lk_urgent"
@@ -2128,12 +2056,6 @@
    "lk_urgent"
   ],
   [
-   "zc_id_oper-action",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
-  ],
-  [
    "zc_id_prod-dev-tools-made",
    "demand",
    "zc_id_subjects",
@@ -2150,18 +2072,6 @@
    "sender-addr",
    "zc_id_contact_infos",
    "fk_sender-addr"
-  ],
-  [
-   "zc_id_oper-check",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
-  ],
-  [
-   "zc_id_oper-observe",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
   ],
   [
    "zc_id_appr-payment",
@@ -2554,12 +2464,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-legal_tender",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_even-alert",
    "date",
    "zc_id_scal-date",
@@ -2662,12 +2566,6 @@
    "fk_place"
   ],
   [
-   "zc_id_even-counting",
-   "place",
-   "zc_id_place",
-   "fk_place"
-  ],
-  [
    "zc_id_even-log",
    "subject",
    "zc_id_subjects",
@@ -2699,12 +2597,6 @@
   ],
   [
    "zc_id_even-modify",
-   "subject",
-   "zc_id_subjects",
-   "fk_subject"
-  ],
-  [
-   "zc_id_even-counting",
    "subject",
    "zc_id_subjects",
    "fk_subject"
@@ -2872,6 +2764,12 @@
    "qk_size"
   ],
   [
+   "zc_id_task-scrap",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
    "zc_id_file-image",
    "size",
    "zc_id_scal-data",
@@ -2924,6 +2822,12 @@
    "health",
    "zc_id_leve-health",
    "lk_health"
+  ],
+  [
+   "zc_id_task-scrap",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
   ],
   [
    "zc_id_prod-prj_vcs_file-request",
@@ -3004,6 +2908,12 @@
    "qk_size"
   ],
   [
+   "zc_id_subj-post_rr_subordinate",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
    "zc_id_plan-outbound",
    "health",
    "zc_id_leve-health",
@@ -3044,12 +2954,6 @@
    "v_capacity",
    "zc_id_scal-volume",
    "qk_v_capacity"
-  ],
-  [
-   "zc_id_subj-post_rr_subordinate",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
   ],
   [
    "zc_id_contract_rr_law",
@@ -3358,12 +3262,6 @@
    "qk_price"
   ],
   [
-   "zc_id_prod-prj_data-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_stor-plc-path",
    "w_capacity",
    "zc_id_scal-weight",
@@ -3448,12 +3346,6 @@
    "fk_subj-provider"
   ],
   [
-   "zc_id_file-image",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_law-civil",
    "jurisdiction",
    "zc_id_subjects",
@@ -3470,6 +3362,12 @@
    "parent",
    "zc_id_cate-inv-title",
    "fk_parent"
+  ],
+  [
+   "zc_id_task-scrap",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
    "zc_id_stor-account",
@@ -3536,12 +3434,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-dev-tools-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-dev-tools-made",
@@ -3935,12 +3827,6 @@
   ],
   [
    "zc_id_file-ver_ctrl",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_file-ver_ctrl",
    "previous",
    "zc_id_version",
    "fk_previous"
@@ -4240,6 +4126,12 @@
    "qk_capacity"
   ],
   [
+   "zc_id_stor-acc-business",
+   "v_capacity",
+   "zc_id_scal-volume",
+   "qk_v_capacity"
+  ],
+  [
    "zc_id_contract_rr_matter",
    "period",
    "zc_id_segm-date",
@@ -4256,12 +4148,6 @@
    "cate-proc_op",
    "zc_id_cate-proc_op",
    "ck_cate-proc_op"
-  ],
-  [
-   "zc_id_stor-acc-business",
-   "v_capacity",
-   "zc_id_scal-volume",
-   "qk_v_capacity"
   ],
   [
    "zc_id_stor-acc-business",
@@ -4876,12 +4762,6 @@
    "qk_w_capacity"
   ],
   [
-   "zc_id_deta-counting",
-   "counting",
-   "zc_id_even-counting",
-   "fk_list"
-  ],
-  [
    "zc_id_plan-delivery",
    "d_period",
    "zc_id_segm-date",
@@ -5062,12 +4942,6 @@
    "fk_subj-demand"
   ],
   [
-   "zc_id_deta-counting",
-   "voucher",
-   "zc_id_stat-sto-voucher",
-   "fk_voucher"
-  ],
-  [
    "zc_id_stor-traffic_line",
    "v_capacity",
    "zc_id_scal-volume",
@@ -5105,6 +4979,12 @@
   ],
   [
    "zc_id_stor-acc-fund",
+   "w_capacity",
+   "zc_id_scal-weight",
+   "qk_w_capacity"
+  ],
+  [
+   "zc_id_stor-acc-cash",
    "w_capacity",
    "zc_id_scal-weight",
    "qk_w_capacity"
@@ -5168,12 +5048,6 @@
    "v_capacity",
    "zc_id_scal-volume",
    "qk_v_capacity"
-  ],
-  [
-   "zc_id_stor-acc-cash",
-   "w_capacity",
-   "zc_id_scal-weight",
-   "qk_w_capacity"
   ],
   [
    "zc_id_stor-ctn-vehicle",
@@ -5290,6 +5164,12 @@
    "qk_w_capacity"
   ],
   [
+   "zc_id_file-avatar",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
    "zc_id_stor-plc-garage",
    "c_capacity",
    "zc_id_scal-amount",
@@ -5369,33 +5249,15 @@
   ],
   [
    "zc_id_file-avatar",
-   "price",
-   "zc_id_scal-price",
-   "qk_price"
-  ],
-  [
-   "zc_id_file-avatar",
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_file-avatar",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-freight_road-made",
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-freight_road-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-retail-made",
@@ -5578,12 +5440,6 @@
    "ck_r-type"
   ],
   [
-   "zc_id_oper-decide",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
-  ],
-  [
    "zc_id_prod-prj_data-purchase",
    "currency",
    "zc_id_unit-currency",
@@ -5630,12 +5486,6 @@
    "r-type",
    "zc_id_cons-r-type-cate",
    "ck_r-type"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
   ],
   [
    "zc_id_stor-ctn-box",
@@ -5786,12 +5636,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-license-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_law-common-chapter",
@@ -5962,12 +5806,6 @@
    "fk_subj-demand"
   ],
   [
-   "zc_id_oper-orient",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
-  ],
-  [
    "zc_id_prod-openapi-sales",
    "provider",
    "zc_id_subjects",
@@ -5978,12 +5816,6 @@
    "size",
    "zc_id_scal-data",
    "qk_size"
-  ],
-  [
-   "zc_id_prod-openapi-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-openapi-sales",
@@ -6044,12 +5876,6 @@
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_prod-electric-eng-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-electric-eng-made",
@@ -6116,12 +5942,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_prod-license-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-rdc_express-purchase",
@@ -6239,12 +6059,6 @@
   ],
   [
    "zc_id_prod-openapi-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-openapi-made",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -6302,6 +6116,12 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
+  ],
+  [
+   "zc_id_oper-gate",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
   ],
   [
    "zc_id_stat-inspection",
@@ -6388,12 +6208,6 @@
    "fk_subj-demand"
   ],
   [
-   "zc_id_prod-prj_vcs_file-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_oper-put_in_stock",
    "effort",
    "zc_id_scal-duration",
@@ -6440,12 +6254,6 @@
    "price",
    "zc_id_scal-price",
    "qk_price"
-  ],
-  [
-   "zc_id_oper-gate",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
   ],
   [
    "zc_id_prod-tsp_land-license-sales",
@@ -6634,18 +6442,6 @@
    "fk_subj-provider"
   ],
   [
-   "zc_id_bom-pickup",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
-   "zc_id_prod-file",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_geom-area",
    "unit",
    "zc_id_unit-geo",
@@ -6686,12 +6482,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_bom-pickup",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
   ],
   [
    "zc_id_oper-check_bill",
@@ -6833,12 +6623,6 @@
   ],
   [
    "zc_id_file-manual",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_file-manual",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -6848,12 +6632,6 @@
    "s_capacity",
    "zc_id_scale",
    "qk_s_capacity"
-  ],
-  [
-   "zc_id_oper-observe",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
   ],
   [
    "zc_id_prod-material-made",
@@ -6947,12 +6725,6 @@
   ],
   [
    "zc_id_prod-pxy-fo_ltl-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-made",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -7012,10 +6784,22 @@
    "qk_progress"
   ],
   [
-   "zc_id_bom-outbound",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
+   "zc_id_prod-consulting",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_contract",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_stat-inspection",
+   "date",
+   "zc_id_scal-date",
+   "qk_date"
   ],
   [
    "zc_id_deta-bill-check",
@@ -7078,18 +6862,6 @@
    "fk_group"
   ],
   [
-   "zc_id_stat-inspection",
-   "date",
-   "zc_id_scal-date",
-   "qk_date"
-  ],
-  [
-   "zc_id_contract",
-   "health",
-   "zc_id_leve-health",
-   "lk_health"
-  ],
-  [
    "zc_id_prod-freight_rail-made",
    "batch_no",
    "zc_id_tags-batch",
@@ -7121,12 +6893,6 @@
   ],
   [
    "zc_id_deta-bill-check",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_deta-bill-check",
    "goods",
    "zc_id_prod-sales",
    "fk_goods"
@@ -7136,6 +6902,12 @@
    "deal",
    "zc_id_prod-sales",
    "fk_deal"
+  ],
+  [
+   "zc_id_operation",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
   ],
   [
    "zc_id_oper-audit_acc",
@@ -7148,12 +6920,6 @@
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_prod-consulting",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_deta-bill-check",
@@ -7378,28 +7144,10 @@
    "qk_sla"
   ],
   [
-   "zc_id_oper-observe",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
-  ],
-  [
    "zc_id_oper-merchandise_on",
    "sla_duration",
    "zc_id_scal-duration",
    "qk_sla"
-  ],
-  [
-   "zc_id_oper-check",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
-  ],
-  [
-   "zc_id_operation",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
   ],
   [
    "zc_id_oper-register",
@@ -7445,18 +7193,6 @@
   ],
   [
    "zc_id_oper-take_off_stock",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
-  ],
-  [
-   "zc_id_oper-decide",
    "sla_duration",
    "zc_id_scal-duration",
    "qk_sla"
@@ -7546,6 +7282,12 @@
    "qk_period"
   ],
   [
+   "zc_id_law-common",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
    "zc_id_prod-freight_air-sales",
    "period",
    "zc_id_segm-date",
@@ -7574,12 +7316,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_oper-action",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
   ],
   [
    "zc_id_prod-freight_rail-purchase",
@@ -7648,12 +7384,6 @@
    "qk_sla"
   ],
   [
-   "zc_id_oper-orient",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
-  ],
-  [
    "zc_id_oper-sales_order",
    "sla_duration",
    "zc_id_scal-duration",
@@ -7670,12 +7400,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_law-common",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_prod-transfer_p2p-purchase",
@@ -7762,6 +7486,12 @@
    "qk_period"
   ],
   [
+   "zc_id_prod-freight_air-sales",
+   "line",
+   "zc_id_stor-traffic_line",
+   "fk_line"
+  ],
+  [
    "zc_id_prod-freight_inland-purchase",
    "period",
    "zc_id_segm-date",
@@ -7790,18 +7520,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_oper-orient",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
-   "zc_id_oper-observe",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
   ],
   [
    "zc_id_prod-pxy-fo_fcl-purchase",
@@ -7864,10 +7582,10 @@
    "fk_line"
   ],
   [
-   "zc_id_prod-freight_air-sales",
-   "line",
-   "zc_id_stor-traffic_line",
-   "fk_line"
+   "zc_id_law-religious",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
   ],
   [
    "zc_id_prod-freight_ocean-purchase",
@@ -7960,12 +7678,6 @@
    "fk_line"
   ],
   [
-   "zc_id_oper-decide",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
    "zc_id_prod-transfer_p2p-request",
    "line",
    "zc_id_stor-traffic_line",
@@ -7988,6 +7700,12 @@
    "line",
    "zc_id_stor-traffic_line",
    "fk_line"
+  ],
+  [
+   "zc_id_prod-pub_affairs",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
   ],
   [
    "zc_id_prod-rdc_express-request",
@@ -8050,6 +7768,12 @@
    "sk_currency"
   ],
   [
+   "zc_id_prod-type_cert-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
    "zc_id_prod-air_cert-sales",
    "branch",
    "zc_id_cate-ver_branch",
@@ -8084,6 +7808,12 @@
    "unit",
    "zc_id_unit",
    "sk_unit"
+  ],
+  [
+   "zc_id_deta-trade_order",
+   "goods",
+   "zc_id_prod-sales",
+   "fk_goods"
   ],
   [
    "zc_id_prod-type_cert-sales",
@@ -8129,12 +7859,6 @@
   ],
   [
    "zc_id_prod-type_cert-sales",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
-   "zc_id_prod-type_cert-sales",
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
@@ -8144,6 +7868,18 @@
    "previous",
    "zc_id_version",
    "fk_previous"
+  ],
+  [
+   "zc_id_law-common-chapter",
+   "parent",
+   "zc_id_law-common",
+   "fk_parent"
+  ],
+  [
+   "zc_id_prod-loading-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
   ],
   [
    "zc_id_prod-stor_sorting-request",
@@ -8188,28 +7924,10 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_law-religious",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
-   "zc_id_prod-loading-request",
-   "price",
-   "zc_id_scal-price",
-   "qk_price"
-  ],
-  [
    "zc_id_prod-freight_rail-purchase",
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-freight_rail-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-freight_rail-purchase",
@@ -8252,12 +7970,6 @@
    "price",
    "zc_id_scal-price",
    "qk_price"
-  ],
-  [
-   "zc_id_prod-proxy",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-freight_ocean-request",
@@ -8294,18 +8006,6 @@
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_prod-pub_affairs",
-   "currency",
-   "zc_id_unit-currency",
-   "sk_currency"
-  ],
-  [
-   "zc_id_prod-pub_affairs",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-pxy-insurance-sales",
@@ -8380,12 +8080,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-rdc_express-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-channel_cost-sales",
    "price",
    "zc_id_scal-price",
@@ -8446,12 +8140,6 @@
    "qk_price"
   ],
   [
-   "zc_id_deta-trade_order",
-   "goods",
-   "zc_id_prod-sales",
-   "fk_goods"
-  ],
-  [
    "zc_id_prod-freight_road-request",
    "currency",
    "zc_id_unit-currency",
@@ -8506,22 +8194,10 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-pxy-fo_lcl-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_law-common",
    "parent",
    "zc_id_law-common",
    "fk_parent"
-  ],
-  [
-   "zc_id_bom-outbound",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
   ],
   [
    "zc_id_law-civil-code",
@@ -8588,6 +8264,18 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
+  ],
+  [
+   "zc_id_law-common-title",
+   "parent",
+   "zc_id_law-common",
+   "fk_parent"
+  ],
+  [
+   "zc_id_prod-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
   ],
   [
    "zc_id_prod-customs_dec_fo-purchase",
@@ -8714,12 +8402,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-customs_cle_fo-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-loading",
@@ -8806,12 +8488,6 @@
    "qk_price"
   ],
   [
-   "zc_id_prod-license",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-ports-request",
    "demand",
    "zc_id_subjects",
@@ -8834,12 +8510,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-freight_ocean-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-channel_cost-sales",
@@ -8872,22 +8542,10 @@
    "qk_price"
   ],
   [
-   "zc_id_prod-request",
-   "provider",
-   "zc_id_subjects",
-   "fk_subj-provider"
-  ],
-  [
    "zc_id_prod-made",
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-customs-clearance",
@@ -8998,6 +8656,12 @@
    "tk_version"
   ],
   [
+   "zc_id_stor-plc-airport",
+   "fence",
+   "zc_id_geog-polygon",
+   "qk_fence"
+  ],
+  [
    "zc_id_prod-stor_sorting-request",
    "previous",
    "zc_id_version",
@@ -9008,6 +8672,18 @@
    "config",
    "zc_id_prot-oss_config",
    "fk_config"
+  ],
+  [
+   "zc_id_geom-polygon",
+   "unit",
+   "zc_id_unit-geo",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-channel_cost-sales",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
   ],
   [
    "zc_id_stor-ctn-fold",
@@ -9206,12 +8882,6 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
-  ],
-  [
-   "zc_id_stor-plc-airport",
-   "fence",
-   "zc_id_geog-polygon",
-   "qk_fence"
   ],
   [
    "zc_id_law-intl-custom",
@@ -9574,6 +9244,12 @@
    "fk_jurisdiction"
   ],
   [
+   "zc_id_even-modify",
+   "date",
+   "zc_id_scal-date",
+   "qk_date"
+  ],
+  [
    "zc_id_law-civil-book",
    "previous",
    "zc_id_version",
@@ -9608,12 +9284,6 @@
    "effective",
    "zc_id_segm-date",
    "qk_effective"
-  ],
-  [
-   "zc_id_law-common-chapter",
-   "parent",
-   "zc_id_law-common",
-   "fk_parent"
   ],
   [
    "zc_id_law-common-statute",
@@ -9752,12 +9422,6 @@
    "effective",
    "zc_id_segm-date",
    "qk_effective"
-  ],
-  [
-   "zc_id_law-common-title",
-   "parent",
-   "zc_id_law-common",
-   "fk_parent"
   ],
   [
    "zc_id_law-intl-part",
@@ -9958,6 +9622,12 @@
    "ck_branch"
   ],
   [
+   "zc_id_stan-air-icao",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
    "zc_id_law-common-title",
    "batch_no",
    "zc_id_tags-batch",
@@ -10040,12 +9710,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_stan-air-icao",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
   ],
   [
    "zc_id_law-common-title",
@@ -10210,12 +9874,6 @@
    "fk_biller"
   ],
   [
-   "zc_id_even-modify",
-   "date",
-   "zc_id_scal-date",
-   "qk_date"
-  ],
-  [
    "zc_id_stan-air-caac-article",
    "version",
    "zc_id_tags-version",
@@ -10262,12 +9920,6 @@
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_prod-retail-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_even-modify",
@@ -10510,12 +10162,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_geom-polygon",
-   "unit",
-   "zc_id_unit-geo",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-diploma-sales",
    "previous",
    "zc_id_version",
@@ -10604,6 +10250,12 @@
    "subject",
    "zc_id_subjects",
    "fk_subject"
+  ],
+  [
+   "zc_id_prod-diploma-sales",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
   ],
   [
    "zc_id_stan-air-faa",
@@ -10804,12 +10456,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-customs-clearance",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-request",
    "currency",
    "zc_id_unit-currency",
@@ -10850,12 +10496,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-rdc_pickup-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-freight_ocean-request",
@@ -10906,12 +10546,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-freight_air-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-freight_rail-request",
    "demand",
    "zc_id_subjects",
@@ -10934,12 +10568,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-freight_road-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-payload",
@@ -10970,12 +10598,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-customs_declaration",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-pxy-fo_fcl-purchase",
@@ -11012,12 +10634,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_prod-freight_rail-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-pxy-fo_fcl-request",
@@ -11098,12 +10714,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-diploma-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-license-purchase",
    "demand",
    "zc_id_subjects",
@@ -11146,12 +10756,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-project-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-fo_insurance-request",
    "demand",
    "zc_id_subjects",
@@ -11188,12 +10792,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-financial",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-fo_insurance-sales",
    "demand",
    "zc_id_subjects",
@@ -11212,12 +10810,6 @@
    "fk_subj-provider"
   ],
   [
-   "zc_id_prod-pxy-fo_fcl-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-freight_road-made",
    "demand",
    "zc_id_subjects",
@@ -11234,12 +10826,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-transform",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-project-purchase",
@@ -11338,12 +10924,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-payload",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-loading-sales",
    "demand",
    "zc_id_subjects",
@@ -11398,6 +10978,12 @@
    "tk_batch_no"
   ],
   [
+   "zc_id_appr-payment",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
    "zc_id_prod-freight_road-made",
    "price",
    "zc_id_scal-price",
@@ -11408,12 +10994,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-retail-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-transform",
@@ -11548,6 +11128,12 @@
    "sk_unit"
   ],
   [
+   "zc_id_prod-retail-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
    "zc_id_prod-rdc_express-request",
    "provider",
    "zc_id_subjects",
@@ -11654,12 +11240,6 @@
    "urgent",
    "zc_id_leve-urgent",
    "lk_urgent"
-  ],
-  [
-   "zc_id_prod-freight_rail-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-material-made",
@@ -11782,12 +11362,6 @@
    "lk_health"
   ],
   [
-   "zc_id_oper-observe",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
-  ],
-  [
    "zc_id_oper-smtv_review",
    "cate-proc_op",
    "zc_id_cate-proc_op",
@@ -11825,12 +11399,6 @@
   ],
   [
    "zc_id_appr-user_verify",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
-  ],
-  [
-   "zc_id_appr-payment",
    "urgent",
    "zc_id_leve-urgent",
    "lk_urgent"
@@ -11932,12 +11500,6 @@
    "ck_cate-proc_op"
   ],
   [
-   "zc_id_oper-decide",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
-  ],
-  [
    "zc_id_appr-prj_made-push",
    "health",
    "zc_id_leve-health",
@@ -11948,18 +11510,6 @@
    "health",
    "zc_id_leve-health",
    "lk_health"
-  ],
-  [
-   "zc_id_oper-check",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
   ],
   [
    "zc_id_appr-bid-evaluation",
@@ -12028,12 +11578,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-retail-request",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-pxy-fo_express-purchase",
    "demand",
    "zc_id_subjects",
@@ -12056,12 +11600,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_oper-orient",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
   ],
   [
    "zc_id_oper-merchandise_on",
@@ -12122,12 +11660,6 @@
    "health",
    "zc_id_leve-health",
    "lk_health"
-  ],
-  [
-   "zc_id_oper-action",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
   ],
   [
    "zc_id_cont-proxy",
@@ -12260,12 +11792,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-customs_cle_fo-purchase",
@@ -12514,12 +12040,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-freight_road-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-sovereign_currency-sales",
    "demand",
    "zc_id_subjects",
@@ -12574,6 +12094,12 @@
    "fk_subj-provider"
   ],
   [
+   "zc_id_prod-pxy-insurance-purchase",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
    "zc_id_prod-conclusion",
    "version",
    "zc_id_tags-version",
@@ -12590,12 +12116,6 @@
    "demand",
    "zc_id_subjects",
    "fk_subj-demand"
-  ],
-  [
-   "zc_id_prod-retail-sales",
-   "price",
-   "zc_id_scal-price",
-   "qk_price"
   ],
   [
    "zc_id_prod-traffic",
@@ -12694,18 +12214,6 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-ports-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-rdc_express-purchase",
    "demand",
    "zc_id_subjects",
@@ -12728,12 +12236,6 @@
    "currency",
    "zc_id_unit-currency",
    "sk_currency"
-  ],
-  [
-   "zc_id_prod-retail-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-traffic",
@@ -13000,34 +12502,16 @@
    "sk_currency"
   ],
   [
-   "zc_id_prod-insurance",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-pxy-fo_express-request",
    "previous",
    "zc_id_version",
    "fk_previous"
   ],
   [
-   "zc_id_oper-action",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_oper-clearance_import",
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_project",
@@ -13060,31 +12544,13 @@
    "ck_cate-wh"
   ],
   [
-   "zc_id_prod-stor_sorting-sales",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_prod-lease",
    "period",
    "zc_id_segm-date",
    "qk_period"
   ],
   [
-   "zc_id_prod-pxy-insurance-purchase",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_prod-storage",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_prod-channel_cost-sales",
    "period",
    "zc_id_segm-date",
    "qk_period"
@@ -13120,12 +12586,6 @@
    "qk_period"
   ],
   [
-   "zc_id_prod-stor_sorting-purchase",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_prod-pxy-insurance-sales",
    "period",
    "zc_id_segm-date",
@@ -13136,6 +12596,12 @@
    "sla",
    "zc_id_scal-duration",
    "qk_sla"
+  ],
+  [
+   "zc_id_prod-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
   ],
   [
    "zc_id_deta-trade_order",
@@ -13174,12 +12640,6 @@
    "ck_cate-wh"
   ],
   [
-   "zc_id_oper-delivery",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
    "zc_id_oper-merchandise_on",
    "cate-wh",
    "zc_id_cate-wh-title",
@@ -13192,19 +12652,7 @@
    "ck_cate-wh"
   ],
   [
-   "zc_id_oper-check",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
    "zc_id_oper-payment",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
-   "zc_id_oper-action",
    "cate-wh",
    "zc_id_cate-wh-title",
    "ck_cate-wh"
@@ -13229,6 +12677,12 @@
   ],
   [
    "zc_id_prod-storage",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-check_bill",
    "previous",
    "zc_id_version",
    "fk_previous"
@@ -13264,6 +12718,12 @@
    "tk_batch_no"
   ],
   [
+   "zc_id_version",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
    "zc_id_bom-file",
    "previous",
    "zc_id_version",
@@ -13294,6 +12754,18 @@
    "ck_category"
   ],
   [
+   "zc_id_deta-trade_order",
+   "trade_order",
+   "zc_id_stat-trade_order",
+   "fk_list"
+  ],
+  [
+   "zc_id_proc-make",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
    "zc_id_prod-pub_affairs",
    "previous",
    "zc_id_version",
@@ -13322,18 +12794,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_bom-inbound",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_bom-shelve",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
   ],
   [
    "zc_id_prod-loading-purchase",
@@ -13390,12 +12850,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_prod-sales",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_proc-purchase",
    "branch",
    "zc_id_cate-ver_branch",
@@ -13424,12 +12878,6 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_bom-inbound",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_prod-payload",
@@ -13504,12 +12952,6 @@
    "tk_version"
   ],
   [
-   "zc_id_bom-loading",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_prod-retail-request",
    "previous",
    "zc_id_version",
@@ -13522,30 +12964,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_oper-orient",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
-   "zc_id_deta-trade_order",
-   "trade_order",
-   "zc_id_stat-trade_order",
-   "fk_list"
-  ],
-  [
-   "zc_id_bom-inbound",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
-   "zc_id_bom-shelve",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
    "zc_id_stan-prod_quality",
    "version",
    "zc_id_tags-version",
@@ -13553,18 +12971,6 @@
   ],
   [
    "zc_id_prod-fo_insurance-request",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_bom-inbound",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
-   "zc_id_bom-shelve",
    "previous",
    "zc_id_version",
    "fk_previous"
@@ -13810,12 +13216,6 @@
    "tk_version"
   ],
   [
-   "zc_id_oper-orient",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_prod-freight_road-sales",
    "branch",
    "zc_id_cate-ver_branch",
@@ -13862,12 +13262,6 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
-  ],
-  [
-   "zc_id_oper-orient",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_prod-freight_road-sales",
@@ -13984,12 +13378,6 @@
    "fk_previous"
   ],
   [
-   "zc_id_oper-orient",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_proc-approve",
    "previous",
    "zc_id_version",
@@ -14086,12 +13474,6 @@
    "tk_version"
   ],
   [
-   "zc_id_oper-observe",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_proc-service",
    "version",
    "zc_id_tags-version",
@@ -14150,12 +13532,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_oper-observe",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
   ],
   [
    "zc_id_prod-lease",
@@ -14398,12 +13774,6 @@
    "tk_version"
   ],
   [
-   "zc_id_proc-make",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_prod-combine",
    "batch_no",
    "zc_id_tags-batch",
@@ -14609,6 +13979,12 @@
   ],
   [
    "zc_id_version",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_version",
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
@@ -14710,12 +14086,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_bom-shipment",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_oper-approve",
    "branch",
    "zc_id_cate-ver_branch",
@@ -14770,22 +14140,10 @@
    "tk_version"
   ],
   [
-   "zc_id_version",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_prod-pxy-fo_fcl-request",
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_oper-check_bill",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
   ],
   [
    "zc_id_oper-storage",
@@ -14938,12 +14296,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_bom-outbound",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
    "zc_id_prod-pxy-fo_express-request",
    "version",
    "zc_id_tags-version",
@@ -14974,12 +14326,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_bom-shipment",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
    "zc_id_vers-context",
    "previous",
    "zc_id_version",
@@ -15004,28 +14350,10 @@
    "fk_previous"
   ],
   [
-   "zc_id_bom-shipment",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
-   "zc_id_bom-pickup",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_deta-task",
    "avg-weight",
    "zc_id_rati-weight",
    "qk_avg-weight"
-  ],
-  [
-   "zc_id_bom-pickup",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_prod-pxy-insurance-purchase",
@@ -15076,13 +14404,13 @@
    "ck_currency"
   ],
   [
-   "zc_id_stat-task",
-   "write-off",
-   "zc_id_scale",
-   "qk_write-off"
+   "zc_id_subj-country",
+   "timezone",
+   "zc_id_cons-timezone-cate",
+   "ck_timezone"
   ],
   [
-   "zc_id_subj-country",
+   "zc_id_stor-plc-shipping_port",
    "timezone",
    "zc_id_cons-timezone-cate",
    "ck_timezone"
@@ -15110,18 +14438,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_bom-shipment",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_stat-tsk-requisition",
-   "write-off",
-   "zc_id_scale",
-   "qk_write-off"
   ],
   [
    "zc_id_stor-plc-repository",
@@ -15152,12 +14468,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_stor-plc-shipping_port",
-   "timezone",
-   "zc_id_cons-timezone-cate",
-   "ck_timezone"
   ],
   [
    "zc_id_stor-plc-division",
@@ -15232,6 +14542,12 @@
    "fk_previous"
   ],
   [
+   "zc_id_prod-pxy-fo_ltl-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
    "zc_id_stor-plc-bin",
    "timezone",
    "zc_id_cons-timezone-cate",
@@ -15256,28 +14572,22 @@
    "qk_verify"
   ],
   [
+   "zc_id_geog-circle",
+   "unit",
+   "zc_id_unit-geo",
+   "sk_unit"
+  ],
+  [
    "zc_id_stor-place",
    "timezone",
    "zc_id_cons-timezone-cate",
    "ck_timezone"
   ],
   [
-   "zc_id_oper-check",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
-  ],
-  [
    "zc_id_oper-merchandise_on",
    "effort",
    "zc_id_scal-duration",
    "qk_effort"
-  ],
-  [
-   "zc_id_stat-tsk-make",
-   "write-off",
-   "zc_id_scale",
-   "qk_write-off"
   ],
   [
    "zc_id_oper-approve",
@@ -15292,22 +14602,10 @@
    "tk_version"
   ],
   [
-   "zc_id_geog-circle",
-   "unit",
-   "zc_id_unit-geo",
-   "sk_unit"
-  ],
-  [
    "zc_id_prod-pxy-fo_ltl-request",
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_prod-pxy-fo_ltl-request",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_oper-lading",
@@ -15332,6 +14630,12 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
+  ],
+  [
+   "zc_id_project",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
    "zc_id_oper-gate",
@@ -15400,12 +14704,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_oper-action",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_project",
    "previous",
    "zc_id_version",
@@ -15418,12 +14716,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_oper-delivery",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
    "zc_id_oper-put_in_stock",
    "version",
    "zc_id_tags-version",
@@ -15434,12 +14726,6 @@
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_bom-outbound",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_oper-transport_tracking",
@@ -15490,28 +14776,10 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_project",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_prod-data",
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
-   "zc_id_oper-check",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_prod-project-made",
@@ -15536,6 +14804,12 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
+  ],
+  [
+   "zc_id_production",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
   ],
   [
    "zc_id_prod-certificate",
@@ -15590,24 +14864,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_oper-check",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
-   "zc_id_oper-decide",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_oper-test",
@@ -15670,12 +14926,6 @@
    "tk_version"
   ],
   [
-   "zc_id_oper-action",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_project",
    "branch",
    "zc_id_cate-ver_branch",
@@ -15724,34 +14974,10 @@
    "tk_version"
   ],
   [
-   "zc_id_production",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_oper-take_off_stock",
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_oper-action",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
-   "zc_id_oper-check",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
-   "zc_id_oper-decide",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
   ],
   [
    "zc_id_oper-put_in_stock",
@@ -15802,18 +15028,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_oper-check",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_oper-decide",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_prod-passenger",
    "version",
    "zc_id_tags-version",
@@ -15854,12 +15068,6 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_oper-decide",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_oper-put_in_stock",
@@ -16096,12 +15304,6 @@
    "fk_previous"
   ],
   [
-   "zc_id_bom-loading",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_task-commission",
    "batch_no",
    "zc_id_tags-batch",
@@ -16178,12 +15380,6 @@
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_oper-action",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
   ],
   [
    "zc_id_event_rr_standard",
@@ -16276,12 +15472,6 @@
    "tk_batch_no"
   ],
   [
-   "zc_id_oper-observe",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_prod-lease",
    "branch",
    "zc_id_cate-ver_branch",
@@ -16316,12 +15506,6 @@
    "previous",
    "zc_id_version",
    "fk_previous"
-  ],
-  [
-   "zc_id_oper-observe",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_prod-traffic",
@@ -16409,12 +15593,6 @@
   ],
   [
    "zc_id_oper-approve",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_version",
    "previous",
    "zc_id_version",
    "fk_previous"
@@ -16606,12 +15784,6 @@
    "tk_version"
   ],
   [
-   "zc_id_bom-loading",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
    "zc_id_prod-fo_insurance-sales",
    "version",
    "zc_id_tags-version",
@@ -16630,12 +15802,6 @@
    "ck_branch"
   ],
   [
-   "zc_id_bom-loading",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
    "zc_id_prod-retail-made",
    "version",
    "zc_id_tags-version",
@@ -16652,12 +15818,6 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
-  ],
-  [
-   "zc_id_bom-shelve",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_prod-customs_declaration",
@@ -17032,18 +16192,6 @@
    "ck_category"
   ],
   [
-   "zc_id_oper-check",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-check",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_oper-confirm_bill",
    "arrived",
    "zc_id_scal-date",
@@ -17063,18 +16211,6 @@
   ],
   [
    "zc_id_oper-check_bill",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_oper-delivery",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-delivery",
    "period",
    "zc_id_segm-date",
    "qk_period"
@@ -17206,18 +16342,6 @@
    "qk_period"
   ],
   [
-   "zc_id_oper-observe",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-observe",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_oper-take_off_stock",
    "arrived",
    "zc_id_scal-date",
@@ -17290,18 +16414,6 @@
    "qk_period"
   ],
   [
-   "zc_id_oper-decide",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-decide",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
    "zc_id_oper-clearance_import",
    "arrived",
    "zc_id_scal-date",
@@ -17357,30 +16469,6 @@
   ],
   [
    "zc_id_oper-test",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_oper-orient",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-orient",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_oper-action",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-action",
    "period",
    "zc_id_segm-date",
    "qk_period"
@@ -17512,12 +16600,6 @@
    "ck_cooperation"
   ],
   [
-   "zc_id_deta-tsk",
-   "biller",
-   "zc_id_subjects",
-   "fk_biller"
-  ],
-  [
    "zc_id_contract_rr_symmetry",
    "period",
    "zc_id_segm-date",
@@ -17528,12 +16610,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_deta-tsk",
-   "list",
-   "zc_id_stat-task",
-   "fk_list"
   ],
   [
    "zc_id_bom-input_rr_item",
@@ -17782,30 +16858,6 @@
    "qk_period"
   ],
   [
-   "zc_id_tick-pickup",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
-  ],
-  [
-   "zc_id_tick-pickup",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
-   "zc_id_tick-pickup",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_tick-pickup",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
    "zc_id_bill",
    "branch",
    "zc_id_cate-ver_branch",
@@ -17984,12 +17036,6 @@
    "r-type",
    "zc_id_cons-r-type-cate",
    "ck_vehicle-form"
-  ],
-  [
-   "zc_id_prod-freight_inland-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prjt-proc_ctrl",
@@ -18197,12 +17243,6 @@
   ],
   [
    "zc_id_prod-openapi-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-openapi-purchase",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -18274,6 +17314,12 @@
    "tk_version"
   ],
   [
+   "zc_id_prod-freight_ocean-purchase",
+   "p_lading",
+   "zc_id_scal-common",
+   "qk_p_lading"
+  ],
+  [
    "zc_id_prod-traffic",
    "cron-cate",
    "zc_id_cons-cron-cate",
@@ -18332,12 +17378,6 @@
    "cron-cate",
    "zc_id_cons-cron-cate",
    "ck_cron-cate"
-  ],
-  [
-   "zc_id_prod-freight_ocean-purchase",
-   "p_lading",
-   "zc_id_scal-common",
-   "qk_p_lading"
   ],
   [
    "zc_id_prod-freight_ocean-purchase",
@@ -19156,12 +18196,6 @@
    "qk_v_lading"
   ],
   [
-   "zc_id_deta-tsk",
-   "write-off",
-   "zc_id_scale",
-   "qk_write-off"
-  ],
-  [
    "zc_id_prod-freight_rail-request",
    "w_lading",
    "zc_id_scal-weight",
@@ -19444,6 +18478,12 @@
    "fk_payload"
   ],
   [
+   "zc_id_plan-inbound",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
    "zc_id_prod-made_rr_stor-place",
    "vp_capacity",
    "zc_id_scal-volume",
@@ -19466,6 +18506,12 @@
    "w_total",
    "zc_id_scal-weight",
    "qk_w_total"
+  ],
+  [
+   "zc_id_plan-inbound",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
   ],
   [
    "zc_id_prod-made_rr_stor-place",
@@ -19544,18 +18590,6 @@
    "branch",
    "zc_id_cate-ver_branch",
    "ck_branch"
-  ],
-  [
-   "zc_id_plan-inbound",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_plan-inbound",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_plan-recruitment",
@@ -20375,6 +19409,12 @@
   ],
   [
    "zc_id_oper-goods_pick",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-goods_pick",
    "arrived",
    "zc_id_scal-date",
    "qk_arrived"
@@ -20426,12 +19466,6 @@
    "urgent",
    "zc_id_leve-urgent",
    "lk_urgent"
-  ],
-  [
-   "zc_id_oper-goods_pick",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_stat-sto-voucher_rr_order",
@@ -20800,6 +19834,12 @@
    "qk_period"
   ],
   [
+   "zc_id_prod-loading-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
    "zc_id_prod-loading_r_description",
    "period",
    "zc_id_segm-date",
@@ -20816,18 +19856,6 @@
    "period",
    "zc_id_segm-date",
    "qk_period"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "arrived",
-   "zc_id_scal-date",
-   "qk_arrived"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "batch_no",
-   "zc_id_tags-batch",
-   "tk_batch_no"
   ],
   [
    "zc_id_prod-loading-made",
@@ -20861,12 +19889,6 @@
   ],
   [
    "zc_id_prod-loading-made",
-   "price",
-   "zc_id_scal-price",
-   "qk_price"
-  ],
-  [
-   "zc_id_prod-loading-made",
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
@@ -20882,12 +19904,6 @@
    "receptacle",
    "zc_id_stor-container",
    "fk_receptacle"
-  ],
-  [
-   "zc_id_prod-loading-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-loading-made",
@@ -20926,37 +19942,7 @@
    "qk_write-off"
   ],
   [
-   "zc_id_oper-put_to_store",
-   "branch",
-   "zc_id_cate-ver_branch",
-   "ck_branch"
-  ],
-  [
    "zc_id_prod-retail_r_description",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "cate-proc_op",
-   "zc_id_cate-proc_op",
-   "ck_cate-proc_op"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "cate-wh",
-   "zc_id_cate-wh-title",
-   "ck_cate-wh"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "effort",
-   "zc_id_scal-duration",
-   "qk_effort"
-  ],
-  [
-   "zc_id_oper-put_to_store",
    "period",
    "zc_id_segm-date",
    "qk_period"
@@ -21005,36 +19991,6 @@
   ],
   [
    "zc_id_prod-apparel",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-apparel",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "previous",
-   "zc_id_version",
-   "fk_previous"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "sla_duration",
-   "zc_id_scal-duration",
-   "qk_sla"
-  ],
-  [
-   "zc_id_oper-put_to_store",
-   "urgent",
-   "zc_id_leve-urgent",
-   "lk_urgent"
-  ],
-  [
-   "zc_id_oper-put_to_store",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -21395,12 +20351,6 @@
   ],
   [
    "zc_id_prod-apparel-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-apparel-sales",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -21689,12 +20639,6 @@
   ],
   [
    "zc_id_prod-apparel-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-apparel-made",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -21749,21 +20693,9 @@
   ],
   [
    "zc_id_prod-apparel-request",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-apparel-request",
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_stat-sto-voucher_rr_deta-counting",
-   "period",
-   "zc_id_segm-date",
-   "qk_period"
   ],
   [
    "zc_id_prod-apparel-purchase",
@@ -21806,12 +20738,6 @@
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_prod-apparel-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-apparel-purchase",
@@ -23051,12 +21977,6 @@
   ],
   [
    "zc_id_prod-mal-carrier-made",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-mal-carrier-made",
    "variant",
    "zc_id_cate-variant",
    "ck_variant"
@@ -23116,16 +22036,16 @@
    "qk_price"
   ],
   [
+   "zc_id_audi-project",
+   "launcher",
+   "zc_id_subjects",
+   "fk_launcher"
+  ],
+  [
    "zc_id_prod-config",
    "provider",
    "zc_id_subjects",
    "fk_subj-provider"
-  ],
-  [
-   "zc_id_prod-config",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
   ],
   [
    "zc_id_prod-config",
@@ -23138,12 +22058,6 @@
    "version",
    "zc_id_tags-version",
    "tk_version"
-  ],
-  [
-   "zc_id_audi-project",
-   "launcher",
-   "zc_id_subjects",
-   "fk_launcher"
   ],
   [
    "zc_id_audi-expense",
@@ -23284,6 +22198,12 @@
    "qk_sla"
   ],
   [
+   "zc_id_oper-inbound",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
    "zc_id_oper-pick_to_bin",
    "urgent",
    "zc_id_leve-urgent",
@@ -23348,12 +22268,6 @@
    "urgent",
    "zc_id_leve-urgent",
    "lk_urgent"
-  ],
-  [
-   "zc_id_oper-inbound",
-   "version",
-   "zc_id_tags-version",
-   "tk_version"
   ],
   [
    "zc_id_prod-config",
@@ -23939,12 +22853,6 @@
   ],
   [
    "zc_id_prod-mal-carrier-purchase",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-mal-carrier-purchase",
    "variant",
    "zc_id_cate-variant",
    "ck_variant"
@@ -23960,6 +22868,12 @@
    "batch_no",
    "zc_id_tags-batch",
    "tk_batch_no"
+  ],
+  [
+   "zc_id_empl-natural",
+   "category",
+   "zc_id_cate-natural",
+   "ck_category"
   ],
   [
    "zc_id_prod-mal-carrier-sales",
@@ -24005,18 +22919,378 @@
   ],
   [
    "zc_id_prod-mal-carrier-sales",
-   "unit",
-   "zc_id_unit",
-   "sk_unit"
-  ],
-  [
-   "zc_id_prod-mal-carrier-sales",
    "variant",
    "zc_id_cate-variant",
    "ck_variant"
   ],
   [
    "zc_id_prod-mal-carrier-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_empl-natural",
+   "cate-gender",
+   "zc_id_cons-gender-cate",
+   "ck_cate-gender"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fabric-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_empl-natural",
+   "age",
+   "zc_id_scal-duration",
+   "qk_age"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fabric-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-retail",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-retail",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-retail",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-retail",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-retail",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-retail",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-retail",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-retail",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-retail",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_tick-lading",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_tick-lading",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_tick-lading",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_tick-lading",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-grocery-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_deta-lading",
+   "ticket",
+   "zc_id_tick-lading",
+   "fk_list"
+  ],
+  [
+   "zc_id_task_rr_stat-tsk",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_tick-admission",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_tick-admission",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_tick-admission",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_tick-admission",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_keep-made",
    "version",
    "zc_id_tags-version",
    "tk_version"
@@ -24053,6 +23327,3258 @@
   ],
   [
    "zc_id_stan-clause",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_bank-commercial",
+   "category",
+   "zc_id_cate-subject",
+   "ck_category"
+  ],
+  [
+   "zc_id_orga-legal",
+   "category",
+   "zc_id_cate-organization",
+   "ck_category"
+  ],
+  [
+   "zc_id_oper-loading",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_orga-non-banking-legal",
+   "category",
+   "zc_id_cate-organization",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-bank",
+   "category",
+   "zc_id_cate-organization",
+   "ck_category"
+  ],
+  [
+   "zc_id_empl-agent",
+   "category",
+   "zc_id_cate-agent",
+   "ck_category"
+  ],
+  [
+   "zc_id_orga-department",
+   "category",
+   "zc_id_cate-department",
+   "ck_category"
+  ],
+  [
+   "zc_id_subjects",
+   "category",
+   "zc_id_cate-subject",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-group",
+   "category",
+   "zc_id_cate-group",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-ministry",
+   "category",
+   "zc_id_cate-society",
+   "ck_category"
+  ],
+  [
+   "zc_id_bank-central",
+   "category",
+   "zc_id_cate-society",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-hierarchy",
+   "category",
+   "zc_id_cate-subject",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-org",
+   "category",
+   "zc_id_cate-organization",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-sovereign",
+   "category",
+   "zc_id_cate-society",
+   "ck_category"
+  ],
+  [
+   "zc_id_subj-supranational",
+   "category",
+   "zc_id_cate-society",
+   "ck_category"
+  ],
+  [
+   "zc_id_oper-loading",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-loading",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-loading",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-loading",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-loading",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-loading",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-loading",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-loading",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-loading",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-loading",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_task-picking",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-picking",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-picking",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-picking",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-picking",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fabric",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_task-inbound",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-inbound",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-inbound",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-inbound",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fabric-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-inbound",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-fabric-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-outbound",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-outbound",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-outbound",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-outbound",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-outbound",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-pack",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-pack",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-pack",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-pack",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-pack",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_subj-employee",
+   "category",
+   "zc_id_cate-subject",
+   "ck_category"
+  ],
+  [
+   "zc_id_task-put_in_stock",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-put_in_stock",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-put_in_stock",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-put_in_stock",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-put_in_stock",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-take_off_stock",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-take_off_stock",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-take_off_stock",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-take_off_stock",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-take_off_stock",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-merchandise_on",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-merchandise_on",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-merchandise_on",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-merchandise_on",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-merchandise_on",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_deta-task",
+   "task",
+   "zc_id_task",
+   "fk_list"
+  ],
+  [
+   "zc_id_deta-tsk",
+   "biller",
+   "zc_id_subjects",
+   "fk_biller"
+  ],
+  [
+   "zc_id_deta-tsk",
+   "stat-tsk",
+   "zc_id_stat-task",
+   "fk_list"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "cate-cert",
+   "zc_id_cate-certification",
+   "ck_cate-cert"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "cate-document",
+   "zc_id_cate-document",
+   "ck_document"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "date",
+   "zc_id_scal-date",
+   "qk_date"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "mime",
+   "zc_id_cate-file",
+   "ck_mime"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "size",
+   "zc_id_scal-data",
+   "qk_size"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "unit",
+   "zc_id_unit",
+   "sk_unit"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-origin_cert-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-retail",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-apparel",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-retail-request",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-transform_r_composition",
+   "ratio",
+   "zc_id_rati-formula",
+   "qk_ratio"
+  ],
+  [
+   "zc_id_prod-apparel-made",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-retail-made",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_prod-apparel-purchase",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-retail-purchase",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-apparel-request",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-apparel-sales",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-retail-sales",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-put_to_store",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-put_to_store",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-put_to_store",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-put_to_store",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-put_to_store",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-put_to_store",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-scan_barcode",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-check_cond",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-match_cond",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-action_prj",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-delivery_prj",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_deta-lading",
+   "biller",
+   "zc_id_subjects",
+   "fk_biller"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-decide_prj",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-orient_prj",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-observe_prj",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "arrived",
+   "zc_id_scal-date",
+   "qk_arrived"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "cate-proc_op",
+   "zc_id_cate-proc_op",
+   "ck_cate-proc_op"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "cate-wh",
+   "zc_id_cate-wh-title",
+   "ck_cate-wh"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "effort",
+   "zc_id_scal-duration",
+   "qk_effort"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "sla_duration",
+   "zc_id_scal-duration",
+   "qk_sla"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "urgent",
+   "zc_id_leve-urgent",
+   "lk_urgent"
+  ],
+  [
+   "zc_id_oper-check_prj",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-grocery",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_tallying-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_sorting-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_keep-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-grocery-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_labeling-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-grocery-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_task-shipment",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-shipment",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-shipment",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-shipment",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-shipment",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_labeling-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_keep-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_keep-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "made_in",
+   "zc_id_subj-country",
+   "fk_made_in"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-grocery-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_orde-payment_rr_cash_register",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_tallying-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_order_rr_channel",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_tallying-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-operate",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-operate",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-operate",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-operate",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-operate",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-operate",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-operate",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-operate",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-operate",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_labeling-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_invo-tax-list",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_invo-tax-list",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_invo-tax-list",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_invo-tax-list",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_invo-proforma",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_invo-proforma",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_invo-proforma",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_invo-proforma",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_stat-cnt-voucher",
+   "object",
+   "zc_id_subjects",
+   "fk_object"
+  ],
+  [
+   "zc_id_stat-cnt-voucher",
+   "payload",
+   "zc_id_prod-sales",
+   "fk_payload"
+  ],
+  [
+   "zc_id_stat-cnt-voucher",
+   "subject",
+   "zc_id_subjects",
+   "fk_subject"
+  ],
+  [
+   "zc_id_stat-cnt-voucher",
+   "write-off",
+   "zc_id_scale",
+   "qk_write-off"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_tallying-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_invoice",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_invoice",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_invoice",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_invoice",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_invo-form",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_invo-form",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_invo-form",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_invo-form",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_invo-electric",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_invo-electric",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_invo-electric",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_invo-electric",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-stor_labeling-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-customs_cle_fo-purchase",
+   "hscode",
+   "zc_id_tags-hscode",
+   "tk_hscode"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "health",
+   "zc_id_leve-health",
+   "lk_health"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-marks_labeling-made",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_orga-legal",
+   "country",
+   "zc_id_subj-country",
+   "fk_country"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-marks_labeling-sales",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-marks_labeling-request",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "demand",
+   "zc_id_subjects",
+   "fk_subj-demand"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "price",
+   "zc_id_scal-price",
+   "qk_price"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "provider",
+   "zc_id_subjects",
+   "fk_subj-provider"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "variant",
+   "zc_id_cate-variant",
+   "ck_variant"
+  ],
+  [
+   "zc_id_prod-marks_labeling-purchase",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_deta-invoice",
+   "goods",
+   "zc_id_prod-sales",
+   "fk_goods"
+  ],
+  [
+   "zc_id_deta-tsk",
+   "write-off",
+   "zc_id_scale",
+   "qk_write-off"
+  ],
+  [
+   "zc_id_deta-task",
+   "qty",
+   "zc_id_scale",
+   "qk_qty"
+  ],
+  [
+   "zc_id_deta-task",
+   "write-off",
+   "zc_id_scale",
+   "qk_write-off"
+  ],
+  [
+   "zc_id_deta-task",
+   "actor",
+   "zc_id_entity",
+   "fk_actor"
+  ],
+  [
+   "zc_id_deta-tsk",
+   "matter",
+   "zc_id_production",
+   "fk_matter"
+  ],
+  [
+   "zc_id_orde-shipping",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-consult",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_deta-task",
+   "end_at",
+   "zc_id_scal-date",
+   "qk_end_at"
+  ],
+  [
+   "zc_id_stat-trade_order",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-railway",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-storage",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_deta-task_rr_deta-tsk",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_orde-traffic",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-retail",
+   "place",
+   "zc_id_stor-plc-shop",
+   "fk_place"
+  ],
+  [
+   "zc_id_deta-task",
+   "matter",
+   "zc_id_production",
+   "fk_matter"
+  ],
+  [
+   "zc_id_orde-airlift",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-multimodal",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-ahbl",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_order-after_sales",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-land",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-hbl",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-lbl",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-payment",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-manual",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_orde-rbl",
+   "place",
+   "zc_id_place",
+   "fk_place"
+  ],
+  [
+   "zc_id_prod-customs_cle_fo-sales",
+   "hscode",
+   "zc_id_tags-hscode",
+   "tk_hscode"
+  ],
+  [
+   "zc_id_deta-invoice",
+   "eco_idu",
+   "zc_id_cate-eco_idu",
+   "ck_eco_idu"
+  ],
+  [
+   "zc_id_deta-invoice",
+   "eco_amount",
+   "zc_id_scal-amount",
+   "qk_eco_amount"
+  ],
+  [
+   "zc_id_deta-invoice",
+   "tax_ratio",
+   "zc_id_rati-tax",
+   "qk_tax_ratio"
+  ],
+  [
+   "zc_id_deta-trade_order",
+   "currency",
+   "zc_id_unit-currency",
+   "sk_currency"
+  ],
+  [
+   "zc_id_deta-tsk",
+   "qty",
+   "zc_id_scale",
+   "qk_qty"
+  ],
+  [
+   "zc_id_bill-check",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_bill-check",
+   "tax_amount",
+   "zc_id_scal-amount",
+   "qk_tax_amount"
+  ],
+  [
+   "zc_id_bill-check",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_bill-check",
+   "detail_amount",
+   "zc_id_scal-amount",
+   "qk_detail_amount"
+  ],
+  [
+   "zc_id_invo-form",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_invo-form",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_invo-tax-list",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_invo-tax-list",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_invoice",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_bill-check",
+   "discount_amount",
+   "zc_id_scal-amount",
+   "qk_discount_amount"
+  ],
+  [
+   "zc_id_invo-proforma",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_invo-proforma",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_invoice",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_invo-credit_note",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_invo-electric",
+   "amount",
+   "zc_id_scal-amount",
+   "qk_amount"
+  ],
+  [
+   "zc_id_invo-electric",
+   "tax",
+   "zc_id_scal-amount",
+   "qk_tax"
+  ],
+  [
+   "zc_id_invo-electric",
+   "origin",
+   "zc_id_invo-tax-list",
+   "fk_origin"
+  ],
+  [
+   "zc_id_deta-invoice",
+   "tax-title",
+   "zc_id_cate-tax-title",
+   "ck_category"
+  ],
+  [
+   "zc_id_deta-bill-check_rr_deta-invoice",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_task_rr_stat-tsk",
+   "verify",
+   "zc_id_scale",
+   "qk_verify"
+  ],
+  [
+   "zc_id_bank-commercial",
+   "country",
+   "zc_id_subj-country",
+   "fk_country"
+  ],
+  [
+   "zc_id_subj-ministry",
+   "country",
+   "zc_id_subj-country",
+   "fk_country"
+  ],
+  [
+   "zc_id_subj-ministry",
+   "representative",
+   "zc_id_empl-natural",
+   "fk_representative"
+  ],
+  [
+   "zc_id_bank-central",
+   "country",
+   "zc_id_subj-country",
+   "fk_country"
+  ],
+  [
+   "zc_id_bank-central",
+   "representative",
+   "zc_id_empl-natural",
+   "fk_representative"
+  ],
+  [
+   "zc_id_orga-non-banking-legal",
+   "country",
+   "zc_id_subj-country",
+   "fk_country"
+  ],
+  [
+   "zc_id_event_rr_prod-obj",
+   "period",
+   "zc_id_segm-date",
+   "qk_period"
+  ],
+  [
+   "zc_id_task-counting",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_task-counting",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_task-counting",
+   "parent",
+   "zc_id_task",
+   "fk_parent"
+  ],
+  [
+   "zc_id_task-counting",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_task-counting",
+   "version",
+   "zc_id_tags-version",
+   "tk_version"
+  ],
+  [
+   "zc_id_task-counting",
+   "storage",
+   "zc_id_storage",
+   "fk_storage"
+  ],
+  [
+   "zc_id_bill-customs_declaration",
+   "batch_no",
+   "zc_id_tags-batch",
+   "tk_batch_no"
+  ],
+  [
+   "zc_id_bill-customs_declaration",
+   "branch",
+   "zc_id_cate-ver_branch",
+   "ck_branch"
+  ],
+  [
+   "zc_id_bill-customs_declaration",
+   "previous",
+   "zc_id_version",
+   "fk_previous"
+  ],
+  [
+   "zc_id_bill-customs_declaration",
    "version",
    "zc_id_tags-version",
    "tk_version"
