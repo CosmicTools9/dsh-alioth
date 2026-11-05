@@ -172,6 +172,25 @@
 - id: preset-minimal
   disabled: true
 
+# rc.1（harness 6ad218c9f0）新默认启用的两面，2026-11-05 评估后关闭：
+# ① mcp-manager = 租户可配的宿主 MCP fleet：stdio 条目带 command/args/cwd/env
+#    （env 还吃 ${credential:…} 模板），条目经 Settings 以 volatile 配置暴露
+#    （写面 = 我们已关的 settings-controller），restart/probe/watch 经 Remote
+#    可达——租户触发的宿主进程执行 + 宿主级共享配置，与 plugin-manager /
+#    settings-controller 同类，多租户部署不可开。
+# ② agent-team / tool-agent-team = 多会话无人值守算力通道（base bundle 默认启用，
+#    maxTasks 256）：与 schedule 同类的配额扩张面，且 worker session 由服务端
+#    自建、创建时无连接账户上下文——enforce 模式的 agent/pre-step 守卫对未绑定
+#    会话必拒，开了也是死重。ui-agent-team 随服务一并关（孤儿面板）。
+- id: mcp-manager
+  disabled: true
+- id: agent-team
+  disabled: true
+- id: tool-agent-team
+  disabled: true
+- id: ui-agent-team
+  disabled: true
+
 # rc.3 起 preset 激活对「等待永不上线的宿主服务」的行 fail-closed（agent-preset-registry
 # 的 mount 审计：pending 行 = preset invalid ⇒ session.create 拒绝 ⇒ hero 选择工作区后
 # 永不解锁，dev/m2/prod 三处实测同象）。stock `standard` preset 的 tool-plugin-manager

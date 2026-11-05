@@ -113,7 +113,10 @@ const COMPOSITIONS: readonly Composition[] = [
     forbidFullAccess: true,
     // Base-layer rows the shared-online closure disables in every profile
     // (web-only rows are unmatched skips here and are asserted on web only).
-    expectDisabled: ['plugin-manager', 'tool-plugin-manager', 'web-deepseek-api'],
+    // agent-team/tool-agent-team: the 2026-11-05 rc.1 closure — unattended
+    // multi-session compute whose server-side worker sessions carry no
+    // connection account, i.e. dead weight under the enforce guard.
+    expectDisabled: ['plugin-manager', 'tool-plugin-manager', 'web-deepseek-api', 'agent-team', 'tool-agent-team', 'fs-observation-policy'],
     // Full enabled-row allowlist: any newly mounted harness row goes red here
     // until the shared-online security assessment consciously lists it.
     expectEnabledRows: [
@@ -124,7 +127,10 @@ const COMPOSITIONS: readonly Composition[] = [
       'command-feedback', 'command-goal', 'commands',
       'compaction-basic', 'config-editor', 'deepseek-llm-api-extensions',
       'directory-picker-app', 'env-alioth', 'feedback-web-alioth',
-      'fs-observation-policy', 'fs-sandbox', 'goal',
+      // fs-observation-policy left the allowlist 2026-11-05: rc.1 ships it
+      // disabled in the base bundle by design ("ship apply_patch on and the
+      // observation policy off") — the disabled state is asserted below.
+      'fs-sandbox', 'goal',
       'goal-round-driver', 'guard-alioth', 'headless-runner',
       'headless-startup', 'image-offload', 'jobs',
       'landing-alioth', 'llm', 'llm-alioth',
@@ -194,6 +200,10 @@ const COMPOSITIONS: readonly Composition[] = [
       'account-controller', 'session-log-download', 'schedule', 'ui-schedule',
       'office-to-pdf', 'workspace-changes', 'harness-dev-context',
       'preset-cordis', 'preset-minimal', 'ui-plugin-manager',
+      // 2026-11-05 rc.1 closure: tenant-configurable host MCP fleet (stdio
+      // child processes + Settings-exposed volatile entries) and the agent
+      // team trio (unattended compute; workers unbound under enforce).
+      'mcp-manager', 'agent-team', 'tool-agent-team', 'ui-agent-team',
     ],
     expectRowText: {
       // Full-text session search spans every session on the host — it must
@@ -232,7 +242,7 @@ const COMPOSITIONS: readonly Composition[] = [
       'credentials', 'deepseek-account', 'deepseek-llm-api-extensions',
       'desktop-product-telemetry', 'directory-picker-app', 'env-alioth',
       'feedback-web-alioth', 'file-reference-local', 'file-upload',
-      'fs-observation-policy', 'fs-sandbox', 'goal',
+      'fs-sandbox', 'goal',
       'goal-round-driver', 'guard-alioth', 'hmr',
       'image-offload', 'job-controller', 'jobs',
       'landing-alioth', 'llm', 'llm-alioth',

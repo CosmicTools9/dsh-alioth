@@ -245,9 +245,13 @@ describe('entitlement decision point (C1)', () => {
 describe('metering ledger + audit trail (C2/C6)', () => {
   it('usage accumulates per account/day/model; a missing price poisons the month cost', async () => {
     const svc = billing.createMemoryBilling()
+    // Derive the ledger days from the same period clock usageMonthly aggregates
+    // by — hardcoded calendar dates turn this into a time bomb at month rollover
+    // (the 2026-10 hardcodes silently started returning 0 on 2026-11-01).
+    const day = (n: number): string => `${currentPeriod()}-${String(n).padStart(2, '0')}`
     await svc.recordUsage('U-ada', [
-      { day: '2026-10-01', model: 'deepseek-chat', tokensIn: 1000, tokensOut: 500, calls: 2, costCents: 0.5 },
-      { day: '2026-10-02', model: 'deepseek-chat', tokensIn: 2000, tokensOut: 100, calls: 1, costCents: 0.5 },
+      { day: day(1), model: 'deepseek-chat', tokensIn: 1000, tokensOut: 500, calls: 2, costCents: 0.5 },
+      { day: day(2), model: 'deepseek-chat', tokensIn: 2000, tokensOut: 100, calls: 1, costCents: 0.5 },
     ])
     const month = await svc.usageMonthly('U-ada')
     expect(month.tokensIn).toBe(3000)
@@ -256,7 +260,7 @@ describe('metering ledger + audit trail (C2/C6)', () => {
     expect(month.costCents).toBe(1)
 
     await svc.recordUsage('U-ada', [
-      { day: '2026-10-03', model: 'mystery-model', tokensIn: 10, tokensOut: 10, calls: 1, costCents: null },
+      { day: day(3), model: 'mystery-model', tokensIn: 10, tokensOut: 10, calls: 1, costCents: null },
     ])
     expect((await svc.usageMonthly('U-ada')).costCents).toBeNull() // never 0-faked
   })
