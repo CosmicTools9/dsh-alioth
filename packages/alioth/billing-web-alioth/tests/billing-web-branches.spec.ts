@@ -11,6 +11,7 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol'
 import type { Bill, BillingUser, Invoice, PendingInvoice } from '@dsh-alioth/billing-alioth'
 import * as billingWeb from '../src/index.ts'
 import type { LicenseView } from '@dsh-alioth/billing-alioth'
@@ -143,6 +144,20 @@ beforeAll(async () => {
   ctx.set('aliothBilling', billing.service as never)
   const webServer = await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
   disposers.push(() => webServer.dispose())
+  // rc.3 moved route admission behind the `webserver/authorize` bail: with no
+  // authentication provider mounted every matched route answers 503. Production
+  // web profiles get it from @deepseek-ai/dsh-host-authentication-token; the
+  // fixture admits each request with an owner peer (the carrier's own cookie
+  // gate is what these tests exercise).
+  const webAuthFixture = ctx.plugin({ apply(scope: Context) {
+    scope.on('webserver/authorize', () => ({ kind: 'allow', peer: {
+      id: 'fixture-peer',
+      ctx: scope,
+      principal: { kind: 'owner' },
+      signal: new AbortController().signal,
+    } as PeerScope }))
+  } })
+  await webAuthFixture.await()
   const carrier = await ctx.plugin(billingWeb, {})
   disposers.push(() => carrier.dispose())
 }, 60_000)

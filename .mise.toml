@@ -5,16 +5,18 @@
 # 可选 ALIOTH_PRE_PROC_ROOT（默认 $HOME/.dsh-alioth/Pre-Proc）
 
 #
-# 工具链钉住，与交付环境对齐（避免迁移/对齐成本）:
-#   node 24.20.0 — 对齐 Docker `node:24.20-slim` 与上游栈（AliothMeta，2026-09-24 分拆后更名；原 2026-08-29 对齐）。
-# pnpm 不进 mise：由 corepack 按 package.json 的 packageManager 字段单源解析（12.6.0，与 deepseek-harness 一致，
-#   装第二份 pnpm 只会制造版本漂移。
-# bun 同样不进 mise：它是各环境各自的部署依赖（mac 宿主走 brew，Docker 走
+# 工具链钉住，与 harness 线对齐（34b6d00 起 node 26.10.0；Docker 侧仍 node:24.20-slim，engines 两者都容）:
+#   node 26.10.0 — 对齐 deepseek-harness 线（>=24 均可，dev 用 26.10.0）。
+#   pnpm 12.8.1 — 镜像钉，与 package.json#packageManager 同值同升。corepack 通道已死：
+#   node 26 起不再随装 corepack（lib/node_modules 只有 npm），mise 2026.11 起也改为
+#   「工具供给」模型直接拒跑未钉的 pnpm——pnpm 必须进 mise，防漂移靠两处钉值同步。
+# bun 不进 mise：它是各环境各自的部署依赖（mac 宿主走 brew，Docker 走
 #   `npm i -g bun@1.4.2`），钉在这里会迫使每次换机的 mise install/exec 慢速拉取
 #   GitHub release（本机实测 >5min 未完成）。版本真理源在 Dockerfile（1.4.2）。
 
 [tools]
 node = "26.10.0"
+"npm:pnpm" = "12.8.1"  # 必须 npm 后端：裸 pnpm= 走 aqua→github release，本机被节流必超时
 [tasks]
 launch = "bash scripts/launch-web.sh"
 "alioth:doctor" = "pnpm exec tsx scripts/alioth-doctor.ts"

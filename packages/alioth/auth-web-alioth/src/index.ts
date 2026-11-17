@@ -152,13 +152,13 @@ function asWebServer(value: unknown): WebServerLike | undefined {
 
 /** Structural face of the harness `connection` service — optional like
  * webServer: present in web profiles (client-connection mounted), absent in
- * headless ones. authenticatedUrl() appends the process launch token to a
- * clean origin, which is how the agent console (SPA) admits a browser.
- * registerAccountResolver (newer harness lines) lets the host login map each
+ * headless ones. registerAccountResolver lets the host login map each
  * request's cookie jar to the signed-in account, so host-side surfaces
- * (workspace pickers) isolate per user without client participation. */
+ * (workspace pickers) isolate per user without client participation.
+ * (0.2.2-rc.3: the console launch URL moved off this service — the process
+ * token now lives in the authentication-token plugin, minted through the
+ * `webserver/entry-url` event; see portalUrl below.) */
 interface ConnectionLike {
-  authenticatedUrl(baseUrl: string): string
   registerAccountResolver?(resolver: (headers: { cookie?: string; host?: string }) => string | null | Promise<string | null>): () => void
 }
 
@@ -167,9 +167,16 @@ function asConnection(value: unknown): ConnectionLike | undefined {
     return undefined
   }
   const candidate = value as Record<string, unknown>
-  return typeof candidate.authenticatedUrl === 'function'
+  return typeof candidate.registerAccountResolver === 'function'
     ? value as ConnectionLike
     : undefined
+}
+
+/** One startup-entry URL appended by a `webserver/entry-url` listener — the
+ * authentication-token plugin pushes the launch-tokened console URL here. */
+interface PortalEntryUrl {
+  url: string
+  open?: boolean
 }
 
 // ── request/response helpers ────────────────────────────────────────────
@@ -841,31 +848,35 @@ export function apply(ctx: Context, config: Config): void {
   let guiOrigin: string | undefined
   const workspaceHref = (): string => publicOrigin ?? guiOrigin ?? '/'
   /**
-   * The agent-console (SPA) URL for one request's origin: the harness
-   * connection service appends its process launch token, admitting the
-   * browser through the device wall. Absent connection (non-web tree) the
-   * caller falls back to the Alioth workspace page.
+   * The agent-console (SPA) URL for one request's origin: the launch token
+   * that admits a browser through the device wall is minted by the
+   * authentication-token plugin (0.2.2-rc.3 moved it off the connection
+   * service) and reached through the `webserver/entry-url` emit — the same
+   * seam the harness console URL printed at boot comes from. Absent
+   * webServer (non-web tree) or a failed derivation falls back to the
+   * Alioth workspace page.
    */
   const portalUrl = (request: IncomingMessage): string | undefined => {
-    const connection = asConnection((ctx.get as (name: string) => unknown).call(ctx, 'connection'))
-    if (connection === undefined) return undefined
-    if (publicOrigin !== undefined) {
-      try {
-        return connection.authenticatedUrl(publicOrigin)
-      } catch {
-        return undefined
-      }
-    }
-    const host = request.headers.host
-    if (typeof host !== 'string' || host === '') return undefined
-    try {
+    const webServer = (ctx.get as (name: string) => unknown).call(ctx, 'webServer')
+    if (typeof webServer !== 'object' || webServer === null) return undefined
+    let origin: string | undefined = publicOrigin
+    if (origin === undefined) {
+      const host = request.headers.host
+      if (typeof host !== 'string' || host === '') return undefined
       // Reverse proxies may strip the port from Host ($host); the browser
       // must land on the real origin, so re-attach the bound port unless the
       // Host already carries one (or is a bracketed IPv6 literal).
       const authority = host.includes(':')
         ? host
         : `${host}:${new URL(guiOrigin ?? 'http://127.0.0.1:3100').port}`
-      return connection.authenticatedUrl(`http://${authority}`)
+      origin = `http://${authority}`
+    }
+    try {
+      const entries: PortalEntryUrl[] = []
+      ;(ctx.emit as (thisArg: object, name: string, baseUrl: string, entries: PortalEntryUrl[]) => void)(
+        webServer, 'webserver/entry-url', origin, entries,
+      )
+      return entries.find(entry => entry.open)?.url ?? entries[0]?.url
     } catch {
       return undefined
     }

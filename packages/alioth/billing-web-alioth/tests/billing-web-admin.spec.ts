@@ -15,6 +15,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
 import * as authWebAlioth from '@dsh-alioth/auth-web-alioth'
@@ -91,6 +92,20 @@ beforeAll(async () => {
   disposers.push(() => env.dispose())
   const web = await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
   disposers.push(() => web.dispose())
+  // rc.3 moved route admission behind the `webserver/authorize` bail: with no
+  // authentication provider mounted every matched route answers 503. Production
+  // web profiles get it from @deepseek-ai/dsh-host-authentication-token; the
+  // fixture admits each request with an owner peer (the carrier's own cookie
+  // gate is what these tests exercise).
+  const webAuthFixture = ctx.plugin({ apply(scope: Context) {
+    scope.on('webserver/authorize', () => ({ kind: 'allow', peer: {
+      id: 'fixture-peer',
+      ctx: scope,
+      principal: { kind: 'owner' },
+      signal: new AbortController().signal,
+    } as PeerScope }))
+  } })
+  await webAuthFixture.await()
   const auth = await ctx.plugin(authAlioth, { mode: 'open', preProcRoot, deployRoot: preProcRoot })
   disposers.push(() => auth.dispose())
   const authWeb = await ctx.plugin(authWebAlioth, { port: 3970 + Math.floor(Math.random() * 20), webGate: true })

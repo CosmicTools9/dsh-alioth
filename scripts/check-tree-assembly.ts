@@ -197,13 +197,24 @@ const COMPOSITIONS: readonly Composition[] = [
     // api are base rows and are already asserted on headless.
     expectDisabled: [
       'settings-controller', 'ui-settings-web-search', 'ui-settings-account',
-      'account-controller', 'session-log-download', 'schedule', 'ui-schedule',
-      'office-to-pdf', 'workspace-changes', 'harness-dev-context',
+      'session-log-download', 'schedule', 'ui-schedule',
+      'workspace-changes', 'harness-dev-context',
       'preset-cordis', 'preset-minimal', 'ui-plugin-manager',
       // 2026-11-05 rc.1 closure: tenant-configurable host MCP fleet (stdio
       // child processes + Settings-exposed volatile entries) and the agent
       // team trio (unattended compute; workers unbound under enforce).
       'mcp-manager', 'agent-team', 'tool-agent-team', 'ui-agent-team',
+      // 2026-11-17 rc.3 closure: account-controller and office-to-pdf were
+      // deleted upstream — their rows are replaced by ui-account-notifications
+      // (client poller over the disabled DeepSeek account face, injects the
+      // disabled ui-settings-account) and office-kit (LibreOffice host service
+      // whose Remote render() takes a caller-supplied workspace scope with no
+      // per-peer check). See the bundle patch comments for the full per-row
+      // rationale. ui-session-status was assessed disabled too, but rc.3 solders
+      // the console client's required injects onto its service — disabling it
+      // whitescreens the console (browser E2E); it is re-enabled and documented
+      // as an accepted face instead.
+      'ui-account-notifications', 'office-kit',
     ],
     expectRowText: {
       // Full-text session search spans every session on the host — it must
@@ -213,6 +224,11 @@ const COMPOSITIONS: readonly Composition[] = [
       // still be the profile gate (upstream flipping it on, or removing the
       // row, both go red).
       'ui-sidebar-browser': ['disabled:', 'profileContext'],
+      // rc.3's workspace-dependencies is likewise profile-gated off on web
+      // (desktop-only python runtime payload paths; see the allowlist note).
+      // The conservative allowlist still counts `!!js` rows as mounted, so
+      // the gate itself is pinned here.
+      'workspace-dependencies': ['disabled:', 'profileContext'],
       // The two host-wide session verbs stay off (desktop open / default-model
       // write); see the 2026-10-23 residual-risk closure in the bundle patch.
       'session-controller': ['openWorkspacePath: false', 'initializeDefaultModel: false'],
@@ -278,6 +294,19 @@ const COMPOSITIONS: readonly Composition[] = [
       // save goes through file-upload (kept product face).
       'ui-chat', 'ui-commands', 'ui-conversation', 'ui-context-menu',
       'ui-file-actions', 'ui-file-drag',
+      // 2026-11-17 rc.3 additions: authentication-token is the web cookie
+      // exchange itself (the gate our whole tenant model sits behind);
+      // skill-office is inert bundled skill guidance (python env = 'user' on
+      // web). workspace-dependencies is counted here only because `!!js`
+      // disables count as enabled — its desktop-only profile gate is pinned
+      // in expectRowText below. ui-account-notifications, ui-session-status
+      // and office-kit are disabled by the closure instead (see expectDisabled).
+      'authentication-token', 'skill-office', 'workspace-dependencies',
+      // ui-session-status: rc.3 wired the console client's required injects
+      // (ui-conversation/ui-chat) onto its service — disabling it breaks the
+      // console boot; re-enabled as an accepted cross-tenant face (see the
+      // bundle patch comment).
+      'ui-session-status',
       'deliverable-file-references', 'entry-customization', 'message-quotes',
       'tool-executor-native',
       'ui-cordis', 'ui-goal',

@@ -9,6 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
+import type { PeerScope } from '@deepseek-ai/dsh-typert-protocol'
 import * as envAlioth from '@dsh-alioth/env-alioth'
 import { createTestDatabase, type TestDatabase } from '../../env-alioth/tests/test-db.ts'
 import * as authAlioth from '@dsh-alioth/auth-alioth'
@@ -64,11 +65,17 @@ let workspaceRegistry: { list: () => Array<{ path: string; sessionIds: readonly 
  */
 let billingLicenseUntil: Date | null = null
 
-/** The `connection` stand-in mounted in beforeAll (restored after variants). */
+/** The `connection` stand-in mounted in beforeAll (restored after variants).
+ * rc.3 moved the console launch URL off this service (webserver/entry-url
+ * emit, see the fixture listener in beforeAll) — only the account-resolver
+ * registration seam remains. */
 let connectionStub: {
-  authenticatedUrl: (base: string) => string
   registerAccountResolver: (resolver: AccountResolver) => () => void
 }
+
+/** Simulates "portal unavailable" for the fallback tests: the entry-url
+ * fixture listener contributes nothing while set. */
+let entryUrlMuted = false
 
 /** Extract the `{ error }` payload of a failing response (narrowed, no cast). */
 async function jsonError(response: Response): Promise<string> {
@@ -221,6 +228,35 @@ beforeAll(async () => {
   // carriers so their deferred ctx.inject(['webServer']) callbacks find it.
   const webServerPlugin = await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
   disposers.push(() => webServerPlugin.dispose())
+  // rc.3 moved route admission behind the `webserver/authorize` bail: with no
+  // authentication provider mounted every matched route answers 503
+  // ("authentication unavailable"). Production web profiles get it from
+  // @deepseek-ai/dsh-host-authentication-token (launch-token/cookie exchange);
+  // the fixture admits each request with an owner peer — these tests exercise
+  // the carrier's own cookie gate above that seam.
+  const webAuthFixture = ctx.plugin({ apply(scope: Context) {
+    scope.on('webserver/authorize', () => ({ kind: 'allow', peer: {
+      id: 'fixture-peer',
+      ctx: scope,
+      principal: { kind: 'owner' },
+      signal: new AbortController().signal,
+    } as PeerScope }))
+  } })
+  await webAuthFixture.await()
+  // rc.3 moved the console launch URL to the `webserver/entry-url` emit (the
+  // authentication-token plugin owns the process token). The fixture plays
+  // that plugin: append a stub token, refuse the throw.test origin, and stay
+  // silent on silent.test (zero entries → the carrier's /workspace fallback).
+  // entryUrlMuted simulates "portal unavailable" for the fallback tests.
+  const webEntryFixture = ctx.plugin({ apply(scope: Context) {
+    scope.on('webserver/entry-url', (baseUrl: string, entries: { url: string; open?: boolean }[]) => {
+      if (entryUrlMuted) return
+      if (baseUrl.includes('throw.test')) throw new Error('not a reachable origin')
+      if (baseUrl.includes('silent.test')) return
+      entries.push({ url: `${baseUrl}/?launch=stub-token`, open: true })
+    })
+  } })
+  await webEntryFixture.await()
   const landing = await ctx.plugin(landingAlioth, {})
   disposers.push(() => landing.dispose())
   previewPreProcRoot = path.join(dataRoot, 'Pre-Proc')
@@ -233,14 +269,10 @@ beforeAll(async () => {
 
   port = 3987 + Math.floor(Math.random() * 500)
   // Harness `connection` service stand-in: the real one (client-connection)
-  // is mounted by web profiles only; here the carrier's portal-URL
-  // derivation and host-login account resolver are exercised over this
-  // structural face. `authenticatedUrl` mimics the real launch-token append.
+  // is mounted by web profiles only. rc.3 keeps only the account-resolver
+  // seam on this service — the console launch URL moved to the entry-url
+  // fixture listener above.
   connectionStub = {
-    authenticatedUrl: (base: string) => {
-      if (base.includes('throw.test')) throw new Error('not a reachable origin')
-      return `${base}/?launch=stub-token`
-    },
     registerAccountResolver: (resolver: AccountResolver) => {
       accountResolver = resolver
       return () => { accountResolver = undefined }
@@ -686,16 +718,23 @@ describe('web gate (real harness WebServer)', () => {
   })
 
   it('answers form logins on the GUI origin with a same-origin /workspace redirect', async () => {
-    const response = await fetch(`${webBase()}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ username: 'carol', password: 'password-789' }),
-      redirect: 'manual',
-    })
-    expect(response.status).toBe(302)
-    expect(response.headers.get('location')).toBe('/workspace')
-    // Cookies land on the caller's origin — no cross-origin token handoff.
-    expect(response.headers.get('set-cookie') ?? '').toContain('alioth_user')
+    // Portal unavailable (no webServer to mint the console URL through) — the
+    // same-origin fallback lands on the workspace page, not a dead link.
+    entryUrlMuted = true
+    try {
+      const response = await fetch(`${webBase()}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ username: 'carol', password: 'password-789' }),
+        redirect: 'manual',
+      })
+      expect(response.status).toBe(302)
+      expect(response.headers.get('location')).toBe('/workspace')
+      // Cookies land on the caller's origin — no cross-origin token handoff.
+      expect(response.headers.get('set-cookie') ?? '').toContain('alioth_user')
+    } finally {
+      entryUrlMuted = false
+    }
   })
 
   it('does not shadow harness workspace RPC sub-paths (/api/workspace/*)', async () => {
@@ -957,24 +996,21 @@ describe('portal / accept / bind identity handoff (real server)', () => {
   })
 
   it('falls back to /workspace when no portal origin can be derived', async () => {
-    // authenticatedUrl rejects this origin…
+    // the entry-url fixture listener refuses this origin…
     const throwing = await rawRequest({ port, path: '/api/auth/portal', headers: { cookie, host: 'throw.test' } })
     expect(throwing.status).toBe(302)
     expect(throwing.headers.location).toBe('/workspace')
 
-    // …and a request without a Host header has no origin at all.
+    // …a request without a Host header has no origin at all…
     const hostless = await hostlessRequest(port, '/api/auth/portal', { headers: { cookie } })
     expect(hostless.status).toBe(302)
     expect(hostless.head).toContain('location: /workspace')
 
-    // An absent/foreign connection service (shape mismatch) is the same story.
-    for (const missing of [null, 42, {}]) {
-      ctx.set('connection', missing)
-      const response = await fetch(`${base()}/api/auth/portal`, { headers: { cookie }, redirect: 'manual' })
-      expect(response.status).toBe(302)
-      expect(response.headers.get('location')).toBe('/workspace')
-    }
-    ctx.set('connection', connectionStub)
+    // …and a mint that comes back with zero entries is the same story.
+    const silent = await rawRequest({ port, path: '/api/auth/portal', headers: { cookie, host: 'silent.test' } })
+    expect(silent.status).toBe(302)
+    expect(silent.headers.location).toBe('/workspace')
+
     expect((await fetch(`${base()}/api/auth/portal`, { headers: { cookie }, redirect: 'manual' })).headers.get('location'))
       .toBe(`http://127.0.0.1:${port}/?launch=stub-token`)
   })
@@ -1295,7 +1331,8 @@ describe('web gate form register (same-origin redirect)', () => {
   })
 
   it('falls back to /workspace for a form register when the portal is unavailable', async () => {
-    ctx.set('connection', {})
+    // rc.3: the portal seam is the webServer (entry-url mint), not connection.
+    entryUrlMuted = true
     try {
       const response = await fetch(`${webBase()}/api/auth/register`, {
         method: 'POST',
@@ -1307,7 +1344,7 @@ describe('web gate form register (same-origin redirect)', () => {
       expect(response.headers.get('location')).toBe('/workspace')
       expect(response.headers.get('set-cookie') ?? '').toContain('alioth_user=gate-reg-2')
     } finally {
-      ctx.set('connection', connectionStub)
+      entryUrlMuted = false
     }
   })
 
@@ -1332,7 +1369,8 @@ describe('web gate form register (same-origin redirect)', () => {
   })
 
   it('falls back to /workspace when the console portal is unavailable', async () => {
-    ctx.set('connection', {})
+    // rc.3: the portal seam is the webServer (entry-url mint), not connection.
+    entryUrlMuted = true
     try {
       const response = await fetch(`${webBase()}/api/auth/login`, {
         method: 'POST',
@@ -1345,7 +1383,7 @@ describe('web gate form register (same-origin redirect)', () => {
       // Cookies still land on the caller's origin.
       expect(response.headers.get('set-cookie') ?? '').toContain('alioth_user')
     } finally {
-      ctx.set('connection', connectionStub)
+      entryUrlMuted = false
     }
   })
 })

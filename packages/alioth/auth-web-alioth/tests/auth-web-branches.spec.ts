@@ -9,8 +9,10 @@
  * - `aliothAuth`: register/login/logout/userForToken/bind/workspaces/
  *   workspaceMode/createWorkspace (the real auth-alioth is standard-mode and
  *   has no super-admin, so the unlimited/admin paths are unreachable with it);
- * - `webServer`: register/tapIndex (real harness service in the sibling spec);
- * - `connection`: authenticatedUrl/registerAccountResolver;
+ * - `webServer`: register/tapIndex (real harness service in the sibling spec),
+ *   plus the `webserver/entry-url` listener that plays rc.3's
+ *   authentication-token (console launch URL mint);
+ * - `connection`: registerAccountResolver;
  * - `aliothLanding`: path/html.
  */
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
@@ -211,9 +213,16 @@ beforeAll(async () => {
   web = fakeWebServer()
   ctx.provide('webServer')
   ctx.set('webServer', web as never)
+  // rc.3 moved the console launch URL to the `webserver/entry-url` emit (the
+  // authentication-token plugin owns the process token). The fixture plays it:
+  // append a stub token, refuse the throw.test origin (the carrier must fall
+  // back to /workspace instead of producing a dead link).
+  ctx.on('webserver/entry-url', (baseUrl: string, entries: { url: string; open?: boolean }[]) => {
+    if (baseUrl.startsWith('https://throw.test')) throw new Error(`unreachable ${baseUrl}`)
+    entries.push({ url: `${baseUrl}/?launch=stub-token`, open: true })
+  })
   ctx.provide('connection')
   ctx.set('connection', {
-    authenticatedUrl: (base: string) => `${base}/?launch=stub-token`,
     registerAccountResolver: () => () => {},
   } as never)
   // A landing service of the wrong shape: the carrier falls back to /login.
@@ -668,23 +677,15 @@ describe('reverse-proxied deployment names its public origin', () => {
     await Promise.resolve(mounted).catch(() => {})
   })
 
-  it('falls back to the workspace page when the connection rejects the public origin', async () => {
-    // A connection that refuses the named origin must not produce a dead link.
-    const original = ctx.get('connection')
-    ctx.set('connection', {
-      authenticatedUrl: (base: string) => { throw new Error(`unreachable ${base}`) },
-      registerAccountResolver: () => () => {},
-    } as never)
-    try {
-      const unreachablePort = await freePort()
-      const carrier = await ctx.plugin(authWeb, { port: unreachablePort, webGate: false, publicOrigin: 'https://throw.test' })
-      disposers.push(() => carrier.dispose())
-      const response = await rawRequest(unreachablePort, '/api/auth/portal', { cookie, host: 'throw.test' })
-      expect(response.status).toBe(302)
-      expect(response.headers.location).toBe('/workspace')
-    } finally {
-      ctx.set('connection', original as never)
-    }
+  it('falls back to the workspace page when the token mint refuses the public origin', async () => {
+    // The entry-url fixture listener refuses the throw.test origin; a portal
+    // behind a public origin the mint cannot serve must not produce a dead link.
+    const unreachablePort = await freePort()
+    const carrier = await ctx.plugin(authWeb, { port: unreachablePort, webGate: false, publicOrigin: 'https://throw.test' })
+    disposers.push(() => carrier.dispose())
+    const response = await rawRequest(unreachablePort, '/api/auth/portal', { cookie, host: 'throw.test' })
+    expect(response.status).toBe(302)
+    expect(response.headers.location).toBe('/workspace')
   })
 })
 

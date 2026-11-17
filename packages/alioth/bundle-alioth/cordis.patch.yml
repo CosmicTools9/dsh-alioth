@@ -317,6 +317,8 @@
           searchTimeoutMs: 60000
       - id: present
         name: '@deepseek-ai/dsh-tool-present'
+      - id: tool-office
+        name: '@deepseek-ai/dsh-tool-office'
       - id: tool-plugin-manager
         name: '@deepseek-ai/dsh-plugin-manager/tools'
         disabled: true
@@ -337,8 +339,20 @@
   disabled: true
 # DeepSeek Platform 账号面：startSignIn 在宿主机上开浏览器、signOut 撤销的是
 # 全机共享的 Platform grant、余额/通知读的是同一账号——单用户本地特性。
-- id: account-controller
+# 0.2.2-rc.3：account-controller 包已删除，其行由 ui-account-notifications
+# 替换——纯客户端轮询 remote.account（宿主 half 已随 web-deepseek-api 关闭），
+# 且 manifest dsh.client.inject 硬依赖已禁的 ui-settings-account，挂载即拖回
+# 已禁面，继续禁。
+- id: ui-account-notifications
   disabled: true
+
+# 会话状态广播（ui-session-status）曾经禁用、rc.3 起必须恢复挂载：上游把
+# 控制台客户端（ui-conversation/ui-chat）的必需 inject 焊在它的
+# uiSession.sessionStatus 服务上，禁用 = required entries 不激活、整个控制台
+# 白屏（浏览器 E2E 实测，无 config 可软化）。跨租户会话 ID/状态互见是
+# **已知接受面**（上游设计耦合；owner peer 本就可达全部未禁的 Remote 面），
+# 待上游提供隔离模式后再关，详见 AGENTS.md rc.3 条目。
+- id: ui-session-status
 
 # 会话导出：`GET /api/session.export?sessionId=…` 接受任意调用方给的 id，无
 # 归属校验（packages/session-query/session-log-export）——整包 ZIP（含子代理
@@ -379,13 +393,18 @@
     maxFileBytes: 67108864
 
 # 死面与宿主解析器：
-# * office-to-pdf —— LibreOffice 引擎转换宿主任意 office 文件的 Remote，唯一
-#   消费方（documentpreview tab）已禁用，留着只是一个文档解析攻击面；
+# * office-kit（0.2.2-rc.3，接替已删除的 office-to-pdf）—— LibreOffice 渲染/
+#   转换/重算宿主服务，除模型工具 tool-office 外还把 Remote render() 面向任意
+#   客户端 peer 暴露且 scope 是调用方参数、包内无 per-peer 校验（owner 直通
+#   gateway）——已知 sessionId+路径即可渲染他租户会话的工作区文件。与 schedule
+#   同一处置：服务禁用，preset 里的 tool-office 不 inject officeKit（调用时
+#   惰性 ctx.get），缺失即调用级 fail-loud，boot 不受影响；租户要产出 office
+#   文档仍可走沙箱内 python（skill-office 保留）。
 # * workspace-changes —— 每 turn 对会话工作目录跑 git 快照，唯一消费方
 #   （ui-deliverables 变更文件卡）已禁用；
 # * harness-dev-context —— 向模型上下文注入 harness checkout 路径与 GUI URL，
 #   面向「检查/扩展 harness 本体的开发代理」，不是产品语境。
-- id: office-to-pdf
+- id: office-kit
   disabled: true
 - id: workspace-changes
   disabled: true

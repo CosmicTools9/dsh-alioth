@@ -75,7 +75,14 @@ runs:
         # `apps/cli` gained experimental members + dep bumps (execa ^10.0.1,
         # node-addon-require-builtin ^0.1.9, ws 8.21.3), so this repo's
         # lockfile was regenerated in the same commit as this pin.
-        ref: 6ad218c9f09e811a54a91c92d8f3bea505f95480
+        # 2026-11-17: advanced across the upstream `dsh 0.2.2-rc.3` merge into
+        # the Alioth line (`0fab2dd69e` + gate-debt settlement `3e6a8a55db`,
+        # fork-expectation realignment, React 19 seams). Harness manifests
+        # moved to `0.2.2-rc.3`; the vendor tier jumped to cordis 4.1.0 /
+        # cordis-plugin-loader 1.1.0 / schemastery 3.19.0 — all still inside
+        # this repo's caret prerelease ranges, so no specifier moved; only the
+        # harness importer sections regenerated.
+        ref: 4b00b0ed7e5671301f006fb99b56691b0cc0c290
         path: deepseek-harness
     - uses: actions/setup-node@v4
       if: inputs.build == 'true'
